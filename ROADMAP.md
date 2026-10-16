@@ -118,7 +118,6 @@ Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](d
 - [ ] Tab state: unsaved marker for boards that live only in the journal, close button, middle-click to close, "+" for a new board
 - [ ] Overlay HUD: opacity slider, click-through toggle, always-on-top toggle, exit button, one-time hint with the exit shortcut
 - [ ] Overlay grab handle that always receives clicks, so the overlay can be left without a global hotkey (Wayland and Flatpak fallback)
-- [ ] Screen-region capture: global hotkey, select a region of the screen, the capture lands on the active board (or its Inbox) at the cursor position; Wayland through the `xdg-desktop-portal` Screenshot interface
 - [ ] Watch folder: images that appear in a chosen folder (for example the OS screenshots folder) are imported into a chosen board's Inbox
 - [ ] Browser extension "Send to MothRef" + `moth-bridge` native host + "Inbox" board
 - [ ] Attach to another application's window: Windows and X11 (macOS and Wayland are P2)
@@ -287,7 +286,6 @@ Priorities: **P0** = no release without it, **P1** = required for 1.0, **P2** = 
 | Web build | MothRef | P2 | M8 |
 | Real-time collaboration | MothRef | P2 | M9 |
 | Status bar, empty-board state, zoom field, selection badge | MothRef | P1 | M2 |
-| Screen-region capture to the board | MothRef | P1 | M3 |
 | Watch folder import | MothRef | P1 | M3 |
 | Overlay HUD and grab handle | MothRef | P1 | M3 |
 | Timed drawing sessions | MothRef | P1 | M4 |
