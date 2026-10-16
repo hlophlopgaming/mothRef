@@ -14,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             name: linux-x86_64
           - os: windows-latest
@@ -71,12 +71,21 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: binaries
           merge-multiple: true
+      - name: Require passing CI for the release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          run_id=$(gh run list --workflow ci.yml --commit "$GITHUB_SHA" --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$run_id" && test "$run_id" != "null"
+          gh run watch "$run_id" --exit-status --interval 15
       - name: Attach binaries to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
