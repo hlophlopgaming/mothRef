@@ -3,7 +3,7 @@
 //! Pixel-free board state. All mutations go through reversible commands.
 use fractional_index::FractionalIndex;
 use rstar::{AABB, RTree, RTreeObject};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 pub use uuid::Uuid;
 
 /// Identifies original bytes independently of a storage backend or GPU format.
@@ -103,6 +103,7 @@ pub enum SceneError {
 pub struct Scene {
     items: HashMap<Uuid, Item>,
     tree: RTree<Entry>,
+    order: BTreeSet<(FractionalIndex, Uuid)>,
 }
 impl Scene {
     /// The only mutable entry point for board content.
@@ -120,6 +121,7 @@ impl Scene {
                     id: item.id,
                     rect: item.rect,
                 });
+                self.order.insert((item.z.clone(), item.id));
                 self.items.insert(item.id, item);
                 Ok(inverse)
             }
@@ -129,6 +131,7 @@ impl Scene {
                     id,
                     rect: item.rect,
                 });
+                self.order.remove(&(item.z.clone(), id));
                 Ok(Command::Insert(item))
             }
             Command::SetRect { id, rect } => {
@@ -175,7 +178,7 @@ impl Scene {
     }
     /// Supplies an insertion index without using integer z-order.
     pub fn top(&self) -> Option<&FractionalIndex> {
-        self.items.values().map(|i| &i.z).max()
+        self.order.last().map(|(z, _)| z)
     }
 }
 
@@ -237,6 +240,46 @@ mod tests {
       let mut camera=Camera::default(); let before=camera.world([x,y]); camera.zoom_at([x,y],factor); let after=camera.world([x,y]);
       prop_assert!((before[0]-after[0]).abs()<0.01 && (before[1]-after[1]).abs()<0.01);
      }
+    }
+    proptest! {
+        #[test]
+        fn top_tracks_insert_remove_and_undo(operations in prop::collection::vec(any::<bool>(), 0..200)) {
+            let mut scene = Scene::default();
+            let mut history = Vec::new();
+            for insert in operations {
+                if insert || history.is_empty() {
+                    let item = Item::image(blake3::hash(b"image"), Rect { x: 0., y: 0., width: 1., height: 1. }, scene.top());
+                    history.push(scene.apply(Command::Insert(item)).unwrap());
+                } else {
+                    let command = history.pop().unwrap();
+                    let redo = scene.apply(command).unwrap();
+                    let undo = scene.apply(redo).unwrap();
+                    scene.apply(undo).unwrap();
+                }
+                prop_assert_eq!(scene.top(), scene.items().map(|item| &item.z).max());
+                prop_assert_eq!(scene.order.len(), scene.len());
+            }
+        }
+    }
+    #[test]
+    fn duplicate_z_survives_removing_one_item() {
+        let mut scene = Scene::default();
+        let item = Item::image(
+            blake3::hash(b"image"),
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 1.,
+                height: 1.,
+            },
+            None,
+        );
+        let mut duplicate = item.clone();
+        duplicate.id = Uuid::now_v7();
+        scene.apply(Command::Insert(item.clone())).unwrap();
+        scene.apply(Command::Insert(duplicate)).unwrap();
+        scene.apply(Command::Remove(item.id)).unwrap();
+        assert_eq!(scene.top(), Some(&item.z));
     }
     #[test]
     fn invalid_command_is_atomic() {

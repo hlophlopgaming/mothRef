@@ -35,6 +35,9 @@ pub enum PlatformError {
     /// A native backend panic becomes an ordinary failed paste.
     #[error("clipboard backend panicked")]
     Panic,
+    /// The UI supplies a localized explanation for unsupported clipboard content.
+    #[error("clipboard has no supported image or file list")]
+    EmptyClipboard,
 }
 /// The desktop catalog stores source identities, never image pixels.
 pub struct DesktopStorage {
@@ -302,8 +305,18 @@ pub enum ClipboardRequest {
 pub enum ClipboardCompletion {
     /// A failed paste leaves the board and its recovery files intact.
     Pasted(Result<(Handle, moth_io::Decoded), PlatformError>),
+    /// Native file lists use the same bounded import path as dropped files.
+    Files(Vec<PathBuf>),
     /// Acknowledges cleanup before the application exits.
     Discarded(io::Result<()>),
+}
+fn file_payload(paths: Vec<PathBuf>) -> Result<ClipboardCompletion, PlatformError> {
+    if paths.is_empty() || paths.len() > 1024 || paths.iter().any(|path| !path.is_absolute()) {
+        return Err(PlatformError::Budget(
+            "Clipboard file list must contain 1–1024 absolute paths",
+        ));
+    }
+    Ok(ClipboardCompletion::Files(paths))
 }
 /// Serializes clipboard staging and explicit board disposal.
 pub struct ClipboardWorker {
@@ -338,15 +351,26 @@ impl ClipboardWorker {
                     }
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let mut clipboard = arboard::Clipboard::new()?;
-                        let image = clipboard.get_image()?;
+                        if let Ok(paths) = clipboard.get().file_list()
+                            && !paths.is_empty()
+                        {
+                            return file_payload(paths);
+                        }
+                        let image = clipboard.get_image().map_err(|error| match error {
+                            arboard::Error::ContentNotAvailable => PlatformError::EmptyClipboard,
+                            error => PlatformError::Clipboard(error),
+                        })?;
                         let width =
                             u32::try_from(image.width).map_err(|_| PlatformError::Dimensions)?;
                         let height =
                             u32::try_from(image.height).map_err(|_| PlatformError::Dimensions)?;
-                        storage.stage_preview(width, height, &image.bytes)
+                        let image = storage.stage_preview(width, height, &image.bytes)?;
+                        Ok(ClipboardCompletion::Pasted(Ok(image)))
                     }))
                     .unwrap_or_else(|_| Err(PlatformError::Panic));
-                    if tx.send(ClipboardCompletion::Pasted(result)).is_err() {
+                    let completion =
+                        result.unwrap_or_else(|error| ClipboardCompletion::Pasted(Err(error)));
+                    if tx.send(completion).is_err() {
                         break;
                     }
                     wake();
@@ -385,6 +409,19 @@ fn atomic_replace(source: &std::path::Path, target: &std::path::Path) -> io::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn clipboard_files_preserve_order_and_enforce_backlog_budget() {
+        let first = std::env::temp_dir().join("first.png");
+        let second = std::env::temp_dir().join("second.jpg");
+        match file_payload(vec![first.clone(), second.clone()]).unwrap() {
+            ClipboardCompletion::Files(paths) => assert_eq!(paths, [first.clone(), second]),
+            _ => panic!("file clipboard payload was not preserved"),
+        }
+        assert!(file_payload(Vec::new()).is_err());
+        assert!(file_payload(vec![PathBuf::from("relative.png")]).is_err());
+        assert!(file_payload(vec![first.clone(); 1024]).is_ok());
+        assert!(file_payload(vec![first; 1025]).is_err());
+    }
     #[test]
     fn worker_acknowledges_discard_after_cleanup() {
         let storage = Arc::new(DesktopStorage::default());

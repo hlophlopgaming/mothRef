@@ -142,6 +142,9 @@ If you are unsure whether a change could lose data, it needs a test that kills t
 
 ## 7. Testing requirements by change type
 
+Agents may use images from the repository's `images/` directory for tests and manual validation.
+Per the maintainer, these images are licensed under Creative Commons; artwork in `images/artBydavidrevoy/` is under Creative Commons 4.0. Preserve attribution and check the specific license variant and its terms before redistributing images.
+
 | You changed | You must add or run |
 | --- | --- |
 | A `Command` or scene logic | `proptest`: apply + undo = identity; save + load = same scene |

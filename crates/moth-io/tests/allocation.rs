@@ -16,6 +16,9 @@ fn four_k_preview_does_not_allocate_a_full_resolution_image() {
     let jpeg = moth_io::decode(include_bytes!("../../../corpus/images/4k.jpg"), 256).unwrap();
     assert_eq!(jpeg.original, [3840, 2160]);
     assert_eq!(jpeg.mips[0].width, 256);
+    let large =
+        moth_io::decode(include_bytes!("../../../corpus/images/large-dct.jpg"), 256).unwrap();
+    assert_eq!(large.original, [8192, 4097]);
     let stats = dhat::HeapStats::get();
     dhat::assert!(
         stats.max_bytes < 8 * 1024 * 1024,

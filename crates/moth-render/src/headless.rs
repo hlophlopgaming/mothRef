@@ -116,25 +116,18 @@ impl Harness {
             height: 1000.,
         });
         let view = self.target.create_view(&Default::default());
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("benchmark"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                ..Default::default()
-            });
-            self.registry
-                .draw(&self.queue, &mut pass, &items, camera, [1000., 1000.]);
-        }
-        self.queue.submit([encoder.finish()]);
+        self.registry.draw(
+            &self.device,
+            &self.queue,
+            crate::Target {
+                view: &view,
+                screen: [1000., 1000.],
+                clip: None,
+                clear: wgpu::Color::BLACK,
+            },
+            &items,
+            camera,
+        );
         self.device
             .poll(wgpu::PollType::Wait {
                 submission_index: None,
@@ -223,6 +216,19 @@ pub async fn golden(software: bool) -> Result<(), String> {
             )))
             .map_err(|e| e.to_string())?;
     }
+    // The final green item must survive crossing the instance-batch boundary.
+    let backdrop = scene
+        .items()
+        .min_by(|a, b| a.z.cmp(&b.z))
+        .expect("the golden scene contains the two images inserted above")
+        .clone();
+    for _ in 0..10_000 {
+        let mut item = backdrop.clone();
+        item.id = moth_scene::Uuid::now_v7();
+        scene
+            .apply(Command::Insert(item))
+            .map_err(|e| e.to_string())?;
+    }
     let odd = moth_io::preview_rgba(31, 17, &[0, 255, 0, 255].repeat(31 * 17), 31)
         .map_err(|e| e.to_string())?;
     registry.upload(&device, &queue, &odd);
@@ -240,29 +246,25 @@ pub async fn golden(software: bool) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let texture = target(&device, 64, 64);
     let view = texture.create_view(&Default::default());
+    let items = scene.query(Rect {
+        x: 0.,
+        y: 0.,
+        width: 64.,
+        height: 64.,
+    });
+    registry.draw(
+        &device,
+        &queue,
+        crate::Target {
+            view: &view,
+            screen: [64., 64.],
+            clip: None,
+            clear: wgpu::Color::BLACK,
+        },
+        &items,
+        Camera::default(),
+    );
     let mut encoder = device.create_command_encoder(&Default::default());
-    {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("golden"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                resolve_target: None,
-                depth_slice: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            ..Default::default()
-        });
-        let items = scene.query(Rect {
-            x: 0.,
-            y: 0.,
-            width: 64.,
-            height: 64.,
-        });
-        registry.draw(&queue, &mut pass, &items, Camera::default(), [64., 64.]);
-    }
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("golden readback"),
         size: 64 * 256,

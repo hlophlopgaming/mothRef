@@ -91,3 +91,29 @@ pixels. `cargo xtask bench --quick`: 10,000 images, p99 4.098 ms, 13.32 MiB text
 `cargo xtask paste`: 349.270 ms after clipboard transfer, 345.505 ms durable
 staging for synthetic noisy 4K pixels. PNG compression is a latency cost; the
 50 ms exit criterion remains unmet.
+
+## Input lifecycle follow-up — 2026-10-16
+
+The existing canvas provides pan mode and middle-button pan, pointer-anchored
+wheel zoom, rubber-band selection in select mode, native file-drop import and
+image clipboard paste (toolbar and Ctrl/Cmd+V). Touch uses the same pan/select
+modes; two contacts feed a separate pan/pinch gesture layer.
+
+Contact handling now ignores duplicate touch-down events, bounds pressure to a
+finite 0–1 range, keeps a drag with its initiating pointer, and cancels a drag
+as soon as a second contact starts a pinch. Contacts beginning outside the
+canvas do not enter canvas gestures. Focus loss and suspension clear pending
+canvas interactions; releasing a different mouse button cannot end a pan.
+
+Automated input tests cover pinch deltas, duplicate contacts, gesture reset,
+pressure bounds, mouse button ownership and focus cancellation. Workspace tests,
+formatting, Clippy and cargo-deny pass on Linux; cargo-deny retains existing
+transitive duplicate warnings. No renderer, decoder, scene or storage format
+changes are part of this follow-up.
+
+The two M0 checkboxes stay open: the current winit 0.30 adapter emits mouse and
+touch events, but has no native pen-identification event, and native Wayland
+file drops remain unsupported by this backend. `Kind::Pen` is available to a
+future native pen backend; its presence alone does not establish pen support.
+Native pen/touch devices and Windows/macOS interoperability were not manually
+validated in this follow-up. The 50 ms paste target also remains open.

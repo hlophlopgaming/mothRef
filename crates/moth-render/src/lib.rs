@@ -42,6 +42,17 @@ struct Array {
     bind: wgpu::BindGroup,
     slots: Vec<Option<Slot>>,
 }
+/// Describes a frame destination without tying canvas batches to the UI render pass.
+pub struct Target<'a> {
+    /// Batches preserve this attachment between ordered submissions.
+    pub view: &'a wgpu::TextureView,
+    /// Logical dimensions keep camera coordinates independent of display scaling.
+    pub screen: [f32; 2],
+    /// Physical clip bounds keep images inside the canvas viewport.
+    pub clip: Option<[u32; 4]>,
+    /// Only the first batch clears the attachment.
+    pub clear: wgpu::Color,
+}
 /// Registry owns all canvas GPU resources; dropping it frees every board texture.
 pub struct Registry {
     /// UI GPU resources share the renderer lifetime and are freed with the registry.
@@ -279,8 +290,47 @@ impl Registry {
             );
         }
     }
-    /// Draws consecutive array runs in scene z-order, preserving overlap semantics.
+    /// Submits bounded batches in z-order before reusing the instance buffer.
     pub fn draw(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: Target<'_>,
+        items: &[&Item],
+        camera: Camera,
+    ) {
+        for batch in 0..items.len().div_ceil(MAX_INSTANCES).max(1) {
+            let start = batch * MAX_INSTANCES;
+            let end = (start + MAX_INSTANCES).min(items.len());
+            let mut encoder = device.create_command_encoder(&Default::default());
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("canvas batch"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: target.view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: if batch == 0 {
+                                wgpu::LoadOp::Clear(target.clear)
+                            } else {
+                                wgpu::LoadOp::Load
+                            },
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                });
+                if let Some([x, y, width, height]) = target.clip {
+                    pass.set_scissor_rect(x, y, width, height);
+                }
+                self.draw_batch(queue, &mut pass, &items[start..end], camera, target.screen);
+            }
+            queue.submit([encoder.finish()]);
+        }
+    }
+    /// Draws consecutive array runs in scene z-order, preserving overlap semantics.
+    fn draw_batch(
         &mut self,
         queue: &wgpu::Queue,
         pass: &mut wgpu::RenderPass<'_>,
@@ -292,7 +342,8 @@ impl Registry {
         self.clock += 1;
         let mut instances = Vec::with_capacity(items.len().min(MAX_INSTANCES));
         let mut classes = Vec::with_capacity(instances.capacity());
-        for item in items.iter().take(MAX_INSTANCES) {
+        debug_assert!(items.len() <= MAX_INSTANCES);
+        for item in items {
             let wanted = (item.rect.width.max(item.rect.height) * camera.zoom).max(1.);
             let Some(&(class, layer)) = self.locations.get(&item.blob) else {
                 continue;

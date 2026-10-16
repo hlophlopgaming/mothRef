@@ -67,5 +67,7 @@ full M1 reliability gates above.
 
 Open uses an editable native path or recent/recovery buttons. Opening another
 board requires an empty canvas; tabs remain M3. Undo/redo is capped at 256 session
-commands and is not restored after reopening. The M0 10,000-item render/UI limit,
-2048-pixel previews and native Wayland file-drop limitation remain in place.
+commands and is not restored after reopening. Rendering now submits bounded
+batches beyond 10,000 items; metadata, import, snapshot and storage budgets still
+apply. The 2048-pixel preview and native Wayland file-drop limits remain.
+See the technical-debt follow-up in [M0 validation](M0-VALIDATION.md).

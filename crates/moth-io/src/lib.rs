@@ -2,7 +2,7 @@
 #![forbid(unsafe_code)]
 //! Bounded image workers. Pixels never enter the scene model.
 use crossbeam_channel::{Receiver, Sender};
-use image::{DynamicImage, ImageReader};
+use image::{DynamicImage, ImageReader, metadata::Orientation};
 use moth_format::{Handle, Storage};
 use std::{
     io::{Read, Write},
@@ -87,18 +87,41 @@ fn decode_inner(bytes: &[u8], side: u32) -> Result<Decoded, DecodeError> {
     reader.limits(header_limits);
     let format = reader.format();
     let (w, h) = reader.into_dimensions()?;
-    if w == 0 || h == 0 || w > 32768 || h > 32768 || u64::from(w) * u64::from(h) > MAX_PIXELS {
+    if w == 0
+        || h == 0
+        || w > 32768
+        || h > 32768
+        || (format != Some(image::ImageFormat::Jpeg) && u64::from(w) * u64::from(h) > MAX_PIXELS)
+    {
         return Err(DecodeError::Budget);
     }
     let side = side.clamp(1, MAX_SIDE);
-    let image = if format == Some(image::ImageFormat::Jpeg) {
+    let mut orientation = Orientation::NoTransforms;
+    let mut image = if format == Some(image::ImageFormat::Jpeg) {
         let mut jpeg = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));
         let divisor = [1u32, 2, 4, 8]
             .into_iter()
             .find(|d| w.max(h).div_ceil(*d) <= side)
             .unwrap_or(8);
-        jpeg.scale(w.div_ceil(divisor) as u16, h.div_ceil(divisor) as u16)?;
+        let (scaled_w, scaled_h) =
+            jpeg.scale(w.div_ceil(divisor) as u16, h.div_ceil(divisor) as u16)?;
+        let info = jpeg.info().ok_or(DecodeError::Budget)?;
+        let channels = info.pixel_format.pixel_bytes() as u64;
+        let mut allocation = u64::from(scaled_w) * u64::from(scaled_h) * channels * 2;
+        // Progressive scans retain source-sized coefficient planes even after DCT scaling.
+        if info.coding_process == jpeg_decoder::CodingProcess::DctProgressive {
+            allocation +=
+                u64::from(w.div_ceil(8) * 8) * u64::from(h.div_ceil(8) * 8) * channels * 2;
+        }
+        if allocation > MAX_PIXELS * 4 {
+            return Err(DecodeError::Budget);
+        }
+        jpeg.set_max_decoding_buffer_size((MAX_PIXELS * 4) as usize);
         let pixels = jpeg.decode()?;
+        orientation = jpeg
+            .exif_data()
+            .and_then(Orientation::from_exif_chunk)
+            .unwrap_or(Orientation::NoTransforms);
         let info = jpeg.info().ok_or(DecodeError::Budget)?;
         match info.pixel_format {
             jpeg_decoder::PixelFormat::RGB24 => DynamicImage::ImageRgb8(
@@ -109,6 +132,20 @@ fn decode_inner(bytes: &[u8], side: u32) -> Result<Decoded, DecodeError> {
                 image::GrayImage::from_raw(info.width.into(), info.height.into(), pixels)
                     .ok_or(DecodeError::Budget)?,
             ),
+            jpeg_decoder::PixelFormat::CMYK32 => {
+                let mut rgb = Vec::with_capacity(pixels.len() / 4 * 3);
+                for pixel in pixels.as_chunks::<4>().0 {
+                    for &ink in &pixel[..3] {
+                        rgb.push(
+                            ((u16::from(255 - ink) * u16::from(255 - pixel[3]) + 127) / 255) as u8,
+                        );
+                    }
+                }
+                DynamicImage::ImageRgb8(
+                    image::RgbImage::from_raw(info.width.into(), info.height.into(), rgb)
+                        .ok_or(DecodeError::Budget)?,
+                )
+            }
             _ => return Err(DecodeError::Budget),
         }
     } else if format == Some(image::ImageFormat::Png) {
@@ -125,10 +162,19 @@ fn decode_inner(bytes: &[u8], side: u32) -> Result<Decoded, DecodeError> {
         reader.limits(limits);
         reader.decode()?
     };
+    image.apply_orientation(orientation);
+    let original = match orientation {
+        Orientation::Rotate90
+        | Orientation::Rotate270
+        | Orientation::Rotate90FlipH
+        | Orientation::Rotate270FlipH => [h, w],
+        _ => [w, h],
+    };
+    let side = side.min(image.width().max(image.height()));
     Ok(pyramid(
         image.thumbnail(side, side).into_rgba8(),
         blake3::hash(bytes),
-        [w, h],
+        original,
     ))
 }
 fn pyramid(mut level: image::RgbaImage, hash: blake3::Hash, original: [u32; 2]) -> Decoded {
@@ -189,7 +235,7 @@ pub fn write_png(
     let mut encoder = png::Encoder::new(writer, width, height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
-    encoder.set_compression(png::Compression::Fast);
+    encoder.set_compression(png::Compression::Fastest);
     let mut writer = encoder.write_header()?;
     {
         let mut stream = writer.stream_writer()?;
@@ -259,16 +305,88 @@ fn rgba_preview_inner(
     let ratio = (side as f64 / f64::from(width.max(height))).min(1.);
     let w = (f64::from(width) * ratio).round().max(1.) as u32;
     let h = (f64::from(height) * ratio).round().max(1.) as u32;
-    let mut image = image::RgbaImage::new(w, h);
-    for y in 0..h {
-        for x in 0..w {
-            let at = (((y * height / h) * width + x * width / w) * 4) as usize;
-            let p = &pixels[at..at + 4];
-            image.put_pixel(x, y, image::Rgba([p[0], p[1], p[2], p[3]]));
+    if w == width && h == height {
+        return Ok(pyramid(
+            image::RgbaImage::from_raw(w, h, pixels.to_vec()).ok_or(DecodeError::Budget)?,
+            hash,
+            [width, height],
+        ));
+    }
+    let mut average = AreaPreview::new(width, height, w, h);
+    for (y, row) in pixels.chunks_exact((width * 4) as usize).enumerate() {
+        average.row(y as u32, 0, 1, row, png::ColorType::Rgba)?;
+    }
+    Ok(pyramid(average.finish(), hash, [width, height]))
+}
+// Alpha-weighted area bins keep thin features and transparent edges without retaining source pixels.
+struct AreaPreview {
+    source: [u32; 2],
+    size: [u32; 2],
+    sums: Vec<[u64; 4]>,
+}
+impl AreaPreview {
+    fn new(width: u32, height: u32, w: u32, h: u32) -> Self {
+        Self {
+            source: [width, height],
+            size: [w, h],
+            sums: vec![[0; 4]; (w * h) as usize],
         }
     }
-    Ok(pyramid(image, hash, [width, height]))
+    fn row(
+        &mut self,
+        y: u32,
+        start: u32,
+        step: u32,
+        bytes: &[u8],
+        color: png::ColorType,
+    ) -> Result<(), DecodeError> {
+        let offset = (y * self.size[1] / self.source[1] * self.size[0]) as usize;
+        let channels = color.samples();
+        if bytes.len() != ((self.source[0] - start).div_ceil(step) as usize) * channels {
+            return Err(DecodeError::Budget);
+        }
+        let mut consumed = 0;
+        for dx in 0..self.size[0] {
+            let end = ((dx + 1) * self.source[0]).div_ceil(self.size[0]);
+            let next = end.saturating_sub(start).div_ceil(step) as usize;
+            let sum = &mut self.sums[offset + dx as usize];
+            for p in bytes[consumed * channels..next * channels].chunks_exact(channels) {
+                let rgba = match color {
+                    png::ColorType::Grayscale => [p[0], p[0], p[0], 255],
+                    png::ColorType::GrayscaleAlpha => [p[0], p[0], p[0], p[1]],
+                    png::ColorType::Rgb => [p[0], p[1], p[2], 255],
+                    png::ColorType::Rgba => [p[0], p[1], p[2], p[3]],
+                    png::ColorType::Indexed => return Err(DecodeError::Budget),
+                };
+                let alpha = u64::from(rgba[3]);
+                for channel in 0..3 {
+                    sum[channel] += u64::from(rgba[channel]) * alpha;
+                }
+                sum[3] += alpha;
+            }
+            consumed = next;
+        }
+        Ok(())
+    }
+    fn finish(self) -> image::RgbaImage {
+        let [w, h] = self.size;
+        let [width, height] = self.source;
+        let mut output = image::RgbaImage::new(w, h);
+        for (index, pixel) in output.pixels_mut().enumerate() {
+            let x = index as u32 % w;
+            let y = index as u32 / w;
+            let count = u64::from(((x + 1) * width).div_ceil(w) - (x * width).div_ceil(w))
+                * u64::from(((y + 1) * height).div_ceil(h) - (y * height).div_ceil(h));
+            let sum = self.sums[index];
+            for channel in 0..3 {
+                pixel[channel] = (sum[channel] + sum[3] / 2).checked_div(sum[3]).unwrap_or(0) as u8;
+            }
+            pixel[3] = ((sum[3] + count / 2) / count) as u8;
+        }
+        output
+    }
 }
+
 // Stream PNG rows into the requested LOD, including Adam7 passes; never allocate the source frame.
 fn png_preview(
     bytes: &[u8],
@@ -285,12 +403,11 @@ fn png_preview(
     let ratio = (side as f64 / f64::from(width.max(height))).min(1.);
     let w = (f64::from(width) * ratio).round().max(1.) as u32;
     let h = (f64::from(height) * ratio).round().max(1.) as u32;
-    let mut output = image::RgbaImage::new(w, h);
+    let mut output = AreaPreview::new(width, height, w, h);
     let (color, depth) = reader.output_color_type();
     if depth != png::BitDepth::Eight {
         return Err(DecodeError::Budget);
     }
-    let channels = color.samples();
     let passes: &[(u32, u32, u32, u32)] = if reader.info().interlaced {
         &[
             (0, 0, 8, 8),
@@ -310,33 +427,11 @@ fn png_preview(
         }
         for y in (y_start..height).step_by(y_step as usize) {
             let row = reader.next_row()?.ok_or(DecodeError::Budget)?;
-            let dy = (u64::from(y) * u64::from(h)).div_ceil(u64::from(height)) as u32;
-            if dy >= h || dy * height / h != y {
-                continue;
-            }
-            for dx in 0..w {
-                let x = dx * width / w;
-                if x < x_start || !(x - x_start).is_multiple_of(x_step) {
-                    continue;
-                }
-                let at = ((x - x_start) / x_step) as usize * channels;
-                let p = row
-                    .data()
-                    .get(at..at + channels)
-                    .ok_or(DecodeError::Budget)?;
-                let rgba = match color {
-                    png::ColorType::Grayscale => [p[0], p[0], p[0], 255],
-                    png::ColorType::GrayscaleAlpha => [p[0], p[0], p[0], p[1]],
-                    png::ColorType::Rgb => [p[0], p[1], p[2], 255],
-                    png::ColorType::Rgba => [p[0], p[1], p[2], p[3]],
-                    png::ColorType::Indexed => return Err(DecodeError::Budget),
-                };
-                output.put_pixel(dx, dy, image::Rgba(rgba));
-            }
+            output.row(y, x_start, x_step, row.data(), color)?;
         }
     }
     reader.finish()?;
-    Ok(output)
+    Ok(output.finish())
 }
 /// Results are bounded too: a slow frame cannot accumulate decoded images.
 pub struct Completion {
@@ -459,28 +554,75 @@ mod tests {
         );
     }
     #[test]
-    fn png_rows_and_adam7_match_source_samples() {
+    fn png_rows_and_adam7_match_area_average() {
+        let mut previous = None;
         for bytes in [
             include_bytes!("../../../corpus/images/rows.png").as_slice(),
             include_bytes!("../../../corpus/images/adam7.png").as_slice(),
         ] {
             let source = image::load_from_memory(bytes).unwrap().into_rgba8();
             let preview = decode(bytes, 16).unwrap();
-            let mip = &preview.mips[0];
-            for y in 0..mip.height {
-                for x in 0..mip.width {
-                    let expected = source.get_pixel(
-                        x * source.width() / mip.width,
-                        y * source.height() / mip.height,
-                    );
-                    assert_eq!(
-                        &mip.rgba[((y * mip.width + x) * 4) as usize
-                            ..((y * mip.width + x) * 4 + 4) as usize],
-                        &expected.0
-                    );
-                }
+            let direct =
+                preview_rgba(source.width(), source.height(), source.as_raw(), 16).unwrap();
+            assert_eq!(preview.mips[0].rgba, direct.mips[0].rgba);
+            if let Some(previous) = previous {
+                assert_eq!(preview.mips[0].rgba, previous);
+            }
+            previous = Some(preview.mips[0].rgba.clone());
+        }
+    }
+    #[test]
+    fn large_jpeg_uses_reduced_budget() {
+        let decoded = decode(include_bytes!("../../../corpus/images/large-dct.jpg"), 256).unwrap();
+        assert_eq!(decoded.original, [8192, 4097]);
+        assert_eq!(decoded.mips[0].width, 256);
+        let mut progressive = include_bytes!("../../../corpus/images/large-dct.jpg").to_vec();
+        let marker = progressive
+            .windows(2)
+            .position(|marker| marker == [0xff, 0xc0])
+            .unwrap();
+        progressive[marker + 1] = 0xc2;
+        assert!(matches!(
+            decode(&progressive, 256),
+            Err(DecodeError::Budget)
+        ));
+    }
+    #[test]
+    fn jpeg_orientation_and_cmyk() {
+        let decoded = decode(include_bytes!("../../../corpus/images/oriented.jpg"), 16).unwrap();
+        assert_eq!(decoded.original, [4, 8]);
+        assert_eq!((decoded.mips[0].width, decoded.mips[0].height), (4, 8));
+        let decoded = decode(include_bytes!("../../../corpus/images/cmyk.jpg"), 16).unwrap();
+        assert_eq!(decoded.original, [8, 4]);
+        for pixel in decoded.mips[0].rgba.as_chunks::<4>().0 {
+            for (actual, expected) in pixel.iter().zip([255u8, 127, 0, 255]) {
+                assert!(actual.abs_diff(expected) <= 2);
             }
         }
+    }
+    #[test]
+    fn previews_average_all_source_pixels() {
+        let pixels = [0, 0, 0, 255, 255, 255, 255, 255].repeat(2);
+        let direct = preview_rgba(2, 2, &pixels, 1).unwrap();
+        assert_eq!(direct.mips[0].rgba, [128, 128, 128, 255]);
+        let mut encoded = Vec::new();
+        write_png(&mut encoded, 2, 2, &pixels).unwrap();
+        assert_eq!(
+            decode(&encoded, 1).unwrap().mips[0].rgba,
+            direct.mips[0].rgba
+        );
+    }
+    #[test]
+    fn transparent_colors_do_not_bleed_into_area_previews() {
+        let pixels = [255, 0, 0, 0, 0, 0, 255, 255];
+        let preview = preview_rgba(2, 1, &pixels, 1).unwrap();
+        assert_eq!(preview.mips[0].rgba, [0, 0, 255, 128]);
+        let mut encoded = Vec::new();
+        write_png(&mut encoded, 2, 1, &pixels).unwrap();
+        assert_eq!(
+            decode(&encoded, 1).unwrap().mips[0].rgba,
+            preview.mips[0].rgba
+        );
     }
     #[test]
     fn oversized_header_rejected() {

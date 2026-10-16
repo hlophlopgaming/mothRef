@@ -395,6 +395,13 @@ mod tests {
             append(&mut bytes,offset,2,&encode(&Command::SetRect{id:item.id,rect:item.rect})).unwrap();
             let board=read(&mut Cursor::new(bytes)).unwrap();
             prop_assert_eq!(board.scene.get(item.id),Some(&item));
+            prop_assert_eq!(board.scene.top(),Some(&item.z));
+            let checkpoint=snapshot(&board.scene).unwrap();
+            let mut restored=restore(&checkpoint,&board.blobs).unwrap();
+            prop_assert_eq!(restored.get(item.id),Some(&item));
+            prop_assert_eq!(restored.top(),Some(&item.z));
+            restored.apply(Command::Remove(item.id)).unwrap();
+            prop_assert!(restored.top().is_none());
         }
         #[test]
         fn arbitrary_input_never_panics(bytes in proptest::collection::vec(any::<u8>(),0..8192)) {

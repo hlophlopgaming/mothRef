@@ -32,6 +32,10 @@ pub enum Text {
 
     /// Explains bounded clipboard worker backpressure.
     ClipboardBusy,
+    /// Explains bounded import backlog backpressure.
+    ImportBusy,
+    /// Explains empty and unsupported clipboard payloads without exposing backend errors.
+    ClipboardEmpty,
     /// Shared localization key for Title.
     Title,
     /// Shared localization key for Paste.
@@ -74,9 +78,13 @@ pub fn text(key: Text) -> &'static str {
         Text::SaveClose => "Save and close",
 
         Text::SourceChanged => "The source file changed. Its previous preview cannot be reloaded.",
-        Text::BoardFull => "This preview supports up to 10,000 images per board",
+        Text::BoardFull => "Board metadata budget full (1,000,000 images)",
+        Text::ClipboardEmpty => {
+            "Clipboard has no image or files. Download images from web links or HTML before pasting."
+        }
+        Text::ImportBusy => "Import queue is full; wait for pending images and try again.",
         Text::Title => "MothRef",
-        Text::Paste => "Paste image",
+        Text::Paste => "Paste",
         Text::Fit => "Fit board",
         Text::Pan => "Pan",
         Text::Select => "Select",

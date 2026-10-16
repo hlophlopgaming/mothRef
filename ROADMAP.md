@@ -58,15 +58,19 @@ Milestones run strictly in order. M8 and M9 come after 1.0, but the architecture
 
 ### M0 review follow-up
 
+Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](docs/TECH-DEBT.md).
+
 - [x] Clipboard staging: application data, lossless compression, per-board ownership
   and cleanup on explicit discard (originals survive a crash; layout recovery is M1)
-- [ ] Allow large JPEG sources when DCT-reduced allocation fits the decode budget
-- [ ] WebP, static GIF and BMP import; EXIF orientation and CMYK JPEG conversion
-- [ ] Area-averaged PNG and clipboard previews, including Adam7 input
-- [ ] Avoid linear `Scene::top()` scans on repeated insertion
-- [ ] Replace the 10,000-item board/render ceilings with bounded render batches by M1–M2
-- [ ] Clipboard backpressure feedback and file/URL/HTML clipboard handling
-- [ ] Add storage temporary objects and atomic replacement before M1 compaction
+- [x] Allow large JPEG sources when DCT-reduced allocation fits the decode budget
+- [ ] WebP, static GIF and BMP import
+- [x] EXIF orientation and CMYK JPEG conversion
+- [x] Area-averaged PNG and clipboard previews, including Adam7 input
+- [x] Avoid linear `Scene::top()` scans on repeated insertion
+- [x] Replace the 10,000-item board/render ceilings with bounded render batches by M1–M2
+- [x] Clipboard backpressure feedback and native file-list paste
+- [ ] URL/HTML clipboard import
+- [x] Add storage temporary objects and atomic replacement before M1 compaction
 
 ### M1 — Reliability and file format
 
@@ -118,7 +122,9 @@ Milestones run strictly in order. M8 and M9 come after 1.0, but the architecture
 - [ ] Rich text notes with links and checklists; configurable heading font size (BeeRef #130)
 - [ ] Animated GIFs with frame stepping
 - [ ] Line/dot grid with snapping; automatic alignment guides and edge/center snapping (BeeRef #129)
-- [ ] Command palette, slideshow (incl. random order), embedded ICC profiles, trackpad gestures
+- [ ] In-app shortcut cheat sheet: all actions and their current bindings (including custom bindings), grouped by category and searchable; open with `/` or from Help
+- [ ] Command Palette (Omnibar / Quick Search): search and run application actions, show their current shortcuts; open with Ctrl/⌘+K or a visible menu button, navigate with arrows, Enter to run, Esc to close
+- [ ] Slideshow (incl. random order), embedded ICC profiles, trackpad gestures
 - [ ] All parity- and Milanote-checklist items tagged M4 (presentation mode, note formatting and markdown shortcuts, sketch card, drawing shortcuts, GIF frame tools, drawing details, locked groups, hierarchy tools, note parenting and links)
 
 **Exit criteria:** every P0/P1 item sourced from PureRef in the feature matrix is done. → **Release 0.7 (beta)**
@@ -209,7 +215,8 @@ Priorities: **P0** = no release without it, **P1** = required for 1.0, **P2** = 
 | GIFs with frame stepping | PureRef 2.0 | P1 | M4 |
 | Grid with snapping | PureRef 2.1 | P1 | M4 |
 | Alignment guides and snapping (#129) | MothRef | P1 | M4 |
-| Command palette | PureRef 2.0 | P1 | M4 |
+| Searchable in-app cheat sheet of all current hotkeys | MothRef, Milanote | P1 | M4 |
+| Command Palette / Omnibar: search and run actions, show shortcuts | MothRef, PureRef 2.0 | P1 | M4 |
 | Slideshow incl. random order | PureRef 2.0 | P2 | M4 |
 | ICC color profiles | PureRef 2.0 | P1 | M4 |
 | Trackpad gestures | PureRef 2.0 | P1 | M4 |
@@ -390,7 +397,7 @@ Inventory of [Milanote](https://milanote.com) features from its [help center](ht
 - [ ] **Presentation mode**: full-screen, editing locked, comments hidden, click an item to focus/zoom it, settings remembered (M4, alongside slideshow)
 - [ ] Dark / light theme toggle (M2)
 - [ ] Interface scale smaller / larger (M2)
-- [ ] Shortcut cheat sheet on `/` (M4, next to the command palette)
+- [ ] Searchable in-app shortcut cheat sheet on `/` and in Help: all actions grouped by category, showing current custom bindings (M4, next to the command palette)
 
 #### Export
 - [ ] PDF export of a board or a selection (M2)

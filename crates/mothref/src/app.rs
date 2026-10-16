@@ -51,6 +51,7 @@ pub struct App {
     pan: bool,
     command: bool,
     drag: Option<([f32; 2], [f32; 2], bool)>,
+    drag_pointer: Option<(moth_platform::input::Kind, u64)>,
     selection: HashSet<Uuid>,
     sources: HashMap<BlobId, Handle>,
     pending: HashMap<Handle, Pending>,
@@ -107,6 +108,7 @@ impl App {
             pan: true,
             command: false,
             drag: None,
+            drag_pointer: None,
             selection: HashSet::new(),
             sources: HashMap::new(),
             pending: HashMap::new(),
@@ -157,16 +159,19 @@ impl App {
         Ok(())
     }
     fn paste(&mut self) {
-        if !self.discarding
-            && self
-                .clipboard
-                .requests
-                .try_send(moth_platform::ClipboardRequest::Paste)
-                .is_ok()
+        if self.discarding {
+            return;
+        }
+        match self
+            .clipboard
+            .requests
+            .try_send(moth_platform::ClipboardRequest::Paste)
         {
-            self.pasting += 1;
+            Ok(()) => self.pasting += 1,
+            Err(_) => self.message = moth_ui::text(moth_ui::Text::ClipboardBusy).into(),
         }
     }
+
     fn persist(&mut self, request: moth_platform::boards::Request) {
         match self.boards.requests.try_send(request) {
             Ok(()) => self.in_flight += 1,
@@ -219,8 +224,12 @@ impl App {
             self.open_board(path);
             return;
         }
-        if self.scene.len() + self.waiting.len() + self.pending.len() >= 10_000 {
+        if self.scene.len() + self.waiting.len() + self.pending.len() >= 1_000_000 {
             self.message = moth_ui::text(moth_ui::Text::BoardFull).into();
+            return;
+        }
+        if self.waiting.len() >= 1024 {
+            self.message = moth_ui::text(moth_ui::Text::ImportBusy).into();
             return;
         }
         match self.storage.register(path) {
@@ -383,7 +392,7 @@ impl App {
                 },
                 moth_platform::ClipboardCompletion::Pasted(Ok((handle, image))) => {
                     self.pasting = self.pasting.saturating_sub(1);
-                    if self.scene.len() + self.waiting.len() + self.pending.len() < 10_000 {
+                    if self.scene.len() + self.waiting.len() + self.pending.len() < 1_000_000 {
                         self.pending.insert(handle, Pending::Import);
                         self.complete(moth_io::Completion {
                             request: moth_io::Request { handle, side: 256 },
@@ -393,6 +402,18 @@ impl App {
                     } else {
                         self.message = moth_ui::text(moth_ui::Text::BoardFull).into();
                     }
+                }
+                moth_platform::ClipboardCompletion::Files(paths) => {
+                    self.pasting = self.pasting.saturating_sub(1);
+                    for path in paths {
+                        self.import(path);
+                    }
+                }
+                moth_platform::ClipboardCompletion::Pasted(Err(
+                    moth_platform::PlatformError::EmptyClipboard,
+                )) => {
+                    self.pasting = self.pasting.saturating_sub(1);
+                    self.message = moth_ui::text(moth_ui::Text::ClipboardEmpty).into();
                 }
                 moth_platform::ClipboardCompletion::Pasted(Err(e)) => {
                     self.pasting = self.pasting.saturating_sub(1);
@@ -434,14 +455,30 @@ impl App {
                 }
             }
             Input::Pointer(p) => {
+                if p.phase == Phase::Down
+                    && !self
+                        .viewport
+                        .contains(egui::pos2(p.position[0], p.position[1]))
+                {
+                    return;
+                }
                 if let Some(g) = self.gestures.update(p) {
                     self.drag = None;
+                    self.drag_pointer = None;
                     self.camera.zoom_at(g.anchor, g.zoom);
                     self.camera.origin[0] -= g.pan[0] / self.camera.zoom;
                     self.camera.origin[1] -= g.pan[1] / self.camera.zoom;
                     return;
                 }
                 if self.gestures.active() {
+                    self.drag = None;
+                    self.drag_pointer = None;
+                    return;
+                }
+                if self
+                    .drag_pointer
+                    .is_some_and(|owner| owner != (p.kind, p.id))
+                {
                     return;
                 }
                 match p.phase {
@@ -450,7 +487,8 @@ impl App {
                             .viewport
                             .contains(egui::pos2(p.position[0], p.position[1])) =>
                     {
-                        self.drag = Some((p.position, p.position, p.pan || self.pan))
+                        self.drag = Some((p.position, p.position, p.pan || self.pan));
+                        self.drag_pointer = Some((p.kind, p.id));
                     }
                     Phase::Move => {
                         if let Some((_, last, pan)) = self.drag.as_mut() {
@@ -464,6 +502,7 @@ impl App {
                         }
                     }
                     Phase::Up => {
+                        self.drag_pointer = None;
                         if let Some((start, _, false)) = self.drag.take() {
                             let a = self.camera.world(start);
                             let b = self.camera.world(p.position);
@@ -476,7 +515,10 @@ impl App {
                             self.selection = self.scene.query(rect).iter().map(|i| i.id).collect();
                         }
                     }
-                    Phase::Cancel => self.drag = None,
+                    Phase::Cancel => {
+                        self.drag = None;
+                        self.drag_pointer = None;
+                    }
                     _ => {}
                 }
             }
@@ -737,42 +779,45 @@ impl App {
                 .ui
                 .update_buffers(&gpu.device, &gpu.queue, &mut encoder, &jobs, &screen);
         let view = texture.texture.create_view(&Default::default());
+        let scale = output.pixels_per_point;
+        let min = self.viewport.min;
+        let max = self.viewport.max;
+        gpu.registry.draw(
+            &gpu.device,
+            &gpu.queue,
+            moth_render::Target {
+                view: &view,
+                screen: [size.width as f32 / scale, size.height as f32 / scale],
+                clip: Some([
+                    (min.x * scale).max(0.) as u32,
+                    (min.y * scale).max(0.) as u32,
+                    ((max.x - min.x) * scale).max(1.) as u32,
+                    ((max.y - min.y) * scale).max(1.) as u32,
+                ]),
+                clear: wgpu::Color {
+                    r: 0.008,
+                    g: 0.009,
+                    b: 0.012,
+                    a: 1.,
+                },
+            },
+            &visible,
+            self.camera,
+        );
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("canvas and UI"),
+            let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("UI"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.008,
-                            g: 0.009,
-                            b: 0.012,
-                            a: 1.,
-                        }),
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
                 ..Default::default()
             });
-            let scale = output.pixels_per_point;
-            let min = self.viewport.min;
-            let max = self.viewport.max;
-            pass.set_scissor_rect(
-                (min.x * scale).max(0.) as u32,
-                (min.y * scale).max(0.) as u32,
-                ((max.x - min.x) * scale).max(1.) as u32,
-                ((max.y - min.y) * scale).max(1.) as u32,
-            );
-            gpu.registry.draw(
-                &gpu.queue,
-                &mut pass,
-                &visible,
-                self.camera,
-                [size.width as f32 / scale, size.height as f32 / scale],
-            );
-            pass.set_scissor_rect(0, 0, size.width, size.height);
             gpu.registry
                 .ui
                 .render(&mut pass.forget_lifetime(), &jobs, &screen);
@@ -850,6 +895,11 @@ impl ApplicationHandler<Wake> for App {
         self.redraw();
     }
     fn suspended(&mut self, _: &ActiveEventLoop) {
+        self.input = Adapter::default();
+        self.drag = None;
+        self.drag_pointer = None;
+        self.gestures.cancel();
+        self.command = false;
         self.gpu = None;
         self.egui = None;
     }
@@ -924,6 +974,12 @@ impl ApplicationHandler<Wake> for App {
                     self.confirm_close = true;
                     self.redraw();
                 }
+            }
+            WindowEvent::Focused(false) => {
+                self.drag = None;
+                self.drag_pointer = None;
+                self.gestures.cancel();
+                self.command = false;
             }
             WindowEvent::DroppedFile(path) => self.import(path),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {

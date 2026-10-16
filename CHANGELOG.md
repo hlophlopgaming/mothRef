@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Render visible images in ordered batches beyond the old 10,000-item ceiling,
+  with a separate bounded import backlog and explicit queue feedback.
+- Index fractional z-order to avoid scanning the board on every image insertion.
+- Accept large JPEGs when reduced decoding fits the memory budget, honor JPEG
+  EXIF orientation, convert CMYK colors and avoid enlarging small previews.
+- Average PNG and clipboard preview areas (including Adam7 and transparency)
+  instead of sampling individual source pixels.
+- Paste native clipboard file lists through the image import path and explain
+  empty/unsupported clipboard contents in the UI.
+
+- Keep canvas drags owned by their starting pointer, cancel selection/pan when
+  pinching or losing focus, and ignore gesture starts over the toolbar.
+- Normalize touch pressure to a finite 0–1 range and ignore duplicate contacts.
+
 ## 0.1.0-alpha.1 — 2026-10-16
 
 - Add version-one `.moth` boards, append-only saves, atomic background compaction,

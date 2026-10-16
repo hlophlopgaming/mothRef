@@ -56,6 +56,7 @@ pub enum Input {
 pub struct Adapter {
     position: [f32; 2],
     pan: bool,
+    button: Option<MouseButton>,
 }
 impl Adapter {
     /// This is the only application code that reads raw native mouse events.
@@ -75,6 +76,11 @@ impl Adapter {
             WindowEvent::MouseInput { state, button, .. } => {
                 if !matches!(button, MouseButton::Left | MouseButton::Middle) {
                     return None;
+                }
+                match state {
+                    ElementState::Pressed if self.button.is_none() => self.button = Some(*button),
+                    ElementState::Released if self.button == Some(*button) => self.button = None,
+                    _ => return None,
                 }
                 self.pan = *button == MouseButton::Middle;
                 Pointer {
@@ -100,17 +106,29 @@ impl Adapter {
                     factor: (y * 0.002).exp(),
                 });
             }
+            WindowEvent::Focused(false) => {
+                self.button = None;
+                self.pan = false;
+                Pointer {
+                    id: 0,
+                    kind: Kind::Mouse,
+                    position: self.position,
+                    pressure: 0.,
+                    phase: Phase::Cancel,
+                    pan: false,
+                }
+            }
             WindowEvent::Touch(t) => Pointer {
                 id: t.id,
                 kind: Kind::Touch,
                 position: [(t.location.x / scale) as f32, (t.location.y / scale) as f32],
                 pressure: match t.force {
-                    Some(Force::Normalized(v)) => v as f32,
+                    Some(Force::Normalized(v)) => pressure(v),
                     Some(Force::Calibrated {
                         force,
                         max_possible_force,
                         ..
-                    }) => (force / max_possible_force) as f32,
+                    }) => pressure(force / max_possible_force),
                     None => 1.,
                 },
                 phase: match t.phase {
@@ -148,6 +166,7 @@ impl Gestures {
         }
         let before = pair(&self.touches);
         match p.phase {
+            Phase::Down if self.touches.iter().any(|t| t.0 == p.id) => {}
             Phase::Down if self.touches.len() < 2 => self.touches.push((p.id, p.position)),
             Phase::Move => {
                 if let Some(t) = self.touches.iter_mut().find(|t| t.0 == p.id) {
@@ -167,9 +186,20 @@ impl Gestures {
             _ => None,
         }
     }
+    /// Focus loss must release contacts even when the OS sends no touch-up events.
+    pub fn cancel(&mut self) {
+        self.touches.clear();
+    }
     /// Two contacts reserve the pointer stream for camera gestures.
     pub fn active(&self) -> bool {
         self.touches.len() == 2
+    }
+}
+fn pressure(value: f64) -> f32 {
+    if value.is_finite() {
+        value.clamp(0., 1.) as f32
+    } else {
+        1.
     }
 }
 fn pair(t: &[(u64, [f32; 2])]) -> Option<([f32; 2], f32)> {
@@ -186,6 +216,89 @@ fn pair(t: &[(u64, [f32; 2])]) -> Option<([f32; 2], f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn releasing_another_button_does_not_end_pan() {
+        let mut adapter = Adapter::default();
+        let button = |state, button| WindowEvent::MouseInput {
+            device_id: winit::event::DeviceId::dummy(),
+            state,
+            button,
+        };
+        assert!(
+            adapter
+                .event(&button(ElementState::Pressed, MouseButton::Middle), 1.)
+                .is_some()
+        );
+        assert!(
+            adapter
+                .event(&button(ElementState::Pressed, MouseButton::Left), 1.)
+                .is_none()
+        );
+        assert!(
+            adapter
+                .event(&button(ElementState::Released, MouseButton::Left), 1.)
+                .is_none()
+        );
+        assert!(matches!(
+            adapter.event(&button(ElementState::Released, MouseButton::Middle), 1.),
+            Some(Input::Pointer(Pointer {
+                phase: Phase::Up,
+                pan: true,
+                ..
+            }))
+        ));
+        adapter.event(&button(ElementState::Pressed, MouseButton::Middle), 1.);
+        assert!(matches!(
+            adapter.event(&WindowEvent::Focused(false), 1.),
+            Some(Input::Pointer(Pointer {
+                phase: Phase::Cancel,
+                ..
+            }))
+        ));
+        assert!(
+            adapter
+                .event(&button(ElementState::Pressed, MouseButton::Left), 1.)
+                .is_some()
+        );
+    }
+    #[test]
+    fn pressure_is_finite_and_normalized() {
+        for (value, expected) in [
+            (0.25, 0.25),
+            (-1., 0.),
+            (2., 1.),
+            (f64::NAN, 1.),
+            (f64::INFINITY, 1.),
+        ] {
+            assert_eq!(pressure(value), expected);
+        }
+    }
+    #[test]
+    fn duplicate_contacts_and_focus_loss_do_not_leave_a_pinch() {
+        let mut g = Gestures::default();
+        let p = Pointer {
+            id: 1,
+            kind: Kind::Touch,
+            position: [0., 0.],
+            pressure: 1.,
+            phase: Phase::Down,
+            pan: false,
+        };
+        g.update(p);
+        g.update(p);
+        assert!(!g.active());
+        g.update(Pointer { id: 2, ..p });
+        assert!(g.active());
+        g.cancel();
+        assert!(!g.active());
+        assert!(
+            g.update(Pointer {
+                phase: Phase::Move,
+                ..p
+            })
+            .is_none()
+        );
+    }
     #[test]
     fn pinch_doubles_distance() {
         let mut g = Gestures::default();
