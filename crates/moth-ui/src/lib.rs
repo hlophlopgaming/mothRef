@@ -5,6 +5,33 @@ use egui::{Color32, Context};
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy)]
 pub enum Text {
+    /// Localized persistence control.
+    StorageBusy,
+    /// Localized persistence control.
+    OpenEmpty,
+    /// Localized persistence control.
+    Recovered,
+    /// Localized persistence control.
+    Opened,
+    /// Localized persistence control.
+    Saved,
+    /// Localized persistence control.
+    Path,
+    /// Localized persistence control.
+    Save,
+    /// Localized persistence control.
+    Open,
+    /// Localized persistence control.
+    Undo,
+    /// Localized persistence control.
+    Redo,
+    /// Localized persistence control.
+    Recovery,
+    /// Localized persistence control.
+    SaveClose,
+
+    /// Explains bounded clipboard worker backpressure.
+    ClipboardBusy,
     /// Shared localization key for Title.
     Title,
     /// Shared localization key for Paste.
@@ -33,18 +60,34 @@ pub enum Text {
 /// English is the initial locale; translation lookup has one entry point.
 pub fn text(key: Text) -> &'static str {
     match key {
+        Text::StorageBusy => "Storage is busy; wait for pending operations.",
+        Text::OpenEmpty => "Save and restart before opening another board.",
+        Text::Recovered => "Recovered the last valid checkpoint; torn bytes were ignored.",
+        Text::Opened => "Board opened. Changes are journaled automatically.",
+        Text::Saved => "Board saved.",
+        Text::Path => "Board path (.moth)",
+        Text::Save => "Save",
+        Text::Open => "Open",
+        Text::Undo => "Undo",
+        Text::Redo => "Redo",
+        Text::Recovery => "Recover a board",
+        Text::SaveClose => "Save and close",
+
         Text::SourceChanged => "The source file changed. Its previous preview cannot be reloaded.",
-        Text::BoardFull => "M0 supports up to 10,000 images per board",
+        Text::BoardFull => "This preview supports up to 10,000 images per board",
         Text::Title => "MothRef",
         Text::Paste => "Paste image",
         Text::Fit => "Fit board",
         Text::Pan => "Pan",
         Text::Select => "Select",
+        Text::ClipboardBusy => "Clipboard is busy; try again shortly.",
         Text::Empty => "Drop images here, or paste an image to begin.",
-        Text::Volatile => "M0 preview • not saved • PNG / JPEG • up to 2048 px",
+        Text::Volatile => "Journaled recovery • PNG / JPEG • previews up to 2048 px",
         Text::Close => "Discard and close",
         Text::Keep => "Keep working",
-        Text::CloseWarning => "This board is only in memory. Closing discards its layout.",
+        Text::CloseWarning => {
+            "Save this board before closing? Discard deletes this session’s recovery files."
+        }
     }
 }
 /// Color tokens are shared by the canvas overlays and the egui theme.

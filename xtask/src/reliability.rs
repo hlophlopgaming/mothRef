@@ -1,0 +1,252 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+use moth_format::board;
+use moth_scene::{Command, Item, Rect};
+use std::{
+    fs::{File, OpenOptions},
+    io::{BufRead, Read, Write},
+    path::Path,
+    process::{Command as Process, Stdio},
+    time::Duration,
+};
+fn item() -> Item {
+    Item::image(
+        moth_scene::BlobId::from_bytes(*blake3_hash()),
+        Rect {
+            x: 0.,
+            y: 0.,
+            width: 1.,
+            height: 1.,
+        },
+        None,
+    )
+}
+fn blake3_hash() -> &'static [u8; 32] {
+    // Use the same original hash as the format fixture without another dependency.
+    static HASH: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let image = moth_io::decode(include_bytes!("../../corpus/images/rows.png"), 256)
+            .expect("checked-in PNG fixture must decode");
+        *image.hash.as_bytes()
+    })
+}
+fn append(file: &mut File, command: &Command) -> anyhow::Result<()> {
+    board::append(file, file.metadata()?.len(), 2, &board::encode(command))?;
+    file.sync_all()?;
+    Ok(())
+}
+pub fn writer(path: &str) -> anyhow::Result<()> {
+    let mut file = OpenOptions::new()
+        .append(true)
+        .create_new(true)
+        .open(path)?;
+    board::initialize(&mut file)?;
+    let bytes = include_bytes!("../../corpus/images/rows.png");
+    board::append(&mut file, 16, 1, bytes)?;
+    let item = item();
+    append(&mut file, &Command::Insert(item.clone()))?;
+    let mut output = std::io::stdout().lock();
+    for index in 1u32.. {
+        let command = Command::SetRect {
+            id: item.id,
+            rect: Rect {
+                x: index as f32,
+                ..item.rect
+            },
+        };
+        // Split the record so random kills exercise writes before the commit footer.
+        let mut record = Vec::new();
+        board::append(
+            &mut record,
+            file.metadata()?.len(),
+            2,
+            &board::encode(&command),
+        )?;
+        file.write_all(&record[..record.len() / 2])?;
+        std::thread::sleep(Duration::from_micros(100));
+        file.write_all(&record[record.len() / 2..])?;
+        file.sync_all()?;
+        writeln!(output, "{index}")?;
+        output.flush()?;
+        std::thread::sleep(Duration::from_micros(100));
+    }
+    Ok(())
+}
+pub fn killtest(count: usize) -> anyhow::Result<()> {
+    anyhow::ensure!(count > 0, "killtest needs at least one iteration");
+    let directory =
+        std::env::temp_dir().join(format!("mothref-killtest-{}", moth_scene::Uuid::now_v7()));
+    std::fs::create_dir(&directory)?;
+    let mut seed = 42u64;
+    for iteration in 0..count {
+        let path = directory.join("board.moth");
+        let mut child = Process::new(std::env::current_exe()?)
+            .arg("kill-writer")
+            .arg(&path)
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("child stdout unavailable"))?;
+        let mut lines = std::io::BufReader::new(stdout).lines();
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let target = seed % 8 + 1;
+        let mut acknowledged = 0;
+        for _ in 0..target {
+            acknowledged = lines
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("writer exited before acknowledgment"))??
+                .parse::<u32>()?;
+        }
+        std::thread::sleep(Duration::from_micros((seed >> 32) % 400));
+        child.kill()?;
+        child.wait()?;
+        // Include all acknowledgments already written to the pipe before the kill.
+        for line in lines {
+            acknowledged = line?.parse()?;
+        }
+        let loaded = board::read(&mut File::open(&path)?)?;
+        let recovered = loaded
+            .scene
+            .items()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("lost original item"))?
+            .rect
+            .x as u32;
+        anyhow::ensure!(
+            recovered >= acknowledged,
+            "iteration {iteration}: lost acknowledged command {acknowledged}, recovered {recovered}"
+        );
+        std::fs::remove_file(path)?;
+    }
+    std::fs::remove_dir(directory)?;
+    println!("{count} process kills: no acknowledged commands lost");
+    Ok(())
+}
+pub fn fixture() -> anyhow::Result<()> {
+    std::fs::create_dir_all("corpus/moth")?;
+    let mut bytes = Vec::new();
+    board::initialize(&mut bytes)?;
+    let original = include_bytes!("../../corpus/images/rows.png");
+    board::append(&mut bytes, 16, 1, original)?;
+    let mut scene = moth_scene::Scene::default();
+    scene.apply(Command::Insert(item()))?;
+    let offset = bytes.len() as u64;
+    board::append(&mut bytes, offset, 3, &board::snapshot(&scene)?)?;
+    std::fs::write("corpus/moth/v1.moth", bytes)?;
+    Ok(())
+}
+pub fn roundtrip(path: &Path) -> anyhow::Result<()> {
+    let mut file = File::open(path)?;
+    let before = board::read(&mut file)?;
+    let mut bytes = Vec::new();
+    board::initialize(&mut bytes)?;
+    for blob in before.blobs.values() {
+        use std::io::{Seek, SeekFrom};
+        file.seek(SeekFrom::Start(blob.offset))?;
+        let mut original = vec![0; blob.length as usize];
+        file.read_exact(&mut original)?;
+        let offset = bytes.len() as u64;
+        board::append(&mut bytes, offset, 1, &original)?;
+    }
+    let offset = bytes.len() as u64;
+    board::append(&mut bytes, offset, 3, &board::snapshot(&before.scene)?)?;
+    let after = board::read(&mut std::io::Cursor::new(bytes))?;
+    anyhow::ensure!(
+        before.scene.len() == after.scene.len(),
+        "round-trip count differs"
+    );
+    for item in before.scene.items() {
+        anyhow::ensure!(
+            after.scene.get(item.id) == Some(item),
+            "round-trip metadata differs"
+        );
+    }
+    Ok(())
+}
+
+/// Exercises bounded history, durable commands, backups and compaction during RSS sampling.
+pub struct Soak {
+    worker: moth_platform::boards::Worker,
+    storage: std::sync::Arc<moth_platform::DesktopStorage>,
+    item: Item,
+    directory: std::path::PathBuf,
+}
+impl Soak {
+    pub fn new() -> anyhow::Result<Self> {
+        let directory =
+            std::env::temp_dir().join(format!("mothref-soak-{}", moth_scene::Uuid::now_v7()));
+        let storage = std::sync::Arc::new(moth_platform::DesktopStorage::in_directory(
+            directory.join("recovery"),
+        ));
+        let (handle, image) = storage.stage_preview(1, 1, &[1, 2, 3, 255])?;
+        let item = Item::image(
+            image.hash,
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 1.,
+                height: 1.,
+            },
+            None,
+        );
+        let worker =
+            moth_platform::boards::Worker::new(storage.clone(), std::sync::Arc::new(|| {}))?;
+        std::fs::create_dir_all(&directory)?;
+        let result = Self {
+            worker,
+            storage,
+            item,
+            directory,
+        };
+        result.send(moth_platform::boards::Request::Apply(
+            Command::Insert(result.item.clone()),
+            Some(handle),
+        ))?;
+        Ok(result)
+    }
+    fn send(&self, request: moth_platform::boards::Request) -> anyhow::Result<()> {
+        self.worker.requests.send(request)?;
+        loop {
+            use moth_platform::boards::Completion;
+            match self.worker.results.recv_timeout(Duration::from_secs(30))? {
+                Completion::Recovery(_) | Completion::Recent(_) => continue,
+                Completion::Failed(error) => anyhow::bail!(error),
+                Completion::Applied(_, _) | Completion::Saved => break,
+                Completion::Opened(_, _, _) => anyhow::bail!("unexpected open completion"),
+            }
+        }
+        Ok(())
+    }
+    pub fn step(&self, frame: usize) -> anyhow::Result<()> {
+        use moth_platform::boards::Request;
+        self.send(Request::Apply(
+            Command::SetRect {
+                id: self.item.id,
+                rect: Rect {
+                    x: (frame % 100) as f32,
+                    ..self.item.rect
+                },
+            },
+            None,
+        ))?;
+        if frame.is_multiple_of(4) {
+            self.send(Request::Undo)?;
+            self.send(Request::Redo)?;
+        }
+        if frame.is_multiple_of(100) {
+            self.send(Request::Save(self.directory.join("board.moth")))?;
+        }
+        Ok(())
+    }
+    pub fn finish(self) -> anyhow::Result<()> {
+        self.send(moth_platform::boards::Request::Save(
+            self.directory.join("board.moth"),
+        ))?;
+        roundtrip(&self.directory.join("board.moth"))?;
+        self.worker.finish()?;
+        self.storage.discard()?;
+        std::fs::remove_dir_all(self.directory)?;
+        Ok(())
+    }
+}

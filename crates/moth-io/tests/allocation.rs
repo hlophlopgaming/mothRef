@@ -21,4 +21,12 @@ fn four_k_preview_does_not_allocate_a_full_resolution_image() {
         stats.max_bytes < 8 * 1024 * 1024,
         "preview must stay below 8 MiB transient allocations"
     );
+    let pixels = vec![127; 3840 * 2160 * 4];
+    let before = dhat::HeapStats::get().curr_bytes;
+    moth_io::write_png(std::io::sink(), 3840, 2160, &pixels).unwrap();
+    let stats = dhat::HeapStats::get();
+    dhat::assert!(
+        stats.max_bytes < before + 8 * 1024 * 1024,
+        "streaming clipboard compression must stay below 8 MiB overhead"
+    );
 }

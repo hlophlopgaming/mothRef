@@ -6,3 +6,10 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+moth-scene.workspace = true
+blake3.workspace = true
+fractional_index.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

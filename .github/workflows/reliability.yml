@@ -1,0 +1,31 @@
+name: Reliability soak
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Soak duration (hosted runner must stay under six hours)
+        default: '1800'
+        required: true
+permissions:
+  contents: read
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev mesa-vulkan-drivers
+      - run: cargo xtask killtest 1000
+      - name: RSS plateau check
+        env:
+          SOAK_SECONDS: ${{ inputs.seconds }}
+        run: |
+          set -o pipefail
+          cargo xtask soak "$SOAK_SECONDS" | tee soak.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reliability-soak
+          path: soak.log

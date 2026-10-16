@@ -17,6 +17,23 @@ pub trait Storage: Send + Sync {
     fn open(&self, handle: Handle) -> io::Result<Box<dyn ReadSeek>>;
     /// Appends without destroying an existing checkpoint.
     fn append(&self, handle: Handle) -> io::Result<Box<dyn Write + Send>>;
+    /// Creates an empty, exclusively owned temporary object beside the destination.
+    fn temporary(&self, _destination: Handle) -> io::Result<Handle> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "temporary storage unavailable",
+        ))
+    }
+    /// Atomically replaces the destination with a synced temporary object.
+    fn replace(&self, _temporary: Handle, _destination: Handle) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "atomic replacement unavailable",
+        ))
+    }
     /// Makes prior writes durable before acknowledging commands.
     fn sync(&self, handle: Handle) -> io::Result<()>;
 }
+
+/// Versioned board records shared by checkpoint and recovery streams.
+pub mod board;

@@ -1,4 +1,4 @@
-# M0 image corpus
+# Image and board corpus
 
 Synthetic fixtures, generated for this repository (GPL-3.0-or-later):
 
@@ -12,5 +12,8 @@ PNG/JPEG fixtures were generated with ImageMagick's normal image encoders.
 Unit tests check scanline sampling, Adam7 equivalence, DCT preview allocation,
 scratch-record identity/checksum and truncation at every byte.
 
-`cargo xtask corpus` decodes every image fixture. Board-file round-trips begin
-when M1 introduces a `.moth` reader/writer; `.bee` and `.pur` fixtures arrive in M2.
+- `moth/v1.moth`: schema-one checkpoint with one UUIDv7 image and its original
+  `rows.png` bytes. Regenerate intentionally with `cargo xtask fixture`.
+
+`cargo xtask corpus` decodes every image fixture and round-trips every `.moth`
+fixture, comparing all item metadata. `.bee` and `.pur` fixtures arrive in M2.

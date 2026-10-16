@@ -11,10 +11,18 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 moth-io = { path = "../crates/moth-io" }
+moth-format = { path = "../crates/moth-format" }
 
 [[bin]]
 name = "image_reader"
 path = "fuzz_targets/image_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "moth_reader"
+path = "fuzz_targets/moth_reader.rs"
 test = false
 doc = false
 bench = false

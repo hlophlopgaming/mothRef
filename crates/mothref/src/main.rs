@@ -10,7 +10,12 @@ fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| "mothref=info,moth_render=info".into()),
         )
         .init();
+    moth_platform::crash::install()?;
     let event_loop = winit::event_loop::EventLoop::<app::Wake>::with_user_event().build()?;
+    let shutdown = event_loop.create_proxy();
+    moth_platform::crash::shutdown(std::sync::Arc::new(move || {
+        let _ = shutdown.send_event(app::Wake::Shutdown);
+    }))?;
     let mut app = app::App::new(event_loop.create_proxy())?;
     event_loop.run_app(&mut app)?;
     if let Some(error) = app.startup_error {

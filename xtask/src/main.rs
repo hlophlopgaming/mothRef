@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![forbid(unsafe_code)]
 //! MothRef measurement tools.
+mod reliability;
 use std::time::{Duration, Instant};
 fn main() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some("killtest") => {
+            reliability::killtest(args.get(1).map(|v| v.parse()).transpose()?.unwrap_or(1000))?
+        }
+        Some("kill-writer") => {
+            reliability::writer(args.get(1).ok_or_else(|| anyhow::anyhow!("missing path"))?)?
+        }
+        Some("fixture") => reliability::fixture()?,
         Some("bench") => {
             let mut harness = pollster::block_on(moth_render::headless::Harness::new(
                 args.iter().any(|a| a == "--software"),
@@ -50,6 +58,7 @@ fn main() -> anyhow::Result<()> {
                 start.elapsed().as_secs_f64() * 1000.,
                 staged.as_secs_f64() * 1000.
             );
+            storage.discard()?;
         }
         Some("soak") => {
             let seconds = args
@@ -59,12 +68,14 @@ fn main() -> anyhow::Result<()> {
                 .unwrap_or(1800u64);
             let mut harness = pollster::block_on(moth_render::headless::Harness::new(false))
                 .map_err(anyhow::Error::msg)?;
+            let persistence = reliability::Soak::new()?;
             let start = Instant::now();
             let mut frame = 0;
             let mut samples = Vec::new();
             let mut next = 0;
             while start.elapsed() < Duration::from_secs(seconds) {
                 harness.frame(frame).map_err(anyhow::Error::msg)?;
+                persistence.step(frame)?;
                 frame += 1;
                 if start.elapsed().as_secs() >= next {
                     if let Ok(stat) = std::fs::read_to_string("/proc/self/status")
@@ -88,6 +99,7 @@ fn main() -> anyhow::Result<()> {
                 let high = *tail.iter().max().unwrap_or(&0);
                 anyhow::ensure!(high - low <= 16384, "RSS failed to plateau within 16 MiB");
             }
+            persistence.finish()?;
             println!(
                 "soak complete: {frame} frames in {} s",
                 start.elapsed().as_secs()
@@ -115,17 +127,19 @@ fn main() -> anyhow::Result<()> {
                             );
                             count += 1;
                         }
-                        Some("moth" | "bee" | "pur") => {
-                            anyhow::bail!("No board reader exists in M0: {}", path.display())
+                        Some("moth") => {
+                            reliability::roundtrip(&path)?;
+                            count += 1;
+                        }
+                        Some("bee" | "pur") => {
+                            anyhow::bail!("No import reader exists yet: {}", path.display())
                         }
                         _ => {}
                     }
                 }
             }
             anyhow::ensure!(count > 0, "image corpus is empty");
-            println!(
-                "{count} image fixtures decoded; board round-trips start with the M1 reader/writer"
-            );
+            println!("{count} image and board fixtures validated");
         }
         _ => anyhow::bail!(
             "usage: cargo xtask bench [--quick] [--enforce] [--software] | paste | soak [seconds] | corpus"

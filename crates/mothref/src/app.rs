@@ -17,6 +17,7 @@ use winit::{
 };
 #[derive(Debug)]
 pub enum Wake {
+    Shutdown,
     Ready,
     Repaint(Duration),
 }
@@ -36,6 +37,14 @@ pub struct App {
     decode: moth_io::DecodePool,
     clipboard: moth_platform::ClipboardWorker,
     scene: Scene,
+    boards: moth_platform::boards::Worker,
+    in_flight: usize,
+    pasting: usize,
+    path: String,
+    recovery_paths: Vec<std::path::PathBuf>,
+    recent_paths: Vec<std::path::PathBuf>,
+    dirty: bool,
+    close_after_save: bool,
     camera: Camera,
     input: Adapter,
     gestures: Gestures,
@@ -51,6 +60,8 @@ pub struct App {
     message: String,
     deadline: Option<Instant>,
     confirm_close: bool,
+    discarding: bool,
+    discarded: bool,
     software: bool,
     startup: Vec<std::path::PathBuf>,
 }
@@ -63,6 +74,7 @@ impl App {
         let storage = Arc::new(moth_platform::DesktopStorage::default());
         let decode = moth_io::DecodePool::new(storage.clone(), wake.clone())?;
         let clipboard = moth_platform::ClipboardWorker::new(storage.clone(), wake.clone())?;
+        let boards = moth_platform::boards::Worker::new(storage.clone(), wake.clone())?;
         let ctx = egui::Context::default();
         moth_ui::theme(&ctx);
         let repaint = proxy.clone();
@@ -81,6 +93,14 @@ impl App {
             decode,
             clipboard,
             scene: Scene::default(),
+            boards,
+            in_flight: 0,
+            pasting: 0,
+            path: String::new(),
+            recovery_paths: Vec::new(),
+            recent_paths: Vec::new(),
+            dirty: false,
+            close_after_save: false,
             camera: Camera::default(),
             input: Adapter::default(),
             gestures: Gestures::default(),
@@ -96,6 +116,8 @@ impl App {
             message: String::new(),
             deadline: None,
             confirm_close: false,
+            discarding: false,
+            discarded: false,
             software: std::env::args().any(|a| a == "--software"),
             startup: std::env::args_os()
                 .skip(1)
@@ -134,7 +156,69 @@ impl App {
         }
         Ok(())
     }
+    fn paste(&mut self) {
+        if !self.discarding
+            && self
+                .clipboard
+                .requests
+                .try_send(moth_platform::ClipboardRequest::Paste)
+                .is_ok()
+        {
+            self.pasting += 1;
+        }
+    }
+    fn persist(&mut self, request: moth_platform::boards::Request) {
+        match self.boards.requests.try_send(request) {
+            Ok(()) => self.in_flight += 1,
+            Err(_) => self.message = moth_ui::text(moth_ui::Text::StorageBusy).into(),
+        }
+    }
+    fn discard(&mut self) {
+        if self.in_flight > 0
+            || self.pasting > 0
+            || !self.pending.is_empty()
+            || !self.waiting.is_empty()
+        {
+            self.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
+            return;
+        }
+        if !self.discarding {
+            match self
+                .clipboard
+                .requests
+                .try_send(moth_platform::ClipboardRequest::Discard)
+            {
+                Ok(()) => self.discarding = true,
+                Err(_) => self.message = moth_ui::text(moth_ui::Text::ClipboardBusy).into(),
+            }
+        }
+    }
+    fn open_board(&mut self, path: std::path::PathBuf) {
+        if self.scene.is_empty()
+            && self.in_flight == 0
+            && self.pasting == 0
+            && self.pending.is_empty()
+            && self.waiting.is_empty()
+            && !self.discarding
+        {
+            self.path = path.to_string_lossy().into_owned();
+            self.persist(moth_platform::boards::Request::Open(path));
+        } else {
+            self.message = moth_ui::text(moth_ui::Text::OpenEmpty).into();
+        }
+    }
     fn import(&mut self, path: std::path::PathBuf) {
+        if self.discarding {
+            return;
+        }
+        if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("moth"))
+        {
+            self.open_board(path);
+            return;
+        }
         if self.scene.len() + self.waiting.len() + self.pending.len() >= 10_000 {
             self.message = moth_ui::text(moth_ui::Text::BoardFull).into();
             return;
@@ -202,10 +286,10 @@ impl App {
                         },
                         self.scene.top(),
                     );
-                    if let Err(e) = self.scene.apply(Command::Insert(item)) {
-                        self.message = e.to_string();
-                    }
-                    self.sources.insert(image.hash, done.request.handle);
+                    self.persist(moth_platform::boards::Request::Apply(
+                        Command::Insert(item),
+                        Some(done.request.handle),
+                    ));
                 }
                 if let Some(gpu) = &mut self.gpu {
                     gpu.registry.upload(&gpu.device, &gpu.queue, &image);
@@ -224,9 +308,10 @@ impl App {
                         },
                         self.scene.top(),
                     );
-                    if self.scene.apply(Command::Insert(item)).is_ok() {
-                        self.sources.insert(hash, done.request.handle);
-                    }
+                    self.persist(moth_platform::boards::Request::Apply(
+                        Command::Insert(item),
+                        Some(done.request.handle),
+                    ));
                 }
                 self.failed.insert(done.request.handle);
                 self.message = e.to_string();
@@ -235,12 +320,69 @@ impl App {
         }
     }
     fn results(&mut self) {
+        while let Ok(done) = self.boards.results.try_recv() {
+            use moth_platform::boards::Completion;
+            match done {
+                Completion::Recovery(paths) => self.recovery_paths = paths,
+                Completion::Recent(paths) => self.recent_paths = paths,
+                done => {
+                    self.in_flight = self.in_flight.saturating_sub(1);
+                    match done {
+                        Completion::Applied(command, source) => {
+                            match self.scene.apply(command) {
+                                Ok(_) => {
+                                    if let Some((hash, handle)) = source {
+                                        self.sources.insert(hash, handle);
+                                    }
+                                    self.dirty = true;
+                                }
+                                Err(e) => self.message = e.to_string(),
+                            }
+                            self.selection.retain(|id| self.scene.get(*id).is_some());
+                        }
+                        Completion::Opened(scene, sources, recovered) => {
+                            self.scene = scene;
+                            self.sources = sources;
+                            self.recovery_paths.clear();
+                            self.dirty = recovered;
+                            self.message = moth_ui::text(if recovered {
+                                moth_ui::Text::Recovered
+                            } else {
+                                moth_ui::Text::Opened
+                            })
+                            .into();
+                            self.fit();
+                        }
+                        Completion::Saved => {
+                            self.dirty = false;
+                            self.message = moth_ui::text(moth_ui::Text::Saved).into();
+                            if self.close_after_save {
+                                self.discard();
+                            }
+                        }
+                        Completion::Failed(e) => {
+                            self.message = e;
+                            self.close_after_save = false;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
         while let Ok(done) = self.decode.results.try_recv() {
             self.complete(done);
         }
         while let Ok(result) = self.clipboard.results.try_recv() {
             match result {
-                Ok((handle, image)) => {
+                moth_platform::ClipboardCompletion::Discarded(result) => match result {
+                    Ok(()) => self.discarded = true,
+                    Err(error) => {
+                        self.discarding = false;
+                        self.message = error.to_string();
+                    }
+                },
+                moth_platform::ClipboardCompletion::Pasted(Ok((handle, image))) => {
+                    self.pasting = self.pasting.saturating_sub(1);
                     if self.scene.len() + self.waiting.len() + self.pending.len() < 10_000 {
                         self.pending.insert(handle, Pending::Import);
                         self.complete(moth_io::Completion {
@@ -252,7 +394,10 @@ impl App {
                         self.message = moth_ui::text(moth_ui::Text::BoardFull).into();
                     }
                 }
-                Err(e) => self.message = e.to_string(),
+                moth_platform::ClipboardCompletion::Pasted(Err(e)) => {
+                    self.pasting = self.pasting.saturating_sub(1);
+                    self.message = e.to_string();
+                }
             }
         }
         self.pump();
@@ -349,11 +494,15 @@ impl App {
         let Some(window) = self.window.clone() else {
             return Ok(());
         };
+        self.results();
+        if self.discarded {
+            event_loop.exit();
+            return Ok(());
+        }
         let size = window.inner_size();
         if size.width == 0 || size.height == 0 {
             return Ok(());
         }
-        self.results();
         let Some(gpu) = &mut self.gpu else {
             return Ok(());
         };
@@ -375,6 +524,10 @@ impl App {
         };
         let mut actions = moth_ui::Actions::default();
         let mut close = false;
+        let mut save = false;
+        let mut open = None;
+        let mut undo = false;
+        let mut redo = false;
         let mut output = self.ctx.run_ui(state.take_egui_input(&window), |ui| {
             actions = moth_ui::toolbar(
                 ui,
@@ -388,6 +541,63 @@ impl App {
                 },
                 &mut self.pan,
             );
+            egui::Panel::top("files").show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(moth_ui::text(moth_ui::Text::Path));
+                    ui.text_edit_singleline(&mut self.path);
+                    let idle = self.pasting == 0
+                        && self.in_flight == 0
+                        && self.pending.is_empty()
+                        && self.waiting.is_empty()
+                        && !self.discarding;
+                    save = ui
+                        .add_enabled(
+                            idle && !self.path.is_empty(),
+                            egui::Button::new(moth_ui::text(moth_ui::Text::Save)),
+                        )
+                        .clicked();
+                    if ui
+                        .add_enabled(
+                            idle && self.scene.is_empty() && !self.path.is_empty(),
+                            egui::Button::new(moth_ui::text(moth_ui::Text::Open)),
+                        )
+                        .clicked()
+                    {
+                        open = Some(std::path::PathBuf::from(&self.path));
+                    }
+                    undo = ui
+                        .add_enabled(idle, egui::Button::new(moth_ui::text(moth_ui::Text::Undo)))
+                        .clicked();
+                    redo = ui
+                        .add_enabled(idle, egui::Button::new(moth_ui::text(moth_ui::Text::Redo)))
+                        .clicked();
+                });
+                if self.scene.is_empty() && self.in_flight == 0 {
+                    for path in &self.recent_paths {
+                        if ui.button(path.display().to_string()).clicked() {
+                            open = Some(path.clone());
+                        }
+                    }
+                }
+            });
+            if !self.recovery_paths.is_empty() && self.scene.is_empty() {
+                egui::Window::new(moth_ui::text(moth_ui::Text::Recovery)).show(ui.ctx(), |ui| {
+                    for path in &self.recovery_paths {
+                        if ui
+                            .add_enabled(
+                                self.in_flight == 0,
+                                egui::Button::new(path.display().to_string()),
+                            )
+                            .clicked()
+                        {
+                            open = Some(path.clone());
+                        }
+                    }
+                    if ui.button(moth_ui::text(moth_ui::Text::Keep)).clicked() {
+                        self.recovery_paths.clear();
+                    }
+                });
+            }
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
                 .show(ui, |ui| {
@@ -461,6 +671,20 @@ impl App {
                         ui.label(moth_ui::text(moth_ui::Text::CloseWarning));
                         if ui.button(moth_ui::text(moth_ui::Text::Keep)).clicked() {
                             self.confirm_close = false;
+                        }
+                        if ui
+                            .add_enabled(
+                                self.in_flight == 0
+                                    && self.pasting == 0
+                                    && self.pending.is_empty()
+                                    && self.waiting.is_empty()
+                                    && !self.path.is_empty(),
+                                egui::Button::new(moth_ui::text(moth_ui::Text::SaveClose)),
+                            )
+                            .clicked()
+                        {
+                            save = true;
+                            self.close_after_save = true;
                         }
                         if ui.button(moth_ui::text(moth_ui::Text::Close)).clicked() {
                             close = true;
@@ -565,8 +789,8 @@ impl App {
             .viewport_output
             .get(&egui::ViewportId::ROOT)
             .and_then(|o| Instant::now().checked_add(o.repaint_delay));
-        if actions.paste {
-            let _ = self.clipboard.requests.try_send(());
+        if actions.paste && !self.discarding {
+            self.paste();
         }
         if actions.fit {
             self.fit();
@@ -579,8 +803,22 @@ impl App {
             );
             self.redraw();
         }
+        if let Some(path) = open {
+            self.open_board(path);
+        }
+        if save {
+            self.persist(moth_platform::boards::Request::Save(
+                std::path::PathBuf::from(&self.path),
+            ));
+        }
+        if undo {
+            self.persist(moth_platform::boards::Request::Undo);
+        }
+        if redo {
+            self.persist(moth_platform::boards::Request::Redo);
+        }
         if close {
-            event_loop.exit();
+            self.discard();
         }
         Ok(())
     }
@@ -615,10 +853,18 @@ impl ApplicationHandler<Wake> for App {
         self.gpu = None;
         self.egui = None;
     }
-    fn user_event(&mut self, _: &ActiveEventLoop, event: Wake) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Wake) {
         tracing::trace!(?event, "wake");
         match event {
-            Wake::Ready => self.redraw(),
+            Wake::Shutdown => event_loop.exit(),
+            Wake::Ready => {
+                self.results();
+                if self.discarded {
+                    event_loop.exit();
+                } else {
+                    self.redraw();
+                }
+            }
             Wake::Repaint(delay) => {
                 if delay.is_zero() {
                     self.redraw();
@@ -668,8 +914,12 @@ impl ApplicationHandler<Wake> for App {
                 self.redraw();
             }
             WindowEvent::CloseRequested => {
-                if self.scene.is_empty() {
-                    event_loop.exit();
+                if !self.dirty
+                    && self.in_flight == 0
+                    && self.pending.is_empty()
+                    && self.waiting.is_empty()
+                {
+                    self.discard();
                 } else {
                     self.confirm_close = true;
                     self.redraw();
@@ -678,10 +928,33 @@ impl ApplicationHandler<Wake> for App {
             WindowEvent::DroppedFile(path) => self.import(path),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 if self.command
+                    && !self.ctx.egui_wants_keyboard_input()
                     && (event.physical_key == PhysicalKey::Code(KeyCode::KeyV)
                         || matches!(event.logical_key,Key::Character(ref c) if c.eq_ignore_ascii_case("v")))
                 {
-                    let _ = self.clipboard.requests.try_send(());
+                    if !self.discarding {
+                        self.paste();
+                    }
+                } else if self.command
+                    && event.physical_key == PhysicalKey::Code(KeyCode::KeyS)
+                    && !self.path.is_empty()
+                    && self.in_flight == 0
+                {
+                    self.persist(moth_platform::boards::Request::Save(
+                        std::path::PathBuf::from(&self.path),
+                    ));
+                } else if self.command
+                    && !self.ctx.egui_wants_keyboard_input()
+                    && event.physical_key == PhysicalKey::Code(KeyCode::KeyZ)
+                    && self.in_flight == 0
+                {
+                    self.persist(moth_platform::boards::Request::Undo);
+                } else if self.command
+                    && !self.ctx.egui_wants_keyboard_input()
+                    && event.physical_key == PhysicalKey::Code(KeyCode::KeyY)
+                    && self.in_flight == 0
+                {
+                    self.persist(moth_platform::boards::Request::Redo);
                 } else if event.logical_key == Key::Named(NamedKey::Home) {
                     self.fit();
                 }

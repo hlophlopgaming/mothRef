@@ -60,6 +60,9 @@ pub enum DecodeError {
     #[error("PNG: {0}")]
     /// Preserves PNG diagnostics without crashing a worker.
     Png(#[from] png::DecodingError),
+    /// Clipboard originals use the existing lossless PNG encoder.
+    #[error("PNG encoding: {0}")]
+    PngEncoding(#[from] png::EncodingError),
     #[error("decoder panicked")]
     /// Converts a decoder panic into a recoverable failure.
     Panic,
@@ -173,6 +176,27 @@ pub fn write_rgba(
     writer.write_all(&height.to_le_bytes())?;
     writer.write_all(blake3::hash(rgba).as_bytes())?;
     writer.write_all(rgba)?;
+    Ok(())
+}
+/// Compresses clipboard originals losslessly into a portable, checksummed image.
+pub fn write_png(
+    writer: impl Write,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> Result<(), DecodeError> {
+    validate_rgba(width, height, rgba.len())?;
+    let mut encoder = png::Encoder::new(writer, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_compression(png::Compression::Fast);
+    let mut writer = encoder.write_header()?;
+    {
+        let mut stream = writer.stream_writer()?;
+        stream.write_all(rgba)?;
+        stream.finish()?;
+    }
+    writer.finish()?;
     Ok(())
 }
 fn validate_rgba(width: u32, height: u32, len: usize) -> Result<(), DecodeError> {

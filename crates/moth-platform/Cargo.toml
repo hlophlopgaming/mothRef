@@ -14,3 +14,9 @@ crossbeam-channel.workspace = true
 tracing.workspace = true
 moth-io.workspace = true
 uuid.workspace = true
+blake3.workspace = true
+moth-scene.workspace = true
+ctrlc = { version = "3.5", features = ["termination"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

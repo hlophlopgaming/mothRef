@@ -1,12 +1,12 @@
-# M0 architecture
+# Architecture
 
 `mothref` owns the event loop and wires together independent crates:
 
 - `moth-scene`: pixel-free image metadata, UUIDv7 identity, fractional ordering,
-  reversible commands and an R-tree. Commands return their inverse; undo UI and
-  serialization arrive in M1.
-- `moth-format`: byte-stream storage contracts and opaque handles. There is no
-  `.moth` reader or writer yet.
+  reversible commands and an R-tree. Commands return their inverse; the storage
+  worker journals undo/redo before acknowledgment.
+- `moth-format`: byte-stream storage contracts, opaque handles, schema-one
+  records, checkpoint replay and atomic compaction. See [FORMAT.md](FORMAT.md).
 - `moth-io`: bounded Rayon decode work, header checks and panic isolation. JPEG
   uses DCT scaling; PNG is downsampled from scanlines, including Adam7 passes.
   Original dimensions determine geometry; pixels live only in worker results
@@ -75,3 +75,23 @@ for file drag-and-drop; CLI image arguments and the paste button are alternative
 Clipboard interoperability and pen pressure need manual testing on each desktop.
 The Wayland decoration backend omits its title font to avoid an unmaintained font
 parser; the application title is shown in the toolbar.
+
+## M1 persistence
+
+The storage worker has 32 request and 32 result slots. Scene mutations are
+validated, journaled and synced before the UI receives their command. Originals
+are copied into private recovery storage before acknowledgment, so external source
+changes cannot destroy an acknowledged image. Scene metadata is duplicated in the
+worker to validate commands and provide checkpoints without blocking frames.
+
+Each explicit save appends missing original blobs and one atomic checkpoint.
+Three immutable backups per destination survive session discard. Compaction uses
+a sibling temporary object and atomic replacement. Recovery, recent-file discovery
+and source extraction run on the worker. The path field, recent/recovery buttons,
+Save/Open and undo/redo controls provide pointer paths for all new operations.
+Undo/redo retains 256 commands per session; it is not restored from disk.
+
+The M0 limits above describe the original preview. M1 adds persistence but retains
+the 10,000-item UI/render limit and RGBA8 preview uploads; runtime compressed
+texture support remains an open release gate. Board I/O never runs on the event
+thread. See [M1 validation](M1-VALIDATION.md) for executed checks and remaining gates.

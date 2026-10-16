@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Native paths and clipboard access stay on the desktop side of the boundary.
+/// Background persistence and recovery for native boards.
+pub mod boards;
+/// Native shutdown and bounded local crash reports.
+pub mod crash;
 pub mod input;
 use moth_format::{Handle, ReadSeek, Storage};
 use std::{
@@ -33,18 +37,69 @@ pub enum PlatformError {
     Panic,
 }
 /// The desktop catalog stores source identities, never image pixels.
-#[derive(Default)]
 pub struct DesktopStorage {
     paths: Mutex<HashMap<Handle, PathBuf>>,
+    board: uuid::Uuid,
+    next_handle: std::sync::atomic::AtomicU64,
+    directory: Option<PathBuf>,
+}
+impl Default for DesktopStorage {
+    fn default() -> Self {
+        Self {
+            paths: Mutex::default(),
+            board: uuid::Uuid::now_v7(),
+            next_handle: std::sync::atomic::AtomicU64::new(0),
+            directory: None,
+        }
+    }
+}
+fn data_directory() -> io::Result<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    #[cfg(target_os = "macos")]
+    let base = std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join("Library/Application Support"));
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .filter(|value| PathBuf::from(value).is_absolute())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
+    base.filter(|path| path.is_absolute())
+        .map(|path| path.join("mothref/recovery"))
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "application data directory unavailable",
+            )
+        })
 }
 impl DesktopStorage {
+    /// Isolates tools and tests from the user's recovery and recent-file catalog.
+    pub fn in_directory(directory: PathBuf) -> Self {
+        Self {
+            directory: Some(directory),
+            ..Self::default()
+        }
+    }
+    fn base_directory(&self) -> io::Result<PathBuf> {
+        self.directory
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(data_directory)
+    }
     /// Registering an OS-provided path performs no filesystem access.
     pub fn register(&self, path: PathBuf) -> io::Result<Handle> {
         let mut paths = self
             .paths
             .lock()
             .map_err(|_| io::Error::other("storage lock poisoned"))?;
-        let handle = Handle(paths.len() as u64);
+        if paths.len() >= 1_000_000 {
+            return Err(io::Error::other("source catalog budget full"));
+        }
+        let handle = Handle(
+            self.next_handle
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        );
         paths.insert(handle, path);
         Ok(handle)
     }
@@ -65,7 +120,7 @@ impl DesktopStorage {
                 "Invalid or oversized clipboard image",
             ));
         }
-        let directory = std::env::temp_dir().join("mothref-recovery");
+        let directory = self.recovery_directory()?;
         std::fs::create_dir_all(&directory)?;
         if std::fs::symlink_metadata(&directory)?
             .file_type()
@@ -90,13 +145,11 @@ impl DesktopStorage {
             }
             used = used.saturating_add(entry?.metadata()?.len());
         }
-        // Reject new pastes rather than silently evicting clipboard originals.
-        if used.saturating_add(rgba.len() as u64 + 48) > 512 * 1024 * 1024 {
-            return Err(PlatformError::Budget(
-                "Clipboard recovery budget full (512 MiB)",
-            ));
+        // Originals are not an evictable cache; each board has its own disk budget.
+        if used.saturating_add(rgba.len() as u64 + 48) > 8 * 1024 * 1024 * 1024 {
+            return Err(PlatformError::Budget("Board recovery budget full (8 GiB)"));
         }
-        let path = directory.join(format!("{}.rgba", uuid::Uuid::now_v7()));
+        let path = directory.join(format!("{}.png", uuid::Uuid::now_v7()));
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -105,13 +158,29 @@ impl DesktopStorage {
             options.mode(0o600);
         }
         let file = options.open(&path)?;
-        let mut writer = io::BufWriter::new(file);
-        moth_io::write_rgba(&mut writer, width, height, rgba)?;
-        io::Write::flush(&mut writer)?;
-        writer.get_ref().sync_all()?;
-        #[cfg(unix)]
-        {
-            File::open(&directory)?.sync_all()?;
+        let result = (|| -> Result<(), PlatformError> {
+            let mut writer = io::BufWriter::new(file);
+            moth_io::write_png(&mut writer, width, height, rgba)?;
+            io::Write::flush(&mut writer)?;
+            let encoded_bytes = writer.get_ref().metadata()?.len();
+            if encoded_bytes > moth_io::MAX_INPUT_BYTES
+                || used.saturating_add(encoded_bytes) > 8 * 1024 * 1024 * 1024
+            {
+                return Err(PlatformError::Budget(
+                    "Compressed clipboard image exceeds input budget",
+                ));
+            }
+            writer.get_ref().sync_all()?;
+            #[cfg(unix)]
+            {
+                File::open(&directory)?.sync_all()?;
+                File::open(self.base_directory()?)?.sync_all()?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            let _ = std::fs::remove_file(&path);
+            return Err(error);
         }
         Ok(self.register(path)?)
     }
@@ -122,9 +191,30 @@ impl DesktopStorage {
         height: u32,
         pixels: &[u8],
     ) -> Result<(Handle, moth_io::Decoded), PlatformError> {
-        let preview = moth_io::preview_rgba(width, height, pixels, 256)?;
+        let mut preview = moth_io::preview_rgba(width, height, pixels, 256)?;
         let handle = self.stage_rgba(width, height, pixels)?;
+        let mut hash = blake3::Hasher::new();
+        hash.update_reader(File::open(self.path(handle)?)?)?;
+        preview.hash = hash.finalize();
         Ok((handle, preview))
+    }
+    fn recovery_directory(&self) -> io::Result<PathBuf> {
+        Ok(self.base_directory()?.join(self.board.to_string()))
+    }
+    /// Removes only this board's staged originals after an explicit discard.
+    /// The clipboard worker serializes this with staging; crashes retain originals.
+    pub fn discard(&self) -> io::Result<()> {
+        match std::fs::remove_dir_all(self.recovery_directory()?) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        }
+    }
+    fn forget(&self, handle: Handle) -> io::Result<()> {
+        self.paths
+            .lock()
+            .map_err(|_| io::Error::other("storage lock poisoned"))?
+            .remove(&handle);
+        Ok(())
     }
     fn path(&self, handle: Handle) -> io::Result<PathBuf> {
         self.paths
@@ -136,6 +226,36 @@ impl DesktopStorage {
     }
 }
 impl Storage for DesktopStorage {
+    fn temporary(&self, destination: Handle) -> io::Result<Handle> {
+        let path = self.path(destination)?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| io::Error::other("destination has no directory"))?;
+        let temporary = parent.join(format!(".mothref-{}.tmp", uuid::Uuid::now_v7()));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options.open(&temporary)?;
+        self.register(temporary)
+    }
+    fn replace(&self, temporary: Handle, destination: Handle) -> io::Result<()> {
+        let source = self.path(temporary)?;
+        let target = self.path(destination)?;
+        atomic_replace(&source, &target)?;
+        #[cfg(unix)]
+        if let Some(parent) = target.parent() {
+            File::open(parent)?.sync_all()?;
+        }
+        self.paths
+            .lock()
+            .map_err(|_| io::Error::other("storage lock poisoned"))?
+            .remove(&temporary);
+        Ok(())
+    }
     fn open(&self, h: Handle) -> io::Result<Box<dyn ReadSeek>> {
         Ok(Box::new(File::open(self.path(h)?)?))
     }
@@ -171,12 +291,26 @@ impl Platform for Desktop {
         }
     }
 }
-/// Bounded requests avoid spawning a thread per paste.
+/// Worker messages keep staging and disposal in order.
+pub enum ClipboardRequest {
+    /// Capture the clipboard on the worker.
+    Paste,
+    /// Discard this board before the app exits.
+    Discard,
+}
+/// Separates staging failures from discard failures during asynchronous shutdown.
+pub enum ClipboardCompletion {
+    /// A failed paste leaves the board and its recovery files intact.
+    Pasted(Result<(Handle, moth_io::Decoded), PlatformError>),
+    /// Acknowledges cleanup before the application exits.
+    Discarded(io::Result<()>),
+}
+/// Serializes clipboard staging and explicit board disposal.
 pub struct ClipboardWorker {
     /// A bounded queue prevents callers accumulating work.
-    pub requests: crossbeam_channel::Sender<()>,
+    pub requests: crossbeam_channel::Sender<ClipboardRequest>,
     /// Backpressure caps memory while the UI is busy.
-    pub results: crossbeam_channel::Receiver<Result<(Handle, moth_io::Decoded), PlatformError>>,
+    pub results: crossbeam_channel::Receiver<ClipboardCompletion>,
 }
 impl ClipboardWorker {
     /// Clipboard calls and recovery writes run on the worker, including initialization.
@@ -189,7 +323,19 @@ impl ClipboardWorker {
         std::thread::Builder::new()
             .name("clipboard".into())
             .spawn(move || {
-                while rx.recv().is_ok() {
+                while let Ok(request) = rx.recv() {
+                    if matches!(request, ClipboardRequest::Discard) {
+                        let result = storage.discard();
+                        let discarded = result.is_ok();
+                        if tx.send(ClipboardCompletion::Discarded(result)).is_err() {
+                            break;
+                        }
+                        wake();
+                        if discarded {
+                            break;
+                        }
+                        continue;
+                    }
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let mut clipboard = arboard::Clipboard::new()?;
                         let image = clipboard.get_image()?;
@@ -200,12 +346,77 @@ impl ClipboardWorker {
                         storage.stage_preview(width, height, &image.bytes)
                     }))
                     .unwrap_or_else(|_| Err(PlatformError::Panic));
-                    if tx.send(result).is_err() {
+                    if tx.send(ClipboardCompletion::Pasted(result)).is_err() {
                         break;
                     }
                     wake();
                 }
             })?;
         Ok(Self { requests, results })
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn atomic_replace(source: &std::path::Path, target: &std::path::Path) -> io::Result<()> {
+    std::fs::rename(source, target)
+}
+#[cfg(target_os = "windows")]
+fn atomic_replace(source: &std::path::Path, target: &std::path::Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    let source: Vec<_> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let target: Vec<_> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: both paths are NUL-terminated and live for the duration of the call.
+    let result = unsafe {
+        windows_sys::Win32::Storage::FileSystem::ReplaceFileW(
+            target.as_ptr(),
+            source.as_ptr(),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if result == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn worker_acknowledges_discard_after_cleanup() {
+        let storage = Arc::new(DesktopStorage::default());
+        let handle = storage.stage_rgba(1, 1, &[0, 0, 0, 255]).unwrap();
+        let path = storage.path(handle).unwrap();
+        let worker = ClipboardWorker::new(storage, Arc::new(|| {})).unwrap();
+        worker.requests.send(ClipboardRequest::Discard).unwrap();
+        assert!(matches!(
+            worker
+                .results
+                .recv_timeout(std::time::Duration::from_secs(5)),
+            Ok(ClipboardCompletion::Discarded(Ok(())))
+        ));
+        assert!(!path.exists());
+    }
+    #[test]
+    fn clipboard_originals_are_compressed_and_board_scoped() {
+        let storage = DesktopStorage::default();
+        let pixels = [20, 40, 60, 255].repeat(256 * 256);
+        let (handle, preview) = storage.stage_preview(256, 256, &pixels).unwrap();
+        let path = storage.path(handle).unwrap();
+        assert!(std::fs::metadata(&path).unwrap().len() < pixels.len() as u64 / 4);
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(moth_io::decode(&bytes, 256).unwrap().mips[0].rgba, pixels);
+        assert_eq!(preview.hash, moth_io::decode(&bytes, 256).unwrap().hash);
+        assert!(path.starts_with(data_directory().unwrap()));
+        let other = DesktopStorage::default();
+        let other_handle = other.stage_rgba(1, 1, &[0, 0, 0, 255]).unwrap();
+        let other_path = other.path(other_handle).unwrap();
+        storage.discard().unwrap();
+        assert!(!path.exists());
+        assert!(other_path.exists());
+        other.discard().unwrap();
     }
 }

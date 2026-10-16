@@ -28,6 +28,8 @@ Every milestone and every pull request is judged against these, in this order:
 | 1.0 | M7 | All P0 and P1 features done, all performance targets met |
 | 2.0 | M9 | Web build and real-time collaboration |
 
+Starting with **M1 / release 0.1**, every tagged release includes downloadable Windows, macOS and Linux binaries on **GitHub Releases**.
+
 Milestones run strictly in order. M8 and M9 come after 1.0, but the architecture decisions they depend on (stable UUIDs, fractional z-order, command-based mutations, content-addressed blobs) are made in M0–M1.
 
 ---
@@ -54,16 +56,32 @@ Milestones run strictly in order. M8 and M9 come after 1.0, but the architecture
 
 **Exit criteria:** a 10,000-image board pans with p99 frame time < 8 ms; a pasted 4K image is visible in < 50 ms.
 
+### M0 review follow-up
+
+- [x] Clipboard staging: application data, lossless compression, per-board ownership
+  and cleanup on explicit discard (originals survive a crash; layout recovery is M1)
+- [ ] Allow large JPEG sources when DCT-reduced allocation fits the decode budget
+- [ ] WebP, static GIF and BMP import; EXIF orientation and CMYK JPEG conversion
+- [ ] Area-averaged PNG and clipboard previews, including Adam7 input
+- [ ] Avoid linear `Scene::top()` scans on repeated insertion
+- [ ] Replace the 10,000-item board/render ceilings with bounded render batches by M1–M2
+- [ ] Clipboard backpressure feedback and file/URL/HTML clipboard handling
+- [ ] Add storage temporary objects and atomic replacement before M1 compaction
+
 ### M1 — Reliability and file format
 
-- [ ] `.moth` format: chunks, footer, append-only checkpoints, background compaction
-- [ ] Write-ahead journal, autosave, rotating backups
-- [ ] Recovery dialog on startup, save prompt on exit
-- [ ] Undo/redo for every command
-- [ ] Panic hook, crash report, decoder isolation (`catch_unwind`, header size checks)
+- [x] Tagged GitHub Actions builds attach Windows `.zip`, macOS `.tar.gz` (Intel and Apple Silicon), and Linux `.tar.gz` binaries to GitHub Releases from 0.1
+
+- [x] `.moth` format: chunks, footer, append-only checkpoints, background compaction
+- [x] Write-ahead journal, autosave, rotating backups
+- [x] Recovery dialog on startup, save prompt on exit
+- [x] Undo/redo for every command (bounded to 256 commands per session)
+- [x] Panic hook, crash report, decoder isolation (`catch_unwind`, header size checks)
 - [ ] Tests: truncated-file recovery, 1,000× `kill -9`, reader fuzzing, 8-hour soak test
-- [ ] Recent files
+- [x] Recent files
 - [ ] Portability: compressed texture format chosen at runtime (BC7 / ASTC / ETC2 / uncompressed RGBA8); LOD caches in `.moth` stay rebuildable for any format
+
+**Status:** persistence, recovery and release packaging implemented; compressed-texture support and full soak qualification remain open. See [M1 validation notes](docs/M1-VALIDATION.md).
 
 **Exit criteria:** 1,000 random `kill -9` runs lose no more than 1 second of work; the soak test shows a flat RSS. → **Release 0.1**
 
@@ -241,10 +259,13 @@ A benchmark regression of more than 10% blocks a merge.
 
 ## Distribution
 
-All builds come from one GitHub Actions pipeline triggered by a release tag.
+All builds come from one GitHub Actions pipeline triggered by a release tag. Raw binary archives are available on GitHub Releases from **0.1 (M1)**; installers and package-manager channels follow the schedule below.
 
 | OS | Format | Channel | From release |
 | --- | --- | --- | --- |
+| Windows | Binary `.zip` | GitHub Releases | 0.1 (M1) |
+| macOS | Binary `.tar.gz` (Apple Silicon and Intel) | GitHub Releases | 0.1 (M1) |
+| Linux | Binary `.tar.gz` (x86_64) | GitHub Releases | 0.1 (M1) |
 | Windows | Portable `.zip` (settings next to the exe when `portable.txt` exists) | GitHub Releases | 0.3 |
 | Windows | MSI (`cargo-wix`) | GitHub Releases, winget | 0.3 |
 | Windows | — | Scoop, Chocolatey | 1.0 |
@@ -278,5 +299,5 @@ Known issues to plan for: macOS notarization needs a paid Apple Developer accoun
 | 2026-10-16 | Collaboration via CRDT; the sync server is recorded but has no timeline, its license is decided later |
 | 2026-10-16 | Distribute through every channel listed above |
 | 2026-10-16 | Android is a future target (no milestone yet). Portability rules are built in from M0: storage trait, input abstraction, surface-loss handling (M0); runtime texture format (M1); responsive layout (M2) |
-
 | 2026-10-16 | [M0 preview budgets and durable clipboard staging](docs/decisions/0001-m0-canvas-budgets.md): 96 MiB GPU cache, bounded decode work, checksummed RGBA scratch records; keep the 50 ms paste criterion open rather than bypass durability |
+| 2026-10-16 | [M1 version-one records and recovery](docs/decisions/0002-m1-durable-records.md): footer commits, journal-before-acknowledgment, atomic snapshots and compaction, bounded session history |

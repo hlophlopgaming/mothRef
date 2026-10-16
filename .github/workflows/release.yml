@@ -1,0 +1,94 @@
+name: Release binaries
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: linux-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: windows-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: macos-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            name: macos-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev
+      - name: Verify tag matches Cargo version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "mothref"))')
+          test "$RELEASE_TAG" = "v$version"
+      - run: cargo build --locked --release -p mothref --target ${{ matrix.target }}
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir package
+          cp target/${{ matrix.target }}/release/mothref package/
+          cp LICENSE THIRD_PARTY.md crates/moth-ui/fonts/LICENSE-Hack.txt package/
+          tar -czf mothref-${{ matrix.name }}.tar.gz -C package .
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory package
+          Copy-Item target/${{ matrix.target }}/release/mothref.exe package/
+          Copy-Item LICENSE, THIRD_PARTY.md, crates/moth-ui/fonts/LICENSE-Hack.txt package/
+          Compress-Archive package/* mothref-${{ matrix.name }}.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mothref-${{ matrix.name }}
+          path: mothref-${{ matrix.name }}.*
+          if-no-files-found: error
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: binaries
+          merge-multiple: true
+      - name: Attach binaries to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          test "$(find binaries -maxdepth 1 -type f | wc -l)" -eq 4
+          (cd binaries && sha256sum * > SHA256SUMS)
+          notes="docs/releases/$RELEASE_TAG.md"
+          test -f "$notes"
+          if ! gh release view "$RELEASE_TAG"; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease --title "MothRef $RELEASE_TAG" --notes-file "$notes"
+          fi
+          gh release upload "$RELEASE_TAG" binaries/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false --notes-file "$notes"

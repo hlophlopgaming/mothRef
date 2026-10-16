@@ -69,3 +69,25 @@ manual platform testing. CI jobs exist for all three desktop OSes but were not
 run remotely during this session. winit 0.30 lacks native Wayland file drops;
 that M0 checkbox remains open. Boards are volatile until M1; there are no save/load
 property tests before a board format exists.
+
+## Clipboard staging review follow-up
+
+Clipboard originals now use lossless PNG in the native application-data directory
+(`mothref/recovery/<board UUID>/`). Each board has an 8 GiB disk budget and a
+10,000-record limit. Confirmed discard removes only that board's directory on the
+clipboard worker before exit. Crashes retain originals; automatic scene recovery
+and cleanup of abandoned or legacy recovery directories remain M1 work. Previous
+RGBA staging latency measurements do not measure this PNG implementation.
+
+Windows/macOS application-data placement and native close behavior require manual
+validation on those systems. The 30-minute soak and process-kill durability checks
+have not yet validated this follow-up.
+
+Follow-up checks on Linux: workspace tests (including board-isolated cleanup and
+worker disposal acknowledgement), fmt, clippy and cargo-deny pass. Cargo-deny
+still reports existing duplicate dependency warnings. The `dhat` check keeps
+streaming PNG compression below 8 MiB extra allocations, excluding clipboard
+pixels. `cargo xtask bench --quick`: 10,000 images, p99 4.098 ms, 13.32 MiB textures.
+`cargo xtask paste`: 349.270 ms after clipboard transfer, 345.505 ms durable
+staging for synthetic noisy 4K pixels. PNG compression is a latency cost; the
+50 ms exit criterion remains unmet.
