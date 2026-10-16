@@ -47,8 +47,21 @@ or decoder path was changed for M1.
 - Native manual save/recover/clipboard/close testing on Windows and macOS,
   including WM_QUERYENDSESSION and applicationShouldTerminate. All acknowledged
   mutations are already synced, but native desktop termination UX needs testing.
-- Execute the release workflow on native runners and inspect the four archives.
-  No tag, GitHub Release or remote artifact was published during local work.
+
+## Published experimental preview
+
+[v0.1.0-alpha.1](https://github.com/hlophlopgaming/mothRef/releases/tag/v0.1.0-alpha.1)
+was published by the [release workflow](https://github.com/hlophlopgaming/mothRef/actions/runs/38922605455).
+The release commit's [CI](https://github.com/hlophlopgaming/mothRef/actions/runs/38922605451)
+passed on native Windows, macOS and Linux runners, including workspace tests and
+clippy, plus license and Android core checks.
+
+All four published archives were downloaded and verified against `SHA256SUMS`;
+binary architectures, Unix executable permissions and license notices were
+checked. The GitHub-built Linux binary opened the board fixture under X11,
+created its recovery journal, and exited successfully on SIGTERM while retaining
+that journal. This does not replace native Windows/macOS manual UX testing or the
+full M1 reliability gates above.
 
 ## Current product limits
 
