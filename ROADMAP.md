@@ -164,6 +164,7 @@ Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](d
 - [ ] Color swatch cards and palette extraction from an image; link cards; comment pins
 - [ ] Palettes: a palette element holding several swatches; export to `.gpl` (Krita, GIMP, Inkscape) and `.ase` (Adobe); import of both
 - [ ] Collapsible left toolbar (hidden by default)
+- [ ] JSON Canvas ([jsoncanvas.org](https://jsoncanvas.org)) export, next to the Markdown export: images → file nodes, notes → text nodes (Markdown), groups and columns → group nodes, lines → edges; the exported board opens as an Obsidian Canvas
 - [ ] All Milanote-checklist items tagged M6 (unsorted tray, item labels, synced notes, card colors, captions, to-do cards, board shortcuts, back/forward navigation, Markdown export)
 
 ### M7 — PureRef export and full compatibility
@@ -221,15 +222,15 @@ For art directors who collect references and give feedback on work in progress. 
 
 Integration goes through open formats and URIs, not through one application's API, so it also works with Logseq, Zettlr and others.
 
-- [ ] JSON Canvas ([jsoncanvas.org](https://jsoncanvas.org)) export and import: images → file nodes, notes → text nodes, groups and columns → group nodes, lines → edges; a board opens as an Obsidian Canvas
-- [ ] Note text round-trips losslessly through Markdown (prerequisite for JSON Canvas and linked note files)
+- [ ] JSON Canvas import (export is in M6): file, text, group and link nodes and edges become images, notes, groups, link cards and lines
+- [ ] Note text round-trips losslessly through Markdown (prerequisite for JSON Canvas import and linked note files)
 - [ ] Preview sidecar: optionally write `board.preview.webp` next to `board.moth` on save, so a note can embed it (`![[board.preview.webp]]`)
 - [ ] Deep links: `mothref://open?board=…&item=<uuid>` opens a board and focuses an item (extends the board links from M6); "Copy link to item" in the context menu
 - [ ] `[[wiki-links]]` in notes resolve against a configured vault folder and open in the user's note app (`obsidian://` or the system default for `.md`)
 - [ ] Linked note card: a note backed by an external `.md` file, edited from either side; changes on disk are picked up by the file watcher and go through a `Command`, conflicts keep both versions
 - [ ] Read-only `.moth` viewer as an Obsidian plugin, built from the WASM build of M8 — only after M8
 
-**Exit criteria:** a board exported as JSON Canvas opens in Obsidian with every image, note, group and line, and imports back without loss of those elements.
+**Exit criteria:** a board exported as JSON Canvas (M6) imports back without loss of its images, notes, groups and lines, and a canvas made in Obsidian opens as a MothRef board.
 
 ---
 
@@ -293,13 +294,14 @@ Priorities: **P0** = no release without it, **P1** = required for 1.0, **P2** = 
 | Board preview chunk | MothRef | P0 | M5 |
 | Library sorting, views, board stats, library health | MothRef | P1 | M5 |
 | Palette export/import (`.gpl`, `.ase`) | MothRef | P1 | M6 |
+| JSON Canvas export (opens as an Obsidian Canvas) | MothRef, Obsidian | P1 | M6 |
 | SpaceMouse | PureRef 2.0 | P2 | after 1.0 |
 | Composition overlays, mirror view, value check, measuring | MothRef | P2 | M10 |
 | Video references | FrameRef | P2 | M10 |
 | Open in external editor | MothRef | P2 | M10 |
 | Redlines, review statuses, image comparison | MothRef | P2 | M11 |
 | Client presentation and pitch sheet export | MothRef | P2 | M11 |
-| JSON Canvas export/import | Obsidian | P2 | M12 |
+| JSON Canvas import | Obsidian | P2 | M12 |
 | Deep links, wiki-links, linked `.md` notes, preview sidecar | MothRef | P2 | M12 |
 
 `#NNN` refers to issues in the [BeeRef repository](https://github.com/rbreu/beeref/issues).
@@ -560,4 +562,4 @@ Known issues to plan for: macOS notarization needs a paid Apple Developer accoun
 | 2026-10-16 | Android is a future target (no milestone yet). Portability rules are built in from M0: storage trait, input abstraction, surface-loss handling (M0); runtime texture format (M1); responsive layout (M2) |
 | 2026-10-16 | [M0 preview budgets and durable clipboard staging](docs/decisions/0001-m0-canvas-budgets.md): 96 MiB GPU cache, bounded decode work, checksummed RGBA scratch records; keep the 50 ms paste criterion open rather than bypass durability |
 | 2026-10-16 | [M1 version-one records and recovery](docs/decisions/0002-m1-durable-records.md): footer commits, journal-before-acknowledgment, atomic snapshots and compaction, bounded session history |
-| 2026-10-16 | Post-1.0 milestones M10 (artist tools), M11 (review and presentation), M12 (note-app interop through Markdown, JSON Canvas and URIs, not a single app's API); independent of M8/M9 |
+| 2026-10-16 | Post-1.0 milestones M10 (artist tools), M11 (review and presentation), M12 (note-app interop through Markdown, JSON Canvas and URIs, not a single app's API); independent of M8/M9. JSON Canvas export is pulled forward to M6; timed drawing sessions stay P1 in M4 |
