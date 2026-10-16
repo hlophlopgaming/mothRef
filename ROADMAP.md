@@ -32,6 +32,8 @@ Starting with **M1 / release 0.1**, every tagged release includes downloadable W
 
 Milestones run strictly in order. M8 and M9 come after 1.0, but the architecture decisions they depend on (stable UUIDs, fractional z-order, command-based mutations, content-addressed blobs) are made in M0–M1.
 
+M10–M12 (artist tools, review workflow, note-app interop) also come after 1.0. They do not depend on M8 or M9, so they may run in parallel with them and ship in 1.x minor releases as they land.
+
 ---
 
 ## Milestones
@@ -95,6 +97,11 @@ Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](d
 - [ ] Mass scaling and arrangement: vertical, horizontal, optimal packing, by filename, configurable gap
 - [ ] Text notes, opacity, grayscale, color sampler (hex to clipboard)
 - [ ] Export: whole scene to PNG/SVG, a selected region (BeeRef #143), a single image to file or clipboard (BeeRef #132), all images to a folder
+- [ ] Empty-board state: drop zone with hint text and Paste / Open buttons (touch path for both)
+- [ ] Status bar: render adapter, item count, selection count, autosave/journal state ("saved", "journaled", "recovery on")
+- [ ] Zoom controls in the toolbar: − / + buttons and an editable zoom percentage field
+- [ ] Selection badge: item count and bounding size, shown while selecting and transforming
+- [ ] Every toolbar and tool-rail button has a tooltip with its name and current shortcut
 - [ ] Hotkey to jump between images (BeeRef #116); configurable keyboard and mouse bindings
 - [ ] Portability: responsive UI layout — no fixed desktop sizes, panels adapt to small screens
 - [ ] `.bee` import
@@ -108,6 +115,10 @@ Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](d
 - [ ] Always-on-top, frameless window, move window by hotkey
 - [ ] Transparent overlay with adjustable opacity and click-through (BeeRef #100)
 - [ ] Board tabs in one window; drag a tab out into its own window and back
+- [ ] Tab state: unsaved marker for boards that live only in the journal, close button, middle-click to close, "+" for a new board
+- [ ] Overlay HUD: opacity slider, click-through toggle, always-on-top toggle, exit button, one-time hint with the exit shortcut
+- [ ] Overlay grab handle that always receives clicks, so the overlay can be left without a global hotkey (Wayland and Flatpak fallback)
+- [ ] Watch folder: images that appear in a chosen folder (for example the OS screenshots folder) are imported into a chosen board's Inbox
 - [ ] Browser extension "Send to MothRef" + `moth-bridge` native host + "Inbox" board
 - [ ] Attach to another application's window: Windows and X11 (macOS and Wayland are P2)
 - [ ] Platform capability flags surfaced in the UI
@@ -125,6 +136,8 @@ Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](d
 - [ ] In-app shortcut cheat sheet: all actions and their current bindings (including custom bindings), grouped by category and searchable; open with `/` or from Help
 - [ ] Command Palette (Omnibar / Quick Search): search and run application actions, show their current shortcuts; open with Ctrl/⌘+K or a visible menu button, navigate with arrows, Enter to run, Esc to close
 - [ ] Slideshow (incl. random order), embedded ICC profiles, trackpad gestures
+- [ ] Timed drawing sessions on top of the slideshow: images from the board, a group or a selection; fixed intervals (30 s, 1, 2, 5, 10 min) or a session plan (for example 10 × 30 s, 5 × 2 min); pause, skip, countdown and a sound cue; list of the shown images at the end
+- [ ] Minimap / navigator: board overview with the viewport rectangle; click or drag to move the camera; toggle with a shortcut
 - [ ] All parity- and Milanote-checklist items tagged M4 (presentation mode, note formatting and markdown shortcuts, sketch card, drawing shortcuts, GIF frame tools, drawing details, locked groups, hierarchy tools, note parenting and links)
 
 **Exit criteria:** every P0/P1 item sourced from PureRef in the feature matrix is done. → **Release 0.7 (beta)**
@@ -135,6 +148,11 @@ Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](d
 - [ ] Start screen: card grid with board previews; stacks shown as a fan of previews or as a folder with icon and color; tags; search; pinning
 - [ ] Stacks are real folders on disk (Procreate-style: drop a board on a board to create a stack); "smart collections" are saved tag filters
 - [ ] File manager thumbnails for `.moth` and `.bee` (BeeRef #152): Windows `IThumbnailProvider`, freedesktop thumbnailer, macOS Quick Look extension
+- [ ] Board preview image rendered off the UI thread after a checkpoint and stored as a rebuildable chunk (format version bump); used by the start screen, file-manager thumbnails and the note-app sidecar (M12)
+- [ ] Library sidebar: All boards, Recent, Pinned, Trash (boards deleted from the library go to the OS trash and are listed here), Stacks, Smart collections; counts next to each entry
+- [ ] Library view options: sort by last opened, last edited, name, item count or size; grid / list view; tag filter chips above the grid
+- [ ] Board cards show item count, last edited time, file size, pinned state and an "unsaved" badge when a recovery journal is pending; the library header shows totals
+- [ ] Library health: boards with missing linked files (with relink), duplicate images across boards by content hash, largest boards
 - [ ] All Milanote-checklist items tagged M5 (templates, search inside boards, item trash)
 
 **Exit criteria:** a library of 1,000 boards is on screen < 200 ms after launch.
@@ -144,6 +162,7 @@ Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](d
 - [ ] Arrow connectors that stick to item edges
 - [ ] Columns (auto-stacking containers), nested boards with breadcrumbs
 - [ ] Color swatch cards and palette extraction from an image; link cards; comment pins
+- [ ] Palettes: a palette element holding several swatches; export to `.gpl` (Krita, GIMP, Inkscape) and `.ase` (Adobe); import of both
 - [ ] Collapsible left toolbar (hidden by default)
 - [ ] All Milanote-checklist items tagged M6 (unsorted tray, item labels, synced notes, card colors, captions, to-do cards, board shortcuts, back/forward navigation, Markdown export)
 
@@ -172,6 +191,45 @@ Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](d
 - [ ] Participant cursors and selections; share links with view/edit rights
 
 **Exit criteria:** three people edit one board from different OSes and the browser; after a network drop everything merges without loss. → **Release 2.0**
+
+### M10 — Artist tools (after 1.0)
+
+Tools that help while painting from references, not only while collecting them. None of them changes the source image; they are view settings or overlays.
+
+- [ ] Composition overlays per image: rule of thirds, golden ratio, diagonals, center cross, and an N × M grid for transferring a drawing; line color and opacity
+- [ ] Mirror view: flip the whole canvas view horizontally or vertically without changing the board, to check one's own drawing with fresh eyes
+- [ ] Value check: posterize an image or the whole canvas into 2–5 tones (notan), next to the existing grayscale
+- [ ] Measuring: ruler with length in image pixels, angle tool between two lines
+- [ ] Video references (replaces the "video on the canvas" P2 row): MP4 and WebM items, play / pause, frame step, playback speed 0.1–2×, A–B loop, grab a frame as a new image item; decoding through an LGPL-compatible library, off the UI thread
+- [ ] "Open in…": open an image in an external editor (Krita, Photoshop, GIMP, Clip Studio or any configured program); linked images reload when the file changes on disk
+
+**Exit criteria:** every tool works on a 1,000-image board without breaking the frame budget; none of them mutates image data or needs a format change beyond view settings.
+
+### M11 — Review and presentation (after 1.0)
+
+For art directors who collect references and give feedback on work in progress. Everything is local; sharing and live comments stay in M9.
+
+- [ ] Redline annotations: a drawing layer attached to an image (moves and scales with it), shown or hidden per image and for the whole board
+- [ ] Review status on items: "approved", "needs work", "rejected" as a preset label set (built on item labels from M6), with a filter to show one status
+- [ ] Compare two images: side by side, swipe slider, or onion skin with adjustable opacity; swap and align by a picked point
+- [ ] Client presentation: hide notes, comments, labels and annotations with one switch; a chosen item order for stepping through (extends presentation mode from M4)
+- [ ] Pitch sheet export: a board or a selection to a paginated PDF or a high-resolution PNG with a title, optional captions and optional notes
+
+**Exit criteria:** a review round (annotate, set statuses, compare versions, export a PDF) is possible without leaving the app.
+
+### M12 — Note-app interop: Obsidian and other Markdown tools (after 1.0)
+
+Integration goes through open formats and URIs, not through one application's API, so it also works with Logseq, Zettlr and others.
+
+- [ ] JSON Canvas ([jsoncanvas.org](https://jsoncanvas.org)) export and import: images → file nodes, notes → text nodes, groups and columns → group nodes, lines → edges; a board opens as an Obsidian Canvas
+- [ ] Note text round-trips losslessly through Markdown (prerequisite for JSON Canvas and linked note files)
+- [ ] Preview sidecar: optionally write `board.preview.webp` next to `board.moth` on save, so a note can embed it (`![[board.preview.webp]]`)
+- [ ] Deep links: `mothref://open?board=…&item=<uuid>` opens a board and focuses an item (extends the board links from M6); "Copy link to item" in the context menu
+- [ ] `[[wiki-links]]` in notes resolve against a configured vault folder and open in the user's note app (`obsidian://` or the system default for `.md`)
+- [ ] Linked note card: a note backed by an external `.md` file, edited from either side; changes on disk are picked up by the file watcher and go through a `Command`, conflicts keep both versions
+- [ ] Read-only `.moth` viewer as an Obsidian plugin, built from the WASM build of M8 — only after M8
+
+**Exit criteria:** a board exported as JSON Canvas opens in Obsidian with every image, note, group and line, and imports back without loss of those elements.
 
 ---
 
@@ -227,8 +285,22 @@ Priorities: **P0** = no release without it, **P1** = required for 1.0, **P2** = 
 | `.pur` export | MothRef | P2 | M7 |
 | Web build | MothRef | P2 | M8 |
 | Real-time collaboration | MothRef | P2 | M9 |
+| Status bar, empty-board state, zoom field, selection badge | MothRef | P1 | M2 |
+| Watch folder import | MothRef | P1 | M3 |
+| Overlay HUD and grab handle | MothRef | P1 | M3 |
+| Timed drawing sessions | MothRef | P1 | M4 |
+| Minimap / navigator | MothRef | P1 | M4 |
+| Board preview chunk | MothRef | P0 | M5 |
+| Library sorting, views, board stats, library health | MothRef | P1 | M5 |
+| Palette export/import (`.gpl`, `.ase`) | MothRef | P1 | M6 |
 | SpaceMouse | PureRef 2.0 | P2 | after 1.0 |
-| Video on the canvas | FrameRef | P2 | after 1.0 |
+| Composition overlays, mirror view, value check, measuring | MothRef | P2 | M10 |
+| Video references | FrameRef | P2 | M10 |
+| Open in external editor | MothRef | P2 | M10 |
+| Redlines, review statuses, image comparison | MothRef | P2 | M11 |
+| Client presentation and pitch sheet export | MothRef | P2 | M11 |
+| JSON Canvas export/import | Obsidian | P2 | M12 |
+| Deep links, wiki-links, linked `.md` notes, preview sidecar | MothRef | P2 | M12 |
 
 `#NNN` refers to issues in the [BeeRef repository](https://github.com/rbreu/beeref/issues).
 
@@ -488,3 +560,4 @@ Known issues to plan for: macOS notarization needs a paid Apple Developer accoun
 | 2026-10-16 | Android is a future target (no milestone yet). Portability rules are built in from M0: storage trait, input abstraction, surface-loss handling (M0); runtime texture format (M1); responsive layout (M2) |
 | 2026-10-16 | [M0 preview budgets and durable clipboard staging](docs/decisions/0001-m0-canvas-budgets.md): 96 MiB GPU cache, bounded decode work, checksummed RGBA scratch records; keep the 50 ms paste criterion open rather than bypass durability |
 | 2026-10-16 | [M1 version-one records and recovery](docs/decisions/0002-m1-durable-records.md): footer commits, journal-before-acknowledgment, atomic snapshots and compaction, bounded session history |
+| 2026-10-16 | Post-1.0 milestones M10 (artist tools), M11 (review and presentation), M12 (note-app interop through Markdown, JSON Canvas and URIs, not a single app's API); independent of M8/M9 |
