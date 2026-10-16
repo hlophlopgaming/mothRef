@@ -1,0 +1,135 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#![forbid(unsafe_code)]
+//! MothRef measurement tools.
+use std::time::{Duration, Instant};
+fn main() -> anyhow::Result<()> {
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some("bench") => {
+            let mut harness = pollster::block_on(moth_render::headless::Harness::new(
+                args.iter().any(|a| a == "--software"),
+            ))
+            .map_err(anyhow::Error::msg)?;
+            let result = harness
+                .measure(if args.iter().any(|a| a == "--quick") {
+                    100
+                } else {
+                    1000
+                })
+                .map_err(anyhow::Error::msg)?;
+            println!(
+                "10,000 distinct images | {} | {} frames | p99 {:.3} ms | textures {:.2} MiB",
+                result.adapter,
+                result.frames,
+                result.p99_ms,
+                result.texture_bytes as f64 / 1048576.
+            );
+            if args.iter().any(|a| a == "--enforce") {
+                anyhow::ensure!(result.p99_ms < 8., "M0 p99 exceeds 8 ms");
+            }
+        }
+        Some("paste") => {
+            let storage = moth_platform::DesktopStorage::default();
+            let mut pixels = vec![0u8; 3840 * 2160 * 4];
+            let mut seed = 42u32;
+            for pixel in pixels.as_chunks_mut::<4>().0 {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                pixel.copy_from_slice(&[seed as u8, (seed >> 8) as u8, (seed >> 16) as u8, 255]);
+            }
+            let mut harness = pollster::block_on(moth_render::headless::Harness::new(false))
+                .map_err(anyhow::Error::msg)?;
+            harness.frame(0).map_err(anyhow::Error::msg)?;
+            let start = Instant::now();
+            let (_, image) = storage
+                .stage_preview(3840, 2160, &pixels)
+                .map_err(anyhow::Error::msg)?;
+            let staged = start.elapsed();
+            harness.show(&image).map_err(anyhow::Error::msg)?;
+            println!(
+                "4K paste pipeline after clipboard transfer: {:.3} ms (durable staging {:.3} ms)",
+                start.elapsed().as_secs_f64() * 1000.,
+                staged.as_secs_f64() * 1000.
+            );
+        }
+        Some("soak") => {
+            let seconds = args
+                .get(1)
+                .map(|s| s.parse())
+                .transpose()?
+                .unwrap_or(1800u64);
+            let mut harness = pollster::block_on(moth_render::headless::Harness::new(false))
+                .map_err(anyhow::Error::msg)?;
+            let start = Instant::now();
+            let mut frame = 0;
+            let mut samples = Vec::new();
+            let mut next = 0;
+            while start.elapsed() < Duration::from_secs(seconds) {
+                harness.frame(frame).map_err(anyhow::Error::msg)?;
+                frame += 1;
+                if start.elapsed().as_secs() >= next {
+                    if let Ok(stat) = std::fs::read_to_string("/proc/self/status")
+                        && let Some(line) = stat.lines().find(|s| s.starts_with("VmRSS:"))
+                    {
+                        let rss = line
+                            .split_whitespace()
+                            .nth(1)
+                            .unwrap_or("0")
+                            .parse::<u64>()?;
+                        println!("{} s: {} KiB RSS", start.elapsed().as_secs(), rss);
+                        samples.push(rss);
+                    }
+                    next += 30;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            if samples.len() > 3 {
+                let tail = &samples[samples.len() / 2..];
+                let low = *tail.iter().min().unwrap_or(&0);
+                let high = *tail.iter().max().unwrap_or(&0);
+                anyhow::ensure!(high - low <= 16384, "RSS failed to plateau within 16 MiB");
+            }
+            println!(
+                "soak complete: {frame} frames in {} s",
+                start.elapsed().as_secs()
+            );
+        }
+        Some("corpus") => {
+            let mut count = 0;
+            let mut directories = vec![std::path::PathBuf::from("corpus")];
+            while let Some(directory) = directories.pop() {
+                for entry in std::fs::read_dir(directory)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.is_dir() {
+                        directories.push(path);
+                        continue;
+                    }
+                    match path.extension().and_then(|s| s.to_str()) {
+                        Some("png" | "jpg" | "jpeg" | "rgba") => {
+                            let bytes = std::fs::read(&path)?;
+                            let decoded = moth_io::decode(&bytes, 256)?;
+                            anyhow::ensure!(
+                                !decoded.mips.is_empty(),
+                                "empty LOD pyramid: {}",
+                                path.display()
+                            );
+                            count += 1;
+                        }
+                        Some("moth" | "bee" | "pur") => {
+                            anyhow::bail!("No board reader exists in M0: {}", path.display())
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            anyhow::ensure!(count > 0, "image corpus is empty");
+            println!(
+                "{count} image fixtures decoded; board round-trips start with the M1 reader/writer"
+            );
+        }
+        _ => anyhow::bail!(
+            "usage: cargo xtask bench [--quick] [--enforce] [--software] | paste | soak [seconds] | corpus"
+        ),
+    }
+    Ok(())
+}

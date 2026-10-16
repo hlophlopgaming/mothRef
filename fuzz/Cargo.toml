@@ -1,0 +1,23 @@
+[package]
+name = "mothref-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+moth-io = { path = "../crates/moth-io" }
+
+[[bin]]
+name = "image_reader"
+path = "fuzz_targets/image_reader.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

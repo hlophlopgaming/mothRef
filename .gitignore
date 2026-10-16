@@ -1,0 +1,7 @@
+/target/
+*.profraw
+dhat-heap.json
+/fuzz/target/
+/fuzz/artifacts/
+/fuzz/corpus/
+**/dhat-heap.json

@@ -1,0 +1,16 @@
+[package]
+name = "moth-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+moth-format.workspace = true
+winit.workspace = true
+arboard.workspace = true
+thiserror.workspace = true
+crossbeam-channel.workspace = true
+tracing.workspace = true
+moth-io.workspace = true
+uuid.workspace = true

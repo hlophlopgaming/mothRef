@@ -1,0 +1,24 @@
+[package]
+name = "moth-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+moth-format.workspace = true
+blake3.workspace = true
+image.workspace = true
+jpeg-decoder.workspace = true
+png.workspace = true
+thiserror.workspace = true
+crossbeam-channel.workspace = true
+rayon.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+dhat = "0.3"
+
+# The core check needs no Android NDK; desktop builds keep SIMD enabled.
+[target.'cfg(target_os = "android")'.dependencies]
+blake3 = { workspace = true, features = ["pure"] }
