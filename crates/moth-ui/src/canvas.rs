@@ -10,11 +10,11 @@ use super::{
 /// Corners arrive in world-rotation order: top-left, top-right, bottom-left,
 /// bottom-right. Handles land on the same 3x3 grid an unrotated frame has.
 pub fn selection(ui: &egui::Ui, corners: [egui::Pos2; 4]) {
+    let [top_left, top_right, bottom_left, bottom_right] = corners;
     ui.painter().add(egui::Shape::closed_line(
-        corners.to_vec(),
+        vec![top_left, top_right, bottom_right, bottom_left],
         egui::Stroke::new(1., ACCENT),
     ));
-    let [top_left, top_right, bottom_left, bottom_right] = corners;
     for across in 0..3u8 {
         for down in 0..3u8 {
             if across == 1 && down == 1 {
@@ -118,4 +118,37 @@ pub fn minimap(
                 });
         });
     click
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selection_outline_follows_frame_perimeter() {
+        let ctx = Context::default();
+        let corners = [
+            egui::pos2(20., 20.),
+            egui::pos2(120., 30.),
+            egui::pos2(10., 80.),
+            egui::pos2(110., 90.),
+        ];
+        let mut output = ctx.run_ui(Default::default(), |ui| selection(ui, corners));
+        output.textures_delta.clear();
+        let path = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Path(path) => Some(path),
+                _ => None,
+            })
+            .expect("selection always paints an outline path");
+        assert_eq!(
+            path.points,
+            [corners[0], corners[1], corners[3], corners[2]]
+        );
+        assert!(path.closed);
+        assert_eq!(path.fill, Color32::TRANSPARENT);
+        assert_eq!(path.stroke.color, egui::epaint::ColorMode::Solid(ACCENT));
+    }
 }

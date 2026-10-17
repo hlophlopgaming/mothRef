@@ -43,7 +43,7 @@ remain unqualified. Wayland on-top is disabled through capability flags.
 
 Four sessions; twenty recent plus twenty pinned catalog entries; four 128-pixel
 previews per entry. The minimap samples at most 128 items. Arrangement commands
-are bounded to 32 selected items and each item has its own undo step. Folder
+cover the whole selection and group into a single undo step. Folder
 filters reflect parent folder names. Full folder management, tab tear-off,
 index watchers, notes, hierarchy, crop and other later-milestone tools remain
 roadmap work. The UI does not expose decorative controls for those features.

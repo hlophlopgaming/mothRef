@@ -8,6 +8,10 @@ pub mod crash;
 pub mod input;
 /// Bounded read-only desktop board catalog.
 pub mod library;
+/// Best-effort detection of the user's interface language.
+pub mod locale;
+/// Plain-text app preferences.
+pub mod settings;
 use moth_format::{Handle, ReadSeek, Storage};
 use std::{
     collections::HashMap,

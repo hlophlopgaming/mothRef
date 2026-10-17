@@ -26,6 +26,11 @@ pub(super) struct Session {
     pub(super) message: String,
     pub(super) discarding: bool,
     pub(super) discarded: bool,
+    pub(super) batching: bool,
+    /// Item ids inserted in the current import/paste burst, cleared when it drains.
+    pub(super) burst: Vec<Uuid>,
+    /// Ids of a finished burst awaiting an arrangement choice while the prompt is shown.
+    pub(super) arrange_prompt: Option<Vec<Uuid>>,
 }
 impl Session {
     pub(super) fn new(wake: Arc<dyn Fn() + Send + Sync>, discover: bool) -> anyhow::Result<Self> {
@@ -68,6 +73,9 @@ impl Session {
             message: String::new(),
             discarding: false,
             discarded: false,
+            batching: false,
+            burst: Vec::new(),
+            arrange_prompt: None,
         })
     }
     pub(super) fn fit(&mut self) {

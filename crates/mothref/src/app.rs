@@ -24,8 +24,13 @@ pub enum Wake {
 }
 enum Pending {
     Import,
+    Paste,
     Preview(BlobId),
 }
+/// Ask how to arrange a burst of newly inserted images once it exceeds this count.
+/// shortcut: fixed threshold until the settings store lands; expose `arrange_prompt_threshold` then.
+const ARRANGE_PROMPT_THRESHOLD: usize = 5;
+mod arrange;
 mod overlay;
 mod session;
 use session::{MAX_TABS, Session};
@@ -56,6 +61,7 @@ pub struct App {
     recent_paths: Vec<std::path::PathBuf>,
     input: Adapter,
     gestures: Gestures,
+    cursor: Option<[f32; 2]>,
     command: bool,
     drag: Option<([f32; 2], [f32; 2], bool)>,
     drag_pointer: Option<(moth_platform::input::Kind, u64)>,
@@ -108,6 +114,7 @@ impl App {
             recent_paths: Vec::new(),
             input: Adapter::default(),
             gestures: Gestures::default(),
+            cursor: None,
             command: false,
             drag: None,
             drag_pointer: None,
@@ -295,6 +302,8 @@ impl App {
         if self.board.discarding {
             return;
         }
+        // A new paste supersedes a pending arrangement prompt.
+        self.board.arrange_prompt = None;
         match self
             .board
             .clipboard
@@ -310,6 +319,36 @@ impl App {
         match self.board.boards.requests.try_send(request) {
             Ok(()) => self.board.in_flight += 1,
             Err(_) => self.board.message = moth_ui::text(moth_ui::Text::StorageBusy).into(),
+        }
+    }
+    /// Sends a whole command list as one undo step.
+    fn persist_batch(&mut self, commands: Vec<(Command, Option<Handle>)>) {
+        self.persist(moth_platform::boards::Request::ApplyBatch(commands));
+    }
+    /// Opens an undo group for a burst of asynchronous inserts (drop/paste).
+    fn begin_batch(&mut self) {
+        if !self.board.batching
+            && self
+                .board
+                .boards
+                .requests
+                .try_send(moth_platform::boards::Request::BeginBatch)
+                .is_ok()
+        {
+            self.board.batching = true;
+        }
+    }
+    /// Closes the undo group once the burst has fully drained to an idle board.
+    fn end_batch(&mut self) {
+        if self.board.batching
+            && self
+                .board
+                .boards
+                .requests
+                .try_send(moth_platform::boards::Request::EndBatch)
+                .is_ok()
+        {
+            self.board.batching = false;
         }
     }
     fn discard(&mut self) {
@@ -370,6 +409,8 @@ impl App {
         if self.board.discarding {
             return;
         }
+        // A new drop supersedes a pending arrangement prompt.
+        self.board.arrange_prompt = None;
         if path
             .extension()
             .and_then(|e| e.to_str())
@@ -432,11 +473,25 @@ impl App {
             .unwrap_or([0., 0.]);
         self.board.camera.world(point)
     }
+    /// The cursor in world space, falling back to the viewport centre when unknown or off-canvas.
+    fn cursor_point(&self) -> [f32; 2] {
+        if let Some(cursor) = self.cursor
+            && self.board.viewport.is_finite()
+            && self
+                .board
+                .viewport
+                .contains(egui::pos2(cursor[0], cursor[1]))
+        {
+            return self.board.camera.world(cursor);
+        }
+        self.insertion_point()
+    }
     fn complete(&mut self, done: moth_io::Completion) {
         let Some(pending) = self.board.pending.remove(&done.request.handle) else {
             return;
         };
-        let insert = matches!(pending, Pending::Import);
+        let paste = matches!(pending, Pending::Paste);
+        let insert = paste || matches!(pending, Pending::Import);
         match done.result {
             Ok(image) => {
                 if matches!(pending,Pending::Preview(hash) if hash!=image.hash) {
@@ -445,10 +500,18 @@ impl App {
                     return;
                 }
                 if insert {
-                    let p = self.insertion_point();
+                    self.begin_batch();
+                    // Both pastes and drops land under the cursor; drops cascade to stay visible.
+                    let (p, offset) = if paste {
+                        (self.cursor_point(), 0.)
+                    } else {
+                        (
+                            self.cursor_point(),
+                            (self.board.scene.len() % 10) as f32 * 24.,
+                        )
+                    };
                     let width = (image.original[0] as f32).min(600.);
                     let height = width * image.original[1] as f32 / image.original[0] as f32;
-                    let offset = (self.board.scene.len() % 10) as f32 * 24.;
                     let item = Item::image(
                         image.hash,
                         Rect {
@@ -459,6 +522,7 @@ impl App {
                         },
                         self.board.scene.top(),
                     );
+                    self.board.burst.push(item.id);
                     self.persist(moth_platform::boards::Request::Apply(
                         Command::Insert(item),
                         Some(done.request.handle),
@@ -470,7 +534,8 @@ impl App {
             }
             Err(e) => {
                 if insert && let Some(hash) = done.failure_hash {
-                    let p = self.insertion_point();
+                    self.begin_batch();
+                    let p = self.cursor_point();
                     let item = Item::image(
                         hash,
                         Rect {
@@ -481,6 +546,7 @@ impl App {
                         },
                         self.board.scene.top(),
                     );
+                    self.board.burst.push(item.id);
                     self.persist(moth_platform::boards::Request::Apply(
                         Command::Insert(item),
                         Some(done.request.handle),
@@ -581,6 +647,11 @@ impl App {
                         self.refresh_library = true;
                     }
                 }
+                Completion::Settings(code) => {
+                    if let Some(language) = moth_ui::Locale::from_code(&code) {
+                        moth_ui::set_locale(language);
+                    }
+                }
                 done => {
                     self.board.in_flight = self.board.in_flight.saturating_sub(1);
                     match done {
@@ -594,6 +665,20 @@ impl App {
                                 }
                                 Err(e) => self.board.message = e.to_string(),
                             }
+                            self.board
+                                .selection
+                                .retain(|id| self.board.scene.get(*id).is_some());
+                        }
+                        Completion::AppliedBatch(commands, sources) => {
+                            for command in commands {
+                                if let Err(e) = self.board.scene.apply(command) {
+                                    self.board.message = e.to_string();
+                                }
+                            }
+                            for (hash, handle) in sources {
+                                self.board.sources.insert(hash, handle);
+                            }
+                            self.board.dirty = true;
                             self.board
                                 .selection
                                 .retain(|id| self.board.scene.get(*id).is_some());
@@ -668,7 +753,7 @@ impl App {
                     if self.board.scene.len() + self.board.waiting.len() + self.board.pending.len()
                         < 1_000_000
                     {
-                        self.board.pending.insert(handle, Pending::Import);
+                        self.board.pending.insert(handle, Pending::Paste);
                         self.complete(moth_io::Completion {
                             request: moth_io::Request { handle, side: 256 },
                             result: Ok(image),
@@ -697,6 +782,14 @@ impl App {
             }
         }
         self.pump();
+        if self.board.batching && self.board.idle() {
+            self.end_batch();
+            if self.board.burst.len() > ARRANGE_PROMPT_THRESHOLD {
+                self.board.arrange_prompt = Some(std::mem::take(&mut self.board.burst));
+            } else {
+                self.board.burst.clear();
+            }
+        }
     }
     fn fit(&mut self) {
         self.board.fit();
@@ -760,6 +853,10 @@ impl App {
         }
     }
     fn pointer(&mut self, input: Input) {
+        self.cursor = Some(match &input {
+            Input::Zoom { position, .. } => *position,
+            Input::Pointer(p) => p.position,
+        });
         if self.confirm_close || self.library || self.dialog.is_some() {
             return;
         }
@@ -948,6 +1045,7 @@ impl App {
         let mut undo = false;
         let mut redo = false;
         let mut commands = Vec::new();
+        let mut arranged: Option<(arrange::Arrange, Vec<Uuid>)> = None;
         let mut fit_selection = false;
         let mut output = self.ctx.run_ui(state.take_egui_input(&window), |ui| {
             if self.overlay.is_none() {
@@ -1121,14 +1219,12 @@ impl App {
                                         ui.close();
                                     }
                                     ui.separator();
-                                    let enabled = !self.board.selection.is_empty()
-                                        && self.board.selection.len() <= 32;
+                                    let enabled = !self.board.selection.is_empty();
                                     ui.add_enabled_ui(enabled, |ui| {
                                         let mut items: Vec<_> = self
                                             .board
                                             .selection
                                             .iter()
-                                            .take(32)
                                             .filter_map(|id| self.board.scene.get(*id))
                                             .collect();
                                         items.sort_unstable_by(|a, b| {
@@ -1141,74 +1237,67 @@ impl App {
                                             fit_selection = true;
                                             ui.close();
                                         }
+                                        let target_width =
+                                            self.board.viewport.width() / self.board.camera.zoom;
                                         ui.menu_button(
                                             moth_ui::text(moth_ui::Text::Arrange),
                                             |ui| {
-                                                for (label, horizontal) in [
-                                                    (moth_ui::Text::Horizontal, true),
-                                                    (moth_ui::Text::Vertical, false),
+                                                for (label, mode) in [
+                                                    (
+                                                        moth_ui::Text::Horizontal,
+                                                        arrange::Arrange::Horizontal,
+                                                    ),
+                                                    (
+                                                        moth_ui::Text::Vertical,
+                                                        arrange::Arrange::Vertical,
+                                                    ),
+                                                    (moth_ui::Text::Grid, arrange::Arrange::Grid),
+                                                    (
+                                                        moth_ui::Text::Optimal,
+                                                        arrange::Arrange::Optimal,
+                                                    ),
                                                 ] {
                                                     if ui.button(moth_ui::text(label)).clicked() {
-                                                        if let Some(first) = items.first() {
-                                                            let mut offset = 0.;
-                                                            for item in &items {
-                                                                let rect = Rect {
-                                                                    x: first.rect.x
-                                                                        + if horizontal {
-                                                                            offset
-                                                                        } else {
-                                                                            0.
-                                                                        },
-                                                                    y: first.rect.y
-                                                                        + if horizontal {
-                                                                            0.
-                                                                        } else {
-                                                                            offset
-                                                                        },
-                                                                    ..item.rect
-                                                                };
-                                                                if rect.valid() {
-                                                                    commands.push(
-                                                                        Command::SetRect {
-                                                                            id: item.id,
-                                                                            rect,
-                                                                        },
-                                                                    );
-                                                                }
-                                                                offset += if horizontal {
-                                                                    item.rect.width + 24.
-                                                                } else {
-                                                                    item.rect.height + 24.
-                                                                };
-                                                            }
-                                                        }
+                                                        commands.extend(arrange::arrange(
+                                                            &items,
+                                                            mode,
+                                                            target_width,
+                                                        ));
                                                         ui.close();
                                                     }
                                                 }
                                             },
                                         );
-                                        if ui
-                                            .button(moth_ui::text(moth_ui::Text::Normalize))
-                                            .clicked()
-                                        {
-                                            if let Some(first) = items.first() {
-                                                for item in &items {
-                                                    let rect = Rect {
-                                                        width: first.rect.width,
-                                                        height: item.rect.height * first.rect.width
-                                                            / item.rect.width,
-                                                        ..item.rect
-                                                    };
-                                                    if rect.valid() {
-                                                        commands.push(Command::SetRect {
-                                                            id: item.id,
-                                                            rect,
-                                                        });
+                                        ui.menu_button(
+                                            moth_ui::text(moth_ui::Text::Normalize),
+                                            |ui| {
+                                                for (label, mode) in [
+                                                    (
+                                                        moth_ui::Text::NormalizeWidth,
+                                                        arrange::Normalize::Width,
+                                                    ),
+                                                    (
+                                                        moth_ui::Text::NormalizeHeight,
+                                                        arrange::Normalize::Height,
+                                                    ),
+                                                    (
+                                                        moth_ui::Text::NormalizeSize,
+                                                        arrange::Normalize::Size,
+                                                    ),
+                                                    (
+                                                        moth_ui::Text::NormalizeArea,
+                                                        arrange::Normalize::Area,
+                                                    ),
+                                                ] {
+                                                    if ui.button(moth_ui::text(label)).clicked() {
+                                                        commands.extend(arrange::normalize(
+                                                            &items, mode,
+                                                        ));
+                                                        ui.close();
                                                     }
                                                 }
-                                            }
-                                            ui.close();
-                                        }
+                                            },
+                                        );
                                         for (label, quarters) in [
                                             (moth_ui::Text::RotateCw, 1.),
                                             (moth_ui::Text::RotateCcw, -1.),
@@ -1254,9 +1343,6 @@ impl App {
                                             ui.close();
                                         }
                                     });
-                                    if self.board.selection.len() > 32 {
-                                        ui.small(moth_ui::text(moth_ui::Text::SelectionLimit));
-                                    }
                                 });
                             });
                         }
@@ -1333,12 +1419,6 @@ impl App {
                                 .and_then(|(id, _)| self.board.scene.get(id))
                                 .map_or(0., |item| item.transform.rotation);
                             let corners = screen_corners(&self.board.camera, moved, rotation);
-                            let ghost = egui::Shape::convex_polygon(
-                                corners.to_vec(),
-                                moth_ui::ACCENT.gamma_multiply(0.15),
-                                egui::Stroke::NONE,
-                            );
-                            ui.painter().add(ghost);
                             moth_ui::canvas::selection(ui, corners);
                         }
                         if let Some((a, b, false)) = self.drag
@@ -1451,6 +1531,30 @@ impl App {
                                 save = true;
                             }
                             self.board.close_after_save = true;
+                        }
+                    });
+                });
+            }
+            if let Some(ids) = self.board.arrange_prompt.clone() {
+                egui::Modal::new(egui::Id::new("arrange_prompt")).show(ui.ctx(), |ui| {
+                    ui.set_max_width(380.);
+                    ui.heading(moth_ui::text(moth_ui::Text::ArrangePrompt));
+                    ui.add_space(12.);
+                    ui.separator();
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, mode) in [
+                            (moth_ui::Text::Horizontal, arrange::Arrange::Horizontal),
+                            (moth_ui::Text::Vertical, arrange::Arrange::Vertical),
+                            (moth_ui::Text::Grid, arrange::Arrange::Grid),
+                            (moth_ui::Text::Optimal, arrange::Arrange::Optimal),
+                        ] {
+                            if ui.button(moth_ui::text(label)).clicked() {
+                                arranged = Some((mode, ids.clone()));
+                                self.board.arrange_prompt = None;
+                            }
+                        }
+                        if ui.button(moth_ui::text(moth_ui::Text::Cancel)).clicked() {
+                            self.board.arrange_prompt = None;
                         }
                     });
                 });
@@ -1581,7 +1685,6 @@ impl App {
                 .board
                 .selection
                 .iter()
-                .take(32)
                 .filter_map(|id| self.board.scene.get(*id))
                 .collect();
             if !selected.is_empty() {
@@ -1606,8 +1709,20 @@ impl App {
                 self.redraw();
             }
         }
-        for command in commands {
-            self.persist(moth_platform::boards::Request::Apply(command, None));
+        if !commands.is_empty() {
+            self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+        }
+        if let Some((mode, ids)) = arranged {
+            let mut items: Vec<_> = ids
+                .iter()
+                .filter_map(|id| self.board.scene.get(*id))
+                .collect();
+            items.sort_unstable_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
+            let target_width = self.board.viewport.width() / self.board.camera.zoom;
+            let commands = arrange::arrange(&items, mode, target_width);
+            if !commands.is_empty() {
+                self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+            }
         }
         if actions.paste && !self.board.discarding {
             self.paste();
@@ -1666,6 +1781,12 @@ impl App {
         }
         if actions.drag {
             let _ = window.drag_window();
+        }
+        if let Some(language) = actions.language {
+            moth_ui::set_locale(language);
+            self.persist(moth_platform::boards::Request::SaveSettings(
+                language.code().to_owned(),
+            ));
         }
         if actions.open {
             self.dialog = Some(false);
@@ -1895,7 +2016,10 @@ impl ApplicationHandler<Wake> for App {
             }
             WindowEvent::DroppedFile(path) => self.import(path),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
-                if self.dialog.is_some() || self.confirm_close {
+                if self.dialog.is_some()
+                    || self.confirm_close
+                    || self.board.arrange_prompt.is_some()
+                {
                     return;
                 }
                 if self.command
@@ -1958,9 +2082,7 @@ impl ApplicationHandler<Wake> for App {
                 {
                     self.persist(moth_platform::boards::Request::Redo);
                 } else if let Some(commands) = self.transform_keys(&event) {
-                    for command in commands {
-                        self.persist(moth_platform::boards::Request::Apply(command, None));
-                    }
+                    self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
                 } else if !self.ctx.egui_wants_keyboard_input()
                     && event.logical_key == Key::Character("v".into())
                 {
@@ -2015,7 +2137,7 @@ fn screen_corners(camera: &Camera, rect: Rect, rotation: f32) -> [egui::Pos2; 4]
         egui::pos2(point[0], point[1])
     })
 }
-/// One transform change per selected item, bounded like the other selection commands.
+/// One transform change per selected item, grouped into one undo step by the caller.
 fn transform_selection(
     scene: &Scene,
     selection: &HashSet<Uuid>,
@@ -2023,7 +2145,6 @@ fn transform_selection(
 ) -> Vec<Command> {
     selection
         .iter()
-        .take(32)
         .filter_map(|id| scene.get(*id))
         .filter_map(|item| {
             let transform = change(item.transform);

@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.2 — 2026-10-17
+
+- Keep Undo, Redo and Save visually steady while edits are acknowledged by the journal.
+
+- Fix crossed selection outlines and remove the filled drag preview: both now use a simple theme-colored frame without diagonals or tinting.
+
+- Group multi-item edits into a single undo step: arranging, normalizing, rotating,
+  mirroring, resetting or deleting a selection, the transform hotkeys, a `.bee`
+  import, and a drop/paste burst of many images now all undo (and redo) with one
+  Ctrl+Z. The previous 32-item selection cap is removed.
+- After one drop or paste adds more than five images, ask how to arrange them
+  (horizontal, vertical, grid or optimal) and place the result under the cursor.
+  The chosen arrangement is a separate undo step; the threshold is a constant until
+  a settings store lands. Pasted and dropped images now both land at the cursor.
+- Add interface localization: English and Russian, with the OS language detected on
+  first launch and a language picker in the title bar. The choice persists in a
+  plain-text settings file next to the recent-file catalog.
 - Add item content transforms to the scene and board format (schema 2). An item now
   stores frame rotation, content flip, pan, zoom and content rotation as a reversible
   `SetTransform` command, and rotated items are indexed by their rotated bounds.
@@ -21,6 +38,12 @@
   are reported as skipped.
 - Implement the reference workspace: board library with previews, folder filters, search, persistent pins and tags; four independent board tabs; empty-board import prompt and save-on-close dialog.
 - Add the floating tool rail, selection handles, minimap, image dragging, arrangement and size normalization, plus a dot-grid canvas.
+- Expand the selection menu: normalize height, width, size and area, and arrange
+  horizontal, vertical, grid and optimal (packed to the window width), all as
+  reversible commands.
+- Read image and file clipboard contents on Wayland sessions by enabling arboard's
+  `wayland-data-control` backend, fixing pasting a copied PNG returning
+  "no supported image" on KDE Wayland and other compositors.
 - Add transparent overlay mode with master opacity, click-through and a separate control window; show platform availability for always-on-top.
 - Fix idle redraw loops, fitting boards opened from the library, and saving to relative filenames; prevent two tabs from writing the same destination.
 

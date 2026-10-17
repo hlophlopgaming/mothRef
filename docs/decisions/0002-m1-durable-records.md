@@ -16,7 +16,8 @@ command. Explicit saves append checkpoints; compaction uses a synced sibling
 temporary object and atomic replacement. Rotating immutable backups are separate
 from per-session discardable recovery. Originals remain unmodified source bytes.
 
-Keep 256 undo/redo commands in memory per session. Persistent replay is not a
+Keep 256 undo/redo steps in memory per session (a step is one command or one
+batched group). Persistent replay is not a
 persistent undo history. New boards are opened only into an empty canvas; tabs
 remain M3. The initial file chooser is an editable native path plus recent-file
 and recovery buttons, avoiding another UI/runtime dependency.

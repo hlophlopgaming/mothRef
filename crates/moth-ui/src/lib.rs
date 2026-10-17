@@ -2,8 +2,9 @@
 #![forbid(unsafe_code)]
 //! Shared theme and localized M0 controls.
 use egui::{Color32, Context};
+use std::sync::atomic::{AtomicU8, Ordering};
 /// Centralized strings keep widgets independent of the selected locale.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Text {
     /// Localized persistence control.
     StorageBusy,
@@ -96,12 +97,26 @@ pub enum Text {
     Cancel,
     /// Localized Arrange action.
     Arrange,
+    /// Localized prompt asking how to arrange a burst of newly added images.
+    ArrangePrompt,
     /// Localized Horizontal action.
     Horizontal,
     /// Localized Vertical action.
     Vertical,
+    /// Localized Grid action.
+    Grid,
+    /// Localized Optimal action.
+    Optimal,
     /// Localized Normalize action.
     Normalize,
+    /// Localized NormalizeWidth action.
+    NormalizeWidth,
+    /// Localized NormalizeHeight action.
+    NormalizeHeight,
+    /// Localized NormalizeSize action.
+    NormalizeSize,
+    /// Localized NormalizeArea action.
+    NormalizeArea,
     /// Localized RotateCw action.
     RotateCw,
     /// Localized RotateCcw action.
@@ -116,8 +131,6 @@ pub enum Text {
     Delete,
     /// Localized FitSelection action.
     FitSelection,
-    /// Localized SelectionLimit action.
-    SelectionLimit,
     /// Localized Tags control.
     Tags,
     /// Localized EditTags control.
@@ -165,8 +178,58 @@ pub enum Text {
     /// Explains that some BeeRef items could not be represented.
     ImportSkipped,
 }
-/// English is the initial locale; translation lookup has one entry point.
-pub fn text(key: Text) -> &'static str {
+/// Interface languages. English is the fallback; Russian ships with the 0.3 release.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Locale {
+    /// English, the default and the fallback when detection fails.
+    En,
+    /// Russian.
+    Ru,
+}
+
+impl Locale {
+    /// Every selectable language, listed under its own native name.
+    pub const ALL: [Locale; 2] = [Locale::En, Locale::Ru];
+    /// Native name keeps the language menu readable without translation.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Locale::En => "English",
+            Locale::Ru => "Русский",
+        }
+    }
+    /// Two-letter code persisted in the settings file.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Locale::En => "en",
+            Locale::Ru => "ru",
+        }
+    }
+    /// Maps a persisted or detected language code back to a locale.
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code.trim().to_ascii_lowercase().as_str() {
+            "ru" => Some(Locale::Ru),
+            "en" => Some(Locale::En),
+            _ => None,
+        }
+    }
+}
+
+static CURRENT: AtomicU8 = AtomicU8::new(Locale::En as u8);
+
+/// Returns the active interface language.
+pub fn locale() -> Locale {
+    match CURRENT.load(Ordering::Relaxed) {
+        1 => Locale::Ru,
+        _ => Locale::En,
+    }
+}
+
+/// Switches the interface language; widgets repaint with the next frame.
+pub fn set_locale(language: Locale) {
+    CURRENT.store(language as u8, Ordering::Relaxed);
+}
+
+fn en(key: Text) -> &'static str {
     match key {
         Text::AllBoards => "All boards",
         Text::Pinned => "Pinned",
@@ -187,9 +250,16 @@ pub fn text(key: Text) -> &'static str {
         Text::PathDialog => "Open or save a board",
         Text::Cancel => "Cancel",
         Text::Arrange => "Arrange",
+        Text::ArrangePrompt => "How should the added images be arranged?",
         Text::Horizontal => "Horizontal",
         Text::Vertical => "Vertical",
-        Text::Normalize => "Normalize size",
+        Text::Grid => "Grid",
+        Text::Optimal => "Optimal",
+        Text::Normalize => "Normalize",
+        Text::NormalizeWidth => "Width",
+        Text::NormalizeHeight => "Height",
+        Text::NormalizeSize => "Size",
+        Text::NormalizeArea => "Area",
         Text::RotateCw => "Rotate 90° clockwise",
         Text::RotateCcw => "Rotate 90° counter-clockwise",
         Text::FlipHorizontal => "Flip horizontally",
@@ -197,7 +267,6 @@ pub fn text(key: Text) -> &'static str {
         Text::ResetTransform => "Reset rotation and crop",
         Text::Delete => "Delete",
         Text::FitSelection => "Fit selection",
-        Text::SelectionLimit => "Select at most 32 items for this operation.",
         Text::Tags => "Tags",
         Text::EditTags => "Edit tags",
         Text::TagsHint => "armor, lighting, wip",
@@ -254,6 +323,115 @@ pub fn text(key: Text) -> &'static str {
         Text::CloseWarning => {
             "Save this board before closing? Discard deletes this session’s recovery files."
         }
+    }
+}
+// shortcut: Russian plural forms (Items/Boards) are simplified to one genitive form;
+// revisit with proper plural rules when a second slavic language is added.
+fn ru(key: Text) -> &'static str {
+    match key {
+        Text::StorageBusy => "Хранилище занято; дождитесь завершения операций.",
+        Text::OpenEmpty => "Сохраните и перезапустите, прежде чем открыть другую доску.",
+        Text::Recovered => {
+            "Восстановлена последняя корректная контрольная точка; повреждённые данные пропущены."
+        }
+        Text::Opened => "Доска открыта. Изменения журналируются автоматически.",
+        Text::Saved => "Доска сохранена.",
+        Text::Path => "Путь доски (.moth)",
+        Text::Save => "Сохранить",
+        Text::Open => "Открыть",
+        Text::Undo => "Отменить",
+        Text::Redo => "Вернуть",
+        Text::Recovery => "Восстановить доску",
+        Text::SaveClose => "Сохранить и закрыть",
+        Text::ClipboardBusy => "Буфер обмена занят; попробуйте ещё раз.",
+        Text::ImportBusy => "Очередь импорта переполнена; дождитесь и попробуйте снова.",
+        Text::ClipboardEmpty => {
+            "В буфере обмена нет поддерживаемого изображения, файлов, URL изображения или HTML-изображения."
+        }
+        Text::Title => "MothRef",
+        Text::Paste => "Вставить",
+        Text::Fit => "Уместить доску",
+        Text::Pan => "Перемещение",
+        Text::Select => "Выбор",
+        Text::Empty => "Перетащите изображения сюда или вставьте изображение.",
+        Text::Volatile => "Журналируемое восстановление • PNG / JPEG • превью до 2048 px",
+        Text::Close => "Отменить и закрыть",
+        Text::Keep => "Продолжить работу",
+        Text::CloseWarning => {
+            "Сохранить доску перед закрытием? При отмене удаляются файлы восстановления этой сессии."
+        }
+        Text::BoardFull => "Бюджет метаданных доски исчерпан (1 000 000 изображений)",
+        Text::AllBoards => "Все доски",
+        Text::Pinned => "Закреплённые",
+        Text::Stacks => "СТОПКИ",
+        Text::ListView => "Список",
+        Text::GridView => "Сетка",
+        Text::Name => "Имя",
+        Text::LastOpened => "Открыта",
+        Text::Boards => "доски",
+        Text::LibraryEmpty => "Здесь появятся ваши доски. Откройте или создайте новую.",
+        Text::NoMatches => "Нет досок, соответствующих поиску.",
+        Text::Search => "Поиск…",
+        Text::ClickThrough => "Сквозной клик",
+        Text::Opacity => "Непрозрачность",
+        Text::ExitOverlay => "Выйти из режима наложения",
+        Text::OverlayUnsupported => "Прозрачные поверхности недоступны на этом адаптере.",
+        Text::TabLimit => "Уже открыто четыре доски. Закройте одну, прежде чем открыть другую.",
+        Text::PathDialog => "Открыть или сохранить доску",
+        Text::Cancel => "Отмена",
+        Text::Arrange => "Расставить",
+        Text::ArrangePrompt => "Как расположить добавленные изображения?",
+        Text::Horizontal => "Горизонтально",
+        Text::Vertical => "Вертикально",
+        Text::Grid => "Сетка",
+        Text::Optimal => "Оптимально",
+        Text::Normalize => "Нормализовать",
+        Text::NormalizeWidth => "Ширина",
+        Text::NormalizeHeight => "Высота",
+        Text::NormalizeSize => "Размер",
+        Text::NormalizeArea => "Площадь",
+        Text::RotateCw => "Повернуть на 90° по часовой",
+        Text::RotateCcw => "Повернуть на 90° против часовой",
+        Text::FlipHorizontal => "Отразить по горизонтали",
+        Text::FlipVertical => "Отразить по вертикали",
+        Text::ResetTransform => "Сбросить поворот и кадрирование",
+        Text::Delete => "Удалить",
+        Text::FitSelection => "Уместить выделенное",
+        Text::Tags => "Теги",
+        Text::EditTags => "Изменить теги",
+        Text::TagsHint => "броня, освещение, в работе",
+        Text::Apply => "Применить",
+        Text::All => "Все",
+        Text::SmartCollections => "УМНЫЕ КОЛЛЕКЦИИ",
+        Text::Library => "Библиотека",
+        Text::NewBoard => "Новая доска",
+        Text::CloseTab => "Закрыть доску",
+        Text::CloseWindow => "Закрыть окно",
+        Text::Maximize => "Развернуть",
+        Text::Minimize => "Свернуть",
+        Text::Overlay => "Режим наложения",
+        Text::OnTop => "Поверх окон",
+        Text::PasteImage => "Вставить изображение",
+        Text::NotSaved => "Безымянная доска · ещё не сохранена",
+        Text::Untitled => "Безымянная",
+        Text::Items => "элементов",
+        Text::Selected => "выбрано",
+        Text::SaveQuestion => "Сохранить эту доску?",
+        Text::SourceChanged => {
+            "Исходный файл изменился. Предыдущее превью невозможно перезагрузить."
+        }
+        Text::Imported => "Импортирована доска BeeRef. Сохраните её как файл .moth.",
+        Text::ImportSkipped => {
+            "Импортированы изображения из доски BeeRef; заметки и неподдерживаемые преобразования пропущены."
+        }
+    }
+}
+
+/// Translation lookup has one entry point; widgets stay independent of the locale.
+pub fn text(key: Text) -> &'static str {
+    match locale() {
+        Locale::En => en(key),
+        Locale::Ru => ru(key),
     }
 }
 /// Color tokens are shared by the canvas overlays and the egui theme.
@@ -382,6 +560,107 @@ pub fn empty_board(ui: &mut egui::Ui) -> Actions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn every_text_key_has_a_non_empty_translation_and_switches_locale() {
+        let keys = [
+            Text::StorageBusy,
+            Text::OpenEmpty,
+            Text::Recovered,
+            Text::Opened,
+            Text::Saved,
+            Text::Path,
+            Text::Save,
+            Text::Open,
+            Text::Undo,
+            Text::Redo,
+            Text::Recovery,
+            Text::SaveClose,
+            Text::ClipboardBusy,
+            Text::ImportBusy,
+            Text::ClipboardEmpty,
+            Text::Title,
+            Text::Paste,
+            Text::Fit,
+            Text::Pan,
+            Text::Select,
+            Text::Empty,
+            Text::Volatile,
+            Text::Close,
+            Text::Keep,
+            Text::CloseWarning,
+            Text::BoardFull,
+            Text::AllBoards,
+            Text::Pinned,
+            Text::Stacks,
+            Text::ListView,
+            Text::GridView,
+            Text::Name,
+            Text::LastOpened,
+            Text::Boards,
+            Text::LibraryEmpty,
+            Text::NoMatches,
+            Text::Search,
+            Text::ClickThrough,
+            Text::Opacity,
+            Text::ExitOverlay,
+            Text::OverlayUnsupported,
+            Text::TabLimit,
+            Text::PathDialog,
+            Text::Cancel,
+            Text::Arrange,
+            Text::ArrangePrompt,
+            Text::Horizontal,
+            Text::Vertical,
+            Text::Grid,
+            Text::Optimal,
+            Text::Normalize,
+            Text::NormalizeWidth,
+            Text::NormalizeHeight,
+            Text::NormalizeSize,
+            Text::NormalizeArea,
+            Text::RotateCw,
+            Text::RotateCcw,
+            Text::FlipHorizontal,
+            Text::FlipVertical,
+            Text::ResetTransform,
+            Text::Delete,
+            Text::FitSelection,
+            Text::Tags,
+            Text::EditTags,
+            Text::TagsHint,
+            Text::Apply,
+            Text::All,
+            Text::SmartCollections,
+            Text::Library,
+            Text::NewBoard,
+            Text::CloseTab,
+            Text::CloseWindow,
+            Text::Maximize,
+            Text::Minimize,
+            Text::Overlay,
+            Text::OnTop,
+            Text::PasteImage,
+            Text::NotSaved,
+            Text::Untitled,
+            Text::Items,
+            Text::Selected,
+            Text::SaveQuestion,
+            Text::SourceChanged,
+            Text::Imported,
+            Text::ImportSkipped,
+        ];
+        for &key in &keys {
+            for language in Locale::ALL {
+                set_locale(language);
+                assert!(!text(key).is_empty(), "{language:?}: {key:?}");
+                assert_eq!(locale(), language);
+            }
+        }
+        set_locale(Locale::En);
+        assert_eq!(Locale::from_code("ru"), Some(Locale::Ru));
+        assert_eq!(Locale::from_code("EN"), Some(Locale::En));
+        assert_eq!(Locale::from_code("de"), None);
+    }
     fn status(library: bool) -> Status<'static> {
         Status {
             path: "",
@@ -397,6 +676,21 @@ mod tests {
             pinned: false,
             can_pin: false,
         }
+    }
+    #[test]
+    fn toolbar_does_not_flash_while_journaling() {
+        let draw = |idle| {
+            let ctx = Context::default();
+            theme(&ctx);
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                let mut state = status(false);
+                state.idle = idle;
+                toolbar(ui, state, &mut false, &[]);
+            });
+            output.textures_delta.clear();
+            format!("{:?}", output.shapes)
+        };
+        assert_eq!(draw(true), draw(false));
     }
     #[test]
     fn chrome_and_library_keep_a_usable_canvas_on_small_screens() {

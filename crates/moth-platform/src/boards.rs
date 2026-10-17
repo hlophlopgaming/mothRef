@@ -15,6 +15,12 @@ use std::{
 pub enum Request {
     /// Original bytes are copied before the insert is acknowledged.
     Apply(Command, Option<Handle>),
+    /// Applies a whole command list as one undo step (synchronous multi-commands).
+    ApplyBatch(Vec<(Command, Option<Handle>)>),
+    /// Opens an undo group: following `Apply`s accumulate into one step until `EndBatch`.
+    BeginBatch,
+    /// Closes the undo group opened by `BeginBatch`.
+    EndBatch,
     /// Journal the inverse before acknowledging it.
     Undo,
     /// Journal the previously undone command.
@@ -25,6 +31,8 @@ pub enum Request {
     Open(PathBuf),
     /// Convert a BeeRef `.bee` database into reversible inserts on an empty board.
     ImportBee(PathBuf),
+    /// Persist the selected interface language code (a two-letter tag).
+    SaveSettings(String),
 }
 /// Worker completions are delivered only after durable writes.
 pub enum Completion {
@@ -32,8 +40,14 @@ pub enum Completion {
     Recovery(Vec<PathBuf>),
     /// Read-only recent-file suggestions, bounded to twenty entries.
     Recent(Vec<PathBuf>),
+    /// The persisted interface language, or a detected default on first launch.
+    Settings(String),
+    /// Confirms a settings write reached the catalog file.
+    SettingsSaved,
     /// Applies an already-journaled mutation on the UI thread.
     Applied(Command, Option<(BlobId, Handle)>),
+    /// Applies a whole journaled group as one unit.
+    AppliedBatch(Vec<Command>, Vec<(BlobId, Handle)>),
     /// Replaces an empty scene with recovered metadata and staged source identities.
     Opened(Scene, HashMap<BlobId, Handle>, bool),
     /// Imported inserts, their staged originals and the count of skipped items.
@@ -63,6 +77,15 @@ impl Drop for Destination {
         }
     }
 }
+/// One undo/redo entry: a single command or a group applied as one user action.
+///
+/// Undo/redo is in-memory only (the journal still stores each command individually),
+/// so grouping never changes crash recovery or the `.moth` format.
+#[derive(Clone, Debug)]
+enum Step {
+    Single(Command),
+    Group(Vec<Command>),
+}
 struct State {
     destination: Option<Destination>,
     storage: Arc<DesktopStorage>,
@@ -70,8 +93,10 @@ struct State {
     sources: HashMap<BlobId, Handle>,
     journal: Option<File>,
     blobs: HashSet<BlobId>,
-    undo: VecDeque<Command>,
-    redo: VecDeque<Command>,
+    undo: VecDeque<Step>,
+    redo: VecDeque<Step>,
+    /// Inverses accumulated by an open `BeginBatch` group, when one is open.
+    batch: Option<Vec<Command>>,
     poisoned: bool,
 }
 fn error(e: impl std::fmt::Display) -> io::Error {
@@ -183,7 +208,13 @@ impl State {
         }
         Ok(bytes)
     }
-    fn apply(&mut self, command: Command, source: Option<Handle>) -> io::Result<Completion> {
+    /// Journals and applies one command, returning its inverse and the UI completion.
+    /// Does not touch the undo/redo stacks: callers decide how to group the inverse.
+    fn apply(
+        &mut self,
+        command: Command,
+        source: Option<Handle>,
+    ) -> io::Result<(Command, Completion)> {
         // Validate before committing; metadata-only inverse rollback cannot lose pixels.
         let inverse = self.scene.apply(command.clone()).map_err(error)?;
         self.scene.apply(inverse.clone()).map_err(error)?;
@@ -208,15 +239,18 @@ impl State {
         }
         self.commit(2, &board::encode(&command))?;
         self.scene.apply(command.clone()).map_err(error)?;
-        self.undo.push_back(inverse);
-        if self.undo.len() > 256 {
-            self.undo.pop_front();
-        }
         let source = match &command {
             Command::Insert(item) => self.sources.get(&item.blob).map(|h| (item.blob, *h)),
             _ => None,
         };
-        Ok(Completion::Applied(command, source))
+        Ok((inverse, Completion::Applied(command, source)))
+    }
+    /// Records one undo step, trimming to the in-memory budget of 256 user actions.
+    fn push_undo(&mut self, step: Step) {
+        self.undo.push_back(step);
+        if self.undo.len() > 256 {
+            self.undo.pop_front();
+        }
     }
     fn save(&mut self, path: PathBuf) -> io::Result<Completion> {
         self.claim(&path, false)?;
@@ -371,22 +405,27 @@ impl State {
         });
         let mut commands = Vec::with_capacity(pending.len());
         let mut sources = HashMap::new();
+        let mut inverses = Vec::with_capacity(pending.len());
         for item in pending {
             let insert = Item::image(item.hash, item.rect, self.scene.top());
-            if let Completion::Applied(command, source) =
-                self.apply(Command::Insert(insert), Some(item.handle))?
-            {
+            let (inverse, completion) = self.apply(Command::Insert(insert), Some(item.handle))?;
+            if let Completion::Applied(command, source) = completion {
                 commands.push(command);
                 if let Some((hash, handle)) = source {
                     sources.insert(hash, handle);
                 }
             }
+            inverses.push(inverse);
         }
         self.commit(3, &board::snapshot(&self.scene).map_err(error)?)?;
+        // Import replaces the board, so prior steps are stale; one undo removes it all.
         self.undo.clear();
+        if !inverses.is_empty() {
+            self.push_undo(Step::Group(inverses));
+        }
         Ok(Completion::Imported(commands, sources, summary.skipped()))
     }
-    fn request(&mut self, request: Request) -> io::Result<Completion> {
+    fn request(&mut self, request: Request) -> io::Result<Option<Completion>> {
         if self.poisoned {
             return Err(error(
                 "Journal write failed; restart and recover before editing",
@@ -394,48 +433,125 @@ impl State {
         }
         match request {
             Request::Apply(command, source) => {
-                let result = self.apply(command, source)?;
+                let (inverse, done) = self.apply(command, source)?;
+                match &mut self.batch {
+                    Some(group) => group.push(inverse),
+                    None => self.push_undo(Step::Single(inverse)),
+                }
                 self.redo.clear();
-                Ok(result)
+                Ok(Some(done))
+            }
+            Request::ApplyBatch(batch) => {
+                let mut inverses = Vec::with_capacity(batch.len());
+                let mut commands = Vec::with_capacity(batch.len());
+                let mut sources = Vec::new();
+                for (command, source) in batch {
+                    let (inverse, done) = self.apply(command, source)?;
+                    inverses.push(inverse);
+                    if let Completion::Applied(command, source) = done {
+                        commands.push(command);
+                        if let Some(s) = source {
+                            sources.push(s);
+                        }
+                    }
+                }
+                if !inverses.is_empty() {
+                    self.push_undo(Step::Group(inverses));
+                }
+                self.redo.clear();
+                Ok(Some(Completion::AppliedBatch(commands, sources)))
+            }
+            Request::BeginBatch => {
+                self.batch.get_or_insert_with(Vec::new);
+                Ok(None)
+            }
+            Request::EndBatch => {
+                if let Some(group) = self.batch.take()
+                    && !group.is_empty()
+                {
+                    self.push_undo(Step::Group(group));
+                }
+                Ok(None)
             }
             Request::Undo => {
-                let command = self
+                let step = self
                     .undo
                     .pop_back()
                     .ok_or_else(|| error("Nothing to undo"))?;
-                let result = self.apply(command.clone(), None);
-                match result {
-                    Ok(done) => {
-                        if let Some(inverse) = self.undo.pop_back() {
-                            self.redo.push_back(inverse);
-                        }
-                        Ok(done)
-                    }
-                    Err(e) => {
-                        self.undo.push_back(command);
-                        Err(e)
-                    }
-                }
+                Ok(Some(self.replay_undo(step)?))
             }
             Request::Redo => {
-                let command = self
+                let step = self
                     .redo
                     .pop_back()
                     .ok_or_else(|| error("Nothing to redo"))?;
-                match self.apply(command.clone(), None) {
-                    Ok(done) => Ok(done),
-                    Err(e) => {
-                        self.redo.push_back(command);
-                        Err(e)
-                    }
-                }
+                Ok(Some(self.replay_redo(step)?))
             }
-            Request::Save(path) => self.save(path),
-            Request::Open(path) => self.open(path),
+            Request::Save(path) => Ok(Some(self.save(path)?)),
+            Request::Open(path) => Ok(Some(self.open(path)?)),
             Request::ImportBee(path) => {
                 let result = self.import_bee(path)?;
                 self.redo.clear();
-                Ok(result)
+                Ok(Some(result))
+            }
+            Request::SaveSettings(code) => {
+                let directory = self.storage.base_directory()?;
+                super::settings::save(&directory, "language", &code)?;
+                Ok(Some(Completion::SettingsSaved))
+            }
+        }
+    }
+    /// Re-applies a popped undo step, producing the matching redo step.
+    fn replay_undo(&mut self, step: Step) -> io::Result<Completion> {
+        match step {
+            Step::Single(command) => {
+                let (inverse, done) = self.apply(command, None)?;
+                self.redo.push_back(Step::Single(inverse));
+                Ok(done)
+            }
+            Step::Group(commands) => {
+                let mut inverses = Vec::with_capacity(commands.len());
+                let mut applied = Vec::with_capacity(commands.len());
+                let mut sources = Vec::new();
+                for command in commands {
+                    let (inverse, done) = self.apply(command, None)?;
+                    inverses.push(inverse);
+                    if let Completion::Applied(command, source) = done {
+                        applied.push(command);
+                        if let Some(s) = source {
+                            sources.push(s);
+                        }
+                    }
+                }
+                self.redo.push_back(Step::Group(inverses));
+                Ok(Completion::AppliedBatch(applied, sources))
+            }
+        }
+    }
+    /// Re-applies a popped redo step, producing the matching undo step.
+    fn replay_redo(&mut self, step: Step) -> io::Result<Completion> {
+        match step {
+            Step::Single(command) => {
+                let (inverse, done) = self.apply(command, None)?;
+                self.push_undo(Step::Single(inverse));
+                Ok(done)
+            }
+            Step::Group(commands) => {
+                let mut inverses = Vec::with_capacity(commands.len());
+                let mut applied = Vec::with_capacity(commands.len());
+                let mut sources = Vec::new();
+                for command in commands {
+                    let (inverse, done) = self.apply(command, None)?;
+                    inverses.push(inverse);
+                    if let Completion::Applied(command, source) = done {
+                        applied.push(command);
+                        if let Some(s) = source {
+                            sources.push(s);
+                        }
+                    }
+                }
+                self.push_undo(Step::Group(inverses));
+                Ok(Completion::AppliedBatch(applied, sources))
             }
         }
     }
@@ -531,6 +647,17 @@ impl Worker {
                         }
                         wake();
                     }
+                    let language = storage
+                        .base_directory()
+                        .and_then(|directory| super::settings::load(&directory))
+                        .map(|settings| settings.get("language").cloned())
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| super::locale::detect().to_owned());
+                    if tx.send(Completion::Settings(language)).is_err() {
+                        return;
+                    }
+                    wake();
                 }
                 let mut state = State {
                     destination: None,
@@ -541,14 +668,22 @@ impl Worker {
                     blobs: HashSet::new(),
                     undo: VecDeque::new(),
                     redo: VecDeque::new(),
+                    batch: None,
                     poisoned: false,
                 };
                 while let Ok(request) = rx.recv() {
-                    let result = state
-                        .request(request)
-                        .unwrap_or_else(|e| Completion::Failed(e.to_string()));
-                    if tx.send(result).is_err() {
-                        break;
+                    match state.request(request) {
+                        Ok(Some(result)) => {
+                            if tx.send(result).is_err() {
+                                break;
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            if tx.send(Completion::Failed(e.to_string())).is_err() {
+                                break;
+                            }
+                        }
                     }
                     wake();
                 }
@@ -600,6 +735,7 @@ mod tests {
             blobs: HashSet::new(),
             undo: VecDeque::new(),
             redo: VecDeque::new(),
+            batch: None,
             poisoned: false,
         }
     }
@@ -668,7 +804,7 @@ mod tests {
         let mut loaded = self::state();
         assert!(matches!(
             loaded.request(Request::Open(path.clone())),
-            Ok(Completion::Opened(_, _, false))
+            Ok(Some(Completion::Opened(_, _, false)))
         ));
         assert_eq!(loaded.scene.get(item.id), Some(&item));
         let backup_directory = state
@@ -702,7 +838,7 @@ mod tests {
             "/../../corpus/bee/tiny.bee"
         ));
         let (blob, rect) = match state.request(Request::ImportBee(fixture)).unwrap() {
-            Completion::Imported(commands, sources, skipped) => {
+            Some(Completion::Imported(commands, sources, skipped)) => {
                 assert_eq!(commands.len(), 1);
                 assert_eq!(sources.len(), 1);
                 assert_eq!(skipped, 1);
@@ -832,6 +968,50 @@ mod tests {
                 .is_err()
         );
         assert!(state.scene.is_empty());
+        state.storage.discard().unwrap();
+        std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
+    }
+    #[test]
+    fn batch_group_undoes_and_redoes_as_one_step() {
+        let mut state = state();
+        let handle = state.storage.stage_rgba(1, 1, &[9, 9, 9, 255]).unwrap();
+        let mut bytes = Vec::new();
+        state
+            .storage
+            .open(handle)
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+        let hash = blake3::hash(&bytes);
+        let rect = moth_scene::Rect {
+            x: 0.,
+            y: 0.,
+            width: 1.,
+            height: 1.,
+        };
+        state.request(Request::BeginBatch).unwrap();
+        for _ in 0..3 {
+            let item = moth_scene::Item::image(hash, rect, None);
+            state
+                .request(Request::Apply(Command::Insert(item), Some(handle)))
+                .unwrap();
+        }
+        state.request(Request::EndBatch).unwrap();
+        assert_eq!(state.scene.len(), 3);
+
+        match state.request(Request::Undo).unwrap() {
+            Some(Completion::AppliedBatch(commands, _)) => assert_eq!(commands.len(), 3),
+            _ => panic!("expected an applied batch"),
+        }
+        assert!(state.scene.is_empty());
+
+        match state.request(Request::Redo).unwrap() {
+            Some(Completion::AppliedBatch(commands, _)) => assert_eq!(commands.len(), 3),
+            _ => panic!("expected an applied batch"),
+        }
+        assert_eq!(state.scene.len(), 3);
+
+        state.journal = None;
         state.storage.discard().unwrap();
         std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
     }

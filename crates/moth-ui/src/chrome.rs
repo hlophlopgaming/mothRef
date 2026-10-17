@@ -52,6 +52,8 @@ pub struct Actions {
     pub minimize: bool,
     /// Native maximize toggle.
     pub maximize: bool,
+    /// User picked a different interface language.
+    pub language: Option<Locale>,
 }
 /// Read-only status keeps UI independent of filesystem and GPU ownership.
 pub struct Status<'a> {
@@ -159,6 +161,17 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                         a.minimize =
                             icons::button(ui, Icon::Minus, text(Text::Minimize), false).clicked();
                     }
+                    let mut language = locale();
+                    egui::ComboBox::from_id_salt("language")
+                        .selected_text(language.name())
+                        .show_ui(ui, |ui| {
+                            for candidate in Locale::ALL {
+                                ui.selectable_value(&mut language, candidate, candidate.name());
+                            }
+                        });
+                    if language != locale() {
+                        a.language = Some(language);
+                    }
                     let drag = ui.allocate_response(ui.available_size(), egui::Sense::drag());
                     a.drag = drag.drag_started();
                     a.maximize |= drag.double_clicked();
@@ -212,6 +225,8 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                 a.home = icons::button(ui, Icon::Home, text(Text::Library), false).clicked();
                 ui.separator();
                 ui.add_enabled_ui(status.idle, |ui| {
+                    // Journal acknowledgements must not flash the toolbar.
+                    ui.set_opacity(1.);
                     a.undo = icons::button(ui, Icon::Undo, text(Text::Undo), false).clicked();
                     a.redo = icons::button(ui, Icon::Redo, text(Text::Redo), false).clicked();
                 });
@@ -220,15 +235,17 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                 ui.selectable_value(pan, true, text(Text::Pan));
                 a.paste = ui.button(text(Text::PasteImage)).clicked();
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    a.save = ui
-                        .add_enabled(
-                            status.idle,
-                            egui::Button::new(
-                                egui::RichText::new(text(Text::Save)).color(BACKGROUND),
+                    ui.add_enabled_ui(status.idle, |ui| {
+                        ui.set_opacity(1.);
+                        a.save = ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new(text(Text::Save)).color(BACKGROUND),
+                                )
+                                .fill(ACCENT),
                             )
-                            .fill(ACCENT),
-                        )
-                        .clicked();
+                            .clicked();
+                    });
                     ui.add_enabled_ui(status.can_pin, |ui| {
                         a.pin = icons::button(ui, Icon::Pin, text(Text::OnTop), status.pinned)
                             .clicked();

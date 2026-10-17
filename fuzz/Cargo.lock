@@ -322,9 +322,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.190"
+version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
+checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libfuzzer-sys"
@@ -370,7 +370,7 @@ dependencies = [
 
 [[package]]
 name = "moth-format"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "blake3",
  "fractional_index",
@@ -380,7 +380,7 @@ dependencies = [
 
 [[package]]
 name = "moth-import"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "moth-format",
  "serde_json",
@@ -389,7 +389,7 @@ dependencies = [
 
 [[package]]
 name = "moth-io"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "blake3",
  "crossbeam-channel",
@@ -405,7 +405,7 @@ dependencies = [
 
 [[package]]
 name = "moth-scene"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "blake3",
  "fractional_index",

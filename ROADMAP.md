@@ -334,14 +334,14 @@ The matrix above lists features at headline level. This checklist is the full co
 As in PureRef: when nothing is selected, arrange/align/normalize actions apply to all items; otherwise only to the selection. Most of them also work on notes.
 
 #### Normalize (M2)
-- [ ] Normalize height (PR, BR)
-- [ ] Normalize width (PR, BR)
-- [ ] Normalize size (PR, BR)
-- [ ] Normalize area (PR)
+- [x] Normalize height (PR, BR)
+- [x] Normalize width (PR, BR)
+- [x] Normalize size (PR, BR)
+- [x] Normalize area (PR)
 - [ ] Normalize scale (PR)
 
 #### Arrange (M2 unless noted)
-- [ ] Optimal — pack to fit the current window (PR, BR)
+- [x] Optimal — pack to fit the current window (PR, BR)
 - [ ] By name / by filename (PR, BR)
 - [ ] By time added (PR)
 - [ ] By file path (PR)
@@ -351,6 +351,8 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 - [ ] Running the same arrange command again reverses the order (PR)
 - [ ] Configurable gap between items (PR, BR)
 - [ ] Auto-arrange newly added images, with a chosen default method (PR "select and pack new images", BR "default arrange method")
+  - [x] Ask how to arrange when one drop/paste adds more than `ARRANGE_PROMPT_THRESHOLD` (5) images; result lands at the cursor in one undo step
+  - [ ] Make the threshold and the default method real settings instead of a constant
 - [ ] Pack all + optimize canvas in one command (PR)
 
 #### Align and distribute (M2)
@@ -434,8 +436,10 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 #### Input, shortcuts, localization
 - [ ] Every action rebindable; system-global shortcuts for chosen actions (PR, BR) — M2 (global: M3)
 - [ ] Settings show which values differ from defaults (BR) — M2
+- [ ] Settings store and panel: persist preferences; first values `arrange_prompt_threshold` and the arrange gap
+- [ ] Undo history size slider: how many steps to keep in memory (default 256), shown with an estimate of the memory the history consumes (bytes per step × kept steps), so a user can trade undo depth for RAM
 - [ ] Touch input and SpaceMouse (PR) — touch via the input abstraction (M0), SpaceMouse after 1.0
-- [ ] Interface translations; at least English and Russian at 0.3, more later (PR 2.1 ships 7 languages) — M2
+- [x] Interface translations; at least English and Russian at 0.3, more later (PR 2.1 ships 7 languages) — M2
 - [ ] Debug log viewer in the app (BR) — M1
 
 ### Milanote checklist

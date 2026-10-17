@@ -220,9 +220,14 @@ impl Soak {
         loop {
             use moth_platform::boards::Completion;
             match self.worker.results.recv_timeout(Duration::from_secs(30))? {
-                Completion::Recovery(_) | Completion::Recent(_) => continue,
+                Completion::Recovery(_)
+                | Completion::Recent(_)
+                | Completion::Settings(_)
+                | Completion::SettingsSaved => continue,
                 Completion::Failed(error) => anyhow::bail!(error),
-                Completion::Applied(_, _) | Completion::Saved => break,
+                Completion::Applied(_, _) | Completion::AppliedBatch(_, _) | Completion::Saved => {
+                    break;
+                }
                 Completion::Opened(_, _, _) => anyhow::bail!("unexpected open completion"),
                 Completion::Imported(_, _, _) => anyhow::bail!("unexpected import completion"),
             }
