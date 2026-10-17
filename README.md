@@ -6,7 +6,7 @@ Download experimental binaries from [GitHub Releases](https://github.com/hlophlo
 Windows, Linux x86_64 and macOS (Apple Silicon / Intel) archives are available.
 
 The M1 preview supports `.moth` saves, recovery journals and undo/redo. It is an
-experimental prerelease: full reliability qualification and compressed textures
+experimental early release: full reliability qualification and compressed textures
 remain open. Keep separate copies of important boards and original references.
 
 ```sh

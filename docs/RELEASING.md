@@ -2,9 +2,10 @@
 
 The `Release binaries` workflow builds Windows x86_64, Linux x86_64 (Ubuntu 24.04
 baseline), macOS Apple Silicon and macOS Intel archives. Archives include the
-license and third-party notices. The pipeline publishes a GitHub prerelease only
+license and third-party notices. The pipeline publishes a GitHub release only
 after all four builds and the release commit's CI checks pass, with `SHA256SUMS`.
-Current releases are intentionally marked experimental prereleases.
+Releases are published as regular, non-prerelease releases and marked latest;
+the software itself is still an experimental early preview.
 
 To prepare the next version:
 

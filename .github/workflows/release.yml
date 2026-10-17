@@ -97,7 +97,7 @@ jobs:
           notes="docs/releases/$RELEASE_TAG.md"
           test -f "$notes"
           if ! gh release view "$RELEASE_TAG"; then
-            gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease --title "MothRef $RELEASE_TAG" --notes-file "$notes"
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "MothRef $RELEASE_TAG" --notes-file "$notes"
           fi
           gh release upload "$RELEASE_TAG" binaries/* --clobber
-          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false --notes-file "$notes"
+          gh release edit "$RELEASE_TAG" --draft=false --latest --notes-file "$notes"
