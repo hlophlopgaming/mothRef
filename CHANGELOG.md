@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reject cyclic or excessively deep BeeRef table trees instead of overflowing the importer stack.
+- Bound JPEG preview memory independently of worker scheduling, fixing allocation-test failures on macOS.
 - Fix first-time saving of library pins and tags on Windows when the metadata file does not yet exist.
 - Import BeeRef `.bee` boards by reading their embedded SQLite database directly:
   images keep their layout and stacking order, every original is journaled before

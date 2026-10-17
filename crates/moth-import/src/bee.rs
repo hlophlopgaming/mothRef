@@ -234,6 +234,15 @@ mod tests {
     }
 
     #[test]
+    fn cyclic_table_returns_an_error() {
+        let bytes = include_bytes!("../../../corpus/bee/invalid/cyclic.bin");
+        assert!(matches!(
+            read(Cursor::new(bytes), &mut |_| Ok(())),
+            Err(Error::Sqlite(SqliteError::Malformed))
+        ));
+    }
+
+    #[test]
     fn corrupt_input_returns_an_error() {
         let result = read(Cursor::new(vec![0u8; 4096]), &mut |_| Ok(()));
         assert!(result.is_err());

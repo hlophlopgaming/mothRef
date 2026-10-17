@@ -10,6 +10,11 @@ fn four_k_preview_does_not_allocate_a_full_resolution_image() {
     image::DynamicImage::ImageRgba8(source)
         .write_to(&mut encoded, image::ImageFormat::Png)
         .unwrap();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
+    pool.install(|| {});
     let _profiler = dhat::Profiler::builder().testing().build();
     let image = moth_io::decode(encoded.get_ref(), 256).unwrap();
     assert_eq!(image.mips[0].width, 256);
@@ -19,6 +24,13 @@ fn four_k_preview_does_not_allocate_a_full_resolution_image() {
     let large =
         moth_io::decode(include_bytes!("../../../corpus/images/large-dct.jpg"), 256).unwrap();
     assert_eq!(large.original, [8192, 4097]);
+    // Exercise the app's Rayon context even when no other decode worker is free.
+    pool.install(|| {
+        let preview =
+            moth_io::decode(include_bytes!("../../../corpus/images/large-dct.jpg"), 256).unwrap();
+        assert_eq!(preview.original, [8192, 4097]);
+        assert_eq!(preview.mips[0].width, 256);
+    });
     for bytes in [
         include_bytes!("../../../corpus/images/4k.gif").as_slice(),
         include_bytes!("../../../corpus/images/4k.bmp").as_slice(),

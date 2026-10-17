@@ -151,15 +151,23 @@ impl<S: ReadSeek> Database<S> {
     ) -> Result<(), E> {
         let page = self.read_page(root)?;
         let body = if root == 1 { HEADER_LEN } else { 0 };
-        self.walk_page(&page, body, rows)
+        let mut remaining = self.page_count;
+        self.walk_page(&page, body, 0, &mut remaining, rows)
     }
 
     fn walk_page<E: From<Error>>(
         &mut self,
         page: &[u8],
         body: usize,
+        depth: usize,
+        remaining: &mut u32,
         rows: &mut dyn FnMut(i64, Vec<Value>) -> Result<(), E>,
     ) -> Result<(), E> {
+        // Bound both stack use and repeated visits through corrupt child pointers.
+        if depth >= 64 || *remaining == 0 {
+            return Err(Error::Malformed.into());
+        }
+        *remaining -= 1;
         let kind = *page.get(body).ok_or(Error::Malformed)?;
         let header_size = match kind {
             PAGE_LEAF_TABLE => 8,
@@ -186,7 +194,7 @@ impl<S: ReadSeek> Database<S> {
                 for child in children {
                     let child_page = self.read_page(child)?;
                     let child_body = if child == 1 { HEADER_LEN } else { 0 };
-                    self.walk_page(&child_page, child_body, rows)?;
+                    self.walk_page(&child_page, child_body, depth + 1, remaining, rows)?;
                 }
             }
             _ => return Err(Error::Malformed.into()),
@@ -359,6 +367,30 @@ fn u32_at(bytes: &[u8], offset: usize) -> Result<u32, Error> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn table_depth_is_bounded() {
+        for page_count in [64u32, 65] {
+            let mut bytes = vec![0u8; page_count as usize * 512];
+            for number in 1..=page_count {
+                let body = (number as usize - 1) * 512 + if number == 1 { HEADER_LEN } else { 0 };
+                if number == page_count {
+                    bytes[body] = PAGE_LEAF_TABLE;
+                } else {
+                    bytes[body] = PAGE_INTERIOR_TABLE;
+                    bytes[body + 8..body + 12].copy_from_slice(&(number + 1).to_be_bytes());
+                }
+            }
+            let mut database = Database {
+                source: Cursor::new(bytes),
+                page_size: 512,
+                usable: 512,
+                page_count,
+            };
+            let result = database.walk_table(1, &mut |_, _| -> Result<(), Error> { Ok(()) });
+            assert_eq!(result.is_ok(), page_count == 64);
+        }
+    }
 
     #[test]
     fn arbitrary_bytes_never_panic() {

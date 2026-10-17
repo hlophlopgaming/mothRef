@@ -38,7 +38,8 @@ rayon = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
 png = "0.18"
 gif = "0.14"
-jpeg-decoder = { version = "0.3", default-features = false }
+# Rayon processes baseline rows inline instead of queuing unbounded coefficient buffers.
+jpeg-decoder = { version = "0.3", default-features = false, features = ["rayon"] }
 arboard = "3"
 
 [profile.dev.package."*"]

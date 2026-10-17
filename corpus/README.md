@@ -1,5 +1,9 @@
 # Image and board corpus
 
+- `bee/invalid/cyclic.bin`: fuzz-generated corrupt SQLite/BeeRef database with
+  cyclic table-page references. Import must return an error; the `.bin` suffix
+  keeps this negative fixture out of the successful-import corpus pass.
+
 Synthetic fixtures, generated for this repository (GPL-3.0-or-later):
 
 - `images/rows.png`: 31×17 red-to-blue gradient, 8-bit RGBA.
