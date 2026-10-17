@@ -49,24 +49,45 @@ Dependency direction is strict: `moth-scene` and `moth-format` depend on nothing
 
 ## 3. Commands
 
-Run these before you say a change is done. All must pass.
+Checks come in three tiers. Agents run tiers 1 and 2; tier 3 is the release gate and runs in CI or by the maintainer, never inside an agent session. A tier-3 run takes 10 minutes to hours, outlives tool timeouts and competes with builds for CPU.
+
+### Tier 1: fast loop (every change, must finish in a few minutes)
 
 ```sh
 cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo deny check                      # licenses (GPLv3-compatible only), advisories, duplicates
-cargo xtask bench --quick             # when touching render, io, scene, format
+cargo clippy -p <changed crates> --all-targets -- -D warnings
+cargo test -p <changed crates>
 cargo xtask corpus                    # when touching format or import: round-trip every corpus file
+cargo deny check                      # when adding or bumping a dependency
 ```
 
-Fuzzing (run when you change any parser or decoder path):
+Before a PR is final, run the workspace-wide versions once: `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace`.
+
+### Tier 2: quick stress (only for the area you touched)
+
+Run these **one at a time, in the foreground, with no build, fuzzer or other benchmark running**. Timing results under load are meaningless: a failed `bench` or `paste` guard while anything else runs is not a regression, rerun it on an idle machine before acting on it.
 
 ```sh
-cargo +nightly fuzz run moth_reader -- -max_total_time=300
-cargo +nightly fuzz run bee_reader  -- -max_total_time=300
-cargo +nightly fuzz run pur_reader  -- -max_total_time=300
+cargo xtask killtest 50               # journal / autosave
+cargo xtask soak 300 5                # long-lived data: 5-minute smoke, RSS sampled every 5 s
+cargo +nightly fuzz run moth_reader  -- -max_total_time=30   # .moth reader changes
+cargo +nightly fuzz run image_reader -- -max_total_time=30   # decoder changes
+cargo xtask bench --quick             # render, io, scene
 ```
+
+`bee_reader` and `pur_reader` fuzz targets do not exist yet; they arrive with the M2 importers. Do not try to run or create them before that.
+
+### Tier 3: release gate (CI / maintainer only)
+
+```sh
+cargo xtask killtest 1000
+cargo xtask soak 1800                 # and the 8-hour soak before a release (Reliability workflow)
+cargo +nightly fuzz run <target> -- -max_total_time=300      # every target
+cargo xtask bench --quick --enforce
+cargo xtask paste --enforce
+```
+
+If a change needs tier-3 evidence (see section 7), say so in the PR description instead of running it in the session.
 
 Run the app: `cargo run -p mothref --release` (debug builds are much slower because decoders rely on SIMD; `[profile.dev.package."*"] opt-level = 3` is set in the workspace for that reason).
 
@@ -148,12 +169,12 @@ Per the maintainer, these images are licensed under Creative Commons; artwork in
 | You changed | You must add or run |
 | --- | --- |
 | A `Command` or scene logic | `proptest`: apply + undo = identity; save + load = same scene |
-| `.moth` reader/writer | Corpus round-trip, truncation test (cut at every byte of the last checkpoint), fuzz run |
-| Journal / autosave | Kill-process test (`cargo xtask killtest`) |
+| `.moth` reader/writer | Corpus round-trip, truncation test (cut at every byte of the last checkpoint), tier-2 fuzz run |
+| Journal / autosave | Kill-process test: `cargo xtask killtest 50` (the 1,000-kill run is tier 3) |
 | `.bee` / `.pur` import or `.pur` export | New corpus files for the case, round-trip test, fuzz run |
-| Decoding / LOD / caches | Benchmark run; `dhat` allocation check on the hot path |
-| Rendering | Headless golden-image test (with tolerance); benchmark run |
-| Anything holding long-lived data | Soak test locally for at least 30 minutes; RSS must plateau |
+| Decoding / LOD / caches | Tier-2 benchmark run; `dhat` allocation check on the hot path |
+| Rendering | Headless golden-image test (with tolerance); tier-2 benchmark run |
+| Anything holding long-lived data | `cargo xtask soak 300 5` smoke run; the 30-minute plateau check is tier 3 and runs in the Reliability workflow |
 | Platform code | Manual test notes in the PR for each OS you could not run in CI |
 
 Bug fixes start with a failing test that reproduces the bug.
@@ -205,6 +226,7 @@ Targets are in `ROADMAP.md`. Rules for agents:
 - Use `std::fs` paths in core crates, read raw mouse events outside the input layer, or hard-code a GPU texture format (see "Portability").
 - Touch PureRef binaries in any way (see the clean-room rule).
 - Make network requests from the desktop app without an explicit user action (link previews load only on click; the update check can be disabled).
-- Claim a task is done without running the commands in section 3.
+- Claim a task is done without running the tier-1 commands (and the tier-2 commands for the area you touched) in section 3.
+- Run tier-3 checks inside a session, or run benchmarks while a build or fuzzer is running.
 
 When something is ambiguous, write down the question and the options in the PR description instead of guessing.
