@@ -102,6 +102,16 @@ pub enum Text {
     Vertical,
     /// Localized Normalize action.
     Normalize,
+    /// Localized RotateCw action.
+    RotateCw,
+    /// Localized RotateCcw action.
+    RotateCcw,
+    /// Localized FlipHorizontal action.
+    FlipHorizontal,
+    /// Localized FlipVertical action.
+    FlipVertical,
+    /// Localized ResetTransform action.
+    ResetTransform,
     /// Localized Delete action.
     Delete,
     /// Localized FitSelection action.
@@ -180,6 +190,11 @@ pub fn text(key: Text) -> &'static str {
         Text::Horizontal => "Horizontal",
         Text::Vertical => "Vertical",
         Text::Normalize => "Normalize size",
+        Text::RotateCw => "Rotate 90° clockwise",
+        Text::RotateCcw => "Rotate 90° counter-clockwise",
+        Text::FlipHorizontal => "Flip horizontally",
+        Text::FlipVertical => "Flip vertically",
+        Text::ResetTransform => "Reset rotation and crop",
         Text::Delete => "Delete",
         Text::FitSelection => "Fit selection",
         Text::SelectionLimit => "Select at most 32 items for this operation.",

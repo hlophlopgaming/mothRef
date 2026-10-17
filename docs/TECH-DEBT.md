@@ -41,7 +41,7 @@ and the storage/input abstractions throughout.
   independent of that batch size. Close with a board above 10,000 items that
   renders every visible item, preserves ordering, and keeps cache budgets and
   benchmark targets. The roadmap schedules this for M1–M2. Implemented ordered
-  submissions using the same 320,000-byte instance buffer and separate import
+  submissions using the same instance buffer and separate import
   admission/backlog limits. The 10,003-item pixel golden now passes; it failed
   before the batching fix.
 - [x] **TD-05 — Avoid linear top-index scans for repeated insertion.**

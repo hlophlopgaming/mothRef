@@ -41,7 +41,7 @@ still pending.
 | App board admission / waiting import backlog | 1,000,000 items / 1,024 handles |
 | Desktop source catalog | 1,000,000 handles |
 | Texture arrays, including every layer and mip | 96 MiB |
-| Instance buffer | 10,000 instances, 320,000 bytes, reused between ordered batch submissions |
+| Instance buffer | 10,000 instances, 880,000 bytes, reused between ordered batch submissions |
 | Decode requests / completed images | 8 / 2 |
 | Concurrent decode consumers | min(cores − 1, 4), at least 1 |
 | Rayon pool threads | cores − 1, at least 1 |

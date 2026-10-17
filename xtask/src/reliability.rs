@@ -125,15 +125,25 @@ pub fn killtest(count: usize) -> anyhow::Result<()> {
 }
 pub fn fixture() -> anyhow::Result<()> {
     std::fs::create_dir_all("corpus/moth")?;
+    // corpus/moth/v1.moth is frozen: it is the schema-1 migration fixture. Regenerating it
+    // with the current writer would replace it with schema 2 and lose that coverage.
     let mut bytes = Vec::new();
     board::initialize(&mut bytes)?;
     let original = include_bytes!("../../corpus/images/rows.png");
     board::append(&mut bytes, 16, 1, original)?;
+    let mut item = item();
+    item.transform = moth_scene::Transform {
+        rotation: 0.75,
+        flip: [true, false],
+        content_offset: [-0.25, 1.5],
+        content_scale: 2.5,
+        content_rotation: -0.5,
+    };
     let mut scene = moth_scene::Scene::default();
-    scene.apply(Command::Insert(item()))?;
+    scene.apply(Command::Insert(item))?;
     let offset = bytes.len() as u64;
     board::append(&mut bytes, offset, 3, &board::snapshot(&scene)?)?;
-    std::fs::write("corpus/moth/v1.moth", bytes)?;
+    std::fs::write("corpus/moth/v2.moth", bytes)?;
     Ok(())
 }
 pub fn roundtrip(path: &Path) -> anyhow::Result<()> {

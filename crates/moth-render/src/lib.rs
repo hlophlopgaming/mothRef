@@ -21,13 +21,80 @@ const CLASSES: [(u32, u32); 8] = [
     (2048, 1),
 ];
 const MAX_INSTANCES: usize = 10_000;
+/// Corner order shared by the shader constants, the CPU geometry and hit testing.
+const LOCAL: [[f32; 2]; 4] = [[0., 0.], [1., 0.], [0., 1.], [1., 1.]];
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 struct Instance {
-    rect: [f32; 4],
-    uv: [f32; 2],
+    /// Clip-space positions of the content quad, in [`LOCAL`] corner order.
+    corners: [[f32; 2]; 4],
+    /// Frame-local coordinates of the same corners, for clipping against the frame.
+    frame: [[f32; 2]; 4],
+    /// Resident source rect in pixels: start corner, then a signed span for mirrored content.
+    region: [f32; 4],
     layer: u32,
     lod: f32,
+}
+/// Content geometry of one item, shared by rendering and the scene-level hit tests.
+struct Content {
+    corners: [[f32; 2]; 4],
+    frame: [[f32; 2]; 4],
+    region: [f32; 4],
+}
+/// Maps item content through its frame into clip space.
+///
+/// Content is fitted into the frame without distortion, then scaled, panned and rotated
+/// inside it; the frame's own rotation turns both. Content outside the frame is clipped by
+/// the fragment stage, so the item's visible footprint stays the rotated frame.
+fn content(item: &Item, dims: [u32; 2], camera: Camera, screen: [f32; 2]) -> Content {
+    let transform = item.transform;
+    let rect = item.rect;
+    let dims = [dims[0] as f32, dims[1] as f32];
+    let center = [rect.x + rect.width / 2., rect.y + rect.height / 2.];
+    // Cover: at scale 1 the content fills the frame without distortion, and the frame clips
+    // whatever does not fit. A frame larger than the content magnifies it instead of leaving gaps.
+    let fit = (rect.width / dims[0]).max(rect.height / dims[1]) * transform.content_scale;
+    let size = [dims[0] * fit, dims[1] * fit];
+    let pan = [
+        transform.content_offset[0] * rect.width,
+        transform.content_offset[1] * rect.height,
+    ];
+    let (spin_sin, spin_cos) = transform.content_rotation.sin_cos();
+    let (turn_sin, turn_cos) = transform.rotation.sin_cos();
+    let mut corners = [[0.; 2]; 4];
+    let mut frame = [[0.; 2]; 4];
+    for (index, corner) in LOCAL.iter().enumerate() {
+        let pan = [
+            pan[0] + (corner[0] - 0.5) * size[0],
+            pan[1] + (corner[1] - 0.5) * size[1],
+        ];
+        let spun = [
+            pan[0] * spin_cos - pan[1] * spin_sin,
+            pan[0] * spin_sin + pan[1] * spin_cos,
+        ];
+        // Frame-local coordinates stay upright while the frame turns with the content.
+        frame[index] = [spun[0] / rect.width + 0.5, spun[1] / rect.height + 0.5];
+        let turned = [
+            spun[0] * turn_cos - spun[1] * turn_sin,
+            spun[0] * turn_sin + spun[1] * turn_cos,
+        ];
+        let point = camera.screen([center[0] + turned[0], center[1] + turned[1]]);
+        corners[index] = [
+            point[0] / screen[0] * 2. - 1.,
+            1. - point[1] / screen[1] * 2.,
+        ];
+    }
+    let flip = transform.flip;
+    Content {
+        corners,
+        frame,
+        region: [
+            if flip[0] { dims[0] } else { 0. },
+            if flip[1] { dims[1] } else { 0. },
+            if flip[0] { -dims[0] } else { dims[0] },
+            if flip[1] { -dims[1] } else { dims[1] },
+        ],
+    }
 }
 #[derive(Clone, Copy)]
 struct Slot {
@@ -117,7 +184,7 @@ impl Registry {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{label:Some("quads"),layout:Some(&pipeline_layout),vertex:wgpu::VertexState{module:&shader,entry_point:Some("vs"),buffers:&[Some(wgpu::VertexBufferLayout{array_stride:std::mem::size_of::<Instance>() as u64,step_mode:wgpu::VertexStepMode::Instance,attributes:&wgpu::vertex_attr_array![0=>Float32x4,1=>Float32x2,2=>Uint32,3=>Float32]})],compilation_options:Default::default()},fragment:Some(wgpu::FragmentState{module:&shader,entry_point:Some("fs"),targets:&[Some(wgpu::ColorTargetState{format,blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})],compilation_options:wgpu::PipelineCompilationOptions{constants:&[("OUTPUT_SRGB",if format.is_srgb(){1.}else{0.})],..Default::default()}}),primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview_mask:None,cache:None});
+        let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{label:Some("quads"),layout:Some(&pipeline_layout),vertex:wgpu::VertexState{module:&shader,entry_point:Some("vs"),buffers:&[Some(wgpu::VertexBufferLayout{array_stride:std::mem::size_of::<Instance>() as u64,step_mode:wgpu::VertexStepMode::Instance,attributes:&wgpu::vertex_attr_array![0=>Float32x2,1=>Float32x2,2=>Float32x2,3=>Float32x2,4=>Float32x2,5=>Float32x2,6=>Float32x2,7=>Float32x2,8=>Float32x4,9=>Uint32,10=>Float32]})],compilation_options:Default::default()},fragment:Some(wgpu::FragmentState{module:&shader,entry_point:Some("fs"),targets:&[Some(wgpu::ColorTargetState{format,blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})],compilation_options:wgpu::PipelineCompilationOptions{constants:&[("OUTPUT_SRGB",if format.is_srgb(){1.}else{0.})],..Default::default()}}),primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview_mask:None,cache:None});
         let grid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("canvas grid"),
             source: wgpu::ShaderSource::Wgsl(include_str!("grid.wgsl").into()),
@@ -444,24 +511,18 @@ impl Registry {
             {
                 s.used = self.clock;
             }
-            let p = camera.screen([item.rect.x, item.rect.y]);
-            let size = slot.side as f32;
+            let shape = content(item, slot.dimensions, camera, screen);
             instances.push(Instance {
-                rect: [
-                    p[0] / screen[0] * 2. - 1.,
-                    1. - p[1] / screen[1] * 2.,
-                    item.rect.width * camera.zoom / screen[0] * 2.,
-                    -item.rect.height * camera.zoom / screen[1] * 2.,
-                ],
-                uv: [
-                    slot.dimensions[0] as f32 / size,
-                    slot.dimensions[1] as f32 / size,
-                ],
+                corners: shape.corners,
+                frame: shape.frame,
+                region: shape.region,
                 layer: layer as u32,
-                lod: (slot.dimensions[0].max(slot.dimensions[1]) as f32 / wanted)
-                    .log2()
-                    .max(0.)
-                    .min(slot.dimensions[0].max(slot.dimensions[1]).ilog2() as f32),
+                // shortcut: content rotation is ignored when choosing the mip, so a rotated
+                // crop can alias by up to one level. Upgrade with a diagonal term if reported.
+                lod: ((slot.dimensions[0].max(slot.dimensions[1]) as f32 / wanted).log2()
+                    - item.transform.content_scale.log2())
+                .max(0.)
+                .min(slot.dimensions[0].max(slot.dimensions[1]).ilog2() as f32),
             });
             classes.push(class);
         }

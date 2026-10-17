@@ -193,6 +193,211 @@ fn target(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
         view_formats: &[],
     })
 }
+/// Copies a rendered target back to CPU bytes so a golden can compare pixels.
+fn readback(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    stride: u32,
+) -> Result<Vec<u8>, String> {
+    let size = texture.size();
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("golden readback"),
+        size: u64::from(stride) * u64::from(size.height),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(stride),
+                rows_per_image: Some(size.height),
+            },
+        },
+        wgpu::Extent3d {
+            width: size.width,
+            height: size.height,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit([encoder.finish()]);
+    let (tx, rx) = std::sync::mpsc::channel();
+    buffer.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(Duration::from_secs(10)),
+        })
+        .map_err(|e| e.to_string())?;
+    rx.recv()
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    let bytes = buffer
+        .slice(..)
+        .get_mapped_range()
+        .map_err(|e| e.to_string())?
+        .to_vec();
+    buffer.unmap();
+    Ok(bytes)
+}
+/// A block stripe keeps every sample a few pixels clear of a color boundary.
+fn stripe(pixel: u32) -> u8 {
+    ((pixel / 8) % 4 * 36) as u8
+}
+/// Golden for arbitrary rotation, content crop/zoom and mirroring.
+///
+/// One 32x32 source of 8-pixel stripe blocks is drawn at (16,16) under several transforms.
+/// Each sample names the target pixel, the source pixel it must show, and `None` where the
+/// frame must clip the content away; the arithmetic behind every pair is in the comments.
+pub async fn golden_transform(software: bool) -> Result<(), String> {
+    use moth_scene::Transform;
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let (_, device, queue) = crate::request_device(&instance, None, software).await?;
+    let mut registry = Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm);
+    let mut image = fixture(0, 32);
+    for mip in &mut image.mips {
+        for (index, pixel) in mip.rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let (x, y) = (index as u32 % mip.width, index as u32 / mip.width);
+            *pixel = [stripe(x), stripe(y), 0, 255];
+        }
+    }
+    registry.upload(&device, &queue, &image);
+    let square = Rect {
+        x: 16.,
+        y: 16.,
+        width: 32.,
+        height: 32.,
+    };
+    type Sample = ((u32, u32), Option<(u32, u32)>);
+    let cases: [(&str, Rect, Transform, &[Sample]); 6] = [
+        (
+            "identity",
+            square,
+            Transform::default(),
+            // At scale 1 the source exactly covers the frame, so world equals source.
+            &[((19, 35), Some((4, 20))), ((43, 19), Some((28, 4)))],
+        ),
+        (
+            "content zoom",
+            square,
+            Transform {
+                content_scale: 2.,
+                ..Transform::default()
+            },
+            // Doubling the content shows the middle half: source = (world + 32) / 2.
+            &[((19, 35), Some((12, 20))), ((43, 19), Some((20, 12)))],
+        ),
+        (
+            "content flip",
+            square,
+            Transform {
+                content_scale: 2.,
+                flip: [true, false],
+                ..Transform::default()
+            },
+            // Mirroring puts source x at 32 minus the unmirrored column.
+            &[((19, 35), Some((20, 20))), ((43, 19), Some((8, 8)))],
+        ),
+        (
+            "content rotation",
+            square,
+            Transform {
+                content_scale: 2.,
+                content_rotation: std::f32::consts::FRAC_PI_2,
+                ..Transform::default()
+            },
+            // A quarter turn inside the frame maps source x to world y and source y to world -x.
+            &[((19, 27), Some((8, 20))), ((43, 35), Some((20, 8)))],
+        ),
+        (
+            "item rotation",
+            square,
+            Transform {
+                rotation: std::f32::consts::FRAC_PI_2,
+                ..Transform::default()
+            },
+            // Turning the whole item keeps the square frame in place and turns the content.
+            &[((19, 27), Some((8, 28))), ((43, 35), Some((20, 4)))],
+        ),
+        (
+            "rotated frame clips",
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 64.,
+                height: 32.,
+            },
+            Transform {
+                rotation: std::f32::consts::FRAC_PI_4,
+                ..Transform::default()
+            },
+            // 45 degrees leaves the frame's corners empty, so the second sample sits inside
+            // the content quad but outside the frame and must be discarded.
+            &[((34, 24), Some((20, 20))), ((17, 30), None)],
+        ),
+    ];
+    let texture = target(&device, 64, 64);
+    let view = texture.create_view(&Default::default());
+    for (name, rect, transform, samples) in cases {
+        let mut scene = Scene::default();
+        let mut item = Item::image(image.hash, rect, None);
+        item.transform = transform;
+        scene
+            .apply(Command::Insert(item))
+            .map_err(|e| e.to_string())?;
+        let items = scene.query(Rect {
+            x: 0.,
+            y: 0.,
+            width: 64.,
+            height: 64.,
+        });
+        registry
+            .draw(
+                &device,
+                &queue,
+                crate::Target {
+                    opacity: 1.,
+                    grid: false,
+                    view: &view,
+                    screen: [64., 64.],
+                    clip: None,
+                    clear: wgpu::Color::BLACK,
+                },
+                &items,
+                Camera::default(),
+            )
+            .map_err(|error| error.to_string())?;
+        let bytes = readback(&device, &queue, &texture, 256)?;
+        for &((x, y), source) in samples {
+            let expected = match source {
+                Some((source_x, source_y)) => [stripe(source_x), stripe(source_y), 0, 255],
+                None => [0, 0, 0, 255],
+            };
+            let pixel = &bytes[(y as usize * 256 + x as usize * 4)..][..4];
+            if pixel.iter().zip(expected).any(|(&a, b)| a.abs_diff(b) > 3) {
+                return Err(format!(
+                    "{name} mismatch at ({x},{y}): {pixel:?} != {expected:?}"
+                ));
+            }
+        }
+    }
+    registry.clear();
+    if registry.allocated_bytes() != 0 {
+        return Err("registry leaked textures".into());
+    }
+    Ok(())
+}
 /// Compares every pixel against a two-image overlap golden with channel tolerance.
 pub async fn golden(software: bool) -> Result<(), String> {
     golden_view(software, 1., false, false).await
@@ -284,85 +489,37 @@ async fn golden_view(
             Camera::default(),
         )
         .map_err(|error| error.to_string())?;
-    let mut encoder = device.create_command_encoder(&Default::default());
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("golden readback"),
-        size: 64 * 256,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &buffer,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(256),
-                rows_per_image: Some(64),
-            },
-        },
-        wgpu::Extent3d {
-            width: 64,
-            height: 64,
-            depth_or_array_layers: 1,
-        },
-    );
-    queue.submit([encoder.finish()]);
-    let (tx, rx) = std::sync::mpsc::channel();
-    buffer.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-        let _ = tx.send(r);
-    });
-    device
-        .poll(wgpu::PollType::Wait {
-            submission_index: None,
-            timeout: Some(Duration::from_secs(10)),
-        })
-        .map_err(|e| e.to_string())?;
-    rx.recv()
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
-    {
-        let bytes = buffer
-            .slice(..)
-            .get_mapped_range()
-            .map_err(|e| e.to_string())?;
-        for y in 0..64 {
-            for x in 0..64 {
-                let mut expected: [f32; 4] = if (48..56).contains(&x) && y < 8 {
-                    [0., 255., 0., 255.]
-                } else if (16..48).contains(&x) && (16..48).contains(&y) {
-                    [0., 0., 255., 255.]
-                } else if x < 32 && y < 32 {
-                    [120., 90., 60., 255.]
-                } else if grid {
-                    let distance = (((x as f32 + 0.5) % 40. - 20.).powi(2)
-                        + ((y as f32 + 0.5) % 40. - 20.).powi(2))
-                    .sqrt();
-                    let t = ((distance - 0.5) / 0.5).clamp(0., 1.);
-                    let dot = 1. - t * t * (3. - 2. * t);
-                    [17. + 26. * dot, 19. + 27. * dot, 23. + 29. * dot, 255.]
-                } else {
-                    [0., 0., 0., if transparent { 0. } else { 255. }]
-                };
-                for channel in &mut expected {
-                    *channel *= opacity;
-                }
-                let expected = expected.map(|v| v.round() as u8);
-                let pixel = &bytes[(y * 256 + x * 4)..(y * 256 + x * 4 + 4)];
-                if pixel.iter().zip(expected).any(|(&a, b)| a.abs_diff(b) > 2) {
-                    return Err(format!(
-                        "golden mismatch at ({x},{y}): {pixel:?} != {expected:?}"
-                    ));
-                }
+    let bytes = readback(&device, &queue, &texture, 256)?;
+    for y in 0..64 {
+        for x in 0..64 {
+            let mut expected: [f32; 4] = if (48..56).contains(&x) && y < 8 {
+                [0., 255., 0., 255.]
+            } else if (16..48).contains(&x) && (16..48).contains(&y) {
+                [0., 0., 255., 255.]
+            } else if x < 32 && y < 32 {
+                [120., 90., 60., 255.]
+            } else if grid {
+                let distance = (((x as f32 + 0.5) % 40. - 20.).powi(2)
+                    + ((y as f32 + 0.5) % 40. - 20.).powi(2))
+                .sqrt();
+                let t = ((distance - 0.5) / 0.5).clamp(0., 1.);
+                let dot = 1. - t * t * (3. - 2. * t);
+                [17. + 26. * dot, 19. + 27. * dot, 23. + 29. * dot, 255.]
+            } else {
+                [0., 0., 0., if transparent { 0. } else { 255. }]
+            };
+            for channel in &mut expected {
+                *channel *= opacity;
+            }
+            let expected = expected.map(|v| v.round() as u8);
+            let pixel = &bytes[(y * 256 + x * 4)..(y * 256 + x * 4 + 4)];
+            if pixel.iter().zip(expected).any(|(&a, b)| a.abs_diff(b) > 2) {
+                return Err(format!(
+                    "golden mismatch at ({x},{y}): {pixel:?} != {expected:?}"
+                ));
             }
         }
     }
-    buffer.unmap();
     registry.clear();
     if registry.allocated_bytes() != 0 {
         return Err("registry leaked textures".into());
@@ -382,5 +539,9 @@ mod tests {
     #[test]
     fn canvas_grid_stays_behind_opaque_images() {
         pollster::block_on(super::golden_view(false, 1., false, true)).unwrap();
+    }
+    #[test]
+    fn rotated_cropped_and_mirrored_content_matches_the_scene() {
+        pollster::block_on(super::golden_transform(false)).unwrap();
     }
 }

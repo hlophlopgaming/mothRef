@@ -30,10 +30,86 @@ impl Rect {
             && self.height > 0.0
     }
     fn envelope(self) -> AABB<[f32; 2]> {
+        self.rotated_envelope(0.0)
+    }
+    /// Conservative axis-aligned footprint of the frame turned by `rotation`.
+    /// Culling stays correct for rotated items without exposing rotation to the index.
+    pub fn rotated_envelope(self, rotation: f32) -> AABB<[f32; 2]> {
+        let (sin, cos) = rotation.sin_cos();
+        let half = [self.width / 2.0, self.height / 2.0];
+        let extent = [
+            half[0] * cos.abs() + half[1] * sin.abs(),
+            half[0] * sin.abs() + half[1] * cos.abs(),
+        ];
+        let center = [self.x + half[0], self.y + half[1]];
         AABB::from_corners(
-            [self.x, self.y],
-            [self.x + self.width, self.y + self.height],
+            [center[0] - extent[0], center[1] - extent[1]],
+            [center[0] + extent[0], center[1] + extent[1]],
         )
+    }
+    /// The frame's four corners, turned by `rotation` around the frame centre.
+    ///
+    /// Order is top-left, top-right, bottom-left, bottom-right as if unrotated, which is
+    /// what the renderer's content quad and the canvas handles both expect.
+    pub fn corners(self, rotation: f32) -> [[f32; 2]; 4] {
+        let center = [self.x + self.width / 2.0, self.y + self.height / 2.0];
+        let (sin, cos) = rotation.sin_cos();
+        [[-1.0, -1.0], [1.0, -1.0], [-1.0, 1.0], [1.0, 1.0]].map(|[across, down]| {
+            let offset = [across * self.width / 2.0, down * self.height / 2.0];
+            [
+                center[0] + offset[0] * cos - offset[1] * sin,
+                center[1] + offset[0] * sin + offset[1] * cos,
+            ]
+        })
+    }
+    /// Exact hit test for a rotated frame, unlike the conservative [`Self::rotated_envelope`].
+    pub fn contains_rotated(self, rotation: f32, point: [f32; 2]) -> bool {
+        let (sin, cos) = rotation.sin_cos();
+        let dx = point[0] - (self.x + self.width / 2.0);
+        let dy = point[1] - (self.y + self.height / 2.0);
+        let local = [dx * cos + dy * sin, -dx * sin + dy * cos];
+        local[0].abs() <= self.width / 2.0 && local[1].abs() <= self.height / 2.0
+    }
+}
+/// How item content sits inside its frame, plus the frame's own rotation.
+/// Content stays clipped by the frame, so scaling never grows an item's footprint.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Transform {
+    /// Rotates frame and content together around the frame centre, in radians.
+    pub rotation: f32,
+    /// Mirrors content horizontally, then vertically, before `content_rotation`.
+    pub flip: [bool; 2],
+    /// Pans content inside the frame, in frame widths and heights.
+    pub content_offset: [f32; 2],
+    /// Zooms content; 1.0 fills the frame without distortion, clipped to it.
+    pub content_scale: f32,
+    /// Rotates content inside the frame around the frame centre, in radians.
+    pub content_rotation: f32,
+}
+impl Default for Transform {
+    fn default() -> Self {
+        Self {
+            rotation: 0.0,
+            flip: [false; 2],
+            content_offset: [0.0; 2],
+            content_scale: 1.0,
+            content_rotation: 0.0,
+        }
+    }
+}
+impl Transform {
+    /// Rejects values that would poison hit testing, culling or content mapping.
+    pub fn valid(self) -> bool {
+        [
+            self.rotation,
+            self.content_offset[0],
+            self.content_offset[1],
+            self.content_scale,
+            self.content_rotation,
+        ]
+        .iter()
+        .all(|v| v.is_finite() && v.abs() <= 1e9)
+            && self.content_scale > 0.0
     }
 }
 /// Persistent identity and ordering never depend on in-process indices.
@@ -45,6 +121,8 @@ pub struct Item {
     pub blob: BlobId,
     /// Keeps indexed bounds available without decoding an image.
     pub rect: Rect,
+    /// Frame and content transform; identity until the user manipulates the item.
+    pub transform: Transform,
     /// Allows insertion between images without renumbering the board.
     pub z: FractionalIndex,
 }
@@ -55,19 +133,29 @@ impl Item {
             id: Uuid::now_v7(),
             blob,
             rect,
+            transform: Transform::default(),
             z: above.map(FractionalIndex::new_after).unwrap_or_default(),
         }
+    }
+}
+/// Rebuilds an index entry from the fields `apply` writes, so removal always matches insertion.
+fn entry(item: &Item) -> Entry {
+    Entry {
+        id: item.id,
+        rect: item.rect,
+        rotation: item.transform.rotation,
     }
 }
 #[derive(Clone, PartialEq)]
 struct Entry {
     id: Uuid,
     rect: Rect,
+    rotation: f32,
 }
 impl RTreeObject for Entry {
     type Envelope = AABB<[f32; 2]>;
     fn envelope(&self) -> Self::Envelope {
-        self.rect.envelope()
+        self.rect.rotated_envelope(self.rotation)
     }
 }
 /// Commands return their inverse, making undo and later journaling share one path.
@@ -83,6 +171,13 @@ pub enum Command {
         id: Uuid,
         /// Validated bounds update both metadata and the R-tree.
         rect: Rect,
+    },
+    /// Updates how content sits inside the frame; the frame itself is unchanged.
+    SetTransform {
+        /// Stable identity prevents changes being applied to a reused slot.
+        id: Uuid,
+        /// Validated transform; invalid values leave the board unchanged.
+        transform: Transform,
     },
 }
 /// Failed commands leave the board unchanged.
@@ -110,27 +205,21 @@ impl Scene {
     pub fn apply(&mut self, command: Command) -> Result<Command, SceneError> {
         match command {
             Command::Insert(item) => {
-                if !item.rect.valid() || item.id.get_version_num() != 7 {
+                if !item.rect.valid() || !item.transform.valid() || item.id.get_version_num() != 7 {
                     return Err(SceneError::Invalid);
                 }
                 if self.items.contains_key(&item.id) {
                     return Err(SceneError::Duplicate);
                 }
                 let inverse = Command::Remove(item.id);
-                self.tree.insert(Entry {
-                    id: item.id,
-                    rect: item.rect,
-                });
+                self.tree.insert(entry(&item));
                 self.order.insert((item.z.clone(), item.id));
                 self.items.insert(item.id, item);
                 Ok(inverse)
             }
             Command::Remove(id) => {
                 let item = self.items.remove(&id).ok_or(SceneError::Missing)?;
-                self.tree.remove(&Entry {
-                    id,
-                    rect: item.rect,
-                });
+                self.tree.remove(&entry(&item));
                 self.order.remove(&(item.z.clone(), id));
                 Ok(Command::Insert(item))
             }
@@ -140,10 +229,26 @@ impl Scene {
                 }
                 let item = self.items.get_mut(&id).ok_or(SceneError::Missing)?;
                 let old = item.rect;
-                self.tree.remove(&Entry { id, rect: old });
+                self.tree.remove(&entry(item));
                 item.rect = rect;
-                self.tree.insert(Entry { id, rect });
+                self.tree.insert(entry(item));
                 Ok(Command::SetRect { id, rect: old })
+            }
+            Command::SetTransform { id, transform } => {
+                if !transform.valid() {
+                    return Err(SceneError::Invalid);
+                }
+                let item = self.items.get_mut(&id).ok_or(SceneError::Missing)?;
+                let old = item.transform;
+                // Only rotation changes the indexed footprint; content gestures skip the tree.
+                if old.rotation != transform.rotation {
+                    self.tree.remove(&entry(item));
+                    item.transform = transform;
+                    self.tree.insert(entry(item));
+                } else {
+                    item.transform = transform;
+                }
+                Ok(Command::SetTransform { id, transform: old })
             }
         }
     }
@@ -269,12 +374,18 @@ mod tests {
         assert_eq!(scene.bounds(), None);
     }
     proptest! {
-     #[test] fn apply_undo_identity(x in -10000f32..10000., y in -10000f32..10000., w in 1f32..4096., h in 1f32..4096.) {
+     #[test] fn apply_undo_identity(x in -10000f32..10000., y in -10000f32..10000., w in 1f32..4096., h in 1f32..4096., rot in -10f32..10., scale in 0.01f32..100., dx in -10f32..10., dy in -10f32..10.) {
       let mut scene=Scene::default(); let item=Item::image(blake3::hash(b"image"),Rect{x,y,width:w,height:h},None);
       let id=item.id; let inverse=scene.apply(Command::Insert(item.clone())).unwrap();
       let snapshot=scene.query(item.rect).into_iter().cloned().collect::<Vec<_>>();
       let undo=scene.apply(Command::SetRect{id,rect:Rect{x:x+10.,..item.rect}}).unwrap(); scene.apply(undo).unwrap();
+      let transform=Transform{rotation:rot,content_offset:[dx,dy],content_scale:scale,..Transform::default()};
+      let undo=scene.apply(Command::SetTransform{id,transform}).unwrap();
+      prop_assert_eq!(scene.get(id).unwrap().transform,transform);
+      scene.apply(undo).unwrap();
       prop_assert_eq!(scene.query(item.rect).into_iter().cloned().collect::<Vec<_>>(),snapshot);
+      prop_assert_eq!(scene.apply(Command::SetTransform{id,transform:Transform{content_scale:0.,..transform}}).unwrap_err(),SceneError::Invalid);
+      prop_assert_eq!(scene.get(id).unwrap().transform,Transform::default());
       scene.apply(inverse).unwrap(); prop_assert!(scene.is_empty()); prop_assert!(scene.query(item.rect).is_empty());
      }
      #[test] fn zoom_preserves_anchor(x in -1000f32..1000., y in -1000f32..1000., factor in 0.1f32..10.) {
@@ -321,6 +432,84 @@ mod tests {
         scene.apply(Command::Insert(duplicate)).unwrap();
         scene.apply(Command::Remove(item.id)).unwrap();
         assert_eq!(scene.top(), Some(&item.z));
+    }
+    #[test]
+    fn rotation_moves_indexed_bounds_and_queries() {
+        let mut scene = Scene::default();
+        let rect = Rect {
+            x: 0.,
+            y: 0.,
+            width: 100.,
+            height: 10.,
+        };
+        let item = Item::image(blake3::hash(b"rotated"), rect, None);
+        let id = item.id;
+        scene.apply(Command::Insert(item)).unwrap();
+        assert_eq!(scene.bounds(), Some(rect));
+        let quarter = Transform {
+            rotation: std::f32::consts::FRAC_PI_2,
+            ..Transform::default()
+        };
+        scene
+            .apply(Command::SetTransform {
+                id,
+                transform: quarter,
+            })
+            .unwrap();
+        let bounds = scene.bounds().unwrap();
+        assert!((bounds.x - 45.).abs() < 1e-3, "{bounds:?}");
+        assert!((bounds.y + 45.).abs() < 1e-3, "{bounds:?}");
+        assert!((bounds.width - 10.).abs() < 1e-3, "{bounds:?}");
+        assert!((bounds.height - 100.).abs() < 1e-3, "{bounds:?}");
+        // The probe misses the upright frame, so only the rotated envelope can return it.
+        let probe = Rect {
+            x: 49.,
+            y: -40.,
+            width: 2.,
+            height: 2.,
+        };
+        assert_eq!(scene.query(probe).len(), 1);
+        scene
+            .apply(Command::SetTransform {
+                id,
+                transform: Transform::default(),
+            })
+            .unwrap();
+        assert!(scene.query(probe).is_empty());
+    }
+    #[test]
+    fn frame_corners_and_hit_test_agree_under_rotation() {
+        let rect = Rect {
+            x: 0.,
+            y: 0.,
+            width: 100.,
+            height: 10.,
+        };
+        // A square frame keeps the arithmetic readable: a quarter turn is exact.
+        let square = Rect {
+            width: 10.,
+            height: 10.,
+            ..rect
+        };
+        let quarter = std::f32::consts::FRAC_PI_2;
+        let corners = square.corners(quarter);
+        assert!((corners[0][0] - 10.).abs() < 1e-3, "{corners:?}");
+        assert!((corners[0][1] - 0.).abs() < 1e-3, "{corners:?}");
+        assert!((corners[3][0] - 0.).abs() < 1e-3, "{corners:?}");
+        assert!((corners[3][1] - 10.).abs() < 1e-3, "{corners:?}");
+        assert!(
+            !square.corners(0.)[0]
+                .iter()
+                .zip(corners[0])
+                .all(|(upright, turned)| (upright - turned).abs() < 1e-3)
+        );
+        // The upright and the turned frame agree on their own centre and disagree on the
+        // upright corner, which rotation carries outside the frame.
+        assert!(square.contains_rotated(quarter, [5., 5.]));
+        assert!(rect.contains_rotated(0., [10., 5.]));
+        assert!(!rect.contains_rotated(quarter, [10., 5.]));
+        assert!(rect.contains_rotated(quarter, [50., -40.]));
+        assert!(!rect.contains_rotated(quarter, [0., 5.]));
     }
     #[test]
     fn invalid_command_is_atomic() {

@@ -4,20 +4,27 @@ use super::{
     icons::{self, Icon},
     *,
 };
-/// Adds visible handles without implying that selection changed the source image.
-pub fn selection(ui: &egui::Ui, rect: egui::Rect) {
-    ui.painter().rect_stroke(
-        rect,
-        0.,
+/// Adds visible handles around a possibly rotated frame, without implying that
+/// selection changed the source image.
+///
+/// Corners arrive in world-rotation order: top-left, top-right, bottom-left,
+/// bottom-right. Handles land on the same 3x3 grid an unrotated frame has.
+pub fn selection(ui: &egui::Ui, corners: [egui::Pos2; 4]) {
+    ui.painter().add(egui::Shape::closed_line(
+        corners.to_vec(),
         egui::Stroke::new(1., ACCENT),
-        egui::StrokeKind::Outside,
-    );
-    for x in [rect.left(), rect.center().x, rect.right()] {
-        for y in [rect.top(), rect.center().y, rect.bottom()] {
-            if x == rect.center().x && y == rect.center().y {
+    ));
+    let [top_left, top_right, bottom_left, bottom_right] = corners;
+    for across in 0..3u8 {
+        for down in 0..3u8 {
+            if across == 1 && down == 1 {
                 continue;
             }
-            let handle = egui::Rect::from_center_size(egui::pos2(x, y), egui::vec2(6., 6.));
+            let ratio = |step: u8| step as f32 / 2.;
+            let top = top_left.lerp(top_right, ratio(across));
+            let bottom = bottom_left.lerp(bottom_right, ratio(across));
+            let handle =
+                egui::Rect::from_center_size(top.lerp(bottom, ratio(down)), egui::vec2(6., 6.));
             ui.painter().rect_filled(handle, 0., BACKGROUND);
             ui.painter().rect_stroke(
                 handle,

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add item content transforms to the scene and board format (schema 2). An item now
+  stores frame rotation, content flip, pan, zoom and content rotation as a reversible
+  `SetTransform` command, and rotated items are indexed by their rotated bounds.
+  Schema 1 boards and journals still open, with the identity transform.
+- Render and edit item transforms: content is fitted into the frame without distortion and
+  clipped to it, so `content_scale`, `content_offset` and `content_rotation` crop, pan and
+  spin the source inside a frame, and a flipped item mirrors its source. Selection outlines
+  the rotated frame, clicks hit the rotated rectangle, the context menu and the
+  `R`/`Shift+R`/`Shift+H`/`Shift+V`/`Shift+0` keys rotate, mirror and reset the selection,
+  and the minimap and drag ghost follow the rotated footprint.
 - Reject cyclic or excessively deep BeeRef table trees instead of overflowing the importer stack.
 - Bound JPEG preview memory independently of worker scheduling, fixing allocation-test failures on macOS.
 - Fix first-time saving of library pins and tags on Windows when the metadata file does not yet exist.

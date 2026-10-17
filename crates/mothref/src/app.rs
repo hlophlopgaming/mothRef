@@ -3,7 +3,7 @@ use crate::gpu::Gpu;
 use moth_format::Handle;
 use moth_platform::Platform;
 use moth_platform::input::{Adapter, Gestures, Input, NativeEvent, Phase};
-use moth_scene::{BlobId, Camera, Command, Item, Rect, Scene, Uuid};
+use moth_scene::{BlobId, Camera, Command, Item, Rect, Scene, Transform, Uuid};
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, atomic::Ordering},
@@ -11,7 +11,7 @@ use std::{
 };
 use winit::{
     application::ApplicationHandler,
-    event::{ElementState, WindowEvent},
+    event::{ElementState, KeyEvent, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy},
     keyboard::{Key, KeyCode, NamedKey, PhysicalKey},
     window::{Window, WindowId},
@@ -701,6 +701,38 @@ impl App {
     fn fit(&mut self) {
         self.board.fit();
     }
+    /// Rotation, mirroring and reset keys; they act on the selection and need an idle board.
+    fn transform_keys(&self, event: &KeyEvent) -> Option<Vec<Command>> {
+        if self.command
+            || self.ctx.egui_wants_keyboard_input()
+            || self.board.selection.is_empty()
+            || !self.board.idle()
+        {
+            return None;
+        }
+        let shift = self.ctx.input(|input| input.modifiers.shift);
+        let transform_selection = |change: fn(Transform) -> Transform| {
+            transform_selection(&self.board.scene, &self.board.selection, change)
+        };
+        Some(match (event.physical_key, shift) {
+            (PhysicalKey::Code(KeyCode::KeyR), false) => {
+                transform_selection(|transform| rotated(transform, 1.))
+            }
+            (PhysicalKey::Code(KeyCode::KeyR), true) => {
+                transform_selection(|transform| rotated(transform, -1.))
+            }
+            (PhysicalKey::Code(KeyCode::KeyH), true) => {
+                transform_selection(|transform| mirrored(transform, 0))
+            }
+            (PhysicalKey::Code(KeyCode::KeyV), true) => {
+                transform_selection(|transform| mirrored(transform, 1))
+            }
+            (PhysicalKey::Code(KeyCode::Digit0), true) => {
+                transform_selection(|_| Transform::default())
+            }
+            _ => return None,
+        })
+    }
     fn native_input(&mut self) {
         let events: Vec<_> = self.input.native().collect();
         for event in events {
@@ -797,7 +829,13 @@ impl App {
                                     width: 1. / self.board.camera.zoom,
                                     height: 1. / self.board.camera.zoom,
                                 })
-                                .last()
+                                .into_iter()
+                                .rev()
+                                // The index only guarantees the rotated envelope, so the
+                                // click must still land inside the frame itself.
+                                .find(|item| {
+                                    item.rect.contains_rotated(item.transform.rotation, world)
+                                })
                             {
                                 self.moving = Some((item.id, item.rect));
                                 self.board.selection.clear();
@@ -1054,15 +1092,12 @@ impl App {
                                 break;
                             }
                             if let Some(item) = self.board.scene.get(id) {
-                                let p = self.board.camera.screen([item.rect.x, item.rect.y]);
-                                let rect = egui::Rect::from_min_size(
-                                    egui::pos2(p[0], p[1]),
-                                    egui::vec2(
-                                        item.rect.width * self.board.camera.zoom,
-                                        item.rect.height * self.board.camera.zoom,
-                                    ),
+                                let corners = screen_corners(
+                                    &self.board.camera,
+                                    item.rect,
+                                    item.transform.rotation,
                                 );
-                                moth_ui::canvas::selection(ui, rect);
+                                moth_ui::canvas::selection(ui, corners);
                             }
                         }
                         if self.overlay.is_none() {
@@ -1174,6 +1209,43 @@ impl App {
                                             }
                                             ui.close();
                                         }
+                                        for (label, quarters) in [
+                                            (moth_ui::Text::RotateCw, 1.),
+                                            (moth_ui::Text::RotateCcw, -1.),
+                                        ] {
+                                            if ui.button(moth_ui::text(label)).clicked() {
+                                                commands.extend(transform_selection(
+                                                    &self.board.scene,
+                                                    &self.board.selection,
+                                                    |transform| rotated(transform, quarters),
+                                                ));
+                                                ui.close();
+                                            }
+                                        }
+                                        for (label, axis) in [
+                                            (moth_ui::Text::FlipHorizontal, 0),
+                                            (moth_ui::Text::FlipVertical, 1),
+                                        ] {
+                                            if ui.button(moth_ui::text(label)).clicked() {
+                                                commands.extend(transform_selection(
+                                                    &self.board.scene,
+                                                    &self.board.selection,
+                                                    |transform| mirrored(transform, axis),
+                                                ));
+                                                ui.close();
+                                            }
+                                        }
+                                        if ui
+                                            .button(moth_ui::text(moth_ui::Text::ResetTransform))
+                                            .clicked()
+                                        {
+                                            commands.extend(transform_selection(
+                                                &self.board.scene,
+                                                &self.board.selection,
+                                                |_| Transform::default(),
+                                            ));
+                                            ui.close();
+                                        }
                                         if ui.button(moth_ui::text(moth_ui::Text::Delete)).clicked()
                                         {
                                             for item in &items {
@@ -1212,12 +1284,13 @@ impl App {
                                     .items()
                                     .take(128)
                                     .map(|item| {
+                                        let envelope =
+                                            item.rect.rotated_envelope(item.transform.rotation);
+                                        let lower = envelope.lower();
+                                        let upper = envelope.upper();
                                         egui::Rect::from_min_max(
-                                            normalize(item.rect.x, item.rect.y),
-                                            normalize(
-                                                item.rect.x + item.rect.width,
-                                                item.rect.y + item.rect.height,
-                                            ),
+                                            normalize(lower[0], lower[1]),
+                                            normalize(upper[0], upper[1]),
                                         )
                                     })
                                     .collect();
@@ -1250,20 +1323,23 @@ impl App {
                             }
                         }
                         if let (Some((_, rect)), Some((a, b, false))) = (self.moving, self.drag) {
-                            let p = self.board.camera.screen([rect.x, rect.y]);
-                            let ghost = egui::Rect::from_min_size(
-                                egui::pos2(p[0] + b[0] - a[0], p[1] + b[1] - a[1]),
-                                egui::vec2(
-                                    rect.width * self.board.camera.zoom,
-                                    rect.height * self.board.camera.zoom,
-                                ),
-                            );
-                            ui.painter().rect_filled(
-                                ghost,
-                                2.,
+                            let moved = Rect {
+                                x: rect.x + (b[0] - a[0]) / self.board.camera.zoom,
+                                y: rect.y + (b[1] - a[1]) / self.board.camera.zoom,
+                                ..rect
+                            };
+                            let rotation = self
+                                .moving
+                                .and_then(|(id, _)| self.board.scene.get(id))
+                                .map_or(0., |item| item.transform.rotation);
+                            let corners = screen_corners(&self.board.camera, moved, rotation);
+                            let ghost = egui::Shape::convex_polygon(
+                                corners.to_vec(),
                                 moth_ui::ACCENT.gamma_multiply(0.15),
+                                egui::Stroke::NONE,
                             );
-                            moth_ui::canvas::selection(ui, ghost);
+                            ui.painter().add(ghost);
+                            moth_ui::canvas::selection(ui, corners);
                         }
                         if let Some((a, b, false)) = self.drag
                             && self.moving.is_none()
@@ -1881,6 +1957,10 @@ impl ApplicationHandler<Wake> for App {
                     && self.board.in_flight == 0
                 {
                     self.persist(moth_platform::boards::Request::Redo);
+                } else if let Some(commands) = self.transform_keys(&event) {
+                    for command in commands {
+                        self.persist(moth_platform::boards::Request::Apply(command, None));
+                    }
                 } else if !self.ctx.egui_wants_keyboard_input()
                     && event.logical_key == Key::Character("v".into())
                 {
@@ -1915,6 +1995,45 @@ impl ApplicationHandler<Wake> for App {
     }
 }
 
+/// Selection transforms share one definition so the menu and the keys cannot drift apart.
+fn rotated(transform: Transform, quarters: f32) -> Transform {
+    Transform {
+        rotation: transform.rotation + quarters * std::f32::consts::FRAC_PI_2,
+        ..transform
+    }
+}
+/// Mirroring is a flag, not a sign, so repeated flips stay reversible.
+fn mirrored(transform: Transform, axis: usize) -> Transform {
+    let mut flip = transform.flip;
+    flip[axis] = !flip[axis];
+    Transform { flip, ..transform }
+}
+/// Frame corners in screen space, so the canvas can outline a rotated selection.
+fn screen_corners(camera: &Camera, rect: Rect, rotation: f32) -> [egui::Pos2; 4] {
+    rect.corners(rotation).map(|corner| {
+        let point = camera.screen(corner);
+        egui::pos2(point[0], point[1])
+    })
+}
+/// One transform change per selected item, bounded like the other selection commands.
+fn transform_selection(
+    scene: &Scene,
+    selection: &HashSet<Uuid>,
+    change: impl Fn(Transform) -> Transform,
+) -> Vec<Command> {
+    selection
+        .iter()
+        .take(32)
+        .filter_map(|id| scene.get(*id))
+        .filter_map(|item| {
+            let transform = change(item.transform);
+            transform.valid().then_some(Command::SetTransform {
+                id: item.id,
+                transform,
+            })
+        })
+        .collect()
+}
 fn canvas_clip(viewport: egui::Rect, scale: f32, size: [u32; 2]) -> [u32; 4] {
     if !viewport.is_finite() || !viewport.is_positive() {
         return [0, 0, size[0], size[1]];
