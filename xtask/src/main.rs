@@ -73,6 +73,13 @@ fn main() -> anyhow::Result<()> {
                 .map(|s| s.parse())
                 .transpose()?
                 .unwrap_or(1800u64);
+            // Short smoke runs need denser RSS samples for the plateau check to apply.
+            let interval = args
+                .get(2)
+                .map(|s| s.parse())
+                .transpose()?
+                .unwrap_or(30u64)
+                .max(1);
             let mut harness = pollster::block_on(moth_render::headless::Harness::new(false))
                 .map_err(anyhow::Error::msg)?;
             let persistence = reliability::Soak::new()?;
@@ -96,7 +103,7 @@ fn main() -> anyhow::Result<()> {
                         println!("{} s: {} KiB RSS", start.elapsed().as_secs(), rss);
                         samples.push(rss);
                     }
-                    next += 30;
+                    next += interval;
                 }
                 std::thread::sleep(Duration::from_millis(100));
             }
@@ -160,7 +167,7 @@ fn main() -> anyhow::Result<()> {
             println!("{count} image and board fixtures validated");
         }
         _ => anyhow::bail!(
-            "usage: cargo xtask bench [--quick] [--enforce] [--software] | paste [--enforce] | soak [seconds] | corpus"
+            "usage: cargo xtask bench [--quick] [--enforce] [--software] | paste [--enforce] | soak [seconds] [sample-interval-seconds] | corpus"
         ),
     }
     Ok(())
