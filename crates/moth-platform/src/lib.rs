@@ -508,7 +508,23 @@ fn atomic_replace(source: &std::path::Path, target: &std::path::Path) -> io::Res
         )
     };
     if result == 0 {
-        return Err(io::Error::last_os_error());
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(windows_sys::Win32::Foundation::ERROR_FILE_NOT_FOUND as i32)
+        {
+            return Err(error);
+        }
+        // ReplaceFileW requires a destination; first writes move without overwriting a raced creation.
+        // SAFETY: both paths are NUL-terminated and live for the duration of the call.
+        let moved = unsafe {
+            windows_sys::Win32::Storage::FileSystem::MoveFileExW(
+                source.as_ptr(),
+                target.as_ptr(),
+                windows_sys::Win32::Storage::FileSystem::MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if moved == 0 {
+            return Err(io::Error::last_os_error());
+        }
     }
     Ok(())
 }
@@ -516,6 +532,22 @@ fn atomic_replace(source: &std::path::Path, target: &std::path::Path) -> io::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn atomic_replacement_creates_then_replaces_and_preserves_on_failure() {
+        let root = std::env::temp_dir().join(format!("mothref-replace-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir(&root).unwrap();
+        let source = root.join("temporary");
+        let target = root.join("destination");
+        for bytes in [b"first", b"after"] {
+            std::fs::write(&source, bytes).unwrap();
+            atomic_replace(&source, &target).unwrap();
+            assert_eq!(std::fs::read(&target).unwrap(), bytes);
+            assert!(!source.exists());
+        }
+        assert!(atomic_replace(&source, &target).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"after");
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn relative_file_replacement_syncs_the_current_directory() {
         let path = PathBuf::from(format!(".mothref-relative-test-{}", uuid::Uuid::now_v7()));

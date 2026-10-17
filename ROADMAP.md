@@ -32,7 +32,7 @@ Starting with **M1 / release 0.1**, every tagged release includes downloadable W
 
 Milestones run strictly in order. M8 and M9 come after 1.0, but the architecture decisions they depend on (stable UUIDs, fractional z-order, command-based mutations, content-addressed blobs) are made in M0–M1.
 
-M10–M12 (artist tools, review workflow, note-app interop) also come after 1.0. They do not depend on M8 or M9, so they may run in parallel with them and ship in 1.x minor releases as they land.
+M10–M13 (artist tools, review workflow, note-app interop, CLI and automation) also come after 1.0. They do not depend on M8 or M9, so they may run in parallel with them and ship in 1.x minor releases as they land.
 
 ---
 
@@ -105,7 +105,7 @@ Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](d
 - [ ] Every toolbar and tool-rail button has a tooltip with its name and current shortcut
 - [ ] Hotkey to jump between images (BeeRef #116); configurable keyboard and mouse bindings
 - [ ] Portability: responsive UI layout — no fixed desktop sizes, panels adapt to small screens
-- [ ] `.bee` import
+- [x] `.bee` import (SQLite reader, embedded images, layout and stacking; notes and unsupported transforms are reported as skipped)
 - [ ] `.pur` import for all PureRef versions via `purcore` from [LazyRef](https://github.com/achrllrogia45/LazyRef) (pinned revision), plus our own test corpus
 - [ ] All parity- and Milanote-checklist items tagged M2 (duplicate by Alt+drag, nudge, PDF export, dark theme, UI scale, normalize, arrange, align/distribute/stack, resets, pickers, canvas locks, export variants)
 
@@ -235,6 +235,23 @@ Integration goes through open formats and URIs, not through one application's AP
 
 **Exit criteria:** a board exported as JSON Canvas opens in Obsidian with every image, note, group and line, and imports back without loss of those elements.
 
+### M13 — Command-line tools and automation (after 1.0)
+
+A headless mode of the `mothref` binary, so agents, scripts and power users can build and edit boards without the GUI. Arguments are parsed with `clap` (subcommands, `--help`, `--json`); it lives in the existing binary, not a new crate. Every command reaches the board through the same `Command` / journal path as the GUI — the CLI never writes the `.moth` byte stream by hand.
+
+- [ ] Subcommand dispatch in `mothref` (`clap`, no new crate): `create`, `add`, `info`, `check`, `export`, and the scene edits below
+- [ ] Import: `create` a board; `add` images from local paths; fetch and add images from HTTP(S) URLs (an explicit invocation counts as the user action required by the network rule)
+- [ ] Arrange: optimal, by name, by time, by path; horizontal, vertical and square; configurable gap — the M2 layout operations, headless
+- [ ] Align and distribute, stack, normalize (width, height, size, area, scale) — the M2 operations, headless
+- [ ] Transform and metadata: move, scale, rotate, flip, crop; z-order (raise/lower, to-top/to-bottom); notes and labels
+- [ ] Read and export: `info` with items, bounds, blobs and recovery state; `check` for integrity with script exit codes; export originals and the scene to PNG/SVG
+- [ ] Machine-readable `--json` output for every command, with stable field names an agent can depend on
+- [ ] Batch: run a sequence of commands or a script file in one invocation, journaled like interactive edits
+- [ ] Data safety: the single `moth-platform` storage worker, checkpoint plus atomic replace, never an in-place write, never a panic on a corrupt file
+- [ ] Every command and flag documented in `--help` and in a CLI reference under `docs/`
+
+**Exit criteria:** an agent creates a board, fetches reference images from the internet, arranges them into a tidy layout, and exports a preview — in one scripted invocation, producing files the GUI opens unchanged.
+
 ---
 
 ## Feature matrix
@@ -305,6 +322,8 @@ Priorities: **P0** = no release without it, **P1** = required for 1.0, **P2** = 
 | Client presentation and pitch sheet export | MothRef | P2 | M11 |
 | JSON Canvas export/import | Obsidian | P2 | M12 |
 | Deep links, wiki-links, linked `.md` notes, preview sidecar | MothRef | P2 | M12 |
+| CLI / headless automation (`clap` subcommands, `--json`) | MothRef | P2 | M13 |
+| Fetch images from HTTP(S) URLs into a board | MothRef | P2 | M13 |
 
 `#NNN` refers to issues in the [BeeRef repository](https://github.com/rbreu/beeref/issues).
 
@@ -571,3 +590,4 @@ Known issues to plan for: macOS notarization needs a paid Apple Developer accoun
 
 | 2026-10-17 | [Reference workspace](docs/decisions/0004-reference-workspace.md): requested early UI slice uses four isolated sessions, a bounded catalog and a separate overlay controller; full M3/M5 remain open. |
 | 2026-10-16 | Post-1.0 milestones M10 (artist tools), M11 (review and presentation), M12 (note-app interop through Markdown, JSON Canvas and URIs, not a single app's API); independent of M8/M9 |
+| 2026-10-17 | Post-1.0 milestone M13 (CLI and automation): headless subcommands built into the `mothref` binary with `clap`, `--json` output; reuses the single storage-worker write path; images may be fetched from URLs on explicit invocation |

@@ -15,7 +15,9 @@ moth-io = { path = "crates/moth-io", version = "0.1.0-alpha.1" }
 moth-render = { path = "crates/moth-render", version = "0.1.0-alpha.1" }
 moth-ui = { path = "crates/moth-ui", version = "0.1.0-alpha.1" }
 moth-platform = { path = "crates/moth-platform", version = "0.1.0-alpha.1" }
+moth-import = { path = "crates/moth-import", version = "0.1.0-alpha.1" }
 anyhow = "1"
+serde_json = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

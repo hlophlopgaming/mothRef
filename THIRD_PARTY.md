@@ -14,3 +14,13 @@
 
 Rust dependencies and their license expressions are recorded in `Cargo.lock`
 and checked with `cargo deny check`.
+
+## Format references
+
+- `.bee` (BeeRef native format): the on-disk layout in `crates/moth-import` was
+  learned from BeeRef's `beeref/fileio` (GPL-3.0-or-later, rbreu/beeref). No
+  BeeRef source code is copied; the reader is an independent implementation of
+  the documented SQLite layout.
+- SQLite file format: `crates/moth-import/src/sqlite.rs` implements a read-only
+  subset of the public SQLite 3 file format specification,
+  https://www.sqlite.org/fileformat.html (public domain).

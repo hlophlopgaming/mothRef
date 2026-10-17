@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fix first-time saving of library pins and tags on Windows when the metadata file does not yet exist.
+- Import BeeRef `.bee` boards by reading their embedded SQLite database directly:
+  images keep their layout and stacking order, every original is journaled before
+  the import is acknowledged, and notes or transforms MothRef cannot yet store
+  are reported as skipped.
 - Implement the reference workspace: board library with previews, folder filters, search, persistent pins and tags; four independent board tabs; empty-board import prompt and save-on-close dialog.
 - Add the floating tool rail, selection handles, minimap, image dragging, arrangement and size normalization, plus a dot-grid canvas.
 - Add transparent overlay mode with master opacity, click-through and a separate control window; show platform availability for always-on-top.

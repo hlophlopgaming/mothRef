@@ -16,6 +16,7 @@ moth-io.workspace = true
 uuid.workspace = true
 blake3.workspace = true
 moth-scene.workspace = true
+moth-import.workspace = true
 ctrlc = { version = "3.5", features = ["termination"] }
 ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "_ring"] }
 scraper = { version = "0.27", default-features = false }

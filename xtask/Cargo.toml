@@ -8,6 +8,7 @@ license.workspace = true
 anyhow.workspace = true
 moth-scene.workspace = true
 moth-io.workspace = true
+moth-import.workspace = true
 moth-format.workspace = true
 moth-render.workspace = true
 pollster.workspace = true

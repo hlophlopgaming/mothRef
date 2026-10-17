@@ -347,6 +347,25 @@ impl App {
             self.board.message = moth_ui::text(moth_ui::Text::OpenEmpty).into();
         }
     }
+    fn import_bee(&mut self, path: std::path::PathBuf) {
+        if self.confirm_close {
+            return;
+        }
+        if !self.board.scene.is_empty() || !self.board.path.is_empty() || !self.board.idle() {
+            let count = self.tabs.len();
+            self.new_board();
+            if self.tabs.len() == count {
+                return;
+            }
+        }
+        self.library = false;
+        self.cards.clear();
+        self.catalog.dismiss_editor();
+        self.board.path = String::new();
+        if self.board.idle() {
+            self.persist(moth_platform::boards::Request::ImportBee(path));
+        }
+    }
     fn import(&mut self, path: std::path::PathBuf) {
         if self.board.discarding {
             return;
@@ -357,6 +376,14 @@ impl App {
             .is_some_and(|e| e.eq_ignore_ascii_case("moth"))
         {
             self.open_board(path);
+            return;
+        }
+        if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("bee"))
+        {
+            self.import_bee(path);
             return;
         }
         if self.board.scene.len() + self.board.waiting.len() + self.board.pending.len() >= 1_000_000
@@ -580,6 +607,24 @@ impl App {
                                 moth_ui::Text::Recovered
                             } else {
                                 moth_ui::Text::Opened
+                            })
+                            .into();
+                            self.fit();
+                        }
+                        Completion::Imported(commands, sources, skipped) => {
+                            self.board.scene = Scene::default();
+                            for command in commands {
+                                if let Err(e) = self.board.scene.apply(command) {
+                                    self.board.message = e.to_string();
+                                }
+                            }
+                            self.board.sources = sources;
+                            self.board.path = String::new();
+                            self.board.dirty = true;
+                            self.board.message = moth_ui::text(if skipped == 0 {
+                                moth_ui::Text::Imported
+                            } else {
+                                moth_ui::Text::ImportSkipped
                             })
                             .into();
                             self.fit();

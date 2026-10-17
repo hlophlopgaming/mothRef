@@ -150,6 +150,10 @@ pub enum Text {
     SaveQuestion,
     /// Shared localization key for SourceChanged.
     SourceChanged,
+    /// Confirms that a BeeRef board was imported.
+    Imported,
+    /// Explains that some BeeRef items could not be represented.
+    ImportSkipped,
 }
 /// English is the initial locale; translation lookup has one entry point.
 pub fn text(key: Text) -> &'static str {
@@ -213,6 +217,10 @@ pub fn text(key: Text) -> &'static str {
         Text::SaveClose => "Save and close",
 
         Text::SourceChanged => "The source file changed. Its previous preview cannot be reloaded.",
+        Text::Imported => "Imported a BeeRef board. Save it as a .moth file.",
+        Text::ImportSkipped => {
+            "Imported images from a BeeRef board; notes and unsupported transforms were skipped."
+        }
         Text::BoardFull => "Board metadata budget full (1,000,000 images)",
         Text::ClipboardEmpty => {
             "Clipboard has no supported image, files, HTTP(S) image URL or HTML image."

@@ -138,8 +138,19 @@ fn main() -> anyhow::Result<()> {
                             reliability::roundtrip(&path)?;
                             count += 1;
                         }
-                        Some("bee" | "pur") => {
-                            anyhow::bail!("No import reader exists yet: {}", path.display())
+                        Some("bee") => {
+                            let file = std::fs::File::open(&path)?;
+                            let summary = moth_import::bee::read(file, &mut |_| Ok(()))
+                                .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+                            anyhow::ensure!(
+                                summary.images > 0,
+                                "no images imported from {}",
+                                path.display()
+                            );
+                            count += 1;
+                        }
+                        Some("pur") => {
+                            anyhow::bail!("No PureRef import reader exists yet: {}", path.display())
                         }
                         _ => {}
                     }

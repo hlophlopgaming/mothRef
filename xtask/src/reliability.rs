@@ -214,6 +214,7 @@ impl Soak {
                 Completion::Failed(error) => anyhow::bail!(error),
                 Completion::Applied(_, _) | Completion::Saved => break,
                 Completion::Opened(_, _, _) => anyhow::bail!("unexpected open completion"),
+                Completion::Imported(_, _, _) => anyhow::bail!("unexpected import completion"),
             }
         }
         Ok(())

@@ -2,7 +2,7 @@
 //! Serializes durable mutations on a bounded storage queue.
 use super::DesktopStorage;
 use moth_format::{Handle, Storage, board};
-use moth_scene::{BlobId, Command, Scene};
+use moth_scene::{BlobId, Command, Item, Rect, Scene};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs::{File, OpenOptions},
@@ -23,6 +23,8 @@ pub enum Request {
     Save(PathBuf),
     /// Load into an empty board and establish a new recovery journal.
     Open(PathBuf),
+    /// Convert a BeeRef `.bee` database into reversible inserts on an empty board.
+    ImportBee(PathBuf),
 }
 /// Worker completions are delivered only after durable writes.
 pub enum Completion {
@@ -34,6 +36,8 @@ pub enum Completion {
     Applied(Command, Option<(BlobId, Handle)>),
     /// Replaces an empty scene with recovered metadata and staged source identities.
     Opened(Scene, HashMap<BlobId, Handle>, bool),
+    /// Imported inserts, their staged originals and the count of skipped items.
+    Imported(Vec<Command>, HashMap<BlobId, Handle>, usize),
     /// Confirms an explicit save has reached stable storage.
     Saved,
     /// Leaves the UI state unchanged on failure.
@@ -317,6 +321,71 @@ impl State {
         }
         Ok(Completion::Opened(loaded.scene, sources, loaded.recovered))
     }
+    /// Converts a BeeRef board into inserts on the current (empty) board.
+    ///
+    /// Embedded originals are staged and journaled one at a time, so a crash
+    /// mid-import recovers every image already acknowledged.
+    fn import_bee(&mut self, path: PathBuf) -> io::Result<Completion> {
+        if !self.scene.is_empty() {
+            return Err(error("Import requires an empty board"));
+        }
+        let storage = self.storage.clone();
+        let directory = storage.recovery_directory()?;
+        std::fs::create_dir_all(&directory)?;
+        struct Pending {
+            z: f32,
+            id: i64,
+            hash: BlobId,
+            rect: Rect,
+            handle: Handle,
+        }
+        let mut pending = Vec::new();
+        let file = File::open(&path)?;
+        let summary = moth_import::bee::read(file, &mut |image| {
+            let hash = blake3::hash(image.bytes);
+            let destination = directory.join(format!("{}.source", uuid::Uuid::now_v7()));
+            let mut staged = private_file(&destination)?;
+            staged.write_all(image.bytes)?;
+            staged.sync_all()?;
+            pending.push(Pending {
+                z: image.z,
+                id: image.id,
+                hash,
+                rect: Rect {
+                    x: image.x,
+                    y: image.y,
+                    width: image.width,
+                    height: image.height,
+                },
+                handle: storage.register(destination)?,
+            });
+            Ok(())
+        })
+        .map_err(error)?;
+        sync_directory(&directory)?;
+        // BeeRef stores z as a float; a stable sort preserves its stacking.
+        pending.sort_by(|a, b| {
+            a.z.partial_cmp(&b.z)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.id.cmp(&b.id))
+        });
+        let mut commands = Vec::with_capacity(pending.len());
+        let mut sources = HashMap::new();
+        for item in pending {
+            let insert = Item::image(item.hash, item.rect, self.scene.top());
+            if let Completion::Applied(command, source) =
+                self.apply(Command::Insert(insert), Some(item.handle))?
+            {
+                commands.push(command);
+                if let Some((hash, handle)) = source {
+                    sources.insert(hash, handle);
+                }
+            }
+        }
+        self.commit(3, &board::snapshot(&self.scene).map_err(error)?)?;
+        self.undo.clear();
+        Ok(Completion::Imported(commands, sources, summary.skipped()))
+    }
     fn request(&mut self, request: Request) -> io::Result<Completion> {
         if self.poisoned {
             return Err(error(
@@ -363,6 +432,11 @@ impl State {
             }
             Request::Save(path) => self.save(path),
             Request::Open(path) => self.open(path),
+            Request::ImportBee(path) => {
+                let result = self.import_bee(path)?;
+                self.redo.clear();
+                Ok(result)
+            }
         }
     }
 }
@@ -620,6 +694,41 @@ mod tests {
         std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
         std::fs::remove_dir_all(loaded.storage.base_directory().unwrap()).unwrap();
     }
+    #[test]
+    fn bee_import_journals_embedded_images() {
+        let mut state = state();
+        let fixture = std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/bee/tiny.bee"
+        ));
+        let (blob, rect) = match state.request(Request::ImportBee(fixture)).unwrap() {
+            Completion::Imported(commands, sources, skipped) => {
+                assert_eq!(commands.len(), 1);
+                assert_eq!(sources.len(), 1);
+                assert_eq!(skipped, 1);
+                let item = state.scene.items().next().unwrap();
+                (item.blob, item.rect)
+            }
+            _ => panic!("expected an import completion"),
+        };
+        assert_eq!(
+            (rect.x, rect.y, rect.width, rect.height),
+            (10., 20., 2., 1.)
+        );
+        // Every embedded original is journaled before it is acknowledged.
+        let journal = state
+            .storage
+            .recovery_directory()
+            .unwrap()
+            .join("board.moth");
+        let recovered = board::read(&mut File::open(journal).unwrap()).unwrap();
+        assert_eq!(recovered.scene.len(), 1);
+        assert!(recovered.blobs.contains_key(&blob));
+        state.journal = None;
+        state.storage.discard().unwrap();
+        std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
+    }
+
     #[test]
     fn failed_journal_write_stops_mutations_and_preserves_last_board() {
         let mut state = state();

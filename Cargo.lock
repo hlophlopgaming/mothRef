@@ -1638,6 +1638,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "moth-import"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "moth-format",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "moth-io"
 version = "0.1.0-alpha.1"
 dependencies = [
@@ -1663,6 +1672,7 @@ dependencies = [
  "crossbeam-channel",
  "ctrlc",
  "moth-format",
+ "moth-import",
  "moth-io",
  "moth-scene",
  "rustls-native-certs",
@@ -4329,6 +4339,7 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "moth-format",
+ "moth-import",
  "moth-io",
  "moth-platform",
  "moth-render",
