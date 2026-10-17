@@ -19,6 +19,14 @@ fn four_k_preview_does_not_allocate_a_full_resolution_image() {
     let large =
         moth_io::decode(include_bytes!("../../../corpus/images/large-dct.jpg"), 256).unwrap();
     assert_eq!(large.original, [8192, 4097]);
+    for bytes in [
+        include_bytes!("../../../corpus/images/4k.gif").as_slice(),
+        include_bytes!("../../../corpus/images/4k.bmp").as_slice(),
+    ] {
+        let preview = moth_io::decode(bytes, 256).unwrap();
+        assert_eq!(preview.original, [3840, 2160]);
+        assert_eq!(preview.mips[0].width, 256);
+    }
     let stats = dhat::HeapStats::get();
     dhat::assert!(
         stats.max_bytes < 8 * 1024 * 1024,
@@ -31,5 +39,12 @@ fn four_k_preview_does_not_allocate_a_full_resolution_image() {
     dhat::assert!(
         stats.max_bytes < before + 8 * 1024 * 1024,
         "streaming clipboard compression must stay below 8 MiB overhead"
+    );
+    let webp = moth_io::decode(include_bytes!("../../../corpus/images/budget.webp"), 256).unwrap();
+    assert_eq!(webp.original, [2048, 1024]);
+    let stats = dhat::HeapStats::get();
+    dhat::assert!(
+        stats.max_bytes < before + 64 * 1024 * 1024,
+        "admitted WebP must stay below 64 MiB additional peak allocations"
     );
 }

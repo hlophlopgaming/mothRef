@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![forbid(unsafe_code)]
 //! Bounded image workers. Pixels never enter the scene model.
+mod preview;
 use crossbeam_channel::{Receiver, Sender};
 use image::{DynamicImage, ImageReader, metadata::Orientation};
 use moth_format::{Handle, Storage};
@@ -16,6 +17,8 @@ pub const MAX_INPUT_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_PIXELS: u64 = 32 * 1024 * 1024;
 /// Largest preview; full-resolution visible tiles are a separate future path.
 pub const MAX_SIDE: u32 = 2048;
+/// WebP has no reduced-output API; bound the permitted full RGBA frame to 8 MiB.
+pub const MAX_WEBP_FRAME_BYTES: u64 = 8 * 1024 * 1024;
 /// A single rebuildable LOD, suitable for one array layer.
 pub struct Mip {
     /// Positive extents preserve valid geometry and aspect ratio.
@@ -66,6 +69,9 @@ pub enum DecodeError {
     #[error("decoder panicked")]
     /// Converts a decoder panic into a recoverable failure.
     Panic,
+    /// GIF failures remain inside the worker error boundary.
+    #[error("GIF: {0}")]
+    Gif(#[from] gif::DecodingError),
 }
 /// Header checks precede pixel allocation, even for JPEG's scaled path.
 pub fn decode(bytes: &[u8], side: u32) -> Result<Decoded, DecodeError> {
@@ -92,6 +98,12 @@ fn decode_inner(bytes: &[u8], side: u32) -> Result<Decoded, DecodeError> {
         || w > 32768
         || h > 32768
         || (format != Some(image::ImageFormat::Jpeg) && u64::from(w) * u64::from(h) > MAX_PIXELS)
+    {
+        return Err(DecodeError::Budget);
+    }
+    if format == Some(image::ImageFormat::WebP)
+        && (u64::from(w) * u64::from(h) * 4 > MAX_WEBP_FRAME_BYTES
+            || bytes.len() as u64 > 8 * 1024 * 1024)
     {
         return Err(DecodeError::Budget);
     }
@@ -150,17 +162,27 @@ fn decode_inner(bytes: &[u8], side: u32) -> Result<Decoded, DecodeError> {
         }
     } else if format == Some(image::ImageFormat::Png) {
         DynamicImage::ImageRgba8(png_preview(bytes, w, h, side)?)
-    } else {
-        let mut reader = ImageReader::with_format(
-            std::io::Cursor::new(bytes),
-            format.ok_or(DecodeError::Budget)?,
-        );
+    } else if format == Some(image::ImageFormat::Gif) {
+        DynamicImage::ImageRgba8(preview::gif(bytes, w, h, side)?)
+    } else if format == Some(image::ImageFormat::Bmp) {
+        DynamicImage::ImageRgba8(preview::bmp(bytes, w, h, side)?)
+    } else if format == Some(image::ImageFormat::WebP) {
+        preview::webp_dimensions(bytes, w, h)?;
+        use image::ImageDecoder;
+        let mut decoder = image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(bytes))?;
+        if decoder.has_animation() {
+            return Err(DecodeError::Budget);
+        }
         let mut limits = image::Limits::default();
-        limits.max_alloc = Some(MAX_PIXELS * 8);
+        limits.max_alloc = Some(MAX_WEBP_FRAME_BYTES);
         limits.max_image_width = Some(32768);
         limits.max_image_height = Some(32768);
-        reader.limits(limits);
-        reader.decode()?
+        decoder.set_limits(limits)?;
+        orientation = decoder.orientation()?;
+        let source = DynamicImage::from_decoder(decoder)?.into_rgba8();
+        DynamicImage::ImageRgba8(preview::rgba(source.as_raw(), w, h, side)?)
+    } else {
+        return Err(DecodeError::Budget);
     };
     image.apply_orientation(orientation);
     let original = match orientation {
@@ -224,26 +246,64 @@ pub fn write_rgba(
     writer.write_all(rgba)?;
     Ok(())
 }
-/// Compresses clipboard originals losslessly into a portable, checksummed image.
+/// Compresses clipboard originals losslessly and hashes the encoded bytes as they are written.
 pub fn write_png(
     writer: impl Write,
     width: u32,
     height: u32,
     rgba: &[u8],
-) -> Result<(), DecodeError> {
+) -> Result<blake3::Hash, DecodeError> {
     validate_rgba(width, height, rgba.len())?;
-    let mut encoder = png::Encoder::new(writer, width, height);
-    encoder.set_color(png::ColorType::Rgba);
+    let mut output = HashWriter {
+        writer,
+        hash: blake3::Hasher::new(),
+    };
+    let mut encoder = png::Encoder::new(&mut output, width, height);
+    let opaque = rgba.as_chunks::<4>().0.iter().all(|pixel| pixel[3] == 255);
+    encoder.set_color(if opaque {
+        png::ColorType::Rgb
+    } else {
+        png::ColorType::Rgba
+    });
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_compression(png::Compression::Fastest);
     let mut writer = encoder.write_header()?;
     {
-        let mut stream = writer.stream_writer()?;
-        stream.write_all(rgba)?;
+        let mut stream = writer.stream_writer_with_size(256 * 1024)?;
+        if opaque {
+            let mut row = vec![0; width as usize * 3];
+            for pixels in rgba.chunks_exact(width as usize * 4) {
+                for (rgb, pixel) in row
+                    .as_chunks_mut::<3>()
+                    .0
+                    .iter_mut()
+                    .zip(pixels.as_chunks::<4>().0)
+                {
+                    rgb.copy_from_slice(&pixel[..3]);
+                }
+                stream.write_all(&row)?;
+            }
+        } else {
+            stream.write_all(rgba)?;
+        }
         stream.finish()?;
     }
     writer.finish()?;
-    Ok(())
+    Ok(output.hash.finalize())
+}
+struct HashWriter<W> {
+    writer: W,
+    hash: blake3::Hasher,
+}
+impl<W: Write> Write for HashWriter<W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let written = self.writer.write(bytes)?;
+        self.hash.update(&bytes[..written]);
+        Ok(written)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
+    }
 }
 fn validate_rgba(width: u32, height: u32, len: usize) -> Result<(), DecodeError> {
     if width == 0
@@ -294,6 +354,17 @@ pub fn preview_rgba(
         side.clamp(1, MAX_SIDE),
         hash.finalize(),
     )
+}
+/// Builds a preview without hashing pixels when the persisted original's identity is known.
+pub fn preview_rgba_with_hash(
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    side: u32,
+    hash: blake3::Hash,
+) -> Result<Decoded, DecodeError> {
+    validate_rgba(width, height, pixels.len())?;
+    rgba_preview_inner(width, height, pixels, side.clamp(1, MAX_SIDE), hash)
 }
 fn rgba_preview_inner(
     width: u32,
@@ -517,6 +588,135 @@ impl DecodePool {
 mod tests {
     use super::*;
     #[test]
+    fn webp_orientation_and_inner_dimension_budget() {
+        let bytes = include_bytes!("../../../corpus/images/oriented.webp");
+        let mut reference = image::load_from_memory(bytes).unwrap();
+        reference.apply_orientation(image::metadata::Orientation::Rotate90);
+        let result = decode(bytes, 64).unwrap();
+        assert_eq!(result.original, [17, 31]);
+        assert_eq!(result.mips[0].rgba, reference.into_rgba8().into_raw());
+        for bytes in [
+            include_bytes!("../../../corpus/images/lossless.webp").as_slice(),
+            include_bytes!("../../../corpus/images/lossy.webp").as_slice(),
+        ] {
+            assert!(preview::webp_dimensions(bytes, 1, 1).is_err());
+            assert!(preview::webp_dimensions(&bytes[..bytes.len() - 2], 31, 17).is_err());
+        }
+    }
+    #[test]
+    fn bounded_webp_matches_reference_pixels() {
+        for bytes in [
+            include_bytes!("../../../corpus/images/lossless.webp").as_slice(),
+            include_bytes!("../../../corpus/images/lossy.webp").as_slice(),
+            include_bytes!("../../../corpus/images/alpha.webp").as_slice(),
+        ] {
+            let source = image::load_from_memory(bytes).unwrap().into_rgba8();
+            for side in [1, 8, 64] {
+                let expected = preview_rgba(31, 17, source.as_raw(), side).unwrap();
+                let actual = decode(bytes, side).unwrap();
+                assert_eq!(actual.original, [31, 17]);
+                assert_eq!(actual.mips[0].rgba, expected.mips[0].rgba);
+            }
+        }
+        assert!(matches!(
+            decode(include_bytes!("../tests/fixtures/animated.webp"), 64),
+            Err(DecodeError::Budget)
+        ));
+        let mut oversized_input = include_bytes!("../../../corpus/images/lossless.webp").to_vec();
+        oversized_input.resize(8 * 1024 * 1024 + 1, 0);
+        assert!(matches!(
+            decode(&oversized_input, 64),
+            Err(DecodeError::Budget)
+        ));
+        let mut oversized = include_bytes!("../../../corpus/images/budget.webp").to_vec();
+        assert_eq!(&oversized[12..16], b"VP8L");
+        let dimensions = (3840u32 - 1) | ((2160u32 - 1) << 14);
+        oversized[21..25].copy_from_slice(&dimensions.to_le_bytes());
+        assert!(matches!(decode(&oversized, 64), Err(DecodeError::Budget)));
+    }
+    #[test]
+    fn gif_offsets_and_transparency_match_reference() {
+        let bytes = include_bytes!("../../../corpus/images/offset.gif");
+        let mut source = image::load_from_memory(bytes).unwrap().into_rgba8();
+        for pixel in source.pixels_mut().filter(|p| p[3] == 0) {
+            *pixel = image::Rgba([0; 4]);
+        }
+        for side in [1, 4, 16] {
+            let expected = preview_rgba(7, 5, source.as_raw(), side).unwrap();
+            let actual = decode(bytes, side).unwrap();
+            assert_eq!(actual.original, [7, 5]);
+            assert_eq!(actual.mips[0].rgba, expected.mips[0].rgba);
+        }
+    }
+    #[test]
+    fn bmp_top_down_and_invalid_layouts() {
+        let bytes = include_bytes!("../../../corpus/images/rows.bmp");
+        let expected = decode(bytes, 8).unwrap();
+        let mut top_down = bytes.to_vec();
+        let offset = u32::from_le_bytes(bytes[10..14].try_into().unwrap()) as usize;
+        let stride = (31usize * 24).div_ceil(32) * 4;
+        for y in 0..17 {
+            top_down[offset + y * stride..offset + (y + 1) * stride]
+                .copy_from_slice(&bytes[offset + (16 - y) * stride..offset + (17 - y) * stride]);
+        }
+        top_down[22..26].copy_from_slice(&(-17i32).to_le_bytes());
+        assert_eq!(
+            decode(&top_down, 8).unwrap().mips[0].rgba,
+            expected.mips[0].rgba
+        );
+        for (offset, value) in [(10, 0u32), (10, u32::MAX), (30, 1), (30, 2)] {
+            let mut invalid = bytes.to_vec();
+            invalid[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+            assert!(decode(&invalid, 8).is_err());
+        }
+        for end in [0, 13, 53, bytes.len() - 1] {
+            assert!(decode(&bytes[..end], 8).is_err());
+        }
+    }
+    #[test]
+    fn gif_and_bmp_previews_are_area_averaged() {
+        for bytes in [
+            include_bytes!("../../../corpus/images/rows.gif").as_slice(),
+            include_bytes!("../../../corpus/images/interlaced.gif").as_slice(),
+            include_bytes!("../../../corpus/images/rows.bmp").as_slice(),
+            include_bytes!("../../../corpus/images/palette.bmp").as_slice(),
+            include_bytes!("../../../corpus/images/alpha.bmp").as_slice(),
+        ] {
+            let source = image::load_from_memory(bytes).unwrap().into_rgba8();
+            let expected = preview_rgba(31, 17, source.as_raw(), 8).unwrap();
+            let result = decode(bytes, 8).unwrap();
+            assert_eq!(result.original, [31, 17]);
+            assert_eq!(result.mips[0].rgba, expected.mips[0].rgba);
+            assert_eq!(decode(bytes, 64).unwrap().mips[0].rgba, source.into_raw());
+        }
+    }
+    #[test]
+    fn streamed_hash_tracks_only_successful_writes() {
+        struct ShortWriter(Vec<u8>);
+        impl Write for ShortWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                let len = bytes.len().min(3);
+                self.0.extend_from_slice(&bytes[..len]);
+                Ok(len)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut writer = HashWriter {
+            writer: ShortWriter(Vec::new()),
+            hash: blake3::Hasher::new(),
+        };
+        writer.write_all(b"clipboard original").unwrap();
+        assert_eq!(writer.hash.finalize(), blake3::hash(&writer.writer.0));
+        let hash = blake3::hash(b"encoded original");
+        let pixels = [10, 20, 30, 255].repeat(16);
+        let preview = preview_rgba_with_hash(4, 4, &pixels, 2, hash).unwrap();
+        assert_eq!(preview.hash, hash);
+        assert_eq!(preview.mips[0].rgba, [10, 20, 30, 255].repeat(4));
+        assert!(preview_rgba_with_hash(4, 4, &pixels[..4], 2, hash).is_err());
+    }
+    #[test]
     fn rgba_scratch_round_trip_and_torn_write() {
         let pixels = [20, 40, 60, 255].repeat(16 * 8);
         let mut bytes = Vec::new();
@@ -598,6 +798,38 @@ mod tests {
             for (actual, expected) in pixel.iter().zip([255u8, 127, 0, 255]) {
                 assert!(actual.abs_diff(expected) <= 2);
             }
+        }
+    }
+    #[test]
+    fn png_omits_only_redundant_alpha() {
+        for alpha in [255, 254, 0] {
+            let mut pixels = Vec::new();
+            for index in 0..31 * 17 {
+                pixels.extend_from_slice(&[index as u8, (index / 31) as u8, 60, 255]);
+            }
+            let last = pixels.len() - 1;
+            pixels[last] = alpha;
+            let mut encoded = Vec::new();
+            let hash = write_png(&mut encoded, 31, 17, &pixels).unwrap();
+            assert_eq!(hash, blake3::hash(&encoded));
+            let reader = png::Decoder::new(std::io::Cursor::new(&encoded))
+                .read_info()
+                .unwrap();
+            assert_eq!(
+                reader.info().color_type,
+                if alpha == 255 {
+                    png::ColorType::Rgb
+                } else {
+                    png::ColorType::Rgba
+                }
+            );
+            assert_eq!(
+                image::load_from_memory(&encoded)
+                    .unwrap()
+                    .into_rgba8()
+                    .as_raw(),
+                &pixels
+            );
         }
     }
     #[test]

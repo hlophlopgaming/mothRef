@@ -116,18 +116,22 @@ impl Harness {
             height: 1000.,
         });
         let view = self.target.create_view(&Default::default());
-        self.registry.draw(
-            &self.device,
-            &self.queue,
-            crate::Target {
-                view: &view,
-                screen: [1000., 1000.],
-                clip: None,
-                clear: wgpu::Color::BLACK,
-            },
-            &items,
-            camera,
-        );
+        self.registry
+            .draw(
+                &self.device,
+                &self.queue,
+                crate::Target {
+                    opacity: 1.,
+                    grid: false,
+                    view: &view,
+                    screen: [1000., 1000.],
+                    clip: None,
+                    clear: wgpu::Color::BLACK,
+                },
+                &items,
+                camera,
+            )
+            .map_err(|error| error.to_string())?;
         self.device
             .poll(wgpu::PollType::Wait {
                 submission_index: None,
@@ -191,6 +195,14 @@ fn target(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
 }
 /// Compares every pixel against a two-image overlap golden with channel tolerance.
 pub async fn golden(software: bool) -> Result<(), String> {
+    golden_view(software, 1., false, false).await
+}
+async fn golden_view(
+    software: bool,
+    opacity: f32,
+    transparent: bool,
+    grid: bool,
+) -> Result<(), String> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let (_, device, queue) = crate::request_device(&instance, None, software).await?;
     let mut registry = Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm);
@@ -252,18 +264,26 @@ pub async fn golden(software: bool) -> Result<(), String> {
         width: 64.,
         height: 64.,
     });
-    registry.draw(
-        &device,
-        &queue,
-        crate::Target {
-            view: &view,
-            screen: [64., 64.],
-            clip: None,
-            clear: wgpu::Color::BLACK,
-        },
-        &items,
-        Camera::default(),
-    );
+    registry
+        .draw(
+            &device,
+            &queue,
+            crate::Target {
+                opacity,
+                grid,
+                view: &view,
+                screen: [64., 64.],
+                clip: None,
+                clear: if transparent {
+                    wgpu::Color::TRANSPARENT
+                } else {
+                    wgpu::Color::BLACK
+                },
+            },
+            &items,
+            Camera::default(),
+        )
+        .map_err(|error| error.to_string())?;
     let mut encoder = device.create_command_encoder(&Default::default());
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("golden readback"),
@@ -313,15 +333,26 @@ pub async fn golden(software: bool) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         for y in 0..64 {
             for x in 0..64 {
-                let expected: [u8; 4] = if (48..56).contains(&x) && y < 8 {
-                    [0, 255, 0, 255]
+                let mut expected: [f32; 4] = if (48..56).contains(&x) && y < 8 {
+                    [0., 255., 0., 255.]
                 } else if (16..48).contains(&x) && (16..48).contains(&y) {
-                    [0, 0, 255, 255]
+                    [0., 0., 255., 255.]
                 } else if x < 32 && y < 32 {
-                    [120, 90, 60, 255]
+                    [120., 90., 60., 255.]
+                } else if grid {
+                    let distance = (((x as f32 + 0.5) % 40. - 20.).powi(2)
+                        + ((y as f32 + 0.5) % 40. - 20.).powi(2))
+                    .sqrt();
+                    let t = ((distance - 0.5) / 0.5).clamp(0., 1.);
+                    let dot = 1. - t * t * (3. - 2. * t);
+                    [17. + 26. * dot, 19. + 27. * dot, 23. + 29. * dot, 255.]
                 } else {
-                    [0, 0, 0, 255]
+                    [0., 0., 0., if transparent { 0. } else { 255. }]
                 };
+                for channel in &mut expected {
+                    *channel *= opacity;
+                }
+                let expected = expected.map(|v| v.round() as u8);
                 let pixel = &bytes[(y * 256 + x * 4)..(y * 256 + x * 4 + 4)];
                 if pixel.iter().zip(expected).any(|(&a, b)| a.abs_diff(b) > 2) {
                     return Err(format!(
@@ -343,5 +374,13 @@ mod tests {
     #[test]
     fn headless_golden() {
         pollster::block_on(super::golden(false)).unwrap();
+    }
+    #[test]
+    fn transparent_overlay_preserves_premultiplied_alpha_and_item_order() {
+        pollster::block_on(super::golden_view(false, 0.55, true, false)).unwrap();
+    }
+    #[test]
+    fn canvas_grid_stays_behind_opaque_images() {
+        pollster::block_on(super::golden_view(false, 1., false, true)).unwrap();
     }
 }

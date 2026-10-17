@@ -44,7 +44,8 @@ Milestones run strictly in order. M8 and M9 come after 1.0, but the architecture
 - [x] Scene model: `UUIDv7` item ids, fractional z-order indices, `Command` enum with inverses, R-tree spatial index
 - [x] Instanced quad rendering, texture arrays, mip selection by on-screen size, VRAM budget with LRU eviction
 - [x] Decode pool, JPEG DCT downscaling, LOD pyramid generation
-- [ ] Pan, zoom, rubber-band selection, file drag-and-drop, paste from clipboard
+- [x] Pan, zoom, rubber-band selection, file drag-and-drop (X11 / Windows / macOS), paste from clipboard
+- [x] Native Wayland file drag-and-drop (TD-09; native protocol tests and Dolphin two-file drop validated)
 - [x] Benchmark boards and measurement harness
 - [x] UI skeleton on egui: custom theme, color tokens, transition animations
 - [x] Portability: storage behind a byte-stream trait (no `std::fs::Path` in core crates)
@@ -52,9 +53,9 @@ Milestones run strictly in order. M8 and M9 come after 1.0, but the architecture
 - [x] Portability: surface loss handled like device loss (recreate the renderer, keep the scene)
 - [x] CI: core crates (`moth-scene`, `moth-format`, `moth-io`) build for `aarch64-linux-android`
 
-**Status:** runnable preview; native Wayland drops, pen-device validation and the 50 ms end-to-end paste target remain open. See [validation notes](docs/M0-VALIDATION.md).
+**Status:** runnable preview; native Wayland drops and Huion pen identity/pressure validated. Real touch-device, other desktop pen and native end-to-end paste qualification remain open. See [validation notes](docs/M0-VALIDATION.md).
 
-**Exit criteria:** a 10,000-image board pans with p99 frame time < 8 ms; a pasted 4K image is visible in < 50 ms.
+**Exit criteria:** a 10,000-image board pans with p99 frame time ≤ 12 ms (the measured 11.5 ms is accepted); a pasted 4K image is visible in approximately 200 ms (accepted by the maintainer).
 
 ### M0 review follow-up
 
@@ -63,13 +64,13 @@ Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](d
 - [x] Clipboard staging: application data, lossless compression, per-board ownership
   and cleanup on explicit discard (originals survive a crash; layout recovery is M1)
 - [x] Allow large JPEG sources when DCT-reduced allocation fits the decode budget
-- [ ] WebP, static GIF and BMP import
+- [x] WebP, static GIF and BMP import (bounded WebP per ADR 0003; BMP RLE/embedded codecs unsupported)
 - [x] EXIF orientation and CMYK JPEG conversion
 - [x] Area-averaged PNG and clipboard previews, including Adam7 input
 - [x] Avoid linear `Scene::top()` scans on repeated insertion
 - [x] Replace the 10,000-item board/render ceilings with bounded render batches by M1–M2
 - [x] Clipboard backpressure feedback and native file-list paste
-- [ ] URL/HTML clipboard import
+- [x] URL/HTML clipboard import (direct HTTP(S) image URLs and the first HTML image)
 - [x] Add storage temporary objects and atomic replacement before M1 compaction
 
 ### M1 — Reliability and file format
@@ -107,10 +108,12 @@ Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](d
 
 - [ ] Always-on-top, frameless window, move window by hotkey
 - [ ] Transparent overlay with adjustable opacity and click-through (BeeRef #100)
+  - [x] Native overlay controls and composited master opacity; X11 qualification (Windows/macOS pending)
 - [ ] Board tabs in one window; drag a tab out into its own window and back
+  - [x] Four independent journaled tabs, with dirty-close prompts and stable ordering
 - [ ] Browser extension "Send to MothRef" + `moth-bridge` native host + "Inbox" board
 - [ ] Attach to another application's window: Windows and X11 (macOS and Wayland are P2)
-- [ ] Platform capability flags surfaced in the UI
+- [x] Platform capability flags surfaced in the UI
 - [ ] All parity- and Milanote-checklist items tagged M3 (web clipper: hover Save, text clips, board picker; always on bottom, lock window, overlay selection, master opacity, resize to selection, appearance themes)
 
 **Exit criteria:** the overlay works on top of Krita, Photoshop and Blender on Windows, macOS and X11.
@@ -132,6 +135,7 @@ Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](d
 ### M5 — Library
 
 - [ ] Board index (`redb`) with file watcher (`notify`)
+  - [x] Bounded recent/pinned catalog with background previews, search, folder filters and persistent tags/pins (requested reference UI slice)
 - [ ] Start screen: card grid with board previews; stacks shown as a fan of previews or as a folder with icon and color; tags; search; pinning
 - [ ] Stacks are real folders on disk (Procreate-style: drop a board on a board to create a stack); "smart collections" are saved tag filters
 - [ ] File manager thumbnails for `.moth` and `.bee` (BeeRef #152): Windows `IThumbnailProvider`, freedesktop thumbnailer, macOS Quick Look extension
@@ -432,8 +436,8 @@ Reference machine: 8 cores, SSD, GTX 1660 / Apple M1 class GPU. Calibrate after 
 | Cold start to library on screen | < 200 ms |
 | Open a 1,000-image board: first frame | < 300 ms |
 | Same board: everything visible at full detail | < 2 s |
-| Pan/zoom a 10,000-image board, p99 frame | < 8 ms (discrete GPU), < 16 ms (integrated) |
-| Paste a 4K image until visible | < 50 ms |
+| Pan/zoom a 10,000-image board, p99 frame | ≤ 12 ms (discrete GPU; 11.5 ms accepted), < 16 ms (integrated) |
+| Paste a 4K image until visible | ≈ 200 ms (accepted) |
 | Save one change in a 2 GB board | < 200 ms |
 | RAM on a 1,000 × 12 MP board | < 1.5 GB |
 | `.moth` size vs sum of source images | ≤ 1.1× |
@@ -488,3 +492,9 @@ Known issues to plan for: macOS notarization needs a paid Apple Developer accoun
 | 2026-10-16 | Android is a future target (no milestone yet). Portability rules are built in from M0: storage trait, input abstraction, surface-loss handling (M0); runtime texture format (M1); responsive layout (M2) |
 | 2026-10-16 | [M0 preview budgets and durable clipboard staging](docs/decisions/0001-m0-canvas-budgets.md): 96 MiB GPU cache, bounded decode work, checksummed RGBA scratch records; keep the 50 ms paste criterion open rather than bypass durability |
 | 2026-10-16 | [M1 version-one records and recovery](docs/decisions/0002-m1-durable-records.md): footer commits, journal-before-acknowledgment, atomic snapshots and compaction, bounded session history |
+| 2026-10-16 | Maintainer accepts the measured 11–12 ms frame time (12 ms benchmark ceiling); revise the immediate 4K paste target to 250 ms. Historical measurements retain their original targets. The paste harness excludes OS clipboard transfer; native end-to-end qualification remains separate. |
+| 2026-10-16 | Maintainer tightens the immediate 4K paste target to 150 ms; qualification remains open. |
+| 2026-10-16 | Maintainer accepts approximately 200 ms durable 4K paste and closes TD-03; the 150 ms goal is withdrawn. Timing outliers and native qualification remain documented. |
+| 2026-10-16 | [Bounded WebP previews](docs/decisions/0003-bounded-webp-previews.md): maintainer permits full-frame static WebP with 8 MiB encoded/frame admission limits; internal codec allocations are separately qualified. GIF/BMP use row-based previews. |
+
+| 2026-10-17 | [Reference workspace](docs/decisions/0004-reference-workspace.md): requested early UI slice uses four isolated sessions, a bounded catalog and a separate overlay controller; full M3/M5 remain open. |

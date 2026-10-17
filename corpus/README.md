@@ -26,3 +26,34 @@ fixture, comparing all item metadata. `.bee` and `.pur` fixtures arrive in M2.
 These three synthetic JPEGs were generated with Pillow's normal encoder. Tests
 check reduced allocations, progressive coefficient rejection, CMYK colors and
 oriented preview/geometry dimensions.
+
+TD-07 synthetic fixtures (GPL-3.0-or-later):
+
+- `images/rows.gif`, `interlaced.gif`: 31×17 red-to-blue indexed gradient,
+  ordinary and GIF-interlaced; generated with ImageMagick.
+- `images/offset.gif`: 7×5 logical canvas, transparent 3×2 red/blue frame at
+  (2,1); generated with Pillow and explicit GIF logical/frame dimensions.
+- `images/rows.bmp`: 31×17 24-bit bottom-up gradient, BMP v3.
+- `images/palette.bmp`: the gradient quantized to eight colors, paletted BMP v3.
+- `images/alpha.bmp`: the gradient at 50% alpha, BMP with explicit channel masks.
+- `images/4k.gif`: 3840×2160 solid red, for row-decoder allocation checks.
+- `images/4k.bmp`: 3840×2160 monochrome checkerboard, 1-bit uncompressed BMP.
+
+BMP/GIF gradient and 4K fixtures use ImageMagick's ordinary encoders. Tests
+compare area-average pixels against reference decoders, including interlacing,
+transparent frame offsets, BMP palettes/alpha, top-down rows and invalid layouts.
+
+WebP fixtures, generated with ImageMagick's ordinary encoders unless noted:
+
+- `images/lossless.webp`, `lossy.webp`: 31×17 red-to-blue gradient, VP8L/VP8.
+- `images/alpha.webp`: the gradient at 50% alpha, lossless WebP.
+- `images/oriented.webp`: the lossless gradient with EXIF orientation 6,
+  generated with Pillow.
+- `images/budget.webp`: 2048×1024 solid RGB (128,80,64), exactly the admitted
+  8 MiB RGBA frame ceiling. The oversize test changes its header dimensions
+  to 3840×2160 and checks rejection before decoding pixels.
+
+The negative animation fixture in `crates/moth-io/tests/fixtures/animated.webp`
+contains two 2×2 solid red/blue frames, generated with Pillow (synthetic,
+GPL-3.0-or-later). It is outside the successful-import corpus because static
+WebP admission intentionally rejects it.

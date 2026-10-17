@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Instanced image quads and a fixed-budget, LRU array-texture registry.
+mod opacity;
 use moth_io::Decoded;
 use moth_scene::{BlobId, Camera, Item};
 use std::sync::{
@@ -43,6 +44,7 @@ struct Array {
     slots: Vec<Option<Slot>>,
 }
 /// Describes a frame destination without tying canvas batches to the UI render pass.
+#[derive(Clone, Copy)]
 pub struct Target<'a> {
     /// Batches preserve this attachment between ordered submissions.
     pub view: &'a wgpu::TextureView,
@@ -52,6 +54,20 @@ pub struct Target<'a> {
     pub clip: Option<[u32; 4]>,
     /// Only the first batch clears the attachment.
     pub clear: wgpu::Color,
+    /// Global viewing opacity is transient and never changes board content.
+    pub opacity: f32,
+    /// The desktop board can opt into the decorative canvas grid.
+    pub grid: bool,
+}
+/// A viewing effect must fail before exceeding its explicit texture budget.
+#[derive(Debug, thiserror::Error)]
+pub enum RenderError {
+    /// Limit screen-sized temporary pixels separately from image residency.
+    #[error("Overlay exceeds the 64 MiB surface budget; resize the window to continue.")]
+    OpacityBudget,
+    /// Non-finite opacity never reaches a GPU uniform.
+    #[error("Invalid view opacity")]
+    Opacity,
 }
 /// Registry owns all canvas GPU resources; dropping it frees every board texture.
 pub struct Registry {
@@ -60,6 +76,8 @@ pub struct Registry {
     arrays: Vec<Option<Array>>,
     locations: std::collections::HashMap<BlobId, (usize, usize)>,
     pipeline: wgpu::RenderPipeline,
+    grid: wgpu::RenderPipeline,
+    opacity: opacity::Pass,
     layout: wgpu::BindGroupLayout,
     instances: wgpu::Buffer,
     sampler: wgpu::Sampler,
@@ -99,10 +117,42 @@ impl Registry {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{label:Some("quads"),layout:Some(&pipeline_layout),vertex:wgpu::VertexState{module:&shader,entry_point:Some("vs"),buffers:&[Some(wgpu::VertexBufferLayout{array_stride:32,step_mode:wgpu::VertexStepMode::Instance,attributes:&wgpu::vertex_attr_array![0=>Float32x4,1=>Float32x2,2=>Uint32,3=>Float32]})],compilation_options:Default::default()},fragment:Some(wgpu::FragmentState{module:&shader,entry_point:Some("fs"),targets:&[Some(wgpu::ColorTargetState{format,blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})],compilation_options:wgpu::PipelineCompilationOptions{constants:&[("OUTPUT_SRGB",if format.is_srgb(){1.}else{0.})],..Default::default()}}),primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview_mask:None,cache:None});
+        let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{label:Some("quads"),layout:Some(&pipeline_layout),vertex:wgpu::VertexState{module:&shader,entry_point:Some("vs"),buffers:&[Some(wgpu::VertexBufferLayout{array_stride:std::mem::size_of::<Instance>() as u64,step_mode:wgpu::VertexStepMode::Instance,attributes:&wgpu::vertex_attr_array![0=>Float32x4,1=>Float32x2,2=>Uint32,3=>Float32]})],compilation_options:Default::default()},fragment:Some(wgpu::FragmentState{module:&shader,entry_point:Some("fs"),targets:&[Some(wgpu::ColorTargetState{format,blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})],compilation_options:wgpu::PipelineCompilationOptions{constants:&[("OUTPUT_SRGB",if format.is_srgb(){1.}else{0.})],..Default::default()}}),primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview_mask:None,cache:None});
+        let grid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("canvas grid"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("grid.wgsl").into()),
+        });
+        let grid = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("canvas grid"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &grid_shader,
+                entry_point: Some("vs"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &grid_shader,
+                entry_point: Some("fs"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &[("OUTPUT_SRGB", if format.is_srgb() { 1. } else { 0. })],
+                    ..Default::default()
+                },
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
         let instances = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("bounded instances"),
-            size: (MAX_INSTANCES * 32) as u64,
+            size: (MAX_INSTANCES * std::mem::size_of::<Instance>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -118,6 +168,8 @@ impl Registry {
             arrays: Vec::new(),
             locations: std::collections::HashMap::new(),
             pipeline,
+            grid,
+            opacity: opacity::Pass::new(device, format),
             layout,
             instances,
             sampler,
@@ -127,7 +179,7 @@ impl Registry {
     }
     /// Reports actual texture allocation, rather than the sum of resident source sizes.
     pub fn allocated_bytes(&self) -> u64 {
-        self.allocated
+        self.allocated + self.opacity.bytes()
     }
     /// A matching or larger resident preview avoids repeated decoding during a frame.
     pub fn resident(&self, hash: BlobId, side: u32) -> bool {
@@ -298,6 +350,38 @@ impl Registry {
         target: Target<'_>,
         items: &[&Item],
         camera: Camera,
+    ) -> Result<(), RenderError> {
+        if !target.opacity.is_finite() || !(0. ..=1.).contains(&target.opacity) {
+            return Err(RenderError::Opacity);
+        }
+        if target.opacity < 1. {
+            let view = self.opacity.prepare(device, target.view.texture().size())?;
+            self.draw_images(
+                device,
+                queue,
+                Target {
+                    view: &view,
+                    clear: wgpu::Color::TRANSPARENT,
+                    opacity: 1.,
+                    ..target
+                },
+                items,
+                camera,
+            );
+            self.opacity.present(device, queue, target);
+        } else {
+            self.opacity.clear();
+            self.draw_images(device, queue, target, items, camera);
+        }
+        Ok(())
+    }
+    fn draw_images(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: Target<'_>,
+        items: &[&Item],
+        camera: Camera,
     ) {
         for batch in 0..items.len().div_ceil(MAX_INSTANCES).max(1) {
             let start = batch * MAX_INSTANCES;
@@ -323,6 +407,10 @@ impl Registry {
                 });
                 if let Some([x, y, width, height]) = target.clip {
                     pass.set_scissor_rect(x, y, width, height);
+                }
+                if batch == 0 && target.grid {
+                    pass.set_pipeline(&self.grid);
+                    pass.draw(0..3, 0..1);
                 }
                 self.draw_batch(queue, &mut pass, &items[start..end], camera, target.screen);
             }
@@ -396,6 +484,7 @@ impl Registry {
     }
     /// Board teardown explicitly releases arrays; accounting must return to zero.
     pub fn clear(&mut self) {
+        self.opacity.clear();
         for array in &mut self.arrays {
             if let Some(a) = array.take() {
                 self.allocated -= array_bytes(a.size, a.slots.len() as u32);

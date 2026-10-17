@@ -117,3 +117,294 @@ file drops remain unsupported by this backend. `Kind::Pen` is available to a
 future native pen backend; its presence alone does not establish pen support.
 Native pen/touch devices and Windows/macOS interoperability were not manually
 validated in this follow-up. The 50 ms paste target also remains open.
+
+## Technical-debt fixes — 2026-10-16
+
+Implementation at `36fbb0b`:
+
+- Replaced render truncation with ordered submissions through the same bounded
+  320,000-byte instance buffer. The 10,003-item pixel golden failed before this
+  fix (the final green image disappeared) and passes afterward. App admission
+  is independent of the render batch; waiting imports are capped at 1,024.
+- Added an ordered fractional-index/UUID set maintained by commands. Property
+  tests cover insert/remove, undo/redo, equal-z items and save/load reconstruction.
+- Large baseline JPEGs are admitted by reduced-plane allocation; progressive
+  coefficient storage is included in admission checks. Added synthetic large,
+  CMYK and EXIF-oriented JPEG fixtures. Small previews no longer enlarge images.
+- PNG and clipboard previews average source areas with alpha weighting, including
+  Adam7. Tests cover a checker pattern, transparent colors and interlace parity.
+  The dhat test includes the large JPEG and retains its 8 MiB preview ceiling.
+- Added bounded native clipboard file-list paste and localized busy/unsupported
+  feedback. Remote URL/HTML import is still unsupported and does not fetch data.
+
+Validation:
+
+- Formatting, workspace Clippy with warnings denied, workspace tests and
+  cargo-deny pass. Existing transitive duplicate-version warnings remain.
+- `cargo xtask corpus`: eight image/board fixtures pass.
+- Android core build passes. All 13 supplied PNG/JPEG files in `images/` decode
+  successfully at preview size; no supplied artwork was copied into the corpus.
+- Discrete-GPU golden passes. Software golden passes using the existing isolated
+  lavapipe driver under `/tmp/mothref-vulkan-software`; the default installed
+  drivers expose no fallback adapter. No system driver was installed or replaced.
+- `cargo xtask killtest 1000`: zero acknowledged commands lost.
+- `moth_reader` fuzzing: 10,692,558 executions in 301 seconds, no failure.
+  `bee_reader` and `pur_reader` commands were attempted but their M2 targets do
+  not exist. Final `image_reader` fuzzing, seeded with the new JPEG fixtures:
+  **23,246 executions in 301 seconds**, no crash or sanitizer failure.
+  Log: `/tmp/mothref-debt-final-image-fuzz.log`.
+- Combined render/persistence soak: **17,048 frames in 1,800 seconds**. RSS during
+  the second half stayed between **165,096 and 165,112 KiB** (16 KiB spread).
+  Log: `/tmp/mothref-tech-debt-soak.log`. The eight-hour release gate stays open.
+- Native Linux launch/open/SIGTERM smoke passes with the normal backend and with
+  X11 plus lavapipe. This does not qualify native clipboard, pen/touch, live
+  device loss, Windows/macOS termination or interactive save/recovery UX.
+
+Performance measurements on the shared development machine are noisy. One
+`--enforce` run failed at **53.563 ms p99**. A subsequent adjacent comparison
+measured **11.507 ms** for the fixes versus **14.449 ms** for original revision
+`ab8ced5`, with **13.32 MiB** textures in both. These loaded runs do not qualify
+an 8 ms exit criterion or a controlled 10% regression check. A shared-cache
+comparison was discarded; release workspace artifacts were explicitly cleaned
+before the adjacent comparison.
+
+Latest noisy-4K paste measurement: **393.472 ms** after clipboard transfer,
+including **390.439 ms** preparation/staging. The native 50 ms target is still
+open; durable staging remains enabled. Logs and temporary benchmark binaries
+under `/tmp` are local validation artifacts, not release qualification records.
+
+## 250 ms paste follow-up — 2026-10-16
+
+The maintainer accepts the earlier 11.5 ms p99 frame measurement and revises the
+frame ceiling to 12 ms and immediate 4K paste target to 250 ms. The benchmark's
+optional enforcement now uses those targets; historical results above are kept.
+
+Clipboard PNG staging now uses bounded 256 KiB chunks instead of 4 KiB chunks.
+Wholly opaque images are encoded as lossless RGB; images with any non-opaque
+pixel retain RGBA. Conversion uses one RGB scanline, not another full image.
+Pixel round-trip tests cover varying colors, odd row widths, and a single
+non-opaque pixel. The existing dhat allocation check still passes. No decoder,
+board format, journal ordering or fsync barriers were changed.
+
+A pre-change measurement was **293.124 ms**. Three consecutive updated opaque
+noisy-4K pipeline runs passed `paste --enforce`: **222.466, 245.491, 215.272 ms**
+(median **222.466 ms**, about **24%** lower than that pre-change run). These
+measurements include staging and GPU completion, but exclude OS clipboard
+transfer and do not qualify every native clipboard backend or transparent image.
+The system also produced second-scale staging outliers during the work. The
+last verification measured **2006.995 ms** (2004.186 ms staging) and failed
+`paste --enforce`. Thus the target is reached in the consecutive runs above,
+but is **not consistently qualified** on this shared machine. File-write/sync
+contention is suspected; it was not separately measured in that last run.
+
+Formatting, Clippy, workspace tests, cargo-deny and corpus checks pass. Another
+1,000-process kill run lost zero acknowledged commands. The
+10,000-image render benchmark measured **6.665 ms p99**, with **13.32 MiB**
+textures. An earlier concurrent build/load run failed the new 12 ms guard at
+33.887 ms; this encoder-only change does not alter the draw path. No new
+long-lived cache or decoder path was introduced, so the previous soak/fuzz
+qualification was not repeated for this encoder optimization.
+
+### 150 ms paste follow-up (2026-10-16)
+
+The maintainer tightened the target to 150 ms. PNG output now hashes successfully
+written bytes as it streams; staging reuses that hash for the preview instead of
+hashing a temporary raw identity and rereading the PNG. Pixel fidelity, bounded
+encoding, and file/directory sync barriers are preserved. No decoder or format
+changes and no additional retained data were introduced.
+
+Initial post-transfer runs: 204.196 and 198.770 ms, then 495.614 ms. Temporary
+instrumentation on the 198.770 ms run measured 98.945 ms through encoding/writing,
+165.306 ms through file sync and 171.381 ms through directory syncs. The temporary
+instrumentation was removed. A different PNG filter was tried and reverted.
+Final three `cargo xtask paste --enforce` runs all failed the new 150 ms guard:
+6501.272, 1823.664 and 442.141 ms. These whole-staging outliers were not separately
+profiled; their cause is not established. The target remains open.
+
+Validation: workspace tests (including dhat), fmt, clippy with warnings denied,
+and cargo deny passed. `cargo xtask killtest 1000` lost no acknowledged commands.
+`cargo xtask bench --quick`: p99 5.113 ms, 13.32 MiB textures. No native clipboard
+transfer timing or Windows/macOS manual validation was performed in this follow-up.
+
+### TD-03 acceptance and TD-07 image compatibility (2026-10-16)
+
+The maintainer accepts the approximately 200 ms paste result and closes TD-03;
+the attempted 150 ms target is withdrawn. Historical outliers remain recorded
+above. `paste --enforce` retains the prior 250 ms regression ceiling; this is not
+a worst-case latency guarantee.
+
+GIF previews now stream the first frame through the area accumulator, respecting
+interlace order, transparency and frame offsets. BMP previews decode bounded
+single-row records through the image crate for palettes and bitfield conversion.
+They support uncompressed/bitfield layouts with standard DIB headers; RLE and
+embedded JPEG/PNG are rejected, and the header/palette prefix is capped at 64 KiB.
+The generic full-resolution fallback has been removed.
+
+Before the row paths were implemented, enabling standard GIF/BMP decoding made
+the 4K dhat test fail its 8 MiB limit. It now passes with both codecs included.
+New synthetic corpus files cover ordinary/interlaced GIF, transparent offsets,
+24-bit, indexed and alpha BMP, plus 4K GIF/BMP. Pixel checks compare against the
+reference codecs and area averages; tests also cover BMP top-down rows, invalid
+compression/offsets and truncated records. Original image bytes are unchanged.
+
+At the initial GIF/BMP stage WebP awaited a maintainer decision. The maintainer
+subsequently approved the bounded full-frame exception in ADR 0003.
+
+TD-07 checks on Linux: workspace tests (including dhat), fmt, clippy with warnings
+denied and cargo deny passed (existing duplicate warnings only). Core `moth-io`
+Android cross-check passed. `cargo xtask corpus` validated 16 image/board files.
+`cargo xtask bench --quick`: 10,000 images, p99 6.142 ms, 13.32 MiB textures.
+A temporary release profiling example (removed after measurement) decoded the
+synthetic 4K GIF/BMP at side 256 five times: GIF median 40.786 ms
+(range 38.145–42.646), BMP median 39.508 ms (38.455–40.346). These codecs were
+previously unavailable; the full-frame fallback comparison is an allocation
+regression test, not a previously shipped import path. Native UI/manual tests
+were not repeated because dispatch and platform code are unchanged by TD-07.
+
+The completed TD-07 follow-up also adds static lossy/lossless WebP, transparency
+and EXIF orientation. Hard admission limits are 8 MiB encoded input and 8 MiB
+full RGBA frame, with embedded VP8/VP8L dimensions checked against the canvas.
+The decoder dependency does not enforce an allocator-wide working-memory cap;
+this limitation is explicit in ADR 0003. A largest-admitted 2048×1024 WebP passes
+the dhat additional-peak gate of 64 MiB; a forged 4K header is rejected before
+pixel decoding. Pixel/orientation checks and invalid internal-dimension checks
+pass. Native clipboard behavior and persistence are unaffected by the codec paths.
+
+Final WebP-enabled workspace tests, clippy, cargo deny and Android core checks
+passed. The successful-import corpus now validates 21 files. Static WebP
+animation rejection also has a negative fixture/test. A temporary release
+profile decoded the maximum-admitted solid 2048×1024 WebP at side 256 five times:
+median 14.966 ms, range 14.160–18.487 ms; the temporary example was removed.
+
+Final sanitizer fuzzing: `image_reader` completed 1,100 runs in 306 seconds on a
+separate temporary corpus seeded with JPEG/PNG/GIF/BMP/WebP and mutations, with
+no crash or sanitizer finding. `moth_reader` completed 12,613,851 runs in 301
+seconds without a finding. `bee_reader`/`pur_reader` were attempted but the targets
+are absent (their importers belong to M2). Final `cargo xtask bench --quick
+--enforce`: p99 6.466 ms, 13.32 MiB textures, accepted 12 ms guard passed.
+
+## URL/HTML clipboard import — 2026-10-17
+
+Paste now falls back from native files/images to a direct HTTP(S) image URL or
+HTML's first `img[src]`. The HTML parser decodes entities and resolves relative
+sources with `base[href]` or a supplied `SourceURL` header. No page, script, CSS,
+`srcset`, data URL or link preview is loaded. HTML imports one image per paste;
+a plain page URL must itself return a supported image. Native image/file formats
+retain precedence.
+
+Only an explicit Paste request starts HTTP work, on the existing bounded
+clipboard worker. Captured text/HTML is limited to 1 MiB (after the native backend
+returns it); URLs to 8 KiB; downloads to 64 MiB and five redirects, with a shared
+20-second HTTP deadline. Redirect targets receive the same URL validation;
+embedded credentials, non-HTTP(S) schemes and HTTPS downgrades are rejected.
+TLS validates against OS trust roots. Decoder admission limits still apply.
+Errors do not include the URL or query string.
+
+Successful downloads preserve original encoded bytes in private, synced recovery
+files under the existing 8 GiB/10,000-entry staging budgets. The existing command
+path journals originals and insertion before updating the board. Tests use a
+local HTTP server to check redirects, redirect loops, malformed/oversized/partial
+responses, byte preservation and command-journal reopening. Parser tests cover
+HTML entities, relative URLs, URL schemes/credentials and text/URL limits.
+
+Native Windows/macOS/Linux clipboard interoperability was not manually exercised
+for this follow-up. Backend-provided HTML metadata varies; relative URLs without
+a usable base are rejected. Browser authentication/cookies and page scraping are
+outside this import path. Existing board-reader fuzzing does not cover HTML.
+
+Final Linux checks on 2026-10-17: formatting, workspace Clippy with warnings
+denied, all 45 workspace tests (including the allocation check and GPU golden),
+and cargo-deny pass. Cargo-deny retains transitive duplicate-version warnings.
+`cargo xtask corpus` validates 21 files; `cargo xtask killtest 1000` loses no
+acknowledged commands.
+
+The benchmark run during simultaneous builds/fuzzing measured 50.019 ms p99,
+and paste measured 1100.949 ms. With compilation finished, `bench --quick
+--enforce` passes at **5.473 ms p99**, with **13.32 MiB** textures; paste measures
+**228.234 ms** after clipboard transfer (**224.571 ms** durable staging). The
+board-reader fuzzer was still running during these repeat measurements. These
+are development checks, not controlled before/after regression qualification
+or native URL-paste latency measurements.
+
+The required `moth_reader` sanitizer fuzz run completed **10,260,591 executions
+in 301 seconds**, without a crash or sanitizer finding. `bee_reader` and
+`pur_reader` were attempted but remain absent until their M2 importers exist.
+No new dedicated HTML fuzz target or native clipboard manual test was run.
+
+
+## TD-09: native Wayland drops and tablet input
+
+2026-10-17, EndeavourOS, KDE/KWin 6.7.4, native `wayland-0`:
+
+- The adapter binds `wl_data_device_manager` and `zwp_tablet_manager_v2` on
+  winit's display, with I/O on native workers and bounded queues/transfer data.
+  Native protocol fixtures use a Wayland server and a guest backend, exercising
+  actual event decoding and descriptor passing, with a concurrent host reader
+  on the same display, rather than injected file paths.
+- Automated drop coverage: URI MIME acceptance and copy negotiation; two local
+  files with percent-encoded spaces; drop followed immediately by `leave`;
+  successful `finish` only after EOF; rejection and destruction of non-URI
+  offers. URI tests cover remote/malformed URLs, NUL paths, invalid UTF-8,
+  empty transfers, stalled-source timeout and the 1 MiB limit.
+- Automated tablet coverage: tool creation, native pen kind/ID, logical surface
+  coordinates, 0.25/0.75 pressure, down/move/up, proximity cancellation and
+  removal. Up preceding proximity-out in one frame is preserved. Transfer-worker
+  shutdown wakes an idle native reader. UI tests ensure cancellation cannot
+  click a toolbar action or release a different pointer; normal releases and
+  up-plus-proximity-out in one batch still click. Synthetic touch tests retain touch kind,
+  pressure, scaling and all contact phases; pan/pinch remains a separate layer.
+- The maintainer confirmed that dragging **two files from Dolphin imported both**
+  into the new native Wayland window.
+- Real pen: kernel/Wayland discovery reports **Huion Tablet Monitor Pen**
+  (USB `256c:006d`). The maintainer reports that the pen appears to work. The
+  running application captured native `Kind::Pen` events with a stable tool ID,
+  hover pressure zero, nonzero varying contact pressure and down/up/proximity-out
+  events. The trace reached approximately **0.70** pressure during the initial
+  check. This verifies native classification and measured pressure, rather than
+  merely exposing `Kind::Pen` in the API. Drawing remains M4 functionality;
+  current pen actions are selection and toolbar interaction. Full button,
+  calibration and interruption combinations were not independently observed.
+- **Real touch:** the maintainer has no touchscreen available. No real-device
+  two-finger or pen-plus-touch validation is claimed. TD-09 and the grouped M0
+  input qualification checkbox remain open for this reason.
+- Windows/macOS: no native manual run in this session; their existing winit
+  mouse/touch paths are unchanged, and this Linux backend does not add pen
+  identification there. X11 pen identification is also outside this backend.
+
+Logs: `/tmp/mothref-td09-native.log` (pen/device interaction),
+`/tmp/mothref-td09-tests.log`, `/tmp/mothref-td09-clippy.log`, and
+`/tmp/mothref-td09-soak.csv` (RSS samples). These are local validation artifacts,
+not redistributable device fixtures.
+
+TD-09 checks: workspace formatting, clippy with warnings denied, workspace tests,
+`cargo deny check` (existing duplicate warnings), and Android core checks pass.
+The required `moth_reader` fuzz command completed **12,882,900 executions in
+301 seconds** without a failure. The repository has no `bee_reader` or
+`pur_reader` targets; both prescribed commands were attempted and failed for
+that reason. A Windows cross-check was attempted but this Linux host lacks the
+MSVC `ml64.exe` assembler required by `ring`; Windows CI/manual validation is
+still needed. No scene, renderer, decoder or board-format implementation changed
+for TD-09, so benchmark/corpus commands are not required by the change scope.
+
+Final-build launch/shutdown smokes passed on native Wayland and X11, each using
+an isolated temporary data directory and exiting successfully on SIGTERM. The
+maintainer's interactive board remains open. A short same-host Wayland comparison
+used an isolated source snapshot with only `input.rs` and `app.rs` restored to
+their pre-TD-09 versions, keeping the existing working-tree changes elsewhere.
+Two ten-second samples per build measured 3.0–3.3% CPU before and 3.4–3.7% after,
+with median RSS 137,892 versus 138,298 KiB and 26 versus 28 threads. These short
+samples are **not** a zero-idle or regression qualification; the previous adapter
+also has nonzero CPU on this host. Native worker state is bounded and the added RSS in
+this probe is about 0.4 MiB. Raw samples: `/tmp/mothref-td09-compare.json`.
+
+The additional `cargo xtask bench --quick` run passes: **10,000 distinct images,
+100 frames, p99 5.253 ms**, 13.32 MiB textures, AMD Radeon RX 5700 XT (RADV
+NAVI10). This is below the 12 ms M0 target. Log:
+`/tmp/mothref-td09-bench.log`.
+
+The maintainer stopped the long check after approximately **23.5 minutes**.
+The interactive build stayed at **170.46–178.30 MiB RSS**
+after warm-up, with 28 threads. The full 30-minute soak was **not completed**;
+this does not close that qualification gate. The interactive build was retained
+throughout; final UI cancellation and shutdown refinements were checked separately
+by protocol/UI tests and isolated final-build launch/shutdown smokes.

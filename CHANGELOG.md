@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Implement the reference workspace: board library with previews, folder filters, search, persistent pins and tags; four independent board tabs; empty-board import prompt and save-on-close dialog.
+- Add the floating tool rail, selection handles, minimap, image dragging, arrangement and size normalization, plus a dot-grid canvas.
+- Add transparent overlay mode with master opacity, click-through and a separate control window; show platform availability for always-on-top.
+- Fix idle redraw loops, fitting boards opened from the library, and saving to relative filenames; prevent two tabs from writing the same destination.
+
+- Accept native Wayland file drops and tablet-tool input with pen identity, pressure, hover and contact cancellation; keep touch pan/pinch in the gesture layer.
+
+- Paste a direct HTTP(S) image URL or the first HTML image; download on the clipboard worker with bounded size/time and preserve original bytes for recovery.
+
+- Import static GIF and uncompressed/bitfield BMP previews by rows; add bounded static WebP imports (8 MiB input and RGBA frame limits), including lossless/lossy, transparency and EXIF orientation.
+
+- Clipboard staging hashes PNG bytes during encoding and reuses that identity for previews, avoiding redundant pixel hashing and rereading the staged file.
+
+- Speed up durable clipboard staging with larger PNG write chunks and lossless RGB
+  storage for fully opaque images; preserve RGBA when any pixel is transparent.
+
 - Render visible images in ordered batches beyond the old 10,000-item ceiling,
   with a separate bounded import backlog and explicit queue feedback.
 - Index fractional z-order to avoid scanning the board on every image insertion.

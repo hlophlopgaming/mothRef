@@ -33,7 +33,7 @@ fn main() -> anyhow::Result<()> {
                 result.texture_bytes as f64 / 1048576.
             );
             if args.iter().any(|a| a == "--enforce") {
-                anyhow::ensure!(result.p99_ms < 8., "M0 p99 exceeds 8 ms");
+                anyhow::ensure!(result.p99_ms <= 12., "M0 p99 exceeds 12 ms");
             }
         }
         Some("paste") => {
@@ -53,12 +53,19 @@ fn main() -> anyhow::Result<()> {
                 .map_err(anyhow::Error::msg)?;
             let staged = start.elapsed();
             harness.show(&image).map_err(anyhow::Error::msg)?;
+            let elapsed = start.elapsed();
             println!(
                 "4K paste pipeline after clipboard transfer: {:.3} ms (durable staging {:.3} ms)",
-                start.elapsed().as_secs_f64() * 1000.,
+                elapsed.as_secs_f64() * 1000.,
                 staged.as_secs_f64() * 1000.
             );
             storage.discard()?;
+            if args.iter().any(|arg| arg == "--enforce") {
+                anyhow::ensure!(
+                    elapsed.as_secs_f64() * 1000. <= 250.,
+                    "4K paste pipeline exceeds 250 ms (accepted ~200 ms plus timing margin)"
+                );
+            }
         }
         Some("soak") => {
             let seconds = args
@@ -117,7 +124,7 @@ fn main() -> anyhow::Result<()> {
                         continue;
                     }
                     match path.extension().and_then(|s| s.to_str()) {
-                        Some("png" | "jpg" | "jpeg" | "rgba") => {
+                        Some("png" | "jpg" | "jpeg" | "rgba" | "gif" | "bmp" | "webp") => {
                             let bytes = std::fs::read(&path)?;
                             let decoded = moth_io::decode(&bytes, 256)?;
                             anyhow::ensure!(
@@ -142,7 +149,7 @@ fn main() -> anyhow::Result<()> {
             println!("{count} image and board fixtures validated");
         }
         _ => anyhow::bail!(
-            "usage: cargo xtask bench [--quick] [--enforce] [--software] | paste | soak [seconds] | corpus"
+            "usage: cargo xtask bench [--quick] [--enforce] [--software] | paste [--enforce] | soak [seconds] | corpus"
         ),
     }
     Ok(())

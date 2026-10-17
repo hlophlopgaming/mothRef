@@ -8,7 +8,7 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, Read, Seek, SeekFrom, Write},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, Mutex, OnceLock},
 };
 
 /// Persistence intent; native paths never cross into the core crates.
@@ -47,7 +47,20 @@ pub struct Worker {
     pub results: crossbeam_channel::Receiver<Completion>,
     thread: std::thread::JoinHandle<()>,
 }
+fn destinations() -> &'static Mutex<HashSet<PathBuf>> {
+    static PATHS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    PATHS.get_or_init(Mutex::default)
+}
+struct Destination(PathBuf);
+impl Drop for Destination {
+    fn drop(&mut self) {
+        if let Ok(mut paths) = destinations().lock() {
+            paths.remove(&self.0);
+        }
+    }
+}
 struct State {
+    destination: Option<Destination>,
     storage: Arc<DesktopStorage>,
     scene: Scene,
     sources: HashMap<BlobId, Handle>,
@@ -60,7 +73,7 @@ struct State {
 fn error(e: impl std::fmt::Display) -> io::Error {
     io::Error::other(e.to_string())
 }
-fn sync_directory(path: &std::path::Path) -> io::Result<()> {
+pub(super) fn sync_directory(path: &std::path::Path) -> io::Result<()> {
     #[cfg(unix)]
     File::open(path)?.sync_all()?;
     let _ = path;
@@ -80,9 +93,7 @@ fn create(path: &std::path::Path) -> io::Result<File> {
     let mut file = private_file(path)?;
     board::initialize(&mut file).map_err(error)?;
     file.sync_all()?;
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        sync_directory(parent)?;
-    }
+    sync_directory(super::parent_directory(path))?;
     Ok(file)
 }
 fn record(file: &mut File, kind: u8, bytes: &[u8]) -> io::Result<()> {
@@ -97,6 +108,39 @@ fn record(file: &mut File, kind: u8, bytes: &[u8]) -> io::Result<()> {
     file.sync_all()
 }
 impl State {
+    fn claim(&mut self, path: &std::path::Path, opening: bool) -> io::Result<()> {
+        let canonical = if path.exists() {
+            path.canonicalize()?
+        } else {
+            let parent = path
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(std::path::Path::new("."));
+            parent.canonicalize()?.join(
+                path.file_name()
+                    .ok_or_else(|| error("Board filename is required"))?,
+            )
+        };
+        if self.destination.as_ref().is_some_and(|d| d.0 == canonical) {
+            return Ok(());
+        }
+        if !opening && path.exists() {
+            return Err(error(
+                "This board already exists. Open it before saving, or choose a new filename.",
+            ));
+        }
+        {
+            let mut paths = destinations()
+                .lock()
+                .map_err(|_| error("Board destination registry unavailable"))?;
+            if !paths.insert(canonical.clone()) {
+                return Err(error("This board is already open in another tab."));
+            }
+        }
+        self.destination = Some(Destination(canonical));
+        Ok(())
+    }
+
     fn journal(&mut self) -> io::Result<&mut File> {
         if self.journal.is_none() {
             let directory = self.storage.recovery_directory()?;
@@ -171,6 +215,7 @@ impl State {
         Ok(Completion::Applied(command, source))
     }
     fn save(&mut self, path: PathBuf) -> io::Result<Completion> {
+        self.claim(&path, false)?;
         let mut file = match OpenOptions::new().read(true).append(true).open(&path) {
             Ok(file) => file,
             Err(e) if e.kind() == io::ErrorKind::NotFound => create(&path)?,
@@ -225,7 +270,7 @@ impl State {
         Ok(Completion::Saved)
     }
     fn open(&mut self, path: PathBuf) -> io::Result<Completion> {
-        // shortcut: opening replaces only empty boards; add board switching with M3 tabs.
+        self.claim(&path, true)?;
         if !self.scene.is_empty() {
             return Err(error(
                 "Open requires an empty board; save and restart first",
@@ -360,44 +405,61 @@ impl Worker {
         storage: Arc<DesktopStorage>,
         wake: Arc<dyn Fn() + Send + Sync>,
     ) -> io::Result<Self> {
+        Self::start(storage, wake, true)
+    }
+    /// Additional tabs already have the application's recovery and recent-file catalog.
+    pub fn new_tab(
+        storage: Arc<DesktopStorage>,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> io::Result<Self> {
+        Self::start(storage, wake, false)
+    }
+    fn start(
+        storage: Arc<DesktopStorage>,
+        wake: Arc<dyn Fn() + Send + Sync>,
+        discover: bool,
+    ) -> io::Result<Self> {
         let (requests, rx) = crossbeam_channel::bounded(32);
         let (tx, results) = crossbeam_channel::bounded(32);
         let thread = std::thread::Builder::new()
             .name("storage".into())
             .spawn(move || {
-                let recovery = (|| -> io::Result<Vec<PathBuf>> {
-                    let directory = storage.base_directory()?;
-                    std::fs::create_dir_all(&directory)?;
-                    let mut paths = Vec::new();
-                    for entry in std::fs::read_dir(directory)?.take(1024) {
-                        let entry = entry?;
-                        if entry.file_type()?.is_dir() {
-                            let path = entry.path().join("board.moth");
-                            if path.is_file() {
-                                paths.push(path);
+                if discover {
+                    let recovery = (|| -> io::Result<Vec<PathBuf>> {
+                        let directory = storage.base_directory()?;
+                        std::fs::create_dir_all(&directory)?;
+                        let mut paths = Vec::new();
+                        for entry in std::fs::read_dir(directory)?.take(1024) {
+                            let entry = entry?;
+                            if entry.file_type()?.is_dir() {
+                                let path = entry.path().join("board.moth");
+                                if path.is_file() {
+                                    paths.push(path);
+                                }
                             }
                         }
-                    }
-                    Ok(paths)
-                })();
-                let initial = match recovery {
-                    Ok(paths) => Completion::Recovery(paths),
-                    Err(e) => Completion::Failed(e.to_string()),
-                };
-                if tx.send(initial).is_err() {
-                    return;
-                }
-                wake();
-                if let Ok(paths) = storage
-                    .base_directory()
-                    .and_then(|directory| recent(&directory, None))
-                {
-                    if tx.send(Completion::Recent(paths)).is_err() {
+                        Ok(paths)
+                    })();
+                    let initial = match recovery {
+                        Ok(paths) => Completion::Recovery(paths),
+                        Err(e) => Completion::Failed(e.to_string()),
+                    };
+                    if tx.send(initial).is_err() {
                         return;
                     }
                     wake();
+                    if let Ok(paths) = storage
+                        .base_directory()
+                        .and_then(|directory| recent(&directory, None))
+                    {
+                        if tx.send(Completion::Recent(paths)).is_err() {
+                            return;
+                        }
+                        wake();
+                    }
                 }
                 let mut state = State {
+                    destination: None,
                     storage,
                     scene: Scene::default(),
                     sources: HashMap::new(),
@@ -436,8 +498,25 @@ impl Worker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tabs_cannot_save_over_an_unopened_or_already_owned_board() {
+        let mut first = state();
+        let directory = first.storage.base_directory().unwrap();
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("owned.moth");
+        first.save(path.clone()).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let mut second = state();
+        assert!(second.save(path.clone()).is_err());
+        assert!(second.open(path.clone()).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        drop(first);
+        second.open(path.clone()).unwrap();
+        second.save(path.clone()).unwrap();
+    }
     fn state() -> State {
         State {
+            destination: None,
             storage: Arc::new(DesktopStorage::in_directory(
                 std::env::temp_dir().join(format!("mothref-board-test-{}", uuid::Uuid::now_v7())),
             )),
@@ -510,6 +589,8 @@ mod tests {
         let h = state.storage.register(path.clone()).unwrap();
         board::compact(state.storage.as_ref(), h).unwrap();
         assert!(std::fs::metadata(&path).unwrap().len() < old_size);
+        // Reopening belongs to a new session after the writer releases the destination.
+        drop(state.destination.take());
         let mut loaded = self::state();
         assert!(matches!(
             loaded.request(Request::Open(path.clone())),

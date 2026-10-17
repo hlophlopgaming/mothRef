@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Raw native pointer events stop here; gestures consume normalized events.
+#[cfg(target_os = "linux")]
+mod wayland;
 use winit::event::{ElementState, Force, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
 /// A pointer's source is preserved for touch-sized hit testing and pen behavior.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -8,7 +10,7 @@ pub enum Kind {
     Mouse,
     /// Routes contacts through the gesture layer.
     Touch,
-    /// Reserves explicit identity for backends that classify pen input.
+    /// Preserves native tablet-tool identity and pressure.
     Pen,
 }
 /// Buttons map into actions without leaking winit into canvas logic.
@@ -51,14 +53,55 @@ pub enum Input {
         factor: f32,
     },
 }
+/// Native extensions feed the same pointer and import paths as winit.
+#[derive(Debug)]
+pub enum NativeEvent {
+    /// Preserves tablet identity without putting recognition in the gesture layer.
+    Pointer(Pointer),
+    /// Hands a local path to the existing background import worker.
+    Drop(std::path::PathBuf),
+    /// Surfaces native backend and transfer failures to the user.
+    Error(String),
+}
 /// Tracks the mouse position because button events do not carry coordinates.
 #[derive(Default)]
 pub struct Adapter {
     position: [f32; 2],
     pan: bool,
     button: Option<MouseButton>,
+    #[cfg(target_os = "linux")]
+    native: Option<wayland::Native>,
 }
 impl Adapter {
+    /// Supplements winit where the native backend supplies richer input.
+    pub fn attach(
+        &mut self,
+        window: std::sync::Arc<winit::window::Window>,
+        display: winit::event_loop::OwnedDisplayHandle,
+        wake: std::sync::Arc<dyn Fn() + Send + Sync>,
+    ) -> std::io::Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            if self.native.is_none() {
+                self.native = wayland::Native::new(window, display, wake)?;
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = (window, display, wake);
+        Ok(())
+    }
+    /// Drains a bounded native queue without waiting for device or file I/O.
+    pub fn native(&self) -> impl Iterator<Item = NativeEvent> + '_ {
+        #[cfg(target_os = "linux")]
+        {
+            self.native
+                .iter()
+                .flat_map(|native| native.events.try_iter())
+                .take(256)
+        }
+        #[cfg(not(target_os = "linux"))]
+        std::iter::empty()
+    }
     /// This is the only application code that reads raw native mouse events.
     pub fn event(&mut self, event: &WindowEvent, scale: f64) -> Option<Input> {
         let pointer = match event {
@@ -260,6 +303,30 @@ mod tests {
                 .event(&button(ElementState::Pressed, MouseButton::Left), 1.)
                 .is_some()
         );
+    }
+    #[test]
+    fn touch_adapter_keeps_kind_force_scale_and_lifecycle() {
+        let mut adapter = Adapter::default();
+        for (native, expected) in [
+            (TouchPhase::Started, Phase::Down),
+            (TouchPhase::Moved, Phase::Move),
+            (TouchPhase::Ended, Phase::Up),
+            (TouchPhase::Cancelled, Phase::Cancel),
+        ] {
+            let event = WindowEvent::Touch(winit::event::Touch {
+                device_id: winit::event::DeviceId::dummy(),
+                phase: native,
+                location: winit::dpi::PhysicalPosition::new(40., 80.),
+                force: Some(Force::Normalized(0.375)),
+                id: 42,
+            });
+            let Some(Input::Pointer(p)) = adapter.event(&event, 2.) else {
+                panic!("touch must normalize to a pointer");
+            };
+            assert_eq!((p.id, p.kind, p.phase), (42, Kind::Touch, expected));
+            assert_eq!(p.position, [20., 40.]);
+            assert_eq!(p.pressure, 0.375);
+        }
     }
     #[test]
     fn pressure_is_finite_and_normalized() {

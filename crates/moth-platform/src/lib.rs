@@ -2,9 +2,12 @@
 //! Native paths and clipboard access stay on the desktop side of the boundary.
 /// Background persistence and recovery for native boards.
 pub mod boards;
+mod clipboard_web;
 /// Native shutdown and bounded local crash reports.
 pub mod crash;
 pub mod input;
+/// Bounded read-only desktop board catalog.
+pub mod library;
 use moth_format::{Handle, ReadSeek, Storage};
 use std::{
     collections::HashMap,
@@ -29,6 +32,9 @@ pub enum PlatformError {
     /// Limits reject a paste before it can evict another original.
     #[error("{0}")]
     Budget(&'static str),
+    /// Downloads fail without exposing URL credentials or query strings.
+    #[error("Clipboard image download failed: {0}")]
+    Download(&'static str),
     /// OS dimensions must fit the portable image representation.
     #[error("invalid clipboard dimensions")]
     Dimensions,
@@ -36,7 +42,7 @@ pub enum PlatformError {
     #[error("clipboard backend panicked")]
     Panic,
     /// The UI supplies a localized explanation for unsupported clipboard content.
-    #[error("clipboard has no supported image or file list")]
+    #[error("clipboard has no supported image, files, URL or HTML image")]
     EmptyClipboard,
 }
 /// The desktop catalog stores source identities, never image pixels.
@@ -113,6 +119,15 @@ impl DesktopStorage {
         height: u32,
         rgba: &[u8],
     ) -> Result<Handle, PlatformError> {
+        self.stage_png(width, height, rgba)
+            .map(|(handle, _)| handle)
+    }
+    fn stage_png(
+        &self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(Handle, blake3::Hash), PlatformError> {
         if width == 0
             || height == 0
             || u64::from(width) * u64::from(height) > 32 * 1024 * 1024
@@ -123,6 +138,45 @@ impl DesktopStorage {
                 "Invalid or oversized clipboard image",
             ));
         }
+        let (directory, used) = self.staging_directory(rgba.len() as u64 + 48)?;
+        let path = directory.join(format!("{}.png", uuid::Uuid::now_v7()));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options.open(&path)?;
+        let result = (|| -> Result<blake3::Hash, PlatformError> {
+            let mut writer = io::BufWriter::new(file);
+            let hash = moth_io::write_png(&mut writer, width, height, rgba)?;
+            io::Write::flush(&mut writer)?;
+            let encoded_bytes = writer.get_ref().metadata()?.len();
+            if encoded_bytes > moth_io::MAX_INPUT_BYTES
+                || used.saturating_add(encoded_bytes) > 8 * 1024 * 1024 * 1024
+            {
+                return Err(PlatformError::Budget(
+                    "Compressed clipboard image exceeds input budget",
+                ));
+            }
+            writer.get_ref().sync_all()?;
+            #[cfg(unix)]
+            {
+                File::open(&directory)?.sync_all()?;
+                File::open(self.base_directory()?)?.sync_all()?;
+            }
+            Ok(hash)
+        })();
+        match result {
+            Ok(hash) => Ok((self.register(path)?, hash)),
+            Err(error) => {
+                let _ = std::fs::remove_file(&path);
+                Err(error)
+            }
+        }
+    }
+    fn staging_directory(&self, bytes: u64) -> Result<(PathBuf, u64), PlatformError> {
         let directory = self.recovery_directory()?;
         std::fs::create_dir_all(&directory)?;
         if std::fs::symlink_metadata(&directory)?
@@ -149,10 +203,15 @@ impl DesktopStorage {
             used = used.saturating_add(entry?.metadata()?.len());
         }
         // Originals are not an evictable cache; each board has its own disk budget.
-        if used.saturating_add(rgba.len() as u64 + 48) > 8 * 1024 * 1024 * 1024 {
+        if used.saturating_add(bytes) > 8 * 1024 * 1024 * 1024 {
             return Err(PlatformError::Budget("Board recovery budget full (8 GiB)"));
         }
-        let path = directory.join(format!("{}.png", uuid::Uuid::now_v7()));
+        Ok((directory, used))
+    }
+    fn stage_encoded(&self, bytes: &[u8]) -> Result<(Handle, moth_io::Decoded), PlatformError> {
+        let image = moth_io::decode(bytes, 256)?;
+        let (directory, _) = self.staging_directory(bytes.len() as u64)?;
+        let path = directory.join(format!("{}.image", uuid::Uuid::now_v7()));
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -160,32 +219,24 @@ impl DesktopStorage {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let file = options.open(&path)?;
-        let result = (|| -> Result<(), PlatformError> {
-            let mut writer = io::BufWriter::new(file);
-            moth_io::write_png(&mut writer, width, height, rgba)?;
-            io::Write::flush(&mut writer)?;
-            let encoded_bytes = writer.get_ref().metadata()?.len();
-            if encoded_bytes > moth_io::MAX_INPUT_BYTES
-                || used.saturating_add(encoded_bytes) > 8 * 1024 * 1024 * 1024
-            {
-                return Err(PlatformError::Budget(
-                    "Compressed clipboard image exceeds input budget",
-                ));
-            }
-            writer.get_ref().sync_all()?;
+        let mut file = options.open(&path)?;
+        let result = (|| -> Result<Handle, PlatformError> {
+            io::Write::write_all(&mut file, bytes)?;
+            file.sync_all()?;
             #[cfg(unix)]
             {
                 File::open(&directory)?.sync_all()?;
                 File::open(self.base_directory()?)?.sync_all()?;
             }
-            Ok(())
+            Ok(self.register(path.clone())?)
         })();
-        if let Err(error) = result {
-            let _ = std::fs::remove_file(&path);
-            return Err(error);
+        match result {
+            Ok(handle) => Ok((handle, image)),
+            Err(error) => {
+                let _ = std::fs::remove_file(path);
+                Err(error)
+            }
         }
-        Ok(self.register(path)?)
     }
     /// Reuses clipboard pixels for the first preview while staging the original durably.
     pub fn stage_preview(
@@ -194,11 +245,8 @@ impl DesktopStorage {
         height: u32,
         pixels: &[u8],
     ) -> Result<(Handle, moth_io::Decoded), PlatformError> {
-        let mut preview = moth_io::preview_rgba(width, height, pixels, 256)?;
-        let handle = self.stage_rgba(width, height, pixels)?;
-        let mut hash = blake3::Hasher::new();
-        hash.update_reader(File::open(self.path(handle)?)?)?;
-        preview.hash = hash.finalize();
+        let (handle, hash) = self.stage_png(width, height, pixels)?;
+        let preview = moth_io::preview_rgba_with_hash(width, height, pixels, 256, hash)?;
         Ok((handle, preview))
     }
     fn recovery_directory(&self) -> io::Result<PathBuf> {
@@ -228,12 +276,15 @@ impl DesktopStorage {
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "unknown storage handle"))
     }
 }
+fn parent_directory(path: &std::path::Path) -> &std::path::Path {
+    path.parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(std::path::Path::new("."))
+}
 impl Storage for DesktopStorage {
     fn temporary(&self, destination: Handle) -> io::Result<Handle> {
         let path = self.path(destination)?;
-        let parent = path
-            .parent()
-            .ok_or_else(|| io::Error::other("destination has no directory"))?;
+        let parent = parent_directory(&path);
         let temporary = parent.join(format!(".mothref-{}.tmp", uuid::Uuid::now_v7()));
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
@@ -250,9 +301,7 @@ impl Storage for DesktopStorage {
         let target = self.path(destination)?;
         atomic_replace(&source, &target)?;
         #[cfg(unix)]
-        if let Some(parent) = target.parent() {
-            File::open(parent)?.sync_all()?;
-        }
+        File::open(parent_directory(&target))?.sync_all()?;
         self.paths
             .lock()
             .map_err(|_| io::Error::other("storage lock poisoned"))?
@@ -284,6 +333,24 @@ pub struct Capabilities {
 pub trait Platform {
     /// Lets callers adapt controls to available native operations.
     fn capabilities(&self) -> Capabilities;
+    /// Compositors can reject topmost windows while still supporting transparent surfaces.
+    fn window_capabilities(&self, window: &winit::window::Window) -> WindowCapabilities;
+    /// Applies reversible window effects through one platform boundary.
+    fn window_effects(
+        &self,
+        window: &winit::window::Window,
+        overlay: bool,
+        on_top: bool,
+        click_through: bool,
+    ) -> Result<(), String>;
+}
+/// Native window affordances are independent of GPU alpha support.
+#[derive(Clone, Copy)]
+pub struct WindowCapabilities {
+    /// Wayland compositors control stacking, so the app cannot promise topmost behavior.
+    pub on_top: bool,
+    /// The backend supports an empty input region.
+    pub click_through: bool,
 }
 /// M0 native clipboard backend; overlay capabilities are added with M3.
 pub struct Desktop;
@@ -292,6 +359,36 @@ impl Platform for Desktop {
         Capabilities {
             clipboard_images: true,
         }
+    }
+    fn window_capabilities(&self, window: &winit::window::Window) -> WindowCapabilities {
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let wayland = window
+            .window_handle()
+            .is_ok_and(|h| matches!(h.as_raw(), RawWindowHandle::Wayland(_)));
+        WindowCapabilities {
+            on_top: !wayland,
+            click_through: true,
+        }
+    }
+    fn window_effects(
+        &self,
+        window: &winit::window::Window,
+        overlay: bool,
+        on_top: bool,
+        click_through: bool,
+    ) -> Result<(), String> {
+        let caps = self.window_capabilities(window);
+        window.set_window_level(if on_top && caps.on_top {
+            winit::window::WindowLevel::AlwaysOnTop
+        } else {
+            winit::window::WindowLevel::Normal
+        });
+        // Keep the normal window frameless too; the application owns its titlebar.
+        window.set_decorations(false);
+        window.set_transparent(overlay);
+        window
+            .set_cursor_hittest(!click_through)
+            .map_err(|error| error.to_string())
     }
 }
 /// Worker messages keep staging and disposal in order.
@@ -356,15 +453,25 @@ impl ClipboardWorker {
                         {
                             return file_payload(paths);
                         }
-                        let image = clipboard.get_image().map_err(|error| match error {
-                            arboard::Error::ContentNotAvailable => PlatformError::EmptyClipboard,
-                            error => PlatformError::Clipboard(error),
-                        })?;
-                        let width =
-                            u32::try_from(image.width).map_err(|_| PlatformError::Dimensions)?;
-                        let height =
-                            u32::try_from(image.height).map_err(|_| PlatformError::Dimensions)?;
-                        let image = storage.stage_preview(width, height, &image.bytes)?;
+                        let image = match clipboard.get_image() {
+                            Ok(image) => {
+                                let width = u32::try_from(image.width)
+                                    .map_err(|_| PlatformError::Dimensions)?;
+                                let height = u32::try_from(image.height)
+                                    .map_err(|_| PlatformError::Dimensions)?;
+                                storage.stage_preview(width, height, &image.bytes)?
+                            }
+                            Err(arboard::Error::ContentNotAvailable) => {
+                                let html = clipboard.get().html();
+                                let text = clipboard.get_text();
+                                let url = clipboard_web::source(
+                                    html.as_deref().ok(),
+                                    text.as_deref().ok(),
+                                )?;
+                                clipboard_web::import(&storage, url.as_str())?
+                            }
+                            Err(error) => return Err(error.into()),
+                        };
                         Ok(ClipboardCompletion::Pasted(Ok(image)))
                     }))
                     .unwrap_or_else(|_| Err(PlatformError::Panic));
@@ -409,6 +516,32 @@ fn atomic_replace(source: &std::path::Path, target: &std::path::Path) -> io::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn relative_file_replacement_syncs_the_current_directory() {
+        let path = PathBuf::from(format!(".mothref-relative-test-{}", uuid::Uuid::now_v7()));
+        let mut original = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        use std::io::Write;
+        original.write_all(b"before").unwrap();
+        drop(original);
+        let storage = DesktopStorage::default();
+        let handle = storage.register(path.clone()).unwrap();
+        let temporary = storage.temporary(handle).unwrap();
+        storage
+            .append(temporary)
+            .unwrap()
+            .write_all(b"after")
+            .unwrap();
+        storage.sync(temporary).unwrap();
+        let result = storage.replace(temporary, handle);
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert!(result.is_ok(), "relative replacement failed: {result:?}");
+        assert_eq!(bytes, b"after");
+    }
     #[test]
     fn clipboard_files_preserve_order_and_enforce_backlog_budget() {
         let first = std::env::temp_dir().join("first.png");

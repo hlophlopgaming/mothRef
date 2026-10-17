@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
             }
             if !matches!(
                 path.extension().and_then(|s| s.to_str()),
-                Some("png" | "jpg" | "jpeg")
+                Some("png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp")
             ) {
                 continue;
             }

@@ -9,6 +9,7 @@ pub struct Gpu {
     pub registry: moth_render::Registry,
     /// Makes hardware and software rendering distinguishable.
     pub adapter: String,
+    pub transparent: bool,
     pub lost: Arc<AtomicBool>,
 }
 impl Gpu {
@@ -41,6 +42,13 @@ impl Gpu {
             .copied()
             .find(|f| !f.is_srgb())
             .unwrap_or(config.format);
+        let transparent = surface
+            .get_capabilities(&adapter)
+            .alpha_modes
+            .contains(&wgpu::CompositeAlphaMode::PreMultiplied);
+        if transparent {
+            config.alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied;
+        }
         config.present_mode = wgpu::PresentMode::AutoVsync;
         surface.configure(&device, &config);
         let registry = moth_render::Registry::new(&device, config.format);
@@ -53,6 +61,7 @@ impl Gpu {
             registry,
             adapter: label,
             lost,
+            transparent,
         })
     }
     pub fn resize(&mut self, width: u32, height: u32) {

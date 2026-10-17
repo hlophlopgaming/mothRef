@@ -147,6 +147,21 @@ impl Scene {
             }
         }
     }
+    /// Uses the spatial index's root so navigation need not scan a huge board each frame.
+    pub fn bounds(&self) -> Option<Rect> {
+        if self.is_empty() {
+            return None;
+        }
+        let envelope = self.tree.root().envelope();
+        let min = envelope.lower();
+        let max = envelope.upper();
+        Some(Rect {
+            x: min[0],
+            y: min[1],
+            width: max[0] - min[0],
+            height: max[1] - min[1],
+        })
+    }
     /// Returns only visible metadata, sorted back to front.
     pub fn query(&self, rect: Rect) -> Vec<&Item> {
         if !rect.valid() {
@@ -227,6 +242,32 @@ impl Camera {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    #[test]
+    fn indexed_bounds_follow_commands_and_undo() {
+        let mut scene = Scene::default();
+        assert_eq!(scene.bounds(), None);
+        let rect = Rect {
+            x: -20.,
+            y: 10.,
+            width: 100.,
+            height: 40.,
+        };
+        let item = Item::image(blake3::hash(b"bounds"), rect, None);
+        let id = item.id;
+        scene.apply(Command::Insert(item)).unwrap();
+        assert_eq!(scene.bounds(), Some(rect));
+        let undo = scene
+            .apply(Command::SetRect {
+                id,
+                rect: Rect { x: 200., ..rect },
+            })
+            .unwrap();
+        assert_eq!(scene.bounds().unwrap().x, 200.);
+        scene.apply(undo).unwrap();
+        assert_eq!(scene.bounds(), Some(rect));
+        scene.apply(Command::Remove(id)).unwrap();
+        assert_eq!(scene.bounds(), None);
+    }
     proptest! {
      #[test] fn apply_undo_identity(x in -10000f32..10000., y in -10000f32..10000., w in 1f32..4096., h in 1f32..4096.) {
       let mut scene=Scene::default(); let item=Item::image(blake3::hash(b"image"),Rect{x,y,width:w,height:h},None);
