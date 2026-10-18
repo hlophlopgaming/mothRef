@@ -181,3 +181,13 @@ Automated Motion results (2026-10-19):
   and renderer dhat allocation check passed. Quick benchmark: RX 5700 XT/RADV,
   10,000 images/100 frames, p99 5.931 ms, textures 13.32 MiB. This run does not
   replace the pending idle-machine before/after performance qualification.
+
+### Zoom toward selection
+
+- Validation: formatting, mothref clippy (`-D warnings`) and all 36 mothref tests
+  passed with the local software Vulkan driver enabled for the existing golden.
+- Unit test covers four selected images, an empty selection, rotated geometry,
+  and a stable selection center throughout the camera interpolation.
+- [ ] Select four images and zoom with the wheel and toolbar: their common center
+  stays fixed, regardless of cursor position. Deselect: wheel follows the cursor.
+- [ ] Pinch/continuous trackpad zoom stays anchored to the gesture with a selection.

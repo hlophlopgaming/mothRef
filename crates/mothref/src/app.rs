@@ -554,12 +554,13 @@ impl App {
                 self.redraw();
             }
             Intent::Zoom(factor) => {
-                self.workspace.board.view.camera.zoom_at(
-                    [
-                        self.workspace.board.view.viewport.center().x,
-                        self.workspace.board.view.viewport.center().y,
-                    ],
+                let center = self.workspace.board.view.viewport.center();
+                let anchor = self.zoom_anchor([center.x, center.y]);
+                self.camera_motion.zoom(
+                    &mut self.workspace.board.view.camera,
+                    anchor,
                     factor,
+                    self.tools.reduced_motion,
                 );
                 self.redraw();
             }
@@ -769,6 +770,16 @@ impl App {
         }
         self.animate_camera(before);
     }
+    /// Keeps discrete zoom focused on the whole selection when present.
+    fn zoom_anchor(&self, fallback: [f32; 2]) -> [f32; 2] {
+        let board = &self.workspace.board;
+        camera_motion::zoom_anchor(
+            board.view.camera,
+            board.selection.iter().filter_map(|id| board.scene.get(*id)),
+            fallback,
+        )
+    }
+
     /// Fits the camera to the current selection, if any.
     fn fit_selection(&mut self) {
         let before = self.workspace.board.view.camera;
@@ -920,9 +931,10 @@ impl App {
                         self.camera_motion.stop();
                         self.workspace.board.view.camera.zoom_at(position, factor);
                     } else {
+                        let anchor = self.zoom_anchor(position);
                         self.camera_motion.zoom(
                             &mut self.workspace.board.view.camera,
-                            position,
+                            anchor,
                             factor,
                             self.tools.reduced_motion,
                         );

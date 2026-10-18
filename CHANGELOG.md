@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Zoom wheel and toolbar controls around the center of the entire selection; retain cursor-based wheel zoom when nothing is selected and direct pinch/trackpad behavior.
+
 - Adapt the GPU image-cache limit to image count, release pages when it shrinks, and show allocated/current-limit memory in the status bar; cap discrete GPUs at 512 MiB and shared/software adapters at 96 MiB.
 
 - Keep budgeted low-resolution GPU fallbacks while zoom detail is replaced or evicted, avoiding blank image frames during rapid zoom; ignore late lower-quality decodes.
