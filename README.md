@@ -2,6 +2,22 @@
 
 A native reference canvas for artists, written in Rust. GPL-3.0-or-later.
 
+![MothRef reference board with the English interface](docs/screenshots/board.png)
+
+<details>
+<summary>Board library (English interface)</summary>
+
+![MothRef library on first launch](docs/screenshots/library.png)
+
+</details>
+
+Artwork shown, by [David Revoy](https://www.davidrevoy.com):
+[Electron donor](https://www.peppercarrot.com/en/viewer/misc__2010-08-19-electron-donor_by-David-Revoy.html),
+[Peacock dragon](https://commons.wikimedia.org/wiki/File:2013-04-28_peacock-dragon_by-David-Revoy.jpg)
+and [Alice in Wonderland](https://www.davidrevoy.com/article36/alice-in-wonderland),
+licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+The illustrations are scaled for display in the screenshot.
+
 Download experimental binaries from [GitHub Releases](https://github.com/hlophlopgaming/mothRef/releases).
 Windows, Linux x86_64 and macOS (Apple Silicon / Intel) archives are available.
 
