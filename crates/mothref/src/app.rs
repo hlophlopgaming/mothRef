@@ -1178,11 +1178,35 @@ impl App {
             grayscale: self.tools.grayscale,
         };
         let camera = self.workspace.board.view.camera;
-        let visible = self.workspace.board.visible(
+        let previews: Vec<_> =
+            if self.moving.is_some() && !self.tools.locked && !self.workspace.library {
+                self.workspace
+                    .board
+                    .selection
+                    .iter()
+                    .filter_map(|id| self.workspace.board.scene.get(*id))
+                    .map(|item| {
+                        let mut item = item.clone();
+                        item.rect = canvas::preview_rect(item.rect, self.drag, camera.zoom);
+                        item
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        let preview_ids: HashSet<_> = previews.iter().map(|item| item.id).collect();
+        let mut visible = self.workspace.board.visible(
             &gpu.registry,
             self.workspace.library,
             output.pixels_per_point,
         );
+        if !previews.is_empty() {
+            if !self.drag_duplicate {
+                visible.retain(|item| !preview_ids.contains(&item.id));
+            }
+            visible.extend(previews.iter());
+            visible.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
+        }
         match self.shell.render(output, &visible, camera, frame)? {
             shell::Present::Presented => {}
             shell::Present::Recovered => {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preview the entire selection during dragging, including Alt-drag copies, without changing board data.
+
 - Add view-only motion primitives with exact endpoints and reduced-motion support.
 
 - Build interface languages from translation catalogs, with automatic menu registration,

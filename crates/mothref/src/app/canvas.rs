@@ -122,7 +122,12 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     break;
                 }
                 if let Some(item) = board.scene.get(id) {
-                    let corners = screen_corners(&view.camera, item.rect, item.transform.rotation);
+                    let rect = preview_rect(
+                        item.rect,
+                        drag.filter(|_| moving.is_some() && !tools.locked),
+                        view.camera.zoom,
+                    );
+                    let corners = screen_corners(&view.camera, rect, item.transform.rotation);
                     moth_ui::canvas::selection(ui, corners);
                 }
             }
@@ -393,18 +398,6 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     }
                 }
             }
-            if let (Some((_, rect)), Some((a, b, false))) = (moving, drag) {
-                let moved = Rect {
-                    x: rect.x + (b[0] - a[0]) / view.camera.zoom,
-                    y: rect.y + (b[1] - a[1]) / view.camera.zoom,
-                    ..rect
-                };
-                let rotation = moving
-                    .and_then(|(id, _)| board.scene.get(id))
-                    .map_or(0., |item| item.transform.rotation);
-                let corners = screen_corners(&view.camera, moved, rotation);
-                moth_ui::canvas::selection(ui, corners);
-            }
             if let Some((a, b, false)) = drag
                 && moving.is_none()
             {
@@ -532,9 +525,46 @@ pub(super) fn canvas_clip(viewport: egui::Rect, scale: f32, size: [u32; 2]) -> [
     [min[0], min[1], max[0] - min[0], max[1] - min[1]]
 }
 
+/// The same logical displacement is used for preview and the eventual command.
+pub(super) fn preview_rect(
+    rect: Rect,
+    drag: Option<([f32; 2], [f32; 2], bool)>,
+    zoom: f32,
+) -> Rect {
+    if let Some((a, b, false)) = drag {
+        Rect {
+            x: rect.x + (b[0] - a[0]) / zoom,
+            y: rect.y + (b[1] - a[1]) / zoom,
+            ..rect
+        }
+    } else {
+        rect
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn preview_preserves_source_and_matches_translation() {
+        let rect = Rect {
+            x: 10.,
+            y: 20.,
+            width: 30.,
+            height: 40.,
+        };
+        let moved = preview_rect(rect, Some(([100., 200.], [120., 180.], false)), 2.);
+        assert_eq!(
+            moved,
+            Rect {
+                x: 20.,
+                y: 10.,
+                ..rect
+            }
+        );
+        assert_eq!(rect.x, 10.);
+        assert_eq!(preview_rect(rect, None, 2.), rect);
+    }
     #[test]
     fn library_and_resized_canvas_keep_scissors_inside_the_surface() {
         assert_eq!(
