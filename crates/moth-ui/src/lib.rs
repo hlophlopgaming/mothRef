@@ -803,3 +803,6 @@ mod tests {
         );
     }
 }
+
+/// Time-based visual transitions and repaint policy.
+pub mod motion;

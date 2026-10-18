@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add view-only motion primitives with exact endpoints and reduced-motion support.
+
 - Build interface languages from translation catalogs, with automatic menu registration,
   English fallback and validation; document how to add a language.
 
