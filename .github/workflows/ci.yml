@@ -3,6 +3,22 @@ on: [push, pull_request]
 permissions:
   contents: read
 jobs:
+  headless-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Keep core dependencies headless
+        shell: bash
+        run: |
+          dependencies="$(cargo tree -p moth-scene -p moth-format -p moth-io -p moth-import --edges normal,build,dev --prefix none --format '{p}')"
+          if echo "$dependencies" | grep -E '^(wgpu[^ ]*|winit|egui[^ ]*|moth-platform) '; then
+            echo '::error::Core tests must not depend on GPU, window, UI or platform crates'
+            exit 1
+          fi
+      - name: Test core without a display
+        run: env -u DISPLAY -u WAYLAND_DISPLAY python3 .github/scripts/annotate.py cargo test -p moth-scene -p moth-format -p moth-io -p moth-import
   desktop:
     strategy:
       fail-fast: false

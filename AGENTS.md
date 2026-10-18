@@ -63,6 +63,24 @@ cargo deny check                      # when adding or bumping a dependency
 
 Before a PR is final, run the workspace-wide versions once: `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace`.
 
+### Pick tests by area
+
+| Area | Fast test command | Runtime needs |
+| --- | --- | --- |
+| Commands, undo/redo, spatial index, camera | `cargo test -p moth-scene` | CPU only |
+| Board format, journal records, recovery, migrations | `cargo test -p moth-format` | CPU only; also run corpus and format checks below |
+| Decoding, previews, LOD, caches | `cargo test -p moth-io` | CPU only; includes allocation check |
+| Bee/PureRef import parsing | `cargo test -p moth-import` | CPU only; also run corpus |
+| Storage worker, board sessions, clipboard, native input, settings, library | `cargo test -p moth-platform` | No window; OS-specific tests run on their host OS |
+| Widgets, localization, responsive layout | `cargo test -p moth-ui` | CPU only, no window |
+| App wiring, tabs, arrange, pointer routing | `cargo test -p mothref` | No window; not yet an independent editor API |
+| Renderer, texture residency, golden images | `cargo test -p moth-render` | Headless GPU or software adapter; no window |
+| Build/check helpers | `cargo test -p xtask` | No window |
+
+The `headless-core` CI job runs `cargo test -p moth-scene -p moth-format -p moth-io -p moth-import`
+without a display. It also rejects GPU/window/UI/platform dependencies in these crates'
+normal, build and test dependency trees. Rendering tests belong to the desktop job.
+
 ### Tier 2: quick stress (only for the area you touched)
 
 Run these **one at a time, in the foreground, with no build, fuzzer or other benchmark running**. Timing results under load are meaningless: a failed `bench` or `paste` guard while anything else runs is not a regression, rerun it on an idle machine before acting on it.
