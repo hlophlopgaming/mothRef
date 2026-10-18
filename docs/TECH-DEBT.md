@@ -11,7 +11,7 @@ Continues the `01-refactor-app-god-object.md` plan. Each step is one local commi
 (`refactor(app): …`); quick checks (`fmt`, `clippy -p mothref`, `test -p mothref`)
 after each, workspace-wide checks once at the end.
 
-- [ ] **Step 1 — Replace the 12 `frame()` flags with `Vec<Intent>`.**
+- [x] **Step 1 — Replace the 12 `frame()` flags with `Vec<Intent>`.**
   `intent.rs` defines `Intent` and `intents_from_actions`. Close buttons emit one
   `SaveAndClose` / `Discard` / `KeepOpen` intent; `apply` sets `close_after_save`
   and sends `Save`. Test: `SaveAndClose` on a board with a path never discards

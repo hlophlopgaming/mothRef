@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Explicit Apply keeps inspector drafts out of the journal until confirmed.
-use super::{Session, arrange};
+use super::{Session, arrange, intent::Intent};
 use moth_platform::export::{Geometry, Target};
 use moth_scene::{Command, Rect, Transform, Uuid};
 use moth_ui::{Text, text};
@@ -23,12 +23,7 @@ pub(super) struct Tools {
     pub scale_with_window: bool,
     pub auto_arrange: bool,
     pub default_arrange: u8,
-    pub preference_dirty: bool,
-    pub fit: bool,
-    pub focus: i32,
-    pub reset_camera: bool,
     pub coordinates: bool,
-    pub image_scale: Option<(Vec<Uuid>, Geometry)>,
     factor: f32,
     path: String,
     side: u32,
@@ -58,12 +53,7 @@ impl Default for Tools {
             scale_with_window: false,
             auto_arrange: false,
             default_arrange: 0,
-            preference_dirty: false,
-            fit: false,
-            focus: 0,
-            reset_camera: false,
             coordinates: false,
-            image_scale: None,
             factor: 1.,
             path: String::new(),
             side: 2048,
@@ -189,14 +179,15 @@ impl Tools {
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
-        board: &mut Session,
+        board: &Session,
         editing: bool,
-    ) -> (Vec<Command>, Option<Target>, bool) {
+    ) -> (Vec<Command>, Option<Target>, bool, Vec<Intent>) {
         let mut commands = Vec::new();
         let mut export = None;
         let mut note = false;
+        let mut intents = Vec::new();
         if !self.open {
-            return (commands, export, note);
+            return (commands, export, note, intents);
         }
         let mut open = self.open;
         egui::Window::new(text(Text::Tools))
@@ -280,7 +271,7 @@ impl Tools {
                             }
                         });
                     if before != self.preferences() {
-                        self.preference_dirty = true;
+                        intents.push(Intent::PreferencesDirty);
                     }
                     if self.preferences() != defaults.preferences() {
                         ui.label(text(Text::ChangedSetting));
@@ -297,7 +288,7 @@ impl Tools {
                         self.threshold = defaults.threshold;
                         self.auto_arrange = defaults.auto_arrange;
                         self.default_arrange = defaults.default_arrange;
-                        self.preference_dirty = true;
+                        intents.push(Intent::PreferencesDirty);
                     }
                 });
                 ui.add_enabled(
@@ -305,20 +296,22 @@ impl Tools {
                     egui::Checkbox::new(&mut self.locked, text(Text::LockCanvas)),
                 );
                 ui.checkbox(&mut self.grayscale, text(Text::CanvasGrayscale));
-                board.locked = self.locked;
-                board.grayscale = self.grayscale;
+                intents.push(Intent::SetViewFlags {
+                    locked: self.locked,
+                    grayscale: self.grayscale,
+                });
                 ui.horizontal_wrapped(|ui| {
                     if ui.button(text(Text::Fit)).clicked() {
-                        self.fit = true;
+                        intents.push(Intent::NeedsFit);
                     }
                     if ui.button(text(Text::ResetCamera)).clicked() {
-                        self.reset_camera = true;
+                        intents.push(Intent::ResetCamera);
                     }
                     if ui.button(text(Text::PreviousImage)).clicked() {
-                        self.focus = -1;
+                        intents.push(Intent::Focus(-1));
                     }
                     if ui.button(text(Text::NextImage)).clicked() {
-                        self.focus = 1;
+                        intents.push(Intent::Focus(1));
                     }
                 });
                 ui.add_enabled_ui(board.idle(), |ui| {
@@ -450,7 +443,7 @@ impl Tools {
                                 }
                             }
                             if old_gap != self.gap {
-                                self.preference_dirty = true;
+                                intents.push(Intent::PreferencesDirty);
                             }
                             if ui.button(text(Text::PackFit)).clicked() {
                                 let mut all: Vec<_> = board.scene.items().collect();
@@ -461,7 +454,7 @@ impl Tools {
                                     board.viewport.width() / board.camera.zoom,
                                     self.gap,
                                 ));
-                                self.fit = true;
+                                intents.push(Intent::NeedsFit);
                             }
                             for (label, mode) in [
                                 (Text::NormalizeWidth, arrange::Normalize::Width),
@@ -502,7 +495,7 @@ impl Tools {
                             (Text::NormalizeScale, Geometry::Normalize),
                         ] {
                             if ui.button(text(key)).clicked() {
-                                self.image_scale = Some((
+                                intents.push(Intent::OriginalGeometry(
                                     items
                                         .iter()
                                         .filter(|i| i.blob().is_some())
@@ -553,7 +546,7 @@ impl Tools {
                         ] {
                             if ui.button(text(key)).clicked() {
                                 if kind >= 2 {
-                                    self.image_scale = Some((
+                                    intents.push(Intent::OriginalGeometry(
                                         items.iter().map(|i| i.id).collect(),
                                         if kind == 2 {
                                             Geometry::Crop
@@ -673,7 +666,7 @@ impl Tools {
                 });
             });
         self.open = open;
-        (commands, export, note)
+        (commands, export, note, intents)
     }
 }
 pub(super) fn layout(i: u8) -> (Text, arrange::Arrange) {

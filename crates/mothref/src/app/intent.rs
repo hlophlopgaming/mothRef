@@ -6,7 +6,7 @@
 //! ordering is expressed by the variant rather than by vector order.
 use std::path::PathBuf;
 
-use moth_platform::export::Target;
+use moth_platform::export::{Geometry, Target};
 use moth_scene::{Command, Uuid};
 use moth_ui::{Actions, Locale};
 
@@ -18,6 +18,8 @@ pub(super) enum Intent {
     Paste,
     /// Fit the camera to the whole board immediately.
     Fit,
+    /// Defer a fit until the canvas lays out next frame.
+    NeedsFit,
     /// Relative zoom from the toolbar percentage control.
     Zoom(f32),
     /// Return to the catalog without closing the board.
@@ -76,6 +78,20 @@ pub(super) enum Intent {
     FitSelection,
     /// Export through the storage worker.
     Export(Target),
+    /// Reset content geometry (crop/scale) on a set of items.
+    OriginalGeometry(Vec<Uuid>, Geometry),
+    /// Reset the camera to its origin.
+    ResetCamera,
+    /// Step selection focus to the previous/next image.
+    Focus(i32),
+    /// Persist changed preferences and re-apply the theme.
+    PreferencesDirty,
+    /// Dismiss the pending arrangement prompt without arranging.
+    DismissArrangePrompt,
+    /// Toggle the focus-return camera for an item, fitting to it on first focus.
+    FocusItem(Uuid),
+    /// Sync the per-tab lock and grayscale view flags from the tools panel.
+    SetViewFlags { locked: bool, grayscale: bool },
 }
 
 /// Converts the shared chrome action set into intents in application order.

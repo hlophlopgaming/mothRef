@@ -1129,39 +1129,115 @@ impl App {
                     self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
                 }
             }
-            Intent::FitSelection => {
-                let selected: Vec<_> = self
+            Intent::FitSelection => self.fit_selection(),
+            Intent::Export(target) => self.persist(moth_platform::boards::Request::Export(target)),
+            Intent::NeedsFit => self.board.needs_fit = true,
+            Intent::ResetCamera => self.board.camera = Camera::default(),
+            Intent::Focus(step) => {
+                let mut items: Vec<_> = self
                     .board
-                    .selection
-                    .iter()
-                    .filter_map(|id| self.board.scene.get(*id))
+                    .scene
+                    .items()
+                    .filter(|i| i.blob().is_some())
                     .collect();
-                if !selected.is_empty() {
-                    let min = selected.iter().fold([f32::INFINITY; 2], |a, i| {
-                        let e = i.rect.rotated_envelope(i.transform.rotation);
-                        [a[0].min(e.lower()[0]), a[1].min(e.lower()[1])]
+                items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
+                if !items.is_empty() {
+                    let current = items
+                        .iter()
+                        .position(|i| self.board.selection.contains(&i.id));
+                    let next = current.map_or(if step > 0 { 0 } else { items.len() - 1 }, |i| {
+                        (i as i32 + step).rem_euclid(items.len() as i32) as usize
                     });
-                    let max = selected.iter().fold([f32::NEG_INFINITY; 2], |a, i| {
-                        [
-                            a[0].max(i.rect.rotated_envelope(i.transform.rotation).upper()[0]),
-                            a[1].max(i.rect.rotated_envelope(i.transform.rotation).upper()[1]),
-                        ]
-                    });
-                    self.board.camera.zoom = ((self.board.viewport.width() - 48.)
-                        / (max[0] - min[0]))
-                        .min((self.board.viewport.height() - 48.) / (max[1] - min[1]))
-                        .clamp(0.01, 64.);
-                    self.board.camera.origin = [
-                        (min[0] + max[0]) / 2.
-                            - self.board.viewport.center().x / self.board.camera.zoom,
-                        (min[1] + max[1]) / 2.
-                            - self.board.viewport.center().y / self.board.camera.zoom,
-                    ];
-                    self.redraw();
+                    self.board.selection = HashSet::from([items[next].id]);
+                    self.fit_selection();
                 }
             }
-            Intent::Export(target) => self.persist(moth_platform::boards::Request::Export(target)),
+            Intent::PreferencesDirty => {
+                self.ctx.set_theme(if self.tools.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                });
+                self.ctx.set_zoom_factor(self.tools.ui_scale);
+                for tab in &mut self.tabs {
+                    let values = std::collections::BTreeMap::from([(
+                        "undo_limit".to_owned(),
+                        self.tools.undo_limit.to_string(),
+                    )]);
+                    if tab
+                        .boards
+                        .requests
+                        .try_send(moth_platform::boards::Request::Preferences(values))
+                        .is_ok()
+                    {
+                        tab.in_flight += 1;
+                    } else {
+                        tab.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
+                    }
+                }
+                self.persist(moth_platform::boards::Request::Preferences(
+                    self.tools
+                        .preferences()
+                        .into_iter()
+                        .map(|(k, v)| (k.to_owned(), v))
+                        .collect(),
+                ));
+            }
+            Intent::OriginalGeometry(ids, mode) => {
+                self.persist(moth_platform::boards::Request::OriginalGeometry { ids, mode });
+            }
+            Intent::DismissArrangePrompt => self.board.arrange_prompt = None,
+            Intent::FocusItem(id) => {
+                if self
+                    .board
+                    .focus_return
+                    .as_ref()
+                    .is_some_and(|(rid, _)| *rid == id)
+                {
+                    if let Some((_, camera)) = self.board.focus_return.take() {
+                        self.board.camera = camera;
+                    }
+                } else {
+                    self.board.focus_return = Some((id, self.board.camera));
+                    self.board.selection = HashSet::from([id]);
+                    self.fit_selection();
+                }
+            }
+            Intent::SetViewFlags { locked, grayscale } => {
+                self.board.locked = locked;
+                self.board.grayscale = grayscale;
+            }
         }
+    }
+    /// Fits the camera to the current selection, if any.
+    fn fit_selection(&mut self) {
+        let selected: Vec<_> = self
+            .board
+            .selection
+            .iter()
+            .filter_map(|id| self.board.scene.get(*id))
+            .collect();
+        if selected.is_empty() {
+            return;
+        }
+        let min = selected.iter().fold([f32::INFINITY; 2], |a, i| {
+            let e = i.rect.rotated_envelope(i.transform.rotation);
+            [a[0].min(e.lower()[0]), a[1].min(e.lower()[1])]
+        });
+        let max = selected.iter().fold([f32::NEG_INFINITY; 2], |a, i| {
+            [
+                a[0].max(i.rect.rotated_envelope(i.transform.rotation).upper()[0]),
+                a[1].max(i.rect.rotated_envelope(i.transform.rotation).upper()[1]),
+            ]
+        });
+        self.board.camera.zoom = ((self.board.viewport.width() - 48.) / (max[0] - min[0]))
+            .min((self.board.viewport.height() - 48.) / (max[1] - min[1]))
+            .clamp(0.01, 64.);
+        self.board.camera.origin = [
+            (min[0] + max[0]) / 2. - self.board.viewport.center().x / self.board.camera.zoom,
+            (min[1] + max[1]) / 2. - self.board.viewport.center().y / self.board.camera.zoom,
+        ];
+        self.redraw();
     }
     /// Rotation, mirroring and reset keys; they act on the selection and need an idle board.
     fn transform_keys(&self, event: &KeyEvent) -> Option<Vec<Command>> {
@@ -1556,8 +1632,9 @@ impl App {
                         self.tools.open = !self.tools.open;
                     }
                 });
-                let (edits, target, note) =
-                    self.tools.show(ui, &mut self.board, self.editing.is_some());
+                let (edits, target, note, tool_intents) =
+                    self.tools.show(ui, &self.board, self.editing.is_some());
+                intents.extend(tool_intents);
                 if !edits.is_empty() {
                     intents.push(Intent::Commands(edits));
                 }
@@ -1871,7 +1948,7 @@ impl App {
                                             .button(moth_ui::text(moth_ui::Text::ResetTransform))
                                             .clicked()
                                         {
-                                            self.tools.image_scale = Some((
+                                            intents.push(Intent::OriginalGeometry(
                                                 items.iter().map(|i| i.id).collect(),
                                                 moth_platform::export::Geometry::All,
                                             ));
@@ -1913,23 +1990,7 @@ impl App {
                                         intents.push(Intent::EditNote(item.id))
                                     }
                                     Some(item) => {
-                                        if self
-                                            .board
-                                            .focus_return
-                                            .as_ref()
-                                            .is_some_and(|(id, _)| *id == item.id)
-                                        {
-                                            if let Some((_, camera)) =
-                                                self.board.focus_return.take()
-                                            {
-                                                self.board.camera = camera;
-                                            }
-                                        } else {
-                                            self.board.focus_return =
-                                                Some((item.id, self.board.camera));
-                                            self.board.selection = HashSet::from([item.id]);
-                                            intents.push(Intent::FitSelection);
-                                        }
+                                        intents.push(Intent::FocusItem(item.id));
                                     }
                                     None => intents.push(Intent::AddNote(world)),
                                 }
@@ -2132,7 +2193,7 @@ impl App {
                         tools::layout(self.tools.default_arrange).1,
                         ids.clone(),
                     ));
-                    self.board.arrange_prompt = None;
+                    intents.push(Intent::DismissArrangePrompt);
                 } else {
                     egui::Modal::new(egui::Id::new("arrange_prompt")).show(ui.ctx(), |ui| {
                         ui.set_max_width(380.);
@@ -2148,11 +2209,11 @@ impl App {
                             ] {
                                 if ui.button(moth_ui::text(label)).clicked() {
                                     intents.push(Intent::Arrange(mode, ids.clone()));
-                                    self.board.arrange_prompt = None;
+                                    intents.push(Intent::DismissArrangePrompt);
                                 }
                             }
                             if ui.button(moth_ui::text(moth_ui::Text::Cancel)).clicked() {
-                                self.board.arrange_prompt = None;
+                                intents.push(Intent::DismissArrangePrompt);
                             }
                         });
                     });
@@ -2160,29 +2221,6 @@ impl App {
             }
         });
         state.handle_platform_output(&window, output.platform_output);
-        if std::mem::take(&mut self.tools.reset_camera) {
-            self.board.camera = Camera::default();
-        }
-        if self.tools.focus != 0 {
-            let step = std::mem::take(&mut self.tools.focus);
-            let mut items: Vec<_> = self
-                .board
-                .scene
-                .items()
-                .filter(|i| i.blob().is_some())
-                .collect();
-            items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
-            if !items.is_empty() {
-                let current = items
-                    .iter()
-                    .position(|i| self.board.selection.contains(&i.id));
-                let next = current.map_or(if step > 0 { 0 } else { items.len() - 1 }, |i| {
-                    (i as i32 + step).rem_euclid(items.len() as i32) as usize
-                });
-                self.board.selection = HashSet::from([items[next].id]);
-                intents.push(Intent::FitSelection);
-            }
-        }
         gpu.registry.grayscale = self.tools.grayscale;
         let p = self
             .board
@@ -2316,43 +2354,6 @@ impl App {
             .viewport_output
             .get(&egui::ViewportId::ROOT)
             .and_then(|o| Instant::now().checked_add(o.repaint_delay));
-        if std::mem::take(&mut self.tools.preference_dirty) {
-            self.ctx.set_theme(if self.tools.dark {
-                egui::Theme::Dark
-            } else {
-                egui::Theme::Light
-            });
-            self.ctx.set_zoom_factor(self.tools.ui_scale);
-            for tab in &mut self.tabs {
-                let values = std::collections::BTreeMap::from([(
-                    "undo_limit".to_owned(),
-                    self.tools.undo_limit.to_string(),
-                )]);
-                if tab
-                    .boards
-                    .requests
-                    .try_send(moth_platform::boards::Request::Preferences(values))
-                    .is_ok()
-                {
-                    tab.in_flight += 1;
-                } else {
-                    tab.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
-                }
-            }
-            self.persist(moth_platform::boards::Request::Preferences(
-                self.tools
-                    .preferences()
-                    .into_iter()
-                    .map(|(k, v)| (k.to_owned(), v))
-                    .collect(),
-            ));
-        }
-        if std::mem::take(&mut self.tools.fit) {
-            self.board.needs_fit = true;
-        }
-        if let Some((ids, mode)) = self.tools.image_scale.take() {
-            self.persist(moth_platform::boards::Request::OriginalGeometry { ids, mode });
-        }
         intents.extend(intent::intents_from_actions(actions));
         for intent in intents {
             self.apply(intent, event_loop);
