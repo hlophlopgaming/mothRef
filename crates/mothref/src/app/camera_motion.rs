@@ -2,28 +2,6 @@
 //! Camera interpolation is presentation state; scene camera math stays timeless.
 use super::*;
 use moth_ui::motion::{Ease, Tween};
-
-pub(super) fn zoom_anchor<'a>(
-    camera: Camera,
-    selected: impl Iterator<Item = &'a Item>,
-    fallback: [f32; 2],
-) -> [f32; 2] {
-    let bounds = selected.fold(None, |bounds: Option<([f32; 2], [f32; 2])>, item| {
-        let envelope = item.rect.rotated_envelope(item.transform.rotation);
-        let lower = envelope.lower();
-        let upper = envelope.upper();
-        Some(bounds.map_or((lower, upper), |(min, max)| {
-            (
-                [min[0].min(lower[0]), min[1].min(lower[1])],
-                [max[0].max(upper[0]), max[1].max(upper[1])],
-            )
-        }))
-    });
-    bounds.map_or(fallback, |(min, max)| {
-        camera.screen([(min[0] + max[0]) / 2., (min[1] + max[1]) / 2.])
-    })
-}
-
 #[derive(Default)]
 pub(super) struct CameraMotion {
     transition: Option<(Camera, Camera, Option<[f32; 2]>, Tween)>,
@@ -170,46 +148,6 @@ fn interpolate(from: Camera, to: Camera, anchor: Option<[f32; 2]>, t: f32) -> Ca
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn zoom_uses_the_whole_selection_and_keeps_its_center_fixed() {
-        let camera = Camera {
-            origin: [20., -10.],
-            zoom: 2.,
-        };
-        let items: Vec<_> = [(0., 0.), (200., 0.), (0., 100.), (200., 100.)]
-            .into_iter()
-            .map(|(x, y)| {
-                Item::image(
-                    moth_scene::BlobId::from_bytes([1; 32]),
-                    Rect {
-                        x,
-                        y,
-                        width: 40.,
-                        height: 60.,
-                    },
-                    None,
-                )
-            })
-            .collect();
-        let fallback = [999., 888.];
-        assert_eq!(zoom_anchor(camera, std::iter::empty(), fallback), fallback);
-        let anchor = zoom_anchor(camera, items.iter(), fallback);
-        assert_eq!(anchor, camera.screen([120., 80.]));
-        let mut target = camera;
-        target.zoom_at(anchor, 2.);
-        for frame in 0..=100 {
-            let current = interpolate(camera, target, Some(anchor), frame as f32 / 100.);
-            let center = current.screen([120., 80.]);
-            assert!((center[0] - anchor[0]).abs() < 0.01);
-            assert!((center[1] - anchor[1]).abs() < 0.01);
-        }
-        let mut rotated = items[0].clone();
-        rotated.transform.rotation = std::f32::consts::FRAC_PI_2;
-        assert_eq!(
-            zoom_anchor(camera, std::iter::once(&rotated), fallback),
-            camera.screen([20., 30.]),
-        );
-    }
     #[test]
     fn inertia_expires_and_stationary_release_does_not_glide() {
         let now = Instant::now();

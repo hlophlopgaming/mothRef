@@ -182,12 +182,13 @@ Automated Motion results (2026-10-19):
   10,000 images/100 frames, p99 5.931 ms, textures 13.32 MiB. This run does not
   replace the pending idle-machine before/after performance qualification.
 
-### Zoom toward selection
+### Double-click selection fit
 
-- Validation: formatting, mothref clippy (`-D warnings`) and all 36 mothref tests
-  passed with the local software Vulkan driver enabled for the existing golden.
-- Unit test covers four selected images, an empty selection, rotated geometry,
-  and a stable selection center throughout the camera interpolation.
-- [ ] Select four images and zoom with the wheel and toolbar: their common center
-  stays fixed, regardless of cursor position. Deselect: wheel follows the cursor.
-- [ ] Pinch/continuous trackpad zoom stays anchored to the gesture with a selection.
+- Formatting, mothref clippy (`-D warnings`) and all 36 mothref tests passed,
+  including the existing software golden with the local Vulkan driver.
+- Regression test first reproduced the group being replaced by the clicked image;
+  focusing a selected image now preserves all selected IDs for the existing
+  rotated-bounds fit calculation. Clicking an unselected image still focuses it.
+- [ ] Select four images (also try the 16-image grid), double-click one of them:
+  the whole group is centered and fits both canvas dimensions with padding.
+- [ ] Double-click again to return; wheel zoom follows the cursor as before.

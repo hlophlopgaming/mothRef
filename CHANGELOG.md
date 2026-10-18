@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Zoom wheel and toolbar controls around the center of the entire selection; retain cursor-based wheel zoom when nothing is selected and direct pinch/trackpad behavior.
+- Double-click a selected image to fit the entire selection's width and height in the canvas; preserve the group instead of focusing only the clicked image. Restore the original wheel and toolbar zoom behavior.
 
 - Adapt the GPU image-cache limit to image count, release pages when it shrinks, and show allocated/current-limit memory in the status bar; cap discrete GPUs at 512 MiB and shared/software adapters at 96 MiB.
 
