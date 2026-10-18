@@ -378,7 +378,19 @@ impl App {
             .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
     }
 
+    fn adapt_gpu_budget(&mut self) {
+        if let Some(gpu) = &mut self.shell.gpu {
+            // Leave room for decoded imports awaiting their journal acknowledgement.
+            let images = self
+                .workspace
+                .board
+                .image_count
+                .max(usize::from(!self.workspace.board.idle()));
+            gpu.registry.adapt_budget(images, gpu.texture_budget_limit);
+        }
+    }
     fn results(&mut self) {
+        self.adapt_gpu_budget();
         let cursor = self.input.cursor;
         let fallback = self
             .shell
@@ -399,6 +411,7 @@ impl App {
             upload: &mut |image| self.shell.upload(image),
             events: Vec::new(),
         });
+        self.adapt_gpu_budget();
         for event in events {
             match event {
                 workspace::Event::TabChanged => self.reset_board_ui(),

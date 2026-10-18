@@ -53,6 +53,7 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
             selected: ctx.board.selection.len(),
             zoom: ctx.board.view.camera.zoom,
             texture_bytes: ctx.gpu.registry.allocated_bytes(),
+            texture_budget: ctx.gpu.registry.budget_bytes(),
             message: &ctx.board.message,
             idle: ctx.board.idle(),
             dirty: ctx.board.dirty,

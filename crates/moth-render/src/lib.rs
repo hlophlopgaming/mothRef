@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Instanced image quads and a fixed-budget, LRU array-texture registry.
+//! Instanced image quads and a bounded adaptive LRU array-texture registry.
 mod opacity;
 use moth_io::{Decoded, ImageFormat};
 use moth_scene::{BlobId, Camera, Item};
@@ -8,8 +8,12 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-/// Includes every mip and layer; allocation does not scale with board size.
+/// Default cache ceiling, also used for software and shared-memory adapters.
 pub const TEXTURE_BUDGET: u64 = 96 * 1024 * 1024;
+/// A nonempty board can retain a full-detail texture and its fallback page.
+pub const MIN_TEXTURE_BUDGET: u64 = 32 * 1024 * 1024;
+/// Adaptive growth stays bounded even on million-item boards.
+pub const MAX_TEXTURE_BUDGET: u64 = 512 * 1024 * 1024;
 const FALLBACK_SIDE: u32 = 32;
 const CLASSES: [(u32, u32); 8] = [
     (16, 256),
@@ -158,6 +162,7 @@ pub struct Registry {
     sampler: wgpu::Sampler,
     clock: u64,
     allocated: u64,
+    budget: u64,
     /// Texture format for image mips, chosen at runtime from adapter capabilities.
     image_format: ImageFormat,
 }
@@ -258,6 +263,7 @@ impl Registry {
             sampler,
             clock: 0,
             allocated: 0,
+            budget: TEXTURE_BUDGET,
             image_format,
         }
     }
@@ -265,6 +271,36 @@ impl Registry {
     pub fn allocated_bytes(&self) -> u64 {
         self.allocated + self.opacity.bytes()
     }
+    /// Current image-cache ceiling; raising it does not preallocate textures.
+    pub fn budget_bytes(&self) -> u64 {
+        self.budget
+    }
+
+    /// Adapts to image count and immediately evicts pages when the ceiling falls.
+    pub fn adapt_budget(&mut self, images: usize, ceiling: u64) {
+        let budget = budget_for(images, ceiling);
+        if self.budget == budget {
+            return;
+        }
+        self.budget = budget;
+        if budget == 0 {
+            self.clear();
+            return;
+        }
+        let mut evicted = false;
+        while self.allocated > budget {
+            if !self.evict_oldest() {
+                break;
+            }
+            evicted = true;
+        }
+        if evicted {
+            self.locations.shrink_to_fit();
+            self.fallbacks.shrink_to_fit();
+            self.arrays.shrink_to_fit();
+        }
+    }
+
     /// Format decode requests must produce; driven by adapter capabilities.
     pub fn image_format(&self) -> ImageFormat {
         self.image_format
@@ -330,34 +366,9 @@ impl Registry {
             i
         } else {
             let bytes = array_bytes(size, layers, self.image_format);
-            while self.allocated + bytes > TEXTURE_BUDGET {
-                let oldest = self
-                    .arrays
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, a)| {
-                        a.as_ref().map(|a| {
-                            (
-                                i,
-                                (
-                                    a.size <= FALLBACK_SIDE,
-                                    a.slots.iter().flatten().map(|s| s.used).max().unwrap_or(0),
-                                ),
-                            )
-                        })
-                    })
-                    .min_by_key(|a| a.1)
-                    .map(|a| a.0);
-                let Some(i) = oldest else {
+            while self.allocated + bytes > self.budget {
+                if !self.evict_oldest() {
                     return;
-                };
-                if let Some(a) = self.arrays[i].take() {
-                    for (layer, slot) in a.slots.iter().enumerate() {
-                        if let Some(slot) = slot {
-                            self.forget(slot.hash, (i, layer));
-                        }
-                    }
-                    self.allocated -= array_bytes(a.size, a.slots.len() as u32, self.image_format);
                 }
             }
             let i = self
@@ -484,6 +495,41 @@ impl Registry {
             );
         }
     }
+    fn evict_oldest(&mut self) -> bool {
+        let oldest = self
+            .arrays
+            .iter()
+            .enumerate()
+            .filter_map(|(i, a)| {
+                a.as_ref().map(|a| {
+                    (
+                        i,
+                        (
+                            a.size <= FALLBACK_SIDE,
+                            a.slots.iter().flatten().map(|s| s.used).max().unwrap_or(0),
+                        ),
+                    )
+                })
+            })
+            .min_by_key(|a| a.1)
+            .map(|a| a.0);
+        let Some(i) = oldest else {
+            return false;
+        };
+        if let Some(a) = self.arrays[i].take() {
+            for (layer, slot) in a.slots.iter().enumerate() {
+                if let Some(slot) = slot {
+                    self.forget(slot.hash, (i, layer));
+                }
+            }
+            self.allocated -= array_bytes(a.size, a.slots.len() as u32, self.image_format);
+        }
+        while self.arrays.last().is_some_and(Option::is_none) {
+            self.arrays.pop();
+        }
+        true
+    }
+
     fn forget(&mut self, hash: BlobId, location: (usize, usize)) {
         if self.locations.get(&hash) == Some(&location) {
             self.locations.remove(&hash);
@@ -651,6 +697,10 @@ impl Registry {
         }
         self.locations.clear();
         self.fallbacks.clear();
+        self.locations.shrink_to_fit();
+        self.fallbacks.shrink_to_fit();
+        self.arrays.clear();
+        self.arrays.shrink_to_fit();
         debug_assert_eq!(self.allocated, 0);
     }
 }
@@ -659,6 +709,16 @@ impl Drop for Registry {
         self.clear();
     }
 }
+fn budget_for(images: usize, ceiling: u64) -> u64 {
+    if images == 0 {
+        return 0;
+    }
+    (images as u64).saturating_mul(1024 * 1024).clamp(
+        MIN_TEXTURE_BUDGET,
+        ceiling.clamp(MIN_TEXTURE_BUDGET, MAX_TEXTURE_BUDGET),
+    )
+}
+
 fn array_bytes(size: u32, layers: u32, format: ImageFormat) -> u64 {
     (0..mip_levels(size, format))
         .map(|m| {
@@ -771,6 +831,17 @@ pub fn watch_device(device: &wgpu::Device, wake: Arc<dyn Fn() + Send + Sync>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn adaptive_budget_grows_shrinks_and_has_a_hard_ceiling() {
+        assert_eq!(budget_for(0, MAX_TEXTURE_BUDGET), 0);
+        assert_eq!(budget_for(1, MAX_TEXTURE_BUDGET), MIN_TEXTURE_BUDGET);
+        assert_eq!(budget_for(100, MAX_TEXTURE_BUDGET), 100 * 1024 * 1024);
+        assert_eq!(budget_for(1000, TEXTURE_BUDGET), TEXTURE_BUDGET);
+        assert_eq!(
+            budget_for(usize::MAX, MAX_TEXTURE_BUDGET),
+            MAX_TEXTURE_BUDGET
+        );
+    }
     #[test]
     fn texture_budget_covers_all_classes() {
         for format in [ImageFormat::Rgba8, ImageFormat::Bc7] {

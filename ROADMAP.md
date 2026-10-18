@@ -664,3 +664,5 @@ Known issues to plan for: macOS notarization needs a paid Apple Developer accoun
 | 2026-10-17 | Post-1.0 milestone M13 (CLI and automation): headless subcommands built into the `mothref` binary with `clap`, `--json` output; reuses the single storage-worker write path; images may be fetched from URLs on explicit invocation |
 | 2026-10-18 | [M2 editing and export](docs/decisions/0008-m2-editing-export.md): schema 4 appearance/source names, journaled inspector, bounded PNG/SVG export and unchanged original export |
 | 2026-10-18 | [Local purcore import fork](docs/decisions/0007-local-purcore-import.md): maintainer authorizes vendoring and local fixes; bounded path-free import, 1.10/2.1 baseline corpus; coverage limited to verified files, with additional qualification driven by available samples |
+
+| 2026-10-19 | [Adaptive GPU cache budget](docs/decisions/0009-adaptive-gpu-budget.md): maintainer requests count-based growth/shrink; 32–512 MiB discrete, 32–96 MiB shared/software, immediate eviction on shrink and zero allocation for an empty board |

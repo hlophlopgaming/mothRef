@@ -440,7 +440,7 @@ impl Workspace {
                         }
                         Completion::Opened(scene, sources, recovered) => {
                             self.board.motion.clear();
-                            self.board.scene = scene;
+                            self.board.replace_scene(scene);
                             self.board.sources = sources;
                             if active {
                                 pump.events.push(Event::Opened);
@@ -457,7 +457,7 @@ impl Workspace {
                         }
                         Completion::Imported(commands, sources, skipped) => {
                             self.board.motion.clear();
-                            self.board.scene = Scene::default();
+                            self.board.replace_scene(Scene::default());
                             if active {
                                 pump.events.push(Event::Opened);
                             }

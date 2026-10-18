@@ -19,6 +19,9 @@ fn upgrading_a_preview_does_not_clone_the_full_pyramid() {
     registry.upload(&device, &queue, &preview);
     queue.submit([]);
     let _profiler = dhat::Profiler::builder().testing().build();
+    let allocated = registry.allocated_bytes();
+    registry.adapt_budget(256, moth_render::MAX_TEXTURE_BUDGET);
+    assert_eq!(registry.allocated_bytes(), allocated);
     registry.upload(&device, &queue, &detail);
     queue.submit([]);
     let stats = dhat::HeapStats::get();
@@ -28,6 +31,8 @@ fn upgrading_a_preview_does_not_clone_the_full_pyramid() {
     );
     assert!(registry.resident(detail.hash, 2048));
     assert!(registry.allocated_bytes() <= moth_render::TEXTURE_BUDGET);
-    registry.clear();
+    registry.adapt_budget(1, moth_render::MAX_TEXTURE_BUDGET);
+    assert!(registry.allocated_bytes() <= registry.budget_bytes());
+    registry.adapt_budget(0, moth_render::MAX_TEXTURE_BUDGET);
     assert_eq!(registry.allocated_bytes(), 0);
 }

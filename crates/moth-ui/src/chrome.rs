@@ -69,6 +69,8 @@ pub struct Status<'a> {
     pub zoom: f32,
     /// Allocated texture pages.
     pub texture_bytes: u64,
+    /// Adaptive image-cache ceiling for the active board.
+    pub texture_budget: u64,
     /// Background worker feedback.
     pub message: &'a str,
     /// Avoid enqueueing conflicting persistence actions.
@@ -207,12 +209,13 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                 ui.add_space(16.);
                 ui.label(
                     egui::RichText::new(format!(
-                        "{} {}  ·  {} {}  ·  {:.1} MiB",
+                        "{} {}  ·  {} {}  ·  {:.1}/{:.0} MiB",
                         status.count,
                         text(Text::Items),
                         status.selected,
                         text(Text::Selected),
-                        status.texture_bytes as f64 / 1048576.
+                        status.texture_bytes as f64 / 1048576.,
+                        status.texture_budget as f64 / 1048576.
                     ))
                     .monospace()
                     .size(10.)

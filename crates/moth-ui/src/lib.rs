@@ -689,6 +689,7 @@ mod tests {
             selected: 0,
             zoom: 1.,
             texture_bytes: 0,
+            texture_budget: 0,
             message: "",
             idle: true,
             dirty: false,

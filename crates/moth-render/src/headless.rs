@@ -669,6 +669,39 @@ pub async fn golden_bc7(software: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn adaptive_budget_releases_allocated_pages_when_image_count_falls() {
+        use super::*;
+        pollster::block_on(async {
+            let instance =
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let (_, device, queue) = crate::request_device(&instance, None, true).await.unwrap();
+            let mut registry =
+                Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm, ImageFormat::Rgba8);
+            registry.adapt_budget(256, crate::MAX_TEXTURE_BUDGET);
+            assert_eq!(
+                registry.allocated_bytes(),
+                0,
+                "growth must not preallocate textures"
+            );
+            for index in 0..8 {
+                registry.upload(&device, &queue, &fixture(index, 2048));
+            }
+            let before = registry.allocated_bytes();
+            assert!(before > crate::TEXTURE_BUDGET);
+            assert!(before <= registry.budget_bytes());
+            registry.adapt_budget(1, crate::MAX_TEXTURE_BUDGET);
+            assert_eq!(registry.budget_bytes(), crate::MIN_TEXTURE_BUDGET);
+            assert!(registry.allocated_bytes() <= registry.budget_bytes());
+            assert!(registry.allocated_bytes() < before);
+            registry.adapt_budget(0, crate::MAX_TEXTURE_BUDGET);
+            assert_eq!(registry.allocated_bytes(), 0);
+            assert_eq!(registry.budget_bytes(), 0);
+            for index in 0..8 {
+                assert!(!registry.resident(fixture(index, 16).hash, 1));
+            }
+        });
+    }
+    #[test]
     fn zoom_detail_upgrades_never_blank_other_resident_images() {
         use super::*;
         pollster::block_on(async {

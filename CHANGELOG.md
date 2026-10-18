@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Adapt the GPU image-cache limit to image count, release pages when it shrinks, and show allocated/current-limit memory in the status bar; cap discrete GPUs at 512 MiB and shared/software adapters at 96 MiB.
+
 - Keep budgeted low-resolution GPU fallbacks while zoom detail is replaced or evicted, avoiding blank image frames during rapid zoom; ignore late lower-quality decodes.
 
 - Discard stale drag-animation copies when another command moves, edits or removes the real item, preventing non-interactive images at old coordinates.

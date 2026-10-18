@@ -48,6 +48,7 @@ pub(super) struct Document {
     decode: moth_io::DecodePool,
     clipboard: moth_platform::ClipboardWorker,
     pub(super) scene: Scene,
+    pub(super) image_count: usize,
     boards: moth_platform::boards::Worker,
     pub(super) in_flight: usize,
     pub(super) pasting: usize,
@@ -71,6 +72,11 @@ pub(super) struct Document {
     pub(super) arrange_prompt: Option<Vec<Uuid>>,
 }
 impl Document {
+    /// Opening a scene recounts once; normal edits maintain the count incrementally.
+    pub(super) fn replace_scene(&mut self, scene: Scene) {
+        self.image_count = scene.items().filter(|item| item.blob().is_some()).count();
+        self.scene = scene;
+    }
     /// Called only for commands acknowledged by the journal worker.
     pub(super) fn apply_visual(
         &mut self,
@@ -81,6 +87,18 @@ impl Document {
             Command::Remove(id) | Command::SetRect { id, .. } => Some(*id),
             _ => None,
         };
+        let image_delta: isize = match &command {
+            Command::Insert(item) if item.blob().is_some() => 1,
+            Command::Remove(id)
+                if self
+                    .scene
+                    .get(*id)
+                    .is_some_and(|item| item.blob().is_some()) =>
+            {
+                -1
+            }
+            _ => 0,
+        };
         let now = Instant::now();
         let before = id.and_then(|id| {
             self.motion
@@ -88,6 +106,7 @@ impl Document {
                 .or_else(|| self.scene.get(id).cloned())
         });
         let inverse = self.scene.apply(command)?;
+        self.image_count = self.image_count.saturating_add_signed(image_delta);
         if let Some(id) = id {
             self.motion.record(before, self.scene.get(id).cloned(), now);
         }
@@ -199,6 +218,7 @@ impl Document {
             decode,
             clipboard,
             scene: Scene::default(),
+            image_count: 0,
             boards,
             in_flight: 0,
             pasting: 0,
@@ -276,6 +296,43 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn image_count_tracks_successful_commands_undo_and_opened_scenes() {
+        let root = std::env::temp_dir().join(format!("mothref-image-count-{}", Uuid::now_v7()));
+        let mut board = Document::with_storage(
+            Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+            Arc::new(|| {}),
+            false,
+        )
+        .unwrap();
+        let rect = Rect {
+            x: 0.,
+            y: 0.,
+            width: 40.,
+            height: 60.,
+        };
+        let image = Item::image(BlobId::from_bytes([1; 32]), rect, None);
+        let remove = board.apply_visual(Command::Insert(image.clone())).unwrap();
+        assert_eq!(board.image_count, 1);
+        board
+            .apply_visual(Command::Insert(Item::text("note", rect, None)))
+            .unwrap();
+        assert_eq!(board.image_count, 1);
+        assert!(board.apply_visual(Command::Insert(image.clone())).is_err());
+        assert_eq!(board.image_count, 1);
+        let insert = board.apply_visual(remove).unwrap();
+        assert_eq!(board.image_count, 0);
+        board.apply_visual(insert).unwrap();
+        assert_eq!(board.image_count, 1);
+        let mut opened = Scene::default();
+        opened.apply(Command::Insert(image)).unwrap();
+        board.replace_scene(opened);
+        assert_eq!(board.image_count, 1);
+        board.replace_scene(Scene::default());
+        assert_eq!(board.image_count, 0);
+        drop(board);
+        let _ = std::fs::remove_dir_all(root);
+    }
     #[test]
     fn parked_tabs_keep_separate_journals_and_resume_their_own_scene() {
         let root = std::env::temp_dir().join(format!("mothref-tabs-{}", Uuid::now_v7()));

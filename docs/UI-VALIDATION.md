@@ -164,3 +164,20 @@ Automated Motion results (2026-10-19):
   processes were observed, so these timings do not qualify an idle-machine
   before/after comparison or establish the 10% regression guard. Repeat performance
   qualification on an idle machine; no app processes were stopped for this task.
+
+### Adaptive GPU budget
+
+- Limit: 1 MiB per image item, minimum 32 MiB for nonempty boards; maximum
+  512 MiB on discrete adapters, 96 MiB on shared/software/unknown adapters.
+  No images means a zero-byte cache. Growth does not preallocate textures.
+- Image count is maintained with acknowledged commands and recounted once on open.
+- Software tests load beyond the former 96 MiB limit, then shrink and clear;
+  dhat checks adaptation/upgrade without copying the decoded pixel pyramid.
+- [ ] Add/delete/undo images and switch tabs: status shows allocated/limit MiB;
+  growth is bounded, shrink releases pages, closing the last board releases all.
+- [ ] Import into an empty board: a pending import has room for its preview before acknowledgement.
+- No long soak repeated, per maintainer instruction.
+- Validation: workspace clippy (`-D warnings`), workspace tests, software golden
+  and renderer dhat allocation check passed. Quick benchmark: RX 5700 XT/RADV,
+  10,000 images/100 frames, p99 5.931 ms, textures 13.32 MiB. This run does not
+  replace the pending idle-machine before/after performance qualification.
