@@ -14,7 +14,8 @@ is `MIT AND GPL-3.0-or-later`.
 `read(Read + Seek, callback)` is the import boundary. It verifies checksums,
 streams a 2.x database through a virtual splice without copying it, and emits
 one image payload at a time. Primitive reads, blob decoders and the legacy parser
-return typed errors; an outer unwind guard contains unexpected panics in normal builds. Individual
+return typed errors; an outer unwind guard contains unexpected panics in normal builds.
+
 All boards have a 4 GiB encoded-file limit, checked before reading payloads.
 SQLite records and individual legacy originals are capped at 32 MiB, retained
 metadata at 8 MiB / 8192 items, and group ancestry at 64 levels. Legacy readers
@@ -31,3 +32,5 @@ The stream adapter currently recognizes the known fixed 2.0/2.1 header layout;
 other layouts are rejected. SQLite UTF-16 databases are unsupported. The local
 blob decoder API returns `Result`; application code uses `read` to enforce the
 aggregate import budgets. No path-based API or C SQLite dependency is compiled. Keep future fixes here documented against the source revision.
+
+Application import behavior and limitations: [specification](../../docs/PUR-IMPORT.md).

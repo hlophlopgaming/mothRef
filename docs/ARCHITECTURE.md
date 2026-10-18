@@ -17,6 +17,9 @@
   Filesystem and clipboard calls run in workers. Registration on the event
   thread records a path without opening it. The storage worker copies imported
   originals into the journal before acknowledging their scene commands.
+- `moth-import`: foreign board extraction and conversion into scene data;
+  `.pur` behavior, compatibility and limits are specified in
+  [PUR-IMPORT.md](PUR-IMPORT.md).
 - `moth-render`: instanced quads and a GPU resource registry, shared by the window
   and headless checks. Texture pages use size classes, full mip pyramids and
   page-level LRU eviction. Original bytes do not depend on a GPU texture format.
