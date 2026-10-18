@@ -39,6 +39,8 @@ struct Editing {
     focus: bool,
 }
 mod arrange;
+mod gesture;
+use gesture::Gesture;
 mod overlay;
 mod session;
 mod tools;
@@ -56,8 +58,7 @@ pub struct App {
     dialog: Option<()>,
     dialog_path: String,
     dialog_focus: bool,
-    moving: Option<(Uuid, Rect)>,
-    drag_duplicate: bool,
+    gesture: Gesture,
     editing: Option<Editing>,
     tabs: Vec<Session>,
     library: bool,
@@ -75,8 +76,6 @@ pub struct App {
     gestures: Gestures,
     cursor: Option<[f32; 2]>,
     command: bool,
-    drag: Option<([f32; 2], [f32; 2], bool)>,
-    drag_pointer: Option<(moth_platform::input::Kind, u64)>,
     native_pressed: Option<(moth_platform::input::Kind, u64)>,
     deadline: Option<Instant>,
     confirm_close: bool,
@@ -119,8 +118,7 @@ impl App {
             dialog: None,
             dialog_path: String::new(),
             dialog_focus: false,
-            moving: None,
-            drag_duplicate: false,
+            gesture: Gesture::Idle,
             editing: None,
             tabs: Vec::new(),
             library: true,
@@ -138,8 +136,6 @@ impl App {
             gestures: Gestures::default(),
             cursor: None,
             command: false,
-            drag: None,
-            drag_pointer: None,
             native_pressed: None,
             deadline: None,
             confirm_close: false,
@@ -209,9 +205,7 @@ impl App {
         self.cards.clear();
         self.catalog.dismiss_editor();
         self.editing = None;
-        self.drag = None;
-        self.moving = None;
-        self.drag_pointer = None;
+        self.gesture.cancel();
         self.gestures.cancel();
         if let Some(gpu) = &mut self.gpu {
             gpu.registry.clear();
@@ -1066,214 +1060,6 @@ impl App {
             }
         }
     }
-    fn pointer(&mut self, input: Input) {
-        self.cursor = Some(match &input {
-            Input::Zoom { position, .. } | Input::Pan { position, .. } => *position,
-            Input::Pointer(p) => p.position,
-        });
-        if self.confirm_close || self.library || self.dialog.is_some() {
-            return;
-        }
-        match input {
-            Input::Pan { position, delta } => {
-                if self
-                    .board
-                    .viewport
-                    .contains(egui::pos2(position[0], position[1]))
-                {
-                    self.board.camera.origin[0] -= delta[0] / self.board.camera.zoom;
-                    self.board.camera.origin[1] -= delta[1] / self.board.camera.zoom;
-                }
-            }
-            Input::Zoom { position, factor } => {
-                if self
-                    .board
-                    .viewport
-                    .contains(egui::pos2(position[0], position[1]))
-                {
-                    self.board.camera.zoom_at(position, factor);
-                }
-            }
-            Input::Pointer(p) => {
-                if p.phase == Phase::Down
-                    && self
-                        .ctx
-                        .layer_id_at(egui::pos2(p.position[0], p.position[1]))
-                        .is_some_and(|layer| layer.order != egui::Order::Background)
-                {
-                    return;
-                }
-                if p.phase == Phase::Down
-                    && !self
-                        .board
-                        .viewport
-                        .contains(egui::pos2(p.position[0], p.position[1]))
-                {
-                    return;
-                }
-                if (self.tools.picking || self.tools.coordinates)
-                    && p.phase == Phase::Down
-                    && self.board.idle()
-                {
-                    let world = self.board.camera.world(p.position);
-                    let id = self
-                        .board
-                        .scene
-                        .query(Rect {
-                            x: world[0],
-                            y: world[1],
-                            width: 1. / self.board.camera.zoom,
-                            height: 1. / self.board.camera.zoom,
-                        })
-                        .into_iter()
-                        .rev()
-                        .find(|item| {
-                            item.blob().is_some()
-                                && item.rect.contains_rotated(item.transform.rotation, world)
-                        })
-                        .map(|item| item.id);
-                    if let Some(id) = id {
-                        self.persist(moth_platform::boards::Request::Export(
-                            if self.tools.coordinates {
-                                moth_platform::export::Target::Info { id, point: world }
-                            } else {
-                                moth_platform::export::Target::Sample {
-                                    id,
-                                    point: world,
-                                    format: match self.tools.color_format {
-                                        1 => moth_platform::export::ColorFormat::Rgb,
-                                        2 => moth_platform::export::ColorFormat::Hsv,
-                                        _ => moth_platform::export::ColorFormat::Hex,
-                                    },
-                                }
-                            },
-                        ));
-                    }
-                    self.tools.picking = false;
-                    self.tools.coordinates = false;
-                    return;
-                }
-                if let Some(g) = self.gestures.update(p) {
-                    self.drag = None;
-                    self.moving = None;
-                    self.drag_pointer = None;
-                    self.board.camera.zoom_at(g.anchor, g.zoom);
-                    self.board.camera.origin[0] -= g.pan[0] / self.board.camera.zoom;
-                    self.board.camera.origin[1] -= g.pan[1] / self.board.camera.zoom;
-                    return;
-                }
-                if self.gestures.active() {
-                    self.drag = None;
-                    self.moving = None;
-                    self.drag_pointer = None;
-                    return;
-                }
-                if self
-                    .drag_pointer
-                    .is_some_and(|owner| owner != (p.kind, p.id))
-                {
-                    return;
-                }
-                match p.phase {
-                    Phase::Down
-                        if self
-                            .board
-                            .viewport
-                            .contains(egui::pos2(p.position[0], p.position[1])) =>
-                    {
-                        if !p.pan && !self.board.pan && self.board.idle() {
-                            let world = self.board.camera.world(p.position);
-                            if let Some(item) = self
-                                .board
-                                .scene
-                                .query(Rect {
-                                    x: world[0],
-                                    y: world[1],
-                                    width: 1. / self.board.camera.zoom,
-                                    height: 1. / self.board.camera.zoom,
-                                })
-                                .into_iter()
-                                .rev()
-                                // The index only guarantees the rotated envelope, so the
-                                // click must still land inside the frame itself.
-                                .find(|item| {
-                                    item.rect.contains_rotated(item.transform.rotation, world)
-                                })
-                            {
-                                self.moving = Some((item.id, item.rect));
-                                self.drag_duplicate = self.ctx.input(|i| i.modifiers.alt);
-                                if !self.board.selection.contains(&item.id) {
-                                    if !self.ctx.input(|i| i.modifiers.shift) {
-                                        self.board.selection.clear();
-                                    }
-                                    self.board.selection.insert(item.id);
-                                }
-                            }
-                        }
-                        self.drag = Some((p.position, p.position, p.pan || self.board.pan));
-                        self.drag_pointer = Some((p.kind, p.id));
-                    }
-                    Phase::Move => {
-                        if let Some((_, last, pan)) = self.drag.as_mut() {
-                            if *pan {
-                                self.board.camera.origin[0] -=
-                                    (p.position[0] - last[0]) / self.board.camera.zoom;
-                                self.board.camera.origin[1] -=
-                                    (p.position[1] - last[1]) / self.board.camera.zoom;
-                            }
-                            *last = p.position;
-                        }
-                    }
-                    Phase::Up => {
-                        self.drag_pointer = None;
-                        if let Some((start, _, false)) = self.drag.take() {
-                            if let Some((_id, _rect)) = self.moving.take() {
-                                let dx = (p.position[0] - start[0]) / self.board.camera.zoom;
-                                let dy = (p.position[1] - start[1]) / self.board.camera.zoom;
-                                if !self.tools.locked
-                                    && dx.abs() + dy.abs() > 0.5 / self.board.camera.zoom
-                                {
-                                    let mut items: Vec<_> = self
-                                        .board
-                                        .selection
-                                        .iter()
-                                        .filter_map(|id| self.board.scene.get(*id))
-                                        .collect();
-                                    items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
-                                    let commands = arrange::translate(
-                                        &items,
-                                        [dx, dy],
-                                        self.drag_duplicate,
-                                        self.board.scene.top(),
-                                    );
-                                    self.persist_batch(
-                                        commands.into_iter().map(|c| (c, None)).collect(),
-                                    );
-                                }
-                                return;
-                            }
-                            let a = self.board.camera.world(start);
-                            let b = self.board.camera.world(p.position);
-                            let rect = Rect {
-                                x: a[0].min(b[0]),
-                                y: a[1].min(b[1]),
-                                width: (a[0] - b[0]).abs().max(1. / self.board.camera.zoom),
-                                height: (a[1] - b[1]).abs().max(1. / self.board.camera.zoom),
-                            };
-                            self.board.selection =
-                                self.board.scene.query(rect).iter().map(|i| i.id).collect();
-                        }
-                    }
-                    Phase::Cancel => {
-                        self.drag = None;
-                        self.moving = None;
-                        self.drag_pointer = None;
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
     fn frame(&mut self, event_loop: &ActiveEventLoop) -> anyhow::Result<()> {
         let _span = tracing::trace_span!("frame", zoom = self.board.camera.zoom).entered();
         if self
@@ -1526,19 +1312,16 @@ impl App {
                             }
                         }
                         if self.overlay.is_none() {
-                            let marquee = self
-                                .drag
-                                .filter(|(_, _, pan)| !pan && self.moving.is_none())
-                                .map(|(a, b, _)| {
-                                    let a = self.board.camera.world(a);
-                                    let b = self.board.camera.world(b);
-                                    Rect {
-                                        x: a[0].min(b[0]),
-                                        y: a[1].min(b[1]),
-                                        width: (a[0] - b[0]).abs(),
-                                        height: (a[1] - b[1]).abs(),
-                                    }
-                                });
+                            let marquee = self.gesture.marquee().map(|(a, b)| {
+                                let a = self.board.camera.world(a);
+                                let b = self.board.camera.world(b);
+                                Rect {
+                                    x: a[0].min(b[0]),
+                                    y: a[1].min(b[1]),
+                                    width: (a[0] - b[0]).abs(),
+                                    height: (a[1] - b[1]).abs(),
+                                }
+                            });
                             let mut bounds = egui::Rect::NOTHING;
                             let mut count = 0;
                             for item in self
@@ -1863,22 +1646,29 @@ impl App {
                                 }
                             }
                         }
-                        if let (Some((_, rect)), Some((a, b, false))) = (self.moving, self.drag) {
+                        if let Gesture::Moving {
+                            start: a,
+                            now: b,
+                            origin,
+                            preview,
+                            ..
+                        } = &self.gesture
+                            && let Some((_, rect)) = origin.iter().find(|(id, _)| id == preview)
+                        {
                             let moved = Rect {
                                 x: rect.x + (b[0] - a[0]) / self.board.camera.zoom,
                                 y: rect.y + (b[1] - a[1]) / self.board.camera.zoom,
-                                ..rect
+                                ..*rect
                             };
                             let rotation = self
-                                .moving
-                                .and_then(|(id, _)| self.board.scene.get(id))
+                                .board
+                                .scene
+                                .get(*preview)
                                 .map_or(0., |item| item.transform.rotation);
                             let corners = screen_corners(&self.board.camera, moved, rotation);
                             moth_ui::canvas::selection(ui, corners);
                         }
-                        if let Some((a, b, false)) = self.drag
-                            && self.moving.is_none()
-                        {
+                        if let Some((a, b)) = self.gesture.marquee() {
                             ui.painter().rect_stroke(
                                 egui::Rect::from_two_pos(
                                     egui::pos2(a[0], a[1]),
@@ -2418,9 +2208,7 @@ impl ApplicationHandler<Wake> for App {
     fn suspended(&mut self, _: &ActiveEventLoop) {
         self.input.event(&WindowEvent::Focused(false), 1.);
         self.native_pressed = None;
-        self.drag = None;
-        self.moving = None;
-        self.drag_pointer = None;
+        self.gesture.cancel();
         self.gestures.cancel();
         self.command = false;
         self.gpu = None;
@@ -2546,9 +2334,7 @@ impl ApplicationHandler<Wake> for App {
                     );
                 }
                 self.native_pressed = None;
-                self.drag = None;
-                self.moving = None;
-                self.drag_pointer = None;
+                self.gesture.cancel();
                 self.gestures.cancel();
                 self.command = false;
             }
