@@ -142,3 +142,25 @@ Automated Motion results (2026-10-19):
   after cleanup, formatting, mothref clippy (`-D warnings`) and all 34 tests passed.
 - This covers stale tails after later commands; the maintainer's report also
   mentions single drags, so native confirmation of that exact interaction remains pending.
+
+### Rapid zoom residency fix
+
+- Software golden initially reproduced a blank image while upgrading the fifth
+  2048-pixel preview under the 96 MiB texture budget. It compares all eight image
+  centers after every upgrade, not only the upgraded image.
+- Retain a 32-pixel mip from each existing pyramid inside the same GPU budget;
+  evict detailed pages first and promote fallback residency instead of skipping images.
+- Ignore stale lower-resolution decode results after a larger preview arrives.
+- dhat checks that upgrading an already-decoded 2048-pixel image does not clone
+  its full pixel pyramid; dhat is a test-only dependency already used in moth-io.
+- [ ] Rapidly zoom in/out over a large board: temporary lower detail is allowed,
+  blank images are not. Verify with hardware and --software.
+- No long soak repeated, per maintainer instruction.
+- Validation: workspace clippy (`-D warnings`), workspace tests, software golden,
+  renderer dhat allocation check and `cargo deny check` passed (existing warnings).
+- Quick benchmark, RX 5700 XT/RADV, 10,000 images/100 frames: pre-change executable
+  p99 7.266 ms; rebuilt executable 9.978 ms, repeat without builds 9.046 ms;
+  texture allocation remained 13.32 MiB. Active Resolve, MothRef and browser
+  processes were observed, so these timings do not qualify an idle-machine
+  before/after comparison or establish the 10% regression guard. Repeat performance
+  qualification on an idle machine; no app processes were stopped for this task.

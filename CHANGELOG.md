@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep budgeted low-resolution GPU fallbacks while zoom detail is replaced or evicted, avoiding blank image frames during rapid zoom; ignore late lower-quality decodes.
+
 - Discard stale drag-animation copies when another command moves, edits or removes the real item, preventing non-interactive images at old coordinates.
 
 - Add a persistent setting to hide item selection/hover outlines and selection handles.

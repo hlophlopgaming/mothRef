@@ -10,6 +10,7 @@ use std::sync::{
 
 /// Includes every mip and layer; allocation does not scale with board size.
 pub const TEXTURE_BUDGET: u64 = 96 * 1024 * 1024;
+const FALLBACK_SIDE: u32 = 32;
 const CLASSES: [(u32, u32); 8] = [
     (16, 256),
     (32, 256),
@@ -147,6 +148,8 @@ pub struct Registry {
     pub ui: egui_wgpu::Renderer,
     arrays: Vec<Option<Array>>,
     locations: std::collections::HashMap<BlobId, (usize, usize)>,
+    // At most one fallback per resident blob, bounded by the same texture budget.
+    fallbacks: std::collections::HashMap<BlobId, (usize, usize)>,
     pipeline: wgpu::RenderPipeline,
     grid: wgpu::RenderPipeline,
     opacity: opacity::Pass,
@@ -246,6 +249,7 @@ impl Registry {
             ui: egui_wgpu::Renderer::new(device, format, Default::default()),
             arrays: Vec::new(),
             locations: std::collections::HashMap::new(),
+            fallbacks: std::collections::HashMap::new(),
             pipeline,
             grid,
             opacity: opacity::Pass::new(device, format),
@@ -275,22 +279,48 @@ impl Registry {
 
     /// Uploading replaces the least recently drawn layer within a size class.
     pub fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, image: &Decoded) {
+        self.upload_mip(device, queue, image, 0);
+    }
+
+    fn upload_mip(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        image: &Decoded,
+        first_mip: usize,
+    ) {
         // A device-loss recreation can change the chosen format; skip stale results.
         // The preview path re-decodes with the current format on the next miss.
         if image.format != self.image_format {
             return;
         }
-        let Some(first) = image.mips.first() else {
+        let Some(first) = image.mips.get(first_mip) else {
             return;
         };
         let side = first.width.max(first.height).next_power_of_two().max(16);
         let Some(&(size, layers)) = CLASSES.iter().find(|c| c.0 >= side) else {
             return;
         };
+        if self.resident(image.hash, side) {
+            return;
+        }
+        if first_mip == 0
+            && side > FALLBACK_SIDE
+            && let Some(base) = image
+                .mips
+                .iter()
+                .position(|mip| mip.width.max(mip.height) <= FALLBACK_SIDE)
+        {
+            self.upload_mip(device, queue, image, base);
+        }
         if let Some((p, l)) = self.locations.remove(&image.hash)
             && let Some(a) = self.arrays[p].as_mut()
         {
-            a.slots[l] = None;
+            if a.size <= FALLBACK_SIDE && size > a.size {
+                self.fallbacks.insert(image.hash, (p, l));
+            } else {
+                a.slots[l] = None;
+            }
         }
         let free = self.arrays.iter().position(|a| {
             a.as_ref()
@@ -309,7 +339,10 @@ impl Registry {
                         a.as_ref().map(|a| {
                             (
                                 i,
-                                a.slots.iter().flatten().map(|s| s.used).max().unwrap_or(0),
+                                (
+                                    a.size <= FALLBACK_SIDE,
+                                    a.slots.iter().flatten().map(|s| s.used).max().unwrap_or(0),
+                                ),
                             )
                         })
                     })
@@ -319,8 +352,10 @@ impl Registry {
                     return;
                 };
                 if let Some(a) = self.arrays[i].take() {
-                    for s in a.slots.iter().flatten() {
-                        self.locations.remove(&s.hash);
+                    for (layer, slot) in a.slots.iter().enumerate() {
+                        if let Some(slot) = slot {
+                            self.forget(slot.hash, (i, layer));
+                        }
                     }
                     self.allocated -= array_bytes(a.size, a.slots.len() as u32, self.image_format);
                 }
@@ -394,7 +429,14 @@ impl Registry {
                     .unwrap_or(0)
             });
         if let Some(old) = array.slots[layer] {
-            self.locations.remove(&old.hash);
+            if self.locations.get(&old.hash) == Some(&(index, layer)) {
+                self.locations.remove(&old.hash);
+                if let Some(fallback) = self.fallbacks.remove(&old.hash) {
+                    self.locations.insert(old.hash, fallback);
+                }
+            } else {
+                self.fallbacks.remove(&old.hash);
+            }
         }
         self.locations.insert(image.hash, (index, layer));
         self.clock += 1;
@@ -404,9 +446,9 @@ impl Registry {
             original_side: image.original[0].max(image.original[1]),
             dimensions: [first.width, first.height],
             used: self.clock,
-            mips: image.mips.len() as u32,
+            mips: (image.mips.len() - first_mip) as u32,
         });
-        for (level, mip) in image.mips.iter().enumerate() {
+        for (level, mip) in image.mips.iter().skip(first_mip).enumerate() {
             // BC7 blocks are 4x4; the write extent and stride are block-aligned.
             let (width, height, bytes_per_row, rows) = match self.image_format {
                 ImageFormat::Rgba8 => (mip.width, mip.height, mip.width * 4, mip.height),
@@ -442,6 +484,17 @@ impl Registry {
             );
         }
     }
+    fn forget(&mut self, hash: BlobId, location: (usize, usize)) {
+        if self.locations.get(&hash) == Some(&location) {
+            self.locations.remove(&hash);
+            if let Some(fallback) = self.fallbacks.remove(&hash) {
+                self.locations.insert(hash, fallback);
+            }
+        } else if self.fallbacks.get(&hash) == Some(&location) {
+            self.fallbacks.remove(&hash);
+        }
+    }
+
     /// Submits bounded batches in z-order before reusing the instance buffer.
     pub fn draw(
         &mut self,
@@ -597,6 +650,7 @@ impl Registry {
             }
         }
         self.locations.clear();
+        self.fallbacks.clear();
         debug_assert_eq!(self.allocated, 0);
     }
 }

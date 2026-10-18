@@ -1836,6 +1836,7 @@ name = "moth-render"
 version = "0.1.0-alpha.2"
 dependencies = [
  "bytemuck",
+ "dhat",
  "egui",
  "egui-wgpu",
  "moth-io",

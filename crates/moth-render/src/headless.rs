@@ -669,6 +669,73 @@ pub async fn golden_bc7(software: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn zoom_detail_upgrades_never_blank_other_resident_images() {
+        use super::*;
+        pollster::block_on(async {
+            let instance =
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let (_, device, queue) = crate::request_device(&instance, None, true).await.unwrap();
+            let mut registry =
+                Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm, ImageFormat::Rgba8);
+            let mut scene = Scene::default();
+            for index in 0..8 {
+                let mut image = fixture(64 + index, 256);
+                image.original = [2048, 2048];
+                registry.upload(&device, &queue, &image);
+                scene
+                    .apply(Command::Insert(Item::image(
+                        image.hash,
+                        Rect {
+                            x: (index % 4) as f32 * 8.,
+                            y: (index / 4) as f32 * 8.,
+                            width: 8.,
+                            height: 8.,
+                        },
+                        scene.top(),
+                    )))
+                    .unwrap();
+            }
+            let texture = target(&device, 32, 16);
+            let view = texture.create_view(&Default::default());
+            for upgraded in 0..8 {
+                registry.upload(&device, &queue, &fixture(64 + upgraded, 2048));
+                let items: Vec<_> = scene.items().collect();
+                registry
+                    .draw(
+                        &device,
+                        &queue,
+                        crate::Target {
+                            opacity: 1.,
+                            grid: false,
+                            view: &view,
+                            screen: [32., 16.],
+                            clip: None,
+                            clear: wgpu::Color::BLACK,
+                        },
+                        &items,
+                        Camera::default(),
+                    )
+                    .unwrap();
+                let pixels = readback(&device, &queue, &texture, 256).unwrap();
+                for index in 0..8 {
+                    let offset = (index / 4 * 8 + 4) * 256 + (index % 4 * 8 + 4) * 4;
+                    let pixel = &pixels[offset..offset + 4];
+                    let expected = [64 + index as u8, 0, 127, 255];
+                    assert!(
+                        pixel.iter().zip(expected).all(|(&a, b)| a.abs_diff(b) <= 3),
+                        "image {index} disappeared while upgrading image {upgraded}: {pixel:?}"
+                    );
+                }
+                assert!(registry.allocated_bytes() <= crate::TEXTURE_BUDGET);
+            }
+            // A delayed, smaller decode from an earlier zoom must not downgrade detail.
+            registry.upload(&device, &queue, &fixture(71, 256));
+            assert!(registry.resident(fixture(71, 16).hash, 2048));
+            registry.clear();
+            assert_eq!(registry.allocated_bytes(), 0);
+        });
+    }
+    #[test]
     fn headless_golden() {
         pollster::block_on(super::golden(false)).unwrap();
     }
