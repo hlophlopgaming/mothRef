@@ -41,6 +41,7 @@ struct Editing {
     focus: bool,
 }
 mod arrange;
+mod camera_motion;
 mod canvas;
 mod chrome;
 mod document;
@@ -63,6 +64,8 @@ pub struct App {
     pinned: bool,
     library_screen: library::LibraryScreen,
     modal: modal::Modal,
+    camera_motion: camera_motion::CameraMotion,
+    camera_active: bool,
     motion: motion::DragMotion,
     moving: Option<(Uuid, Rect)>,
     drag_duplicate: bool,
@@ -101,6 +104,8 @@ impl App {
             pinned: false,
             library_screen: library::LibraryScreen::new(library_worker),
             modal: modal::Modal::default(),
+            camera_motion: camera_motion::CameraMotion::default(),
+            camera_active: false,
             motion: motion::DragMotion::default(),
             moving: None,
             drag_duplicate: false,
@@ -170,6 +175,7 @@ impl App {
         self.library_screen.catalog.dismiss_editor();
         self.editing = None;
         self.motion = motion::DragMotion::default();
+        self.camera_motion.stop();
         self.drag = None;
         self.moving = None;
         self.drag_pointer = None;
@@ -482,11 +488,25 @@ impl App {
     }
 
     fn fit(&mut self) {
+        let before = self.workspace.board.view.camera;
         self.workspace.board.fit();
+        self.animate_camera(before);
+    }
+    fn animate_camera(&mut self, before: Camera) {
+        let target = self.workspace.board.view.camera;
+        if before.origin != target.origin || before.zoom != target.zoom {
+            self.camera_motion
+                .transition(before, target, self.tools.reduced_motion);
+            if !self.tools.reduced_motion {
+                self.workspace.board.view.camera = before;
+            }
+            self.redraw();
+        }
     }
     /// Applies one user intent as a single side effect. Close-with-save ordering
     /// is expressed by `SaveAndClose` itself, never by the order intents arrive in.
     fn apply(&mut self, intent: Intent, event_loop: &ActiveEventLoop) {
+        let before = self.workspace.board.view.camera;
         match intent {
             Intent::View(view) => self.workspace.board.view = view,
             Intent::ToggleTools => self.tools.open = !self.tools.open,
@@ -731,9 +751,11 @@ impl App {
             }
             Intent::DismissRecovery => self.workspace.dismiss_recovery(),
         }
+        self.animate_camera(before);
     }
     /// Fits the camera to the current selection, if any.
     fn fit_selection(&mut self) {
+        let before = self.workspace.board.view.camera;
         let selected: Vec<_> = self
             .workspace
             .board
@@ -766,6 +788,7 @@ impl App {
                 - self.workspace.board.view.viewport.center().y
                     / self.workspace.board.view.camera.zoom,
         ];
+        self.animate_camera(before);
         self.redraw();
     }
     /// Rotation, mirroring and reset keys; they act on the selection and need an idle board.
@@ -837,7 +860,13 @@ impl App {
             return;
         }
         match input {
-            Input::Pan { position, delta } => {
+            Input::Pan {
+                position,
+                delta,
+                continuous,
+                finished,
+            } => {
+                self.camera_motion.stop();
                 if self
                     .workspace
                     .board
@@ -845,13 +874,25 @@ impl App {
                     .viewport
                     .contains(egui::pos2(position[0], position[1]))
                 {
+                    if continuous {
+                        if finished {
+                            self.camera_motion
+                                .release(Instant::now(), self.tools.reduced_motion);
+                        } else {
+                            self.camera_motion.pan_sample(delta, Instant::now());
+                        }
+                    }
                     self.workspace.board.view.camera.origin[0] -=
                         delta[0] / self.workspace.board.view.camera.zoom;
                     self.workspace.board.view.camera.origin[1] -=
                         delta[1] / self.workspace.board.view.camera.zoom;
                 }
             }
-            Input::Zoom { position, factor } => {
+            Input::Zoom {
+                position,
+                factor,
+                continuous,
+            } => {
                 if self
                     .workspace
                     .board
@@ -859,7 +900,17 @@ impl App {
                     .viewport
                     .contains(egui::pos2(position[0], position[1]))
                 {
-                    self.workspace.board.view.camera.zoom_at(position, factor);
+                    if continuous {
+                        self.camera_motion.stop();
+                        self.workspace.board.view.camera.zoom_at(position, factor);
+                    } else {
+                        self.camera_motion.zoom(
+                            &mut self.workspace.board.view.camera,
+                            position,
+                            factor,
+                            self.tools.reduced_motion,
+                        );
+                    }
                 }
             }
             Input::Pointer(p) => {
@@ -927,6 +978,8 @@ impl App {
                     return;
                 }
                 if let Some(g) = self.input.gestures.update(p) {
+                    self.camera_motion.stop();
+                    self.camera_motion.pan_sample(g.pan, Instant::now());
                     self.drag = None;
                     self.moving = None;
                     self.drag_pointer = None;
@@ -936,6 +989,10 @@ impl App {
                     self.workspace.board.view.camera.origin[1] -=
                         g.pan[1] / self.workspace.board.view.camera.zoom;
                     return;
+                }
+                if p.phase == Phase::Up && p.kind == moth_platform::input::Kind::Touch {
+                    self.camera_motion
+                        .release(Instant::now(), self.tools.reduced_motion);
                 }
                 if self.input.gestures.active() {
                     self.drag = None;
@@ -958,6 +1015,8 @@ impl App {
                             .viewport
                             .contains(egui::pos2(p.position[0], p.position[1])) =>
                     {
+                        self.camera_motion.stop();
+                        self.camera_motion.clear_samples();
                         if !p.pan && !self.workspace.board.view.pan && self.workspace.board.idle() {
                             let world = self.workspace.board.view.camera.world(p.position);
                             if let Some(item) = self
@@ -1008,6 +1067,12 @@ impl App {
                         }
                         if let Some((_, last, pan)) = self.drag.as_mut() {
                             if *pan {
+                                if p.kind != moth_platform::input::Kind::Mouse {
+                                    self.camera_motion.pan_sample(
+                                        [p.position[0] - last[0], p.position[1] - last[1]],
+                                        Instant::now(),
+                                    );
+                                }
                                 self.workspace.board.view.camera.origin[0] -= (p.position[0]
                                     - last[0])
                                     / self.workspace.board.view.camera.zoom;
@@ -1106,6 +1171,7 @@ impl App {
         self.drag = None;
         self.moving = None;
         self.drag_pointer = None;
+        self.camera_motion.stop();
         self.redraw();
     }
     fn frame(&mut self, event_loop: &ActiveEventLoop) -> anyhow::Result<()> {
@@ -1118,6 +1184,11 @@ impl App {
             return Ok(());
         };
         self.results();
+        self.camera_active = self.camera_motion.step(
+            &mut self.workspace.board.view.camera,
+            Instant::now(),
+            self.tools.reduced_motion,
+        );
         self.motion.step(
             Instant::now(),
             self.tools.reduced_motion,
@@ -1150,7 +1221,7 @@ impl App {
                 return None;
             };
             ctx.run_ui(state.take_egui_input(window), |ui| {
-                if self.motion.frames.active() {
+                if self.motion.frames.active() || self.camera_active {
                     ui.ctx().request_repaint();
                 }
                 let chrome = if self.overlay.is_none() {

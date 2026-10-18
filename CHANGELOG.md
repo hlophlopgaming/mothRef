@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Smooth discrete wheel zoom around the pointer and fit/focus transitions; keep continuous input direct and add touch-pan inertia.
+
 - Add grab-point drag sway, a gentle lift and animated cancellation; add a localized reduced-motion preference.
 
 - Preview the entire selection during dragging, including Alt-drag copies, without changing board data.

@@ -49,6 +49,10 @@ pub enum Input {
         position: [f32; 2],
         /// Logical point delta independent of the native wheel units.
         delta: [f32; 2],
+        /// A trackpad stream can continue with inertia after its final event.
+        continuous: bool,
+        /// End of a continuous scroll gesture.
+        finished: bool,
     },
     /// Keeps normalized contacts separate from camera zoom intent.
     Pointer(Pointer),
@@ -58,6 +62,8 @@ pub enum Input {
         position: [f32; 2],
         /// Multiplicative scale is independent of wheel units.
         factor: f32,
+        /// Continuous devices follow the fingers without interpolation.
+        continuous: bool,
     },
 }
 /// Native extensions feed the same pointer and import paths as winit.
@@ -155,13 +161,16 @@ impl Adapter {
                     pan: self.pan,
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } => {
+            WindowEvent::MouseWheel { delta, phase, .. } => {
+                let continuous = matches!(delta, MouseScrollDelta::PixelDelta(_));
                 let delta = match delta {
                     MouseScrollDelta::LineDelta(x, y) => [*x * 40., *y * 40.],
                     MouseScrollDelta::PixelDelta(p) => [(p.x / scale) as f32, (p.y / scale) as f32],
                 };
                 if self.shift || self.wheel == 1 {
                     return Some(Input::Pan {
+                        continuous,
+                        finished: matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled),
                         position: self.position,
                         delta: if self.shift && self.control {
                             [delta[1], delta[0]]
@@ -177,6 +186,13 @@ impl Adapter {
                 return Some(Input::Zoom {
                     position: self.position,
                     factor: (y * 0.002).exp(),
+                    continuous: matches!(
+                        event,
+                        WindowEvent::MouseWheel {
+                            delta: MouseScrollDelta::PixelDelta(_),
+                            ..
+                        }
+                    ),
                 });
             }
             WindowEvent::Focused(false) => {
