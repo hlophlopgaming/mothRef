@@ -104,18 +104,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                 hover.is_some() && moving.is_none(),
                 if tools.reduced_motion { 0. } else { 0.09 },
             );
-            if fade > 0.
-                && let Some(item) = ui
-                    .ctx()
-                    .data(|data| data.get_temp::<Uuid>(hover_key))
-                    .and_then(|id| board.scene.get(id))
-            {
-                let corners = screen_corners(&view.camera, item.rect, item.transform.rotation);
-                ui.painter().add(egui::Shape::closed_line(
-                    vec![corners[0], corners[1], corners[3], corners[2]],
-                    egui::Stroke::new(1., moth_ui::ACCENT.gamma_multiply(fade * 0.65)),
-                ));
-            }
+            let hover_id = ui.ctx().data(|data| data.get_temp::<Uuid>(hover_key));
             let previous = view.viewport;
             view.viewport = ui.max_rect();
             if tools.scale_with_window
@@ -146,7 +135,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                 .camera
                 .world([view.viewport.min.x, view.viewport.min.y]);
             let returning: std::collections::HashMap<_, _> = motion
-                .returning(std::time::Instant::now(), tools.reduced_motion)
+                .returning(motion.now(), tools.reduced_motion)
                 .into_iter()
                 .map(|item| (item.id, item))
                 .collect();
@@ -157,7 +146,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                 height: view.viewport.height() / view.camera.zoom,
             });
 
-            let transitions = board.motion.copies(std::time::Instant::now());
+            let transitions = board.motion.copies(motion.now());
             if moving.is_some() || !transitions.is_empty() || !returning.is_empty() {
                 let mut ids: std::collections::HashSet<_> =
                     visible.iter().map(|item| item.id).collect();
@@ -179,7 +168,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
             for item in visible {
                 let mut presented = board
                     .motion
-                    .get(item.id, std::time::Instant::now())
+                    .get(item.id, motion.now())
                     .map(std::borrow::Cow::Owned)
                     .unwrap_or(std::borrow::Cow::Borrowed(item));
                 if moving.is_some() && board.selection.contains(&item.id) && !tools.locked {
@@ -226,30 +215,31 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     }
                     Some(_) => {}
                 }
+                if !overlay {
+                    outline(
+                        ui,
+                        &view.camera,
+                        item,
+                        board.selection.contains(&item.id)
+                            && !(duplicate
+                                && moving.is_none()
+                                && !returning.is_empty()
+                                && !returning.contains_key(&item.id)),
+                        if hover_id == Some(item.id) { fade } else { 0. },
+                    );
+                }
             }
             for ghost in returning.values() {
                 if ghost.blob().is_none() && board.scene.get(ghost.id).is_none() {
                     draw_note(ui, &view.camera, ghost);
                 }
+                if !overlay && board.scene.get(ghost.id).is_none() {
+                    outline(ui, &view.camera, ghost, true, 0.);
+                }
             }
             for ghost in transitions {
                 if ghost.blob().is_none() && board.scene.get(ghost.id).is_none() {
                     draw_note(ui, &view.camera, &ghost);
-                }
-            }
-            for &id in &board.selection {
-                if overlay {
-                    break;
-                }
-                if let Some(item) = board.scene.get(id) {
-                    let rect = preview_rect(
-                        item.rect,
-                        drag.filter(|_| moving.is_some() && !tools.locked),
-                        view.camera.zoom,
-                    );
-                    let rect = motion.logical_rect(id, rect, std::time::Instant::now());
-                    let corners = screen_corners(&view.camera, rect, item.transform.rotation);
-                    moth_ui::canvas::selection(ui, corners);
                 }
             }
             if !overlay {
@@ -535,6 +525,25 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
     intents
 }
 
+/// Outlines share the displayed geometry, including sway, lift and transitions.
+fn outline(ui: &mut egui::Ui, camera: &Camera, item: &Item, selected: bool, hover: f32) {
+    if !selected && hover <= 0. {
+        return;
+    }
+    let opacity = ui.opacity();
+    ui.multiply_opacity(item.transform.opacity);
+    let corners = screen_corners(camera, item.rect, item.transform.rotation);
+    if selected {
+        moth_ui::canvas::selection(ui, corners);
+    } else {
+        ui.painter().add(egui::Shape::closed_line(
+            vec![corners[0], corners[1], corners[3], corners[2]],
+            egui::Stroke::new(1., moth_ui::ACCENT.gamma_multiply(hover * 0.65)),
+        ));
+    }
+    ui.set_opacity(opacity);
+}
+
 /// Frame corners in screen space, so the canvas can outline a rotated selection.
 fn screen_corners(camera: &Camera, rect: Rect, rotation: f32) -> [egui::Pos2; 4] {
     rect.corners(rotation).map(|corner| {
@@ -666,6 +675,58 @@ pub(super) fn preview_rect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn selection_and_hover_follow_the_animated_image_corners() {
+        let camera = Camera {
+            origin: [-20., 10.],
+            zoom: 2.,
+        };
+        let source = Item::text(
+            "reference",
+            Rect {
+                x: 20.,
+                y: 30.,
+                width: 60.,
+                height: 40.,
+            },
+            None,
+        );
+        let mut motion = super::super::motion::DragMotion::default();
+        motion.start([20., 30.], 72.);
+        let start = std::time::Instant::now();
+        motion.sample(0., start);
+        motion.sample(100., start + std::time::Duration::from_millis(50));
+        motion.step(start + std::time::Duration::from_millis(90), false, true);
+        motion.step(start + std::time::Duration::from_millis(100), false, true);
+        let presented = motion.preview(
+            &source,
+            Some(([0., 0.], [80., 60.], false)),
+            camera.zoom,
+            false,
+        );
+        assert_ne!(presented.transform.rotation, source.transform.rotation);
+        assert_ne!(presented.rect.width, source.rect.width);
+        let corners = screen_corners(&camera, presented.rect, presented.transform.rotation);
+        for selected in [true, false] {
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                outline(ui, &camera, &presented, selected, 1.)
+            });
+            output.textures_delta.clear();
+            let path = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Path(path) => Some(path),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(
+                path.points,
+                [corners[0], corners[1], corners[3], corners[2]]
+            );
+        }
+    }
     #[test]
     fn preview_preserves_source_and_matches_translation() {
         let rect = Rect {

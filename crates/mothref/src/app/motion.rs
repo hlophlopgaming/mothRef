@@ -261,18 +261,9 @@ impl DragMotion {
             }
         }
     }
-    /// Selection follows the logical preview, without decorative sway or lift.
-    pub fn logical_rect(&self, id: Uuid, fallback: Rect, now: Instant) -> Rect {
-        self.returning
-            .as_ref()
-            .and_then(|(items, delta, tween)| {
-                items.iter().find(|item| item.id == id).map(|item| Rect {
-                    x: item.rect.x + delta[0] * tween.value(now),
-                    y: item.rect.y + delta[1] * tween.value(now),
-                    ..item.rect
-                })
-            })
-            .unwrap_or(fallback)
+    /// UI outlines and GPU instances sample the same animation frame.
+    pub fn now(&self) -> Instant {
+        self.frame_now
     }
     pub fn returning(&self, now: Instant, reduced: bool) -> Vec<Item> {
         let Some((items, delta, tween)) = &self.returning else {
@@ -331,10 +322,6 @@ mod tests {
                 "the frame must not fall back to the unacknowledged scene position"
             );
             assert_eq!(rendered.rect.y, 70.);
-            assert_eq!(
-                motion.logical_rect(source.id, source.rect, now),
-                rendered.rect
-            );
             assert!(
                 !motion.frames.active(),
                 "waiting for storage must not spin the frame loop"
@@ -372,10 +359,7 @@ mod tests {
         motion.release(&commands, &scene, [100., 50.], false);
         motion.sync(&scene, &mut item_motion::Items::default(), true);
         assert!(motion.returning(Instant::now(), false).is_empty());
-        assert_eq!(
-            motion.logical_rect(source.id, source.rect, Instant::now()),
-            source.rect
-        );
+        assert_eq!(scene.get(source.id).unwrap().rect, source.rect);
     }
     #[test]
     fn live_preview_is_view_only_and_release_commands_keep_rotation() {

@@ -1351,14 +1351,14 @@ impl App {
             };
         previews.extend(
             self.motion
-                .returning(Instant::now(), self.tools.reduced_motion),
+                .returning(self.motion.now(), self.tools.reduced_motion),
         );
         let drag_ids: HashSet<_> = previews.iter().map(|item| item.id).collect();
         previews.extend(
             self.workspace
                 .board
                 .motion
-                .copies(Instant::now())
+                .copies(self.motion.now())
                 .into_iter()
                 .filter(|item| !drag_ids.contains(&item.id)),
         );

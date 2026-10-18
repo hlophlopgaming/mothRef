@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Make selection and hover outlines follow image sway, lift, opacity and geometry transitions using the same animation frame as the image renderer.
+
 - Keep dragged images and selection outlines at their released position until storage acknowledgement, without replaying the move animation.
 
 - Add canvas cursors and mouse/pen hover outlines, animated toolbar/tab feedback and a subtle library-card lift.

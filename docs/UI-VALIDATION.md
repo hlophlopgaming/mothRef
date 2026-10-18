@@ -102,3 +102,13 @@ Automated Motion results (2026-10-19):
 - Validation: `cargo fmt --all`, clippy for mothref with `-D warnings`, and all
   30 mothref tests passed, including the forced-software golden. The delayed
   acknowledgement test first failed with x=10 instead of x=110, then passed.
+
+### Animated outlines
+
+- Selection and hover outlines use the displayed Item (position, scale, rotation
+  and opacity); both UI and GPU sample the same frame timestamp.
+- Automated polygon checks compare the painted outline to animated image corners.
+- [ ] Drag, release, cancel and arrange rotated images: outlines stay attached.
+- Appearance preferences remain deferred; no long stress run repeated.
+- Validation: formatting, mothref clippy (`-D warnings`) and all 31 mothref tests
+  passed, including animated outline polygons and the software opacity/rotation golden.
