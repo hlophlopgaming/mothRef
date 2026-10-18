@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a persistent setting to hide item selection/hover outlines and selection handles.
+
 - Add persistent drag-animation and fallback-opacity preferences: without drag motion, images become translucent only while following the pointer.
 
 - Make selection and hover outlines follow image sway, lift, opacity and geometry transitions using the same animation frame as the image renderer.

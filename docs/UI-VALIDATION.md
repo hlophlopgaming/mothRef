@@ -123,3 +123,11 @@ Automated Motion results (2026-10-19):
 - Validation: formatting, clippy for mothref/moth-ui (`-D warnings`) and all 45
   tests passed, including preference round-trip/invalid values, transient opacity
   restoration, scene immutability and the forced-software golden.
+
+### Outline visibility preference
+
+- [ ] Tools → Settings → Show item outlines: disable to hide selection handles
+  and hover outlines, including during dragging and its release animation.
+- [ ] Selection, dragging and marquee selection still work; restart preserves the setting.
+- Automated tests cover preference persistence/defaults and no painted outlines/handles when disabled.
+- Validation: formatting, clippy for mothref/moth-ui (`-D warnings`) and all 46 tests passed.

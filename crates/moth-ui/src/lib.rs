@@ -5,6 +5,8 @@ use egui::{Color32, Context};
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug)]
 pub enum Text {
+    /// Toggle selection handles and hover outlines on the canvas.
+    ShowOutlines,
     /// Toggle sway and lift while dragging items.
     DragAnimation,
     /// Live-preview opacity when decorative drag motion is disabled.

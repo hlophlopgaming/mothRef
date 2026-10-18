@@ -101,8 +101,12 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
             }
             let fade = ui.ctx().animate_bool_with_time(
                 hover_key,
-                hover.is_some() && moving.is_none(),
-                if tools.reduced_motion { 0. } else { 0.09 },
+                tools.show_outlines && hover.is_some() && moving.is_none(),
+                if tools.reduced_motion || !tools.show_outlines {
+                    0.
+                } else {
+                    0.09
+                },
             );
             let hover_id = ui.ctx().data(|data| data.get_temp::<Uuid>(hover_key));
             let previous = view.viewport;
@@ -226,6 +230,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                                 && !returning.is_empty()
                                 && !returning.contains_key(&item.id)),
                         if hover_id == Some(item.id) { fade } else { 0. },
+                        tools.show_outlines,
                     );
                 }
             }
@@ -234,7 +239,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     draw_note(ui, &view.camera, ghost);
                 }
                 if !overlay && board.scene.get(ghost.id).is_none() {
-                    outline(ui, &view.camera, ghost, true, 0.);
+                    outline(ui, &view.camera, ghost, true, 0., tools.show_outlines);
                 }
             }
             for ghost in transitions {
@@ -526,8 +531,15 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
 }
 
 /// Outlines share the displayed geometry, including sway, lift and transitions.
-fn outline(ui: &mut egui::Ui, camera: &Camera, item: &Item, selected: bool, hover: f32) {
-    if !selected && hover <= 0. {
+fn outline(
+    ui: &mut egui::Ui,
+    camera: &Camera,
+    item: &Item,
+    selected: bool,
+    hover: f32,
+    enabled: bool,
+) {
+    if !enabled || (!selected && hover <= 0.) {
         return;
     }
     let opacity = ui.opacity();
@@ -676,6 +688,32 @@ pub(super) fn preview_rect(
 mod tests {
     use super::*;
     #[test]
+    fn hidden_outlines_paint_neither_selection_handles_nor_hover() {
+        let item = Item::text(
+            "reference",
+            Rect {
+                x: 20.,
+                y: 30.,
+                width: 60.,
+                height: 40.,
+            },
+            None,
+        );
+        for selected in [false, true] {
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                outline(ui, &Camera::default(), &item, selected, 1., false)
+            });
+            output.textures_delta.clear();
+            assert!(
+                output
+                    .shapes
+                    .iter()
+                    .all(|shape| matches!(shape.shape, egui::Shape::Noop))
+            );
+        }
+    }
+    #[test]
     fn selection_and_hover_follow_the_animated_image_corners() {
         let camera = Camera {
             origin: [-20., 10.],
@@ -710,7 +748,7 @@ mod tests {
         for selected in [true, false] {
             let ctx = egui::Context::default();
             let mut output = ctx.run_ui(Default::default(), |ui| {
-                outline(ui, &camera, &presented, selected, 1.)
+                outline(ui, &camera, &presented, selected, 1., true)
             });
             output.textures_delta.clear();
             let path = output

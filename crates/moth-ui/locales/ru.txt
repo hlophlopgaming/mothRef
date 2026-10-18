@@ -167,3 +167,5 @@ ReducedMotion = Уменьшить анимацию
 
 DragAnimation = Анимация перетаскивания
 DragOpacity = Непрозрачность без анимации
+
+ShowOutlines = Показывать обводку элементов

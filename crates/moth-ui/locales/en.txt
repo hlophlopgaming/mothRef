@@ -167,3 +167,5 @@ ReducedMotion = Reduce motion
 
 DragAnimation = Animate dragging
 DragOpacity = Drag opacity without animation
+
+ShowOutlines = Show item outlines
