@@ -114,6 +114,40 @@ impl Session {
             .filter(|n| !n.is_empty())
             .unwrap_or(moth_ui::text(moth_ui::Text::Untitled))
     }
+    /// Enqueue a journaled save; the caller resolves the path first.
+    pub(super) fn save(&mut self) {
+        match self
+            .boards
+            .requests
+            .try_send(moth_platform::boards::Request::Save(
+                std::path::PathBuf::from(&self.path),
+            )) {
+            Ok(()) => self.in_flight += 1,
+            Err(_) => self.message = moth_ui::text(moth_ui::Text::StorageBusy).into(),
+        }
+    }
+    /// Begin discarding staged originals and the journal; guarded by in-flight
+    /// work so a close never loses journaled but unsaved edits.
+    pub(super) fn discard(&mut self) {
+        if self.in_flight > 0
+            || self.pasting > 0
+            || !self.pending.is_empty()
+            || !self.waiting.is_empty()
+        {
+            self.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
+            return;
+        }
+        if !self.discarding {
+            match self
+                .clipboard
+                .requests
+                .try_send(moth_platform::ClipboardRequest::Discard)
+            {
+                Ok(()) => self.discarding = true,
+                Err(_) => self.message = moth_ui::text(moth_ui::Text::ClipboardBusy).into(),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -201,6 +235,46 @@ mod tests {
         first.boards.finish().unwrap();
         second.boards.finish().unwrap();
         // Decode/clipboard handles keep no files open after their owning sessions are dropped.
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn save_and_close_never_discards_before_the_save_completes() {
+        let root = std::env::temp_dir().join(format!("mothref-close-{}", Uuid::now_v7()));
+        let save_path = root.join("board.moth");
+        let mut session = Session::with_storage(
+            Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+            Arc::new(|| {}),
+            false,
+        )
+        .unwrap();
+
+        // SaveAndClose on a board with a path enqueues the save and marks the close.
+        session.path = save_path.to_string_lossy().into_owned();
+        session.close_after_save = true;
+        session.save();
+        assert_eq!(session.in_flight, 1);
+
+        // Discard must not drop the in-flight save: the guard loses nothing.
+        session.discard();
+        assert!(!session.discarding);
+        assert!(!session.discarded);
+        assert!(!session.message.is_empty());
+
+        // Once the save completes and in_flight drains, close_after_save discards.
+        match session
+            .boards
+            .results
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap()
+        {
+            moth_platform::boards::Completion::Saved => {}
+            _ => panic!("expected Saved completion"),
+        }
+        session.in_flight = session.in_flight.saturating_sub(1);
+        session.discard();
+        assert!(session.discarding);
+
+        session.boards.finish().unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -5,6 +5,38 @@ qualification from M0 and M1. It does not mark either milestone complete.
 Work in the order below; preserve journal-before-acknowledgment, bounded memory,
 and the storage/input abstractions throughout.
 
+## Remaining refactor plan (App god-object)
+
+Continues the `01-refactor-app-god-object.md` plan. Each step is one local commit
+(`refactor(app): …`); quick checks (`fmt`, `clippy -p mothref`, `test -p mothref`)
+after each, workspace-wide checks once at the end.
+
+- [ ] **Step 1 — Replace the 12 `frame()` flags with `Vec<Intent>`.**
+  `intent.rs` defines `Intent` and `intents_from_actions`. Close buttons emit one
+  `SaveAndClose` / `Discard` / `KeepOpen` intent; `apply` sets `close_after_save`
+  and sends `Save`. Test: `SaveAndClose` on a board with a path never discards
+  before the save completes; `Discard` with `in_flight > 0` loses nothing.
+- [ ] **Step 2 — UI no longer mutates App state.**
+  Every direct assignment inside `run_ui` becomes an intent. Widget-local input
+  (`&mut String` / `&mut bool` text fields, `board.view.pan` in the toolbar) stays.
+  The `tools.preference_dirty` / `tools.fit` mailboxes become intents from `Tools::show`.
+- [ ] **Step 3 — Extract UI sections from `frame()`.**
+  `app/chrome.rs` (toolbar/tabs/status), `app/canvas.rs` (CentralPanel: notes,
+  selection, overlays), `app/modal.rs` (board_path, confirm_close, arrange_prompt,
+  recovery). `draw_note` / `measure_note` / `screen_corners` / `canvas_clip` move to
+  `canvas.rs`. `frame()` reads as surface check → results → run_ui → apply → render.
+- [ ] **Step 4 — Rendering moves into `Shell::render`.**
+  Surface texture, Lost/Outdated/Occluded, egui buffers, `registry.draw`, present,
+  free egui textures, deadline. Visible-item collection and LOD requests stay outside.
+- [ ] **Step 5 — Tabs and worker results move into `Workspace`.**
+  `reset_board_ui` consolidates the tab-switch reset. `Workspace::{activate,new_board,
+  open_in_tab,request_close,finish_close}` return a `TabChange`; `results`/
+  `drain_results`/`complete` become `Workspace::pump`. Test: `request_close` on a
+  dirty board.
+- [ ] **Step 6 — Cleanup.**
+  Fold `cursor`/`command`/`native_pressed`/`input`/`gestures` into `InputState`.
+  Close `pub(super)` fields that are only read externally. Update `ARCHITECTURE.md`.
+
 ## Release qualification first
 
 - [ ] **TD-01 — Qualify the final persistence build.**
