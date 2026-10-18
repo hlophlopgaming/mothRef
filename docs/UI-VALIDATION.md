@@ -131,3 +131,14 @@ Automated Motion results (2026-10-19):
 - [ ] Selection, dragging and marquee selection still work; restart preserves the setting.
 - Automated tests cover preference persistence/defaults and no painted outlines/handles when disabled.
 - Validation: formatting, clippy for mothref/moth-ui (`-D warnings`) and all 46 tests passed.
+
+### Stale drag-tail cleanup
+
+- Regression reproduces a confirmed move followed by another geometry change
+  while its release tail is alive: the old preview must disappear immediately.
+- [ ] Drag, then quickly undo/arrange/edit/delete: no non-interactive old image remains.
+- [ ] A normal release still finishes its sway and goes idle; ordinary drag does not duplicate images.
+- The regression first failed with a surviving, non-interactive release copy;
+  after cleanup, formatting, mothref clippy (`-D warnings`) and all 34 tests passed.
+- This covers stale tails after later commands; the maintainer's report also
+  mentions single drags, so native confirmation of that exact interaction remains pending.

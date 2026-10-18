@@ -275,6 +275,18 @@ impl DragMotion {
                 }
             }
         }
+        if !self.awaiting
+            && let Some((items, _, _)) = &mut self.returning
+        {
+            // A later command owns the new display; an old drag tail cannot cover it.
+            items.retain(|item| scene.get(item.id) == Some(item));
+            if items.is_empty() {
+                self.returning = None;
+                self.spring.value = 0.;
+                self.spring.velocity = 0.;
+                self.spring.target = 0.;
+            }
+        }
     }
     /// UI outlines and GPU instances sample the same animation frame.
     pub fn now(&self) -> Instant {
@@ -306,6 +318,35 @@ impl DragMotion {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn confirmed_drag_tail_cannot_outlive_a_new_scene_position() {
+        let mut scene = Scene::default();
+        let source = Item::text(
+            "reference",
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 40.,
+                height: 60.,
+            },
+            None,
+        );
+        scene.apply(Command::Insert(source.clone())).unwrap();
+        let commands = arrange::translate(&[&source], [100., 50.], false, scene.top());
+        let mut motion = DragMotion::default();
+        motion.release(&commands, &scene, [100., 50.], false);
+        let inverse = scene.apply(commands[0].clone()).unwrap();
+        let mut transitions = item_motion::Items::default();
+        motion.sync(&scene, &mut transitions, true);
+        scene.apply(inverse).unwrap();
+        motion.sync(&scene, &mut transitions, true);
+        let now = Instant::now();
+        motion.step(now, false, false);
+        assert!(
+            motion.returning(now, false).is_empty(),
+            "a tail at the old rect is a non-interactive phantom after the scene moves again"
+        );
+    }
     #[test]
     fn disabled_animation_fades_only_the_live_preview() {
         let mut scene = Scene::default();

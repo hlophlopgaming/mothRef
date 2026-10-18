@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Discard stale drag-animation copies when another command moves, edits or removes the real item, preventing non-interactive images at old coordinates.
+
 - Add a persistent setting to hide item selection/hover outlines and selection handles.
 
 - Add persistent drag-animation and fallback-opacity preferences: without drag motion, images become translucent only while following the pointer.
