@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Owns tabs, persistence identities and worker completion routing.
 use super::*;
-use session::MAX_TABS;
+use document::MAX_TABS;
 
 pub(super) enum TabChange {
     None,
@@ -24,18 +24,28 @@ pub(super) struct Pump<'a> {
     pub events: Vec<Event>,
 }
 pub(super) struct Workspace {
-    pub(super) board: Session,
-    pub(super) tabs: Vec<Session>,
+    pub(super) board: Document,
+    pub(super) tabs: Vec<Document>,
     pub(super) library: bool,
-    pub(super) recovery_paths: Vec<std::path::PathBuf>,
-    pub(super) recent_paths: Vec<std::path::PathBuf>,
+    recovery_paths: Vec<std::path::PathBuf>,
+    recent_paths: Vec<std::path::PathBuf>,
     pub(super) refresh_library: bool,
     pub(super) confirm_close: bool,
     pub(super) closing_window: bool,
     wake: Arc<dyn Fn() + Send + Sync>,
 }
 impl Workspace {
-    pub(super) fn new(board: Session, wake: Arc<dyn Fn() + Send + Sync>) -> Self {
+    pub(super) fn recent_paths(&self) -> &[std::path::PathBuf] {
+        &self.recent_paths
+    }
+    pub(super) fn recovery_paths(&self) -> &[std::path::PathBuf] {
+        &self.recovery_paths
+    }
+    pub(super) fn dismiss_recovery(&mut self) {
+        self.recovery_paths.clear();
+    }
+
+    pub(super) fn new(board: Document, wake: Arc<dyn Fn() + Send + Sync>) -> Self {
         Self {
             board,
             tabs: Vec::new(),
@@ -80,7 +90,7 @@ impl Workspace {
         } else if self.closing_window {
             Ok(TabChange::WindowClosed)
         } else {
-            self.board = Session::new(self.wake.clone(), false)?;
+            self.board = Document::new(self.wake.clone(), false)?;
             self.library = true;
             self.refresh_library = true;
             Ok(TabChange::Closed)
@@ -97,7 +107,7 @@ impl Workspace {
             self.board.message = moth_ui::text(moth_ui::Text::TabLimit).into();
             return TabChange::None;
         }
-        match Session::new(self.wake.clone(), false) {
+        match Document::new(self.wake.clone(), false) {
             Ok(board) => {
                 let previous = std::mem::replace(&mut self.board, board);
                 self.tabs.push(previous);
@@ -148,7 +158,7 @@ impl Workspace {
         {
             return;
         }
-        match self.board.boards.requests.try_send(request) {
+        match self.board.boards().requests.try_send(request) {
             Ok(()) => self.board.in_flight += 1,
             Err(_) => self.board.message = moth_ui::text(moth_ui::Text::StorageBusy).into(),
         }
@@ -160,7 +170,7 @@ impl Workspace {
         if !self.board.batching
             && self
                 .board
-                .boards
+                .boards()
                 .requests
                 .try_send(moth_platform::boards::Request::BeginBatch)
                 .is_ok()
@@ -172,7 +182,7 @@ impl Workspace {
         if self.board.batching
             && self
                 .board
-                .boards
+                .boards()
                 .requests
                 .try_send(moth_platform::boards::Request::EndBatch)
                 .is_ok()
@@ -260,7 +270,7 @@ impl Workspace {
             self.board.message = moth_ui::text(moth_ui::Text::ImportBusy).into();
             return TabChange::None;
         }
-        match self.board.storage.register(path) {
+        match self.board.storage().register(path) {
             Ok(h) => self.board.waiting.push(h),
             Err(e) => self.board.message = e.to_string(),
         }
@@ -269,7 +279,7 @@ impl Workspace {
     }
     pub(super) fn queue_decodes(&mut self, format: moth_io::ImageFormat) {
         while let Some(&handle) = self.board.waiting.last() {
-            match self.board.decode.requests.try_send(moth_io::Request {
+            match self.board.decode().requests.try_send(moth_io::Request {
                 handle,
                 side: 256,
                 format,
@@ -322,7 +332,7 @@ impl Workspace {
                         self.board.scene.top(),
                     );
                     if !paste {
-                        item.name = self.board.storage.source_name(done.request.handle);
+                        item.name = self.board.storage().source_name(done.request.handle);
                     }
                     self.board.burst.push(item.id);
                     self.persist(moth_platform::boards::Request::Apply(
@@ -349,7 +359,7 @@ impl Workspace {
                         self.board.scene.top(),
                     );
                     if !paste {
-                        item.name = self.board.storage.source_name(done.request.handle);
+                        item.name = self.board.storage().source_name(done.request.handle);
                     }
                     self.board.burst.push(item.id);
                     self.persist(moth_platform::boards::Request::Apply(
@@ -365,7 +375,7 @@ impl Workspace {
     }
     fn drain_results(&mut self, active: bool, pump: &mut Pump<'_>) {
         let point = self.board.cursor_point(pump.cursor, pump.fallback);
-        while let Ok(done) = self.board.boards.results.try_recv() {
+        while let Ok(done) = self.board.boards().results.try_recv() {
             use moth_platform::boards::Completion;
             match done {
                 Completion::Recovery(paths) => self.recovery_paths = paths,
@@ -494,10 +504,10 @@ impl Workspace {
                 }
             }
         }
-        while let Ok(done) = self.board.decode.results.try_recv() {
+        while let Ok(done) = self.board.decode().results.try_recv() {
             self.complete(done, point, active, pump);
         }
-        while let Ok(result) = self.board.clipboard.results.try_recv() {
+        while let Ok(result) = self.board.clipboard().results.try_recv() {
             match result {
                 moth_platform::ClipboardCompletion::Discarded(result) => match result {
                     Ok(()) => self.board.discarded = true,

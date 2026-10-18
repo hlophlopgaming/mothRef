@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The infinite canvas: notes, selection frames, drag overlays and the tool rail.
-use super::{Editing, Intent, Session, arrange};
+use super::{Document, Editing, Intent, arrange};
 use crate::gpu::Gpu;
 use moth_scene::{Camera, Item, Rect, Uuid};
 use moth_ui::Actions;
 
 /// Read-only inputs the canvas draws from; bundled to keep the call small.
 pub(super) struct Canvas<'a> {
-    pub board: &'a mut Session,
+    pub board: &'a Document,
     pub tools: &'a mut super::tools::Tools,
     pub editing: &'a mut Option<Editing>,
     pub drag: Option<([f32; 2], [f32; 2], bool)>,
@@ -17,12 +17,9 @@ pub(super) struct Canvas<'a> {
 }
 
 /// Draws the canvas panel and the tools window, emitting intents for board edits.
-pub(super) fn canvas(
-    ui: &mut egui::Ui,
-    ctx: Canvas<'_>,
-    actions: &mut Actions,
-    intents: &mut Vec<Intent>,
-) {
+pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
+    let mut actions = Actions::default();
+    let mut intents = Vec::new();
     let Canvas {
         board,
         tools,
@@ -32,10 +29,11 @@ pub(super) fn canvas(
         gpu,
         overlay,
     } = ctx;
+    let mut view = board.view;
     if !overlay {
         egui::Panel::bottom("board_tools_button").show(ui, |ui| {
             if ui.button(moth_ui::text(moth_ui::Text::Tools)).clicked() {
-                tools.open = !tools.open;
+                intents.push(Intent::ToggleTools);
             }
         });
         let (edits, target, note, tool_intents) = tools.show(ui, board, editing.is_some());
@@ -48,59 +46,58 @@ pub(super) fn canvas(
         }
         if note {
             intents.push(Intent::AddNote(
-                board
-                    .camera
-                    .world([board.viewport.center().x, board.viewport.center().y]),
+                view.camera
+                    .world([view.viewport.center().x, view.viewport.center().y]),
             ));
         }
     }
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
-            let previous = board.viewport;
-            board.viewport = ui.max_rect();
+            let previous = view.viewport;
+            view.viewport = ui.max_rect();
             if tools.scale_with_window
                 && previous.is_positive()
-                && previous.size() != board.viewport.size()
+                && previous.size() != view.viewport.size()
             {
-                let anchor = board
+                let anchor = view
                     .camera
                     .world([previous.center().x, previous.center().y]);
-                board.camera.zoom = (board.camera.zoom
-                    * (board.viewport.width() / previous.width())
-                        .min(board.viewport.height() / previous.height()))
+                view.camera.zoom = (view.camera.zoom
+                    * (view.viewport.width() / previous.width())
+                        .min(view.viewport.height() / previous.height()))
                 .clamp(0.01, 64.);
-                board.camera.origin = [
-                    anchor[0] - board.viewport.center().x / board.camera.zoom,
-                    anchor[1] - board.viewport.center().y / board.camera.zoom,
+                view.camera.origin = [
+                    anchor[0] - view.viewport.center().x / view.camera.zoom,
+                    anchor[1] - view.viewport.center().y / view.camera.zoom,
                 ];
             }
-            if board.needs_fit && board.in_flight == 0 {
-                board.fit();
+            if view.needs_fit && board.in_flight == 0 {
+                view.fit(&board.scene);
             }
             if board.scene.is_empty() {
                 let empty = moth_ui::empty_board(ui);
                 actions.paste |= empty.paste;
                 actions.open |= empty.open;
             }
-            let origin = board
+            let origin = view
                 .camera
-                .world([board.viewport.min.x, board.viewport.min.y]);
+                .world([view.viewport.min.x, view.viewport.min.y]);
             for item in board.scene.query(Rect {
                 x: origin[0],
                 y: origin[1],
-                width: board.viewport.width() / board.camera.zoom,
-                height: board.viewport.height() / board.camera.zoom,
+                width: view.viewport.width() / view.camera.zoom,
+                height: view.viewport.height() / view.camera.zoom,
             }) {
                 match item.blob() {
                     // Non-resident images show a placeholder until decoded.
                     Some(blob) if !gpu.registry.resident(blob, 1) => {
-                        let p = board.camera.screen([item.rect.x, item.rect.y]);
+                        let p = view.camera.screen([item.rect.x, item.rect.y]);
                         let rect = egui::Rect::from_min_size(
                             egui::pos2(p[0], p[1]),
                             egui::vec2(
-                                item.rect.width * board.camera.zoom,
-                                item.rect.height * board.camera.zoom,
+                                item.rect.width * view.camera.zoom,
+                                item.rect.height * view.camera.zoom,
                             ),
                         );
                         ui.painter().rect_filled(rect, 2., moth_ui::BACKGROUND);
@@ -114,7 +111,7 @@ pub(super) fn canvas(
                     // Notes are drawn by the UI layer in screen space.
                     None => {
                         if editing.as_ref().is_none_or(|e| e.id != item.id) {
-                            draw_note(ui, &board.camera, item);
+                            draw_note(ui, &view.camera, item);
                         }
                     }
                     Some(_) => {}
@@ -125,7 +122,7 @@ pub(super) fn canvas(
                     break;
                 }
                 if let Some(item) = board.scene.get(id) {
-                    let corners = screen_corners(&board.camera, item.rect, item.transform.rotation);
+                    let corners = screen_corners(&view.camera, item.rect, item.transform.rotation);
                     moth_ui::canvas::selection(ui, corners);
                 }
             }
@@ -133,8 +130,8 @@ pub(super) fn canvas(
                 let marquee =
                     drag.filter(|(_, _, pan)| !pan && moving.is_none())
                         .map(|(a, b, _)| {
-                            let a = board.camera.world(a);
-                            let b = board.camera.world(b);
+                            let a = view.camera.world(a);
+                            let b = view.camera.world(b);
                             Rect {
                                 x: a[0].min(b[0]),
                                 y: a[1].min(b[1]),
@@ -162,17 +159,12 @@ pub(super) fn canvas(
                     );
                 }
                 if bounds.is_finite() {
-                    moth_ui::canvas::selection_badge(
-                        ui.ctx(),
-                        board.viewport,
-                        count,
-                        bounds.size(),
-                    );
+                    moth_ui::canvas::selection_badge(ui.ctx(), view.viewport, count, bounds.size());
                 }
             }
             if !overlay {
                 let response = ui.interact(
-                    board.viewport,
+                    view.viewport,
                     egui::Id::new("canvas_context"),
                     egui::Sense::click(),
                 );
@@ -185,7 +177,7 @@ pub(super) fn canvas(
                         .clicked()
                     {
                         if let Some(pos) = response.interact_pointer_pos() {
-                            let world = board.camera.world([pos.x, pos.y]);
+                            let world = view.camera.world([pos.x, pos.y]);
                             intents.push(Intent::AddNote(world));
                         }
                         ui.close();
@@ -222,7 +214,7 @@ pub(super) fn canvas(
                                 intents.push(Intent::FitSelection);
                                 ui.close();
                             }
-                            let target_width = board.viewport.width() / board.camera.zoom;
+                            let target_width = view.viewport.width() / view.camera.zoom;
                             ui.menu_button(moth_ui::text(moth_ui::Text::Arrange), |ui| {
                                 for (label, mode) in [
                                     (moth_ui::Text::Horizontal, arrange::Arrange::Horizontal),
@@ -308,14 +300,14 @@ pub(super) fn canvas(
                     && board.idle()
                     && let Some(pos) = response.interact_pointer_pos()
                 {
-                    let world = board.camera.world([pos.x, pos.y]);
+                    let world = view.camera.world([pos.x, pos.y]);
                     let hit = board
                         .scene
                         .query(Rect {
                             x: world[0],
                             y: world[1],
-                            width: 1. / board.camera.zoom,
-                            height: 1. / board.camera.zoom,
+                            width: 1. / view.camera.zoom,
+                            height: 1. / view.camera.zoom,
                         })
                         .into_iter()
                         .rev()
@@ -330,8 +322,8 @@ pub(super) fn canvas(
                 }
                 // The inline note editor floats above the canvas.
                 if let Some(editing) = editing {
-                    let anchor = board.camera.screen(editing.anchor);
-                    let zoom = board.camera.zoom;
+                    let anchor = view.camera.screen(editing.anchor);
+                    let zoom = view.camera.zoom;
                     egui::Area::new(egui::Id::new("note_editor"))
                         .fixed_pos(egui::pos2(anchor[0], anchor[1]))
                         .show(ui.ctx(), |ui| {
@@ -341,7 +333,7 @@ pub(super) fn canvas(
                                 .show(ui);
                             if editing.focus {
                                 response.response.request_focus();
-                                editing.focus = false;
+                                intents.push(Intent::NoteFocused);
                             }
                             if response.response.lost_focus() {
                                 intents.push(Intent::CommitNote);
@@ -350,7 +342,7 @@ pub(super) fn canvas(
                 }
             }
             if !board.scene.is_empty() && !overlay {
-                let tool = moth_ui::canvas::tools(ui.ctx(), board.viewport, &mut board.pan);
+                let tool = moth_ui::canvas::tools(ui.ctx(), view.viewport, &mut view.pan);
                 actions.paste |= tool.paste;
                 actions.fit |= tool.fit;
                 actions.open |= tool.open;
@@ -377,40 +369,40 @@ pub(super) fn canvas(
                             )
                         })
                         .collect();
-                    let world_min = board
+                    let world_min = view
                         .camera
-                        .world([board.viewport.left(), board.viewport.top()]);
-                    let world_max = board
+                        .world([view.viewport.left(), view.viewport.top()]);
+                    let world_max = view
                         .camera
-                        .world([board.viewport.right(), board.viewport.bottom()]);
+                        .world([view.viewport.right(), view.viewport.bottom()]);
                     if let Some(p) = moth_ui::canvas::minimap(
                         ui.ctx(),
-                        board.viewport,
+                        view.viewport,
                         &samples,
                         egui::Rect::from_min_max(
                             normalize(world_min[0], world_min[1]),
                             normalize(world_max[0], world_max[1]),
                         ),
                     ) {
-                        board.camera.origin = [
+                        view.camera.origin = [
                             bounds.x + p.x * bounds.width
-                                - board.viewport.center().x / board.camera.zoom,
+                                - view.viewport.center().x / view.camera.zoom,
                             bounds.y + p.y * bounds.height
-                                - board.viewport.center().y / board.camera.zoom,
+                                - view.viewport.center().y / view.camera.zoom,
                         ];
                     }
                 }
             }
             if let (Some((_, rect)), Some((a, b, false))) = (moving, drag) {
                 let moved = Rect {
-                    x: rect.x + (b[0] - a[0]) / board.camera.zoom,
-                    y: rect.y + (b[1] - a[1]) / board.camera.zoom,
+                    x: rect.x + (b[0] - a[0]) / view.camera.zoom,
+                    y: rect.y + (b[1] - a[1]) / view.camera.zoom,
                     ..rect
                 };
                 let rotation = moving
                     .and_then(|(id, _)| board.scene.get(id))
                     .map_or(0., |item| item.transform.rotation);
-                let corners = screen_corners(&board.camera, moved, rotation);
+                let corners = screen_corners(&view.camera, moved, rotation);
                 moth_ui::canvas::selection(ui, corners);
             }
             if let Some((a, b, false)) = drag
@@ -424,6 +416,9 @@ pub(super) fn canvas(
                 );
             }
         });
+    intents.insert(0, Intent::View(view));
+    intents.extend(super::intent::intents_from_actions(actions));
+    intents
 }
 
 /// Frame corners in screen space, so the canvas can outline a rotated selection.

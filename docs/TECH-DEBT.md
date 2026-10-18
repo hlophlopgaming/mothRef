@@ -33,9 +33,41 @@ after each, workspace-wide checks once at the end.
   open_in_tab,request_close,finish_close}` return a `TabChange`; `results`/
   `drain_results`/`complete` become `Workspace::pump`. Test: `request_close` on a
   dirty board.
-- [ ] **Step 6 — Cleanup.**
+- [x] **Step 6 — Cleanup.**
   Fold `cursor`/`command`/`native_pressed`/`input`/`gestures` into `InputState`.
   Close `pub(super)` fields that are only read externally. Update `ARCHITECTURE.md`.
+
+
+### Manual refactor validation (pending; does not block the refactor)
+
+Follow [UI validation](UI-VALIDATION.md) and
+[M2 editing validation](M2-EDITING-VALIDATION.md), using disposable boards:
+
+- [ ] Dirty close: Save with an existing path, Save As, cancel Save As, Keep Open,
+  and Discard; repeat while import/save work is in flight. Reopen saved boards
+  and verify the acknowledged edits.
+- [ ] Open/new/switch/close tabs, including closing the whole window with several
+  dirty tabs; confirm each tab keeps its camera, lock flags and separate undo history.
+- [ ] Create/edit notes, focus loss, unchanged draft, undo/redo, selection and
+  double-click image focus/return.
+- [ ] Mouse/pen drag, Alt+drag duplicate, pen hover/cancellation, touch pan/pinch
+  where hardware is available; repeat after switching tabs.
+- [ ] Resize with/without camera scaling, fit/zoom, tools, arrangement prompts,
+  library pin/tags/previews, recovery browser and overlay controls.
+- [ ] Minimize/restore, suspend/resume and device/surface recovery; verify library
+  thumbnails reload and the board survives. Repeat native checks on each OS.
+
+Automated refactor checks (2026-10-19):
+
+- `cargo fmt --all` / `cargo fmt --all --check`: passed.
+- `cargo clippy -p mothref --all-targets -- -D warnings` and `cargo test -p mothref`:
+  passed after each resumed step (19 mothref tests on the final build).
+- `cargo clippy --workspace --all-targets -- -D warnings`: passed.
+- `cargo test --workspace`: passed, including headless golden/BC7 rendering,
+  allocation checks, parked-tab worker routing and save-before-discard coverage.
+
+Per the task's quick-check workflow, stress/benchmark/fuzz runs were not repeated.
+No format or feature change is intended. Native checks above remain unexecuted.
 
 ## Release qualification first
 

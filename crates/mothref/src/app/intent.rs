@@ -14,6 +14,17 @@ use super::arrange::Arrange;
 
 /// One user action from chrome, canvas, tools or a modal.
 pub(super) enum Intent {
+    /// Commit the locally laid-out canvas before applying its user actions.
+    View(super::document::View),
+    /// Toggle the board tools window.
+    ToggleTools,
+    /// Acknowledge the inline editor focus request.
+    NoteFocused,
+    /// Acknowledge the save-path widget focus request.
+    DialogFocused,
+    /// Send an explicit catalog action to the library worker.
+    Library(moth_platform::library::Request),
+
     /// Clipboard import.
     Paste,
     /// Fit the camera to the whole board immediately.

@@ -164,10 +164,51 @@ input/frame limits, not a cap on every private allocation inside the dependency.
 
 ## Reference workspace
 
-The desktop shell parks up to four independent `Session`s, each with its own
-journal, scene, decode requests and camera. Switching clears image residency;
+The `Workspace` parks up to four independent `Document`s, each with its own
+journal, scene, decode requests and `View` (camera and viewport). Switching clears image residency;
 inactive completions are drained without GPU uploads. Destination leases prevent
 two sessions in this process from writing the same canonical native path.
+
+
+The application boundary is `App → {Shell, Workspace, LibraryScreen, Modal,
+Tools, InputState}`. `App` coordinates the native event loop; these types keep
+window/GPU state, board lifetimes, library widgets/textures, dialogs, tool drafts
+and pointer state separate.
+
+```mermaid
+flowchart LR
+    App --> Shell
+    App --> Workspace
+    App --> LibraryScreen
+    App --> Modal
+    App --> Tools
+    App --> InputState
+    Workspace --> Document
+    Document --> View
+```
+
+The frame path is **event → Gesture/Intent → apply → render**. `InputState`
+adapts native pointers and recognizes gestures. `chrome`, `canvas` and
+`Modal::show` return intent vectors; text fields, checkboxes and inspector drafts
+retain their local widget input. Canvas layout uses a local `View` and emits it
+before user actions, so hit testing and drawing share the same camera without
+mutating the document inside the UI pass. `SaveAndClose` arms the close and
+queues a save; only a successful storage completion permits journal discard.
+
+`Workspace::{activate,new_board,open_in_tab,request_close,finish_close}` return
+`TabChange`. `App::reset_board_ui` reloads the tab's tools, clears library/editor
+and gesture state, and clears texture residency after a switch. `Workspace::pump`
+drains all tab workers, applies journal acknowledgments to their owning scenes,
+and returns UI events. Active decoded images go straight to `Shell::upload`
+through a callback; inactive tabs never upload and no intermediate pixel queue
+accumulates. Journal identity stays with the document when tabs switch.
+
+`Document::visible` selects items and requests missing LODs. `Shell::render`
+acquires the surface, updates egui textures/buffers, draws the supplied item
+references, presents, frees textures and schedules the next repaint. Device and
+surface recovery rebuild GPU/egui state while retaining documents; `App` resets
+renderer-dependent UI and refreshes visible library previews. `frame()` only
+coordinates surface checks, worker results, UI, intent application and rendering.
 
 An independent library worker indexes at most twenty recent and twenty pinned
 boards. It produces four 128-pixel previews per entry (at most 10 MiB of egui

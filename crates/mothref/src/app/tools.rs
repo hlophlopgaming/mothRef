@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Explicit Apply keeps inspector drafts out of the journal until confirmed.
-use super::{Session, arrange, intent::Intent};
+use super::{Document, arrange, intent::Intent};
 use moth_platform::export::{Geometry, Target};
 use moth_scene::{Command, Rect, Transform, Uuid};
 use moth_ui::{Text, text};
@@ -179,7 +179,7 @@ impl Tools {
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
-        board: &Session,
+        board: &Document,
         editing: bool,
     ) -> (Vec<Command>, Option<Target>, bool, Vec<Intent>) {
         let mut commands = Vec::new();
@@ -438,7 +438,7 @@ impl Tools {
                                     commands.extend(self.arrange(
                                         &mut items,
                                         mode,
-                                        board.viewport.width() / board.camera.zoom,
+                                        board.view.viewport.width() / board.view.camera.zoom,
                                     ));
                                 }
                             }
@@ -451,7 +451,7 @@ impl Tools {
                                 commands.extend(arrange::arrange(
                                     &all,
                                     arrange::Arrange::Optimal,
-                                    board.viewport.width() / board.camera.zoom,
+                                    board.view.viewport.width() / board.view.camera.zoom,
                                     self.gap,
                                 ));
                                 intents.push(Intent::NeedsFit);

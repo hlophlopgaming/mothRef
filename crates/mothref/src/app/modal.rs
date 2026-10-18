@@ -19,10 +19,10 @@ impl Modal {
         workspace: &Workspace,
         auto_arrange: bool,
         default_arrange: u8,
-        intents: &mut Vec<Intent>,
-    ) {
+    ) -> Vec<Intent> {
+        let mut intents = Vec::new();
         let board = &workspace.board;
-        let recovery_paths = &workspace.recovery_paths;
+        let recovery_paths = workspace.recovery_paths();
         if !recovery_paths.is_empty() && board.scene.is_empty() {
             egui::Window::new(moth_ui::text(moth_ui::Text::Recovery)).show(ui.ctx(), |ui| {
                 for path in recovery_paths {
@@ -53,7 +53,7 @@ impl Modal {
                 );
                 if self.dialog_focus {
                     input.request_focus();
-                    self.dialog_focus = false;
+                    intents.push(Intent::DialogFocused);
                 }
                 let submit = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 ui.horizontal(|ui| {
@@ -152,5 +152,6 @@ impl Modal {
                 });
             }
         }
+        intents
     }
 }

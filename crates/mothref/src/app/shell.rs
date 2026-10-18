@@ -37,15 +37,46 @@ pub(super) enum Present {
 pub(super) struct Shell {
     pub(super) window: Option<Arc<Window>>,
     pub(super) gpu: Option<Gpu>,
-    pub(super) ctx: egui::Context,
+    ctx: egui::Context,
     pub(super) egui: Option<egui_winit::State>,
-    pub(super) software: bool,
-    pub(super) wake: Arc<dyn Fn() + Send + Sync>,
-    pub(super) proxy: EventLoopProxy<Wake>,
+    software: bool,
+    wake: Arc<dyn Fn() + Send + Sync>,
+    proxy: EventLoopProxy<Wake>,
     pub(super) deadline: Option<Instant>,
 }
 
 impl Shell {
+    pub(super) fn new(
+        proxy: EventLoopProxy<Wake>,
+        wake: Arc<dyn Fn() + Send + Sync>,
+        software: bool,
+    ) -> Self {
+        let ctx = egui::Context::default();
+        moth_ui::theme(&ctx);
+        let repaint = proxy.clone();
+        ctx.set_request_repaint_callback(move |info| {
+            let _ = repaint.send_event(Wake::Repaint(info.delay));
+        });
+        Self {
+            window: None,
+            gpu: None,
+            ctx,
+            egui: None,
+            software,
+            wake,
+            proxy,
+            deadline: None,
+        }
+    }
+    pub(super) fn context(&self) -> &egui::Context {
+        &self.ctx
+    }
+    pub(super) fn wake(&self) -> Arc<dyn Fn() + Send + Sync> {
+        self.wake.clone()
+    }
+    pub(super) fn software(&self) -> bool {
+        self.software
+    }
     pub(super) fn upload(&mut self, image: &moth_io::Decoded) {
         if let Some(gpu) = &mut self.gpu {
             gpu.registry.upload(&gpu.device, &gpu.queue, image);
