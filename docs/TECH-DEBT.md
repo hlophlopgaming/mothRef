@@ -141,3 +141,19 @@ and the storage/input abstractions throughout.
 See the technical-debt follow-up in [M0 validation](M0-VALIDATION.md) for current
 checks and measurements. The remaining release gates above stay open until
 executed on the final build and appropriate native platforms.
+
+## App responsibility split (2026-10-18)
+
+- [x] Replace the independent drag/move/duplicate/pointer fields with one
+  `Gesture` state. Canvas pointer transitions live in `app/gesture.rs`;
+  cancellation on focus loss, suspension, tab activation and touch takeover
+  releases the same state. Moving captures the full selection in `(z, id)` order;
+  release uses the existing journaled batch path. The existing single-item
+  outline preview is preserved; live dragging belongs to tactility/motion work.
+- [ ] Route UI and keyboard actions through `Intent` with one apply path.
+- [ ] Replace screen/modal flags with `Screen` and `Modal`.
+- [ ] Extract `LibraryScreen`, then `Shell`, then `Workspace` in separate PRs.
+- [ ] Split `Session` into `Document` and `View` while preserving tab persistence
+  identities. Keep the existing isolated-journal regression test.
+- [ ] Complete native scenario validation from `UI-VALIDATION.md` and
+  `M2-EDITING-VALIDATION.md` for the final refactor, including physical pen/touch.
