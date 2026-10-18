@@ -16,7 +16,7 @@ after each, workspace-wide checks once at the end.
   `SaveAndClose` / `Discard` / `KeepOpen` intent; `apply` sets `close_after_save`
   and sends `Save`. Test: `SaveAndClose` on a board with a path never discards
   before the save completes; `Discard` with `in_flight > 0` loses nothing.
-- [ ] **Step 2 — UI no longer mutates App state.**
+- [x] **Step 2 — UI no longer mutates App state.**
   Every direct assignment inside `run_ui` becomes an intent. Widget-local input
   (`&mut String` / `&mut bool` text fields, `board.view.pan` in the toolbar) stays.
   The `tools.preference_dirty` / `tools.fit` mailboxes become intents from `Tools::show`.

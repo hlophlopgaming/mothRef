@@ -92,6 +92,8 @@ pub(super) enum Intent {
     FocusItem(Uuid),
     /// Sync the per-tab lock and grayscale view flags from the tools panel.
     SetViewFlags { locked: bool, grayscale: bool },
+    /// Dismiss the recovery browser without opening a board.
+    DismissRecovery,
 }
 
 /// Converts the shared chrome action set into intents in application order.
