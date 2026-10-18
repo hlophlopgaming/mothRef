@@ -212,21 +212,23 @@ impl App {
                         })
                         .map(|item| item.id);
                     if let Some(id) = id {
-                        self.persist(moth_platform::boards::Request::Export(
-                            if self.tools.coordinates {
-                                moth_platform::export::Target::Info { id, point: world }
-                            } else {
-                                moth_platform::export::Target::Sample {
-                                    id,
-                                    point: world,
-                                    format: match self.tools.color_format {
-                                        1 => moth_platform::export::ColorFormat::Rgb,
-                                        2 => moth_platform::export::ColorFormat::Hsv,
-                                        _ => moth_platform::export::ColorFormat::Hex,
-                                    },
-                                }
-                            },
-                        ));
+                        self.workspace
+                            .board
+                            .persist(moth_platform::boards::Request::Export(
+                                if self.tools.coordinates {
+                                    moth_platform::export::Target::Info { id, point: world }
+                                } else {
+                                    moth_platform::export::Target::Sample {
+                                        id,
+                                        point: world,
+                                        format: match self.tools.color_format {
+                                            1 => moth_platform::export::ColorFormat::Rgb,
+                                            2 => moth_platform::export::ColorFormat::Hsv,
+                                            _ => moth_platform::export::ColorFormat::Hex,
+                                        },
+                                    }
+                                },
+                            ));
                     }
                     self.tools.picking = false;
                     self.tools.coordinates = false;
@@ -316,7 +318,7 @@ impl App {
                                 self.tools.locked,
                             );
                             if let Some(commands) = commands {
-                                self.persist_batch(
+                                self.workspace.board.persist_batch(
                                     commands.into_iter().map(|c| (c, None)).collect(),
                                 );
                             }

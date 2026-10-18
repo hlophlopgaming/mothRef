@@ -255,7 +255,7 @@ impl App {
         if self.workspace.board.document.dirty || !self.workspace.board.document.idle() {
             self.modal.confirm_close();
         } else {
-            self.discard();
+            self.workspace.board.discard();
         }
         self.shell.redraw();
     }
@@ -286,121 +286,6 @@ impl App {
         self.library.refresh = self.workspace.screen == Screen::Library;
         self.shell.recreate()
     }
-    fn paste(&mut self) {
-        if self.tools.locked {
-            return;
-        }
-        if self.workspace.board.document.discarding {
-            return;
-        }
-        // A new paste supersedes a pending arrangement prompt.
-        self.workspace.board.document.arrange_prompt = None;
-        match self
-            .workspace
-            .board
-            .document
-            .clipboard
-            .requests
-            .try_send(moth_platform::ClipboardRequest::Paste)
-        {
-            Ok(()) => self.workspace.board.document.pasting += 1,
-            Err(_) => {
-                self.workspace.board.view.message =
-                    moth_ui::text(moth_ui::Text::ClipboardBusy).into()
-            }
-        }
-    }
-
-    fn persist(&mut self, request: moth_platform::boards::Request) {
-        use moth_platform::boards::Request;
-        if self.tools.locked
-            && matches!(
-                &request,
-                Request::Apply(..)
-                    | Request::ApplyBatch(..)
-                    | Request::OriginalGeometry { .. }
-                    | Request::Undo
-                    | Request::Redo
-                    | Request::ImportBee(..)
-                    | Request::ImportPur(..)
-            )
-        {
-            return;
-        }
-        match self
-            .workspace
-            .board
-            .document
-            .boards
-            .requests
-            .try_send(request)
-        {
-            Ok(()) => self.workspace.board.document.in_flight += 1,
-            Err(_) => {
-                self.workspace.board.view.message = moth_ui::text(moth_ui::Text::StorageBusy).into()
-            }
-        }
-    }
-    /// Sends a whole command list as one undo step.
-    fn persist_batch(&mut self, commands: Vec<(Command, Option<Handle>)>) {
-        self.persist(moth_platform::boards::Request::ApplyBatch(commands));
-    }
-    /// Opens an undo group for a burst of asynchronous inserts (drop/paste).
-    fn begin_batch(&mut self) {
-        if !self.workspace.board.document.batching
-            && self
-                .workspace
-                .board
-                .document
-                .boards
-                .requests
-                .try_send(moth_platform::boards::Request::BeginBatch)
-                .is_ok()
-        {
-            self.workspace.board.document.batching = true;
-        }
-    }
-    /// Closes the undo group once the burst has fully drained to an idle board.
-    fn end_batch(&mut self) {
-        if self.workspace.board.document.batching
-            && self
-                .workspace
-                .board
-                .document
-                .boards
-                .requests
-                .try_send(moth_platform::boards::Request::EndBatch)
-                .is_ok()
-        {
-            self.workspace.board.document.batching = false;
-        }
-    }
-    fn discard(&mut self) {
-        if self.workspace.board.document.in_flight > 0
-            || self.workspace.board.document.pasting > 0
-            || !self.workspace.board.document.pending.is_empty()
-            || !self.workspace.board.document.waiting.is_empty()
-        {
-            self.workspace.board.view.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
-            return;
-        }
-        if !self.workspace.board.document.discarding {
-            match self
-                .workspace
-                .board
-                .document
-                .clipboard
-                .requests
-                .try_send(moth_platform::ClipboardRequest::Discard)
-            {
-                Ok(()) => self.workspace.board.document.discarding = true,
-                Err(_) => {
-                    self.workspace.board.view.message =
-                        moth_ui::text(moth_ui::Text::ClipboardBusy).into()
-                }
-            }
-        }
-    }
     fn open_board(&mut self, path: std::path::PathBuf) {
         if self.workspace.board.document.scene.is_empty()
             && self.workspace.board.document.in_flight == 0
@@ -410,7 +295,9 @@ impl App {
             && !self.workspace.board.document.discarding
         {
             self.workspace.board.document.path = path.to_string_lossy().into_owned();
-            self.persist(moth_platform::boards::Request::Open(path));
+            self.workspace
+                .board
+                .persist(moth_platform::boards::Request::Open(path));
         } else {
             self.workspace.board.view.message = moth_ui::text(moth_ui::Text::OpenEmpty).into();
         }
@@ -442,7 +329,7 @@ impl App {
             } else {
                 moth_platform::boards::Request::ImportBee(path)
             };
-            self.persist(request);
+            self.workspace.board.persist(request);
         }
     }
     fn import(&mut self, path: std::path::PathBuf) {
@@ -486,7 +373,10 @@ impl App {
             Ok(h) => self.workspace.board.document.waiting.push(h),
             Err(e) => self.workspace.board.view.message = e.to_string(),
         }
-        self.pump();
+        self.workspace
+            .board
+            .document
+            .pump(self.shell.image_format());
     }
     fn open_files(&mut self) {
         if self.modal.confirming() {
@@ -508,31 +398,6 @@ impl App {
                     self.new_board();
                 }
                 self.import(path);
-            }
-        }
-    }
-    fn pump(&mut self) {
-        while let Some(&handle) = self.workspace.board.document.waiting.last() {
-            match self
-                .workspace
-                .board
-                .document
-                .decode
-                .requests
-                .try_send(moth_io::Request {
-                    handle,
-                    side: 256,
-                    format: self.shell.image_format(),
-                }) {
-                Ok(()) => {
-                    self.workspace.board.document.waiting.pop();
-                    self.workspace
-                        .board
-                        .document
-                        .pending
-                        .insert(handle, Pending::Import);
-                }
-                Err(_) => break,
             }
         }
     }
@@ -587,10 +452,12 @@ impl App {
             self.workspace.board.document.scene.top(),
         );
         let id = item.id;
-        self.persist(moth_platform::boards::Request::Apply(
-            Command::Insert(item),
-            None,
-        ));
+        self.workspace
+            .board
+            .persist(moth_platform::boards::Request::Apply(
+                Command::Insert(item),
+                None,
+            ));
         self.modal.edit(Editing {
             id,
             original: String::new(),
@@ -655,7 +522,9 @@ impl App {
                 });
             }
         }
-        self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+        self.workspace
+            .board
+            .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
     }
     fn complete(&mut self, done: moth_io::Completion) {
         let Some(pending) = self
@@ -682,7 +551,7 @@ impl App {
                     return;
                 }
                 if insert {
-                    self.begin_batch();
+                    self.workspace.board.document.begin_batch();
                     // Both pastes and drops land under the cursor; drops cascade to stay visible.
                     let (p, offset) = if paste {
                         (self.cursor_point(), 0.)
@@ -713,10 +582,12 @@ impl App {
                             .source_name(done.request.handle);
                     }
                     self.workspace.board.document.burst.push(item.id);
-                    self.persist(moth_platform::boards::Request::Apply(
-                        Command::Insert(item),
-                        Some(done.request.handle),
-                    ));
+                    self.workspace
+                        .board
+                        .persist(moth_platform::boards::Request::Apply(
+                            Command::Insert(item),
+                            Some(done.request.handle),
+                        ));
                 }
                 if let Some(gpu) = &mut self.shell.gpu {
                     gpu.registry.upload(&gpu.device, &gpu.queue, &image);
@@ -724,7 +595,7 @@ impl App {
             }
             Err(e) => {
                 if insert && let Some(hash) = done.failure_hash {
-                    self.begin_batch();
+                    self.workspace.board.document.begin_batch();
                     let p = self.cursor_point();
                     let mut item = Item::image(
                         hash,
@@ -745,10 +616,12 @@ impl App {
                             .source_name(done.request.handle);
                     }
                     self.workspace.board.document.burst.push(item.id);
-                    self.persist(moth_platform::boards::Request::Apply(
-                        Command::Insert(item),
-                        Some(done.request.handle),
-                    ));
+                    self.workspace
+                        .board
+                        .persist(moth_platform::boards::Request::Apply(
+                            Command::Insert(item),
+                            Some(done.request.handle),
+                        ));
                 }
                 self.workspace
                     .board
@@ -907,7 +780,7 @@ impl App {
                             self.workspace.board.view.message =
                                 moth_ui::text(moth_ui::Text::Saved).into();
                             if self.workspace.board.document.close_after_save {
-                                self.discard();
+                                self.workspace.board.discard();
                             }
                         }
                         Completion::Failed(e) => {
@@ -980,7 +853,10 @@ impl App {
                 }
             }
         }
-        self.pump();
+        self.workspace
+            .board
+            .document
+            .pump(self.shell.image_format());
         if self.workspace.board.document.batching
             && self.workspace.board.document.idle()
             && self.workspace.board.document.arrange_prompt.is_none()
@@ -993,7 +869,7 @@ impl App {
                     Some(std::mem::take(&mut self.workspace.board.document.burst));
             } else {
                 self.workspace.board.document.burst.clear();
-                self.end_batch();
+                self.workspace.board.document.end_batch();
             }
         }
     }

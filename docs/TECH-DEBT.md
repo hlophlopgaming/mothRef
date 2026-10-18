@@ -163,8 +163,16 @@ executed on the final build and appropriate native platforms.
 - [x] Extract `LibraryScreen` (`show`/`pump`), `Shell` (window/gpu/egui,
   `recreate`/`redraw`/`image_format`) and `Workspace` (board/tabs/screen and the
   close-flow state). `App` now holds these subsystems instead of a scatter of
-  fields. Tab lifecycle and document-worker methods remain `App` coordinators:
-  they route between the subsystems rather than owning one kind of data.
+  fields.
+- [x] Move the document workers to where their data lives: `Document` owns
+  `begin_batch`/`end_batch`/`pump`, and `Session` owns
+  `persist`/`persist_batch`/`discard`/`paste`. The canvas-lock guard now reads
+  `view.locked`, which already mirrors `tools.locked`, so no behavior changes.
+- [x] Keep the tab lifecycle (`activate`/`new_board`/`open_in_tab`/
+  `request_close`/`finish_close`) and the worker drain (`results`/`drain_results`)
+  on `App` by design: they coordinate `Workspace` + `Modal` + `LibraryScreen` +
+  `Shell` + `Tools`, so moving them would turn a data-owning subsystem into a
+  coordinator rather than remove coordination.
 - [ ] Replace the remaining named action flags in `frame()` with a collected
   `Vec<Intent>`. The ordered `apply` path already routes every UI and keyboard
   action through one place; collapsing the flags is a cosmetic follow-up that
