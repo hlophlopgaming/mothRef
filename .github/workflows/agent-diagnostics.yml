@@ -1,0 +1,41 @@
+name: Agent diagnostics
+# Temporary: surfaces compiler errors as annotations for a session that cannot read job logs.
+on:
+  push:
+    branches: ["refactor/**"]
+permissions:
+  contents: read
+jobs:
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev
+      - name: clippy
+        shell: bash
+        run: |
+          cargo clippy --workspace --all-targets --message-format=json -- -D warnings > out.json || status=$?
+          python3 - <<'EOF'
+          import json
+          n = 0
+          for line in open("out.json"):
+              try:
+                  m = json.loads(line)
+              except ValueError:
+                  continue
+              if m.get("reason") != "compiler-message":
+                  continue
+              msg = m["message"]
+              if msg["level"] not in ("error", "warning") or not msg.get("rendered"):
+                  continue
+              n += 1
+              text = msg["rendered"][:3500].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              print(f"::error title=diag {n}::{text}")
+              if n >= 40:
+                  break
+          EOF
+          exit ${status:-0}
