@@ -14,6 +14,9 @@ pub(super) struct Items {
     suppressed: Option<Instant>,
 }
 impl Items {
+    pub fn remove(&mut self, id: Uuid) {
+        self.entries.remove(&id);
+    }
     pub fn clear(&mut self) {
         self.entries.clear();
     }

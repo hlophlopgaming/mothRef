@@ -247,6 +247,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                         drag.filter(|_| moving.is_some() && !tools.locked),
                         view.camera.zoom,
                     );
+                    let rect = motion.logical_rect(id, rect, std::time::Instant::now());
                     let corners = screen_corners(&view.camera, rect, item.transform.rotation);
                     moth_ui::canvas::selection(ui, corners);
                 }

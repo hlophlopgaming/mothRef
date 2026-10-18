@@ -1206,6 +1206,11 @@ impl App {
             return Ok(());
         };
         self.results();
+        self.motion.sync(
+            &self.workspace.board.scene,
+            &mut self.workspace.board.motion,
+            self.workspace.board.in_flight == 0,
+        );
         self.items_active = self
             .workspace
             .board

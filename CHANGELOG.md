@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep dragged images and selection outlines at their released position until storage acknowledgement, without replaying the move animation.
+
 - Add canvas cursors and mouse/pen hover outlines, animated toolbar/tab feedback and a subtle library-card lift.
 
 - Animate item entry, removal and acknowledged arrangement/undo geometry changes using bounded presentation copies.

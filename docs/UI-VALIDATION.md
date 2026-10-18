@@ -90,3 +90,15 @@ Automated Motion results (2026-10-19):
   plateau 160,024 KiB through the end. It finished before the maintainer asked
   not to wait five minutes; do not repeat a long soak for this task.
 - Native device behavior and actual idle CPU remain unverified; use the checklist above.
+
+### Drag release handoff fix
+
+- Regression test delays acknowledgement beyond the 400 ms decorative tail and
+  checks image position, logical selection rect, no waiting repaint, and no second
+  move tween on acknowledgement, with reduced motion both enabled and disabled.
+- Failed storage completion drops the pending preview and displays the actual scene.
+- [ ] Release an image repeatedly: neither image nor outline flashes at the old position.
+- No long soak repeated, per maintainer instruction.
+- Validation: `cargo fmt --all`, clippy for mothref with `-D warnings`, and all
+  30 mothref tests passed, including the forced-software golden. The delayed
+  acknowledgement test first failed with x=10 instead of x=110, then passed.

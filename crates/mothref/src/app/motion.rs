@@ -23,6 +23,7 @@ pub(super) struct DragMotion {
     frame_now: Instant,
     release_lift: f32,
     returning: Option<(Vec<Item>, [f32; 2], Tween)>,
+    awaiting: bool,
 }
 impl Default for DragMotion {
     fn default() -> Self {
@@ -42,6 +43,7 @@ impl Default for DragMotion {
             frame_now: Instant::now(),
             release_lift: 0.,
             returning: None,
+            awaiting: false,
         }
     }
 }
@@ -56,6 +58,7 @@ impl DragMotion {
         self.samples.clear();
         self.last_sample = None;
         self.returning = None;
+        self.awaiting = false;
     }
     pub fn sample(&mut self, x: f32, now: Instant) {
         self.samples.push_back((now, x));
@@ -80,7 +83,9 @@ impl DragMotion {
             self.spring.value = 0.;
             self.spring.velocity = 0.;
             self.spring.target = 0.;
-            self.returning = None;
+            if !self.awaiting {
+                self.returning = None;
+            }
             return;
         }
         if !moving
@@ -93,13 +98,18 @@ impl DragMotion {
         self.spring.step_damped(dt, SWAY_DAMPING);
         self.spring.value = self.spring.value.clamp(-self.limit, self.limit);
         if self.returning.as_ref().is_some_and(|(_, _, t)| t.done(now)) {
-            self.returning = None;
+            if !self.awaiting {
+                self.returning = None;
+            }
             self.spring.value = 0.;
             self.spring.velocity = 0.;
         }
         self.frames.track(
             !self.spring.settled()
-                || self.returning.is_some()
+                || self
+                    .returning
+                    .as_ref()
+                    .is_some_and(|(_, _, tween)| !tween.done(now))
                 || (moving && now.duration_since(self.started).as_millis() < 120),
         );
     }
@@ -158,6 +168,7 @@ impl DragMotion {
         item.transform.rotation += angle;
     }
     pub fn cancel(&mut self, items: Vec<Item>, delta: [f32; 2], reduced: bool) {
+        self.awaiting = false;
         self.spring.target = 0.;
         self.release_lift = 1.
             - (1.
@@ -193,7 +204,7 @@ impl DragMotion {
                     / 0.12)
                     .min(1.))
             .powi(3);
-        if reduced || commands.len() > MAX_ITEMS {
+        if commands.len() > MAX_ITEMS {
             return;
         }
         let items = commands
@@ -210,6 +221,7 @@ impl DragMotion {
                 _ => None,
             })
             .collect();
+        self.awaiting = true;
         self.anchor[0] += delta[0];
         self.anchor[1] += delta[1];
         self.returning = Some((
@@ -219,10 +231,48 @@ impl DragMotion {
                 1.,
                 0.,
                 Instant::now(),
-                Duration::from_millis(400),
+                if reduced {
+                    Duration::ZERO
+                } else {
+                    Duration::from_millis(400)
+                },
                 Ease::OutCubic,
             ),
         ));
+    }
+    /// Hand off only after the journal acknowledgement reaches the scene.
+    pub fn sync(&mut self, scene: &Scene, transitions: &mut item_motion::Items, idle: bool) {
+        if self.awaiting
+            && let Some((items, _, _)) = &self.returning
+        {
+            let confirmed = items.iter().all(|item| {
+                scene
+                    .get(item.id)
+                    .is_some_and(|current| current.rect == item.rect)
+            });
+            if confirmed || idle {
+                for item in items {
+                    transitions.remove(item.id);
+                }
+                self.awaiting = false;
+                if !confirmed {
+                    self.returning = None;
+                }
+            }
+        }
+    }
+    /// Selection follows the logical preview, without decorative sway or lift.
+    pub fn logical_rect(&self, id: Uuid, fallback: Rect, now: Instant) -> Rect {
+        self.returning
+            .as_ref()
+            .and_then(|(items, delta, tween)| {
+                items.iter().find(|item| item.id == id).map(|item| Rect {
+                    x: item.rect.x + delta[0] * tween.value(now),
+                    y: item.rect.y + delta[1] * tween.value(now),
+                    ..item.rect
+                })
+            })
+            .unwrap_or(fallback)
     }
     pub fn returning(&self, now: Instant, reduced: bool) -> Vec<Item> {
         let Some((items, delta, tween)) = &self.returning else {
@@ -250,6 +300,83 @@ impl DragMotion {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn released_image_keeps_final_position_while_storage_is_late() {
+        for reduced in [false, true] {
+            let mut scene = Scene::default();
+            let source = Item::text(
+                "reference",
+                Rect {
+                    x: 10.,
+                    y: 20.,
+                    width: 40.,
+                    height: 60.,
+                },
+                None,
+            );
+            scene.apply(Command::Insert(source.clone())).unwrap();
+            let commands = arrange::translate(&[&source], [100., 50.], false, scene.top());
+            let mut motion = DragMotion::default();
+            motion.start([10., 20.], 72.);
+            motion.release(&commands, &scene, [100., 50.], reduced);
+            let now = Instant::now() + Duration::from_secs(1);
+            motion.step(now, reduced, false);
+            let rendered = motion
+                .returning(now, reduced)
+                .into_iter()
+                .find(|item| item.id == source.id)
+                .unwrap_or_else(|| scene.get(source.id).unwrap().clone());
+            assert_eq!(
+                rendered.rect.x, 110.,
+                "the frame must not fall back to the unacknowledged scene position"
+            );
+            assert_eq!(rendered.rect.y, 70.);
+            assert_eq!(
+                motion.logical_rect(source.id, source.rect, now),
+                rendered.rect
+            );
+            assert!(
+                !motion.frames.active(),
+                "waiting for storage must not spin the frame loop"
+            );
+
+            let mut transitions = item_motion::Items::default();
+            transitions.record(Some(source.clone()), Some(rendered.clone()), now);
+            scene.apply(commands[0].clone()).unwrap();
+            motion.sync(&scene, &mut transitions, true);
+            assert!(
+                transitions.get(source.id, now).is_none(),
+                "the acknowledged drag must not animate from its old position again"
+            );
+            motion.step(now, reduced, false);
+            assert!(motion.returning(now, reduced).is_empty());
+            assert_eq!(scene.get(source.id).unwrap().rect, rendered.rect);
+        }
+    }
+    #[test]
+    fn rejected_drag_restores_the_actual_scene() {
+        let mut scene = Scene::default();
+        let source = Item::text(
+            "reference",
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 40.,
+                height: 60.,
+            },
+            None,
+        );
+        scene.apply(Command::Insert(source.clone())).unwrap();
+        let commands = arrange::translate(&[&source], [100., 50.], false, scene.top());
+        let mut motion = DragMotion::default();
+        motion.release(&commands, &scene, [100., 50.], false);
+        motion.sync(&scene, &mut item_motion::Items::default(), true);
+        assert!(motion.returning(Instant::now(), false).is_empty());
+        assert_eq!(
+            motion.logical_rect(source.id, source.rect, Instant::now()),
+            source.rect
+        );
+    }
     #[test]
     fn live_preview_is_view_only_and_release_commands_keep_rotation() {
         let mut scene = Scene::default();
