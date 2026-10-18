@@ -815,9 +815,8 @@ impl App {
                                 }
                                 Err(e) => self.tabs[self.active].message = e.to_string(),
                             }
-                            self.board
-                                .selection
-                                .retain(|id| self.tabs[self.active].scene.get(*id).is_some());
+                            let board = self.board_mut();
+                            board.selection.retain(|id| board.scene.get(*id).is_some());
                         }
                         Completion::AppliedBatch(commands, sources) => {
                             for command in commands {
@@ -829,9 +828,8 @@ impl App {
                                 self.tabs[self.active].sources.insert(hash, handle);
                             }
                             self.tabs[self.active].dirty = true;
-                            self.board
-                                .selection
-                                .retain(|id| self.tabs[self.active].scene.get(*id).is_some());
+                            let board = self.board_mut();
+                            board.selection.retain(|id| board.scene.get(*id).is_some());
                         }
                         Completion::Opened(scene, sources, recovered) => {
                             self.tabs[self.active].scene = scene;
@@ -1088,7 +1086,7 @@ impl App {
                     {
                         if !p.pan && !self.tabs[self.active].pan && self.tabs[self.active].idle() {
                             let world = self.tabs[self.active].camera.world(p.position);
-                            if let Some(item) = self.tabs[self.active]
+                            if let Some(hit) = self.tabs[self.active]
                                 .scene
                                 .query(Rect {
                                     x: world[0],
@@ -1103,10 +1101,11 @@ impl App {
                                 .find(|item| {
                                     item.rect.contains_rotated(item.transform.rotation, world)
                                 })
+                                .map(|item| (item.id, item.rect))
                             {
-                                self.moving = Some((item.id, item.rect));
+                                self.moving = Some(hit);
                                 self.tabs[self.active].selection.clear();
-                                self.tabs[self.active].selection.insert(item.id);
+                                self.tabs[self.active].selection.insert(hit.0);
                             }
                         }
                         self.drag =
@@ -1235,46 +1234,40 @@ impl App {
         let mut edit_note_id: Option<Uuid> = None;
         let mut output = self.ctx.run_ui(state.take_egui_input(&window), |ui| {
             if self.overlay.is_none() {
-                let active_title = self.tabs[self.active].title().to_owned();
-                let mut ordered = vec![(
-                    self.tabs[self.active].ui_id,
-                    moth_ui::Tab {
-                        title: &active_title,
-                        dirty: self.tabs[self.active].dirty,
-                        active: true,
-                        slot: 0,
-                    },
-                )];
-                ordered.extend(self.tabs.iter().enumerate().map(|(i, tab)| {
-                    (
-                        tab.ui_id,
-                        moth_ui::Tab {
-                            title: tab.title(),
-                            dirty: tab.dirty,
-                            active: false,
-                            slot: i + 1,
-                        },
-                    )
-                }));
-                ordered.sort_unstable_by_key(|(id, _)| *id);
-                let tab_labels: Vec<_> = ordered.into_iter().map(|(_, tab)| tab).collect();
+                // Titles are copied so the toolbar can borrow the active board mutably.
+                let titles: Vec<_> = self
+                    .tabs
+                    .iter()
+                    .map(|tab| (tab.title().to_owned(), tab.dirty))
+                    .collect();
+                let tab_labels: Vec<_> = titles
+                    .iter()
+                    .enumerate()
+                    .map(|(slot, (title, dirty))| moth_ui::Tab {
+                        title,
+                        dirty: *dirty,
+                        active: slot == self.active,
+                        slot,
+                    })
+                    .collect();
+                let board = &mut self.tabs[self.active];
                 actions = moth_ui::toolbar(
                     ui,
                     moth_ui::Status {
-                        path: &self.tabs[self.active].path,
+                        path: &board.path,
                         adapter: &gpu.adapter,
-                        count: self.tabs[self.active].scene.len(),
-                        selected: self.tabs[self.active].selection.len(),
-                        zoom: self.tabs[self.active].camera.zoom,
+                        count: board.scene.len(),
+                        selected: board.selection.len(),
+                        zoom: board.camera.zoom,
                         texture_bytes: gpu.registry.allocated_bytes(),
-                        message: &self.tabs[self.active].message,
-                        idle: self.tabs[self.active].idle(),
-                        dirty: self.tabs[self.active].dirty,
+                        message: &board.message,
+                        idle: board.idle(),
+                        dirty: board.dirty,
                         library: self.library,
                         pinned: self.pinned,
                         can_pin: moth_platform::Desktop.window_capabilities(&window).on_top,
                     },
-                    &mut self.tabs[self.active].pan,
+                    &mut board.pan,
                     &tab_labels,
                 );
                 if self.library {
@@ -1815,19 +1808,19 @@ impl App {
             }
         });
         state.handle_platform_output(&window, output.platform_output);
-        let p = self.tabs[self.active].camera.world([
-            self.tabs[self.active].viewport.min.x,
-            self.tabs[self.active].viewport.min.y,
-        ]);
-        let visible = self.tabs[self.active].scene.query(Rect {
+        let board = &mut self.tabs[self.active];
+        let p = board
+            .camera
+            .world([board.viewport.min.x, board.viewport.min.y]);
+        let visible = board.scene.query(Rect {
             x: p[0],
             y: p[1],
             width: if self.library {
                 0.
             } else {
-                self.tabs[self.active].viewport.width() / self.tabs[self.active].camera.zoom
+                board.viewport.width() / board.camera.zoom
             },
-            height: self.tabs[self.active].viewport.height() / self.tabs[self.active].camera.zoom,
+            height: board.viewport.height() / board.camera.zoom,
         });
         for item in &visible {
             // Notes have no source bytes; only images request decode previews.
@@ -1835,15 +1828,13 @@ impl App {
                 continue;
             };
             let side = moth_render::preview_side(
-                item.rect.width.max(item.rect.height)
-                    * self.tabs[self.active].camera.zoom
-                    * output.pixels_per_point,
+                item.rect.width.max(item.rect.height) * board.camera.zoom * output.pixels_per_point,
             );
             if !gpu.registry.resident(blob, side)
-                && let Some(&handle) = self.tabs[self.active].sources.get(&blob)
-                && !self.tabs[self.active].pending.contains_key(&handle)
-                && !self.tabs[self.active].failed.contains(&handle)
-                && self.tabs[self.active]
+                && let Some(&handle) = board.sources.get(&blob)
+                && !board.pending.contains_key(&handle)
+                && !board.failed.contains(&handle)
+                && board
                     .decode
                     .requests
                     .try_send(moth_io::Request {
@@ -1853,9 +1844,7 @@ impl App {
                     })
                     .is_ok()
             {
-                self.tabs[self.active]
-                    .pending
-                    .insert(handle, Pending::Preview(blob));
+                board.pending.insert(handle, Pending::Preview(blob));
             }
         }
         let jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);

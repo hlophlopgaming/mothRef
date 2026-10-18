@@ -3,7 +3,6 @@
 use super::*;
 pub(super) const MAX_TABS: usize = 4;
 pub(super) struct Session {
-    pub(super) ui_id: Uuid,
     pub(super) storage: Arc<moth_platform::DesktopStorage>,
     pub(super) decode: moth_io::DecodePool,
     pub(super) clipboard: moth_platform::ClipboardWorker,
@@ -50,7 +49,6 @@ impl Session {
             moth_platform::boards::Worker::new_tab(storage.clone(), wake)?
         };
         Ok(Self {
-            ui_id: Uuid::now_v7(),
             storage,
             decode,
             clipboard,
