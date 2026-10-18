@@ -48,27 +48,23 @@ mod session;
 mod shell;
 mod tools;
 use intent::Intent;
-use session::{MAX_TABS, Session};
+use session::Session;
+mod workspace;
 
 pub struct App {
-    board: Session,
+    workspace: workspace::Workspace,
     tools: tools::Tools,
     overlay: Option<overlay::Overlay>,
     pinned: bool,
     library_worker: moth_platform::library::Worker,
     cards: Vec<moth_ui::library::Card>,
     catalog: moth_ui::library::Library,
-    refresh_library: bool,
     modal: modal::Modal,
     moving: Option<(Uuid, Rect)>,
     drag_duplicate: bool,
     editing: Option<Editing>,
-    tabs: Vec<Session>,
-    library: bool,
     pub startup_error: Option<anyhow::Error>,
     shell: shell::Shell,
-    recovery_paths: Vec<std::path::PathBuf>,
-    recent_paths: Vec<std::path::PathBuf>,
     input: Adapter,
     gestures: Gestures,
     cursor: Option<[f32; 2]>,
@@ -114,24 +110,19 @@ impl App {
             deadline: None,
         };
         Ok(Self {
-            board,
+            workspace: workspace::Workspace::new(board, shell.wake.clone()),
             tools: tools::Tools::default(),
             overlay: None,
             pinned: false,
             library_worker,
             cards: Vec::new(),
             catalog: Default::default(),
-            refresh_library: false,
             modal: modal::Modal::default(),
             moving: None,
             drag_duplicate: false,
             editing: None,
-            tabs: Vec::new(),
-            library: true,
             startup_error: None,
             shell,
-            recovery_paths: Vec::new(),
-            recent_paths: Vec::new(),
             input: Adapter::default(),
             gestures: Gestures::default(),
             cursor: None,
@@ -154,7 +145,7 @@ impl App {
             if let Err(error) =
                 moth_platform::Desktop.window_effects(&window, false, self.pinned, false)
             {
-                self.board.message = error;
+                self.workspace.board.message = error;
             } else {
                 self.overlay = None;
             }
@@ -169,28 +160,22 @@ impl App {
                     if let Err(error) =
                         moth_platform::Desktop.window_effects(&window, true, overlay.on_top, false)
                     {
-                        self.board.message = error;
+                        self.workspace.board.message = error;
                     }
                     self.overlay = Some(overlay);
-                    self.library = false;
+                    self.workspace.library = false;
                     self.cards.clear();
                     self.catalog.dismiss_editor();
                 }
-                Err(error) => self.board.message = error.to_string(),
+                Err(error) => self.workspace.board.message = error.to_string(),
             }
         } else {
-            self.board.message = moth_ui::text(moth_ui::Text::OverlayUnsupported).into();
+            self.workspace.board.message = moth_ui::text(moth_ui::Text::OverlayUnsupported).into();
         }
         self.redraw();
     }
-    fn activate(&mut self, index: usize) {
-        if self.modal.confirm_close || index > self.tabs.len() {
-            return;
-        }
-        if index > 0 {
-            std::mem::swap(&mut self.board, &mut self.tabs[index - 1]);
-        }
-        self.library = false;
+
+    fn reset_board_ui(&mut self) {
         let preferences = self
             .tools
             .preferences()
@@ -199,8 +184,8 @@ impl App {
             .collect();
         self.tools = tools::Tools::default();
         self.tools.load(&preferences);
-        self.tools.locked = self.board.locked;
-        self.tools.grayscale = self.board.grayscale;
+        self.tools.locked = self.workspace.board.locked;
+        self.tools.grayscale = self.workspace.board.grayscale;
         self.cards.clear();
         self.catalog.dismiss_editor();
         self.editing = None;
@@ -211,85 +196,42 @@ impl App {
         if let Some(gpu) = &mut self.shell.gpu {
             gpu.registry.clear();
         }
+    }
+    fn tab_change(&mut self, change: workspace::TabChange) {
+        if matches!(
+            change,
+            workspace::TabChange::Switched | workspace::TabChange::Closed
+        ) {
+            self.reset_board_ui();
+        }
         self.redraw();
+    }
+    fn activate(&mut self, index: usize) {
+        let change = self.workspace.activate(index);
+        self.tab_change(change);
     }
     fn new_board(&mut self) {
-        if self.modal.confirm_close {
-            return;
-        }
-        if self.board.scene.is_empty() && self.board.path.is_empty() && self.board.idle() {
-            self.activate(0);
-            return;
-        }
-        if self.tabs.len() + 1 >= MAX_TABS {
-            self.board.message = moth_ui::text(moth_ui::Text::TabLimit).into();
-            return;
-        }
-        match Session::new(self.shell.wake.clone(), false) {
-            Ok(board) => {
-                let previous = std::mem::replace(&mut self.board, board);
-                self.tabs.push(previous);
-                self.activate(0);
-            }
-            Err(error) => self.board.message = error.to_string(),
-        }
+        let change = self.workspace.new_board();
+        self.tab_change(change);
     }
     fn open_in_tab(&mut self, path: std::path::PathBuf) {
-        if self.modal.confirm_close {
-            return;
-        }
-        if std::path::Path::new(&self.board.path) == path {
-            self.activate(0);
-            return;
-        }
-        if let Some(index) = self
-            .tabs
-            .iter()
-            .position(|b| std::path::Path::new(&b.path) == path)
-        {
-            self.activate(index + 1);
-            return;
-        }
-        if !self.board.scene.is_empty() || !self.board.path.is_empty() || !self.board.idle() {
-            let count = self.tabs.len();
-            self.new_board();
-            if self.tabs.len() == count {
-                return;
-            }
-        }
-        self.library = false;
-        self.cards.clear();
-        self.catalog.dismiss_editor();
-        self.open_board(path);
+        let change = self.workspace.open_in_tab(path);
+        self.tab_change(change);
+    }
+    fn import(&mut self, path: std::path::PathBuf) {
+        let change = self.workspace.import(path, self.image_format());
+        self.tab_change(change);
     }
     fn request_close(&mut self, window: bool) {
-        self.modal.closing_window = window;
-        self.library = false;
-        if self.board.dirty || !self.board.idle() {
-            self.modal.confirm_close = true;
-        } else {
-            self.discard();
-        }
-        self.redraw();
+        let change = self.workspace.request_close(window);
+        self.tab_change(change);
     }
     fn finish_close(&mut self, event_loop: &ActiveEventLoop) -> anyhow::Result<()> {
-        self.modal.confirm_close = false;
-        if let Some(board) = self.tabs.pop() {
-            self.board = board;
-            self.activate(0);
-            if self.modal.closing_window {
-                self.request_close(true);
-            }
-        } else if self.modal.closing_window {
+        let change = self.workspace.finish_close()?;
+        if matches!(change, workspace::TabChange::WindowClosed) {
             event_loop.exit();
-        } else {
-            self.board = Session::new(self.shell.wake.clone(), false)?;
-            self.library = true;
-            self.refresh_library = true;
-            if let Some(gpu) = &mut self.shell.gpu {
-                gpu.registry.clear();
-            }
         }
+        self.tab_change(change);
         Ok(())
     }
     fn redraw(&self) {
@@ -301,166 +243,34 @@ impl App {
         self.native_pressed = None;
         self.cards.clear();
         self.catalog.dismiss_editor();
-        self.refresh_library = self.library;
+        self.workspace.refresh_library = self.workspace.library;
         self.shell.recover()
     }
     fn paste(&mut self) {
         if self.tools.locked {
             return;
         }
-        if self.board.discarding {
+        if self.workspace.board.discarding {
             return;
         }
         // A new paste supersedes a pending arrangement prompt.
-        self.board.arrange_prompt = None;
+        self.workspace.board.arrange_prompt = None;
         match self
+            .workspace
             .board
             .clipboard
             .requests
             .try_send(moth_platform::ClipboardRequest::Paste)
         {
-            Ok(()) => self.board.pasting += 1,
-            Err(_) => self.board.message = moth_ui::text(moth_ui::Text::ClipboardBusy).into(),
+            Ok(()) => self.workspace.board.pasting += 1,
+            Err(_) => {
+                self.workspace.board.message = moth_ui::text(moth_ui::Text::ClipboardBusy).into()
+            }
         }
     }
 
-    fn persist(&mut self, request: moth_platform::boards::Request) {
-        use moth_platform::boards::Request;
-        if self.tools.locked
-            && matches!(
-                &request,
-                Request::Apply(..)
-                    | Request::ApplyBatch(..)
-                    | Request::OriginalGeometry { .. }
-                    | Request::Undo
-                    | Request::Redo
-                    | Request::ImportBee(..)
-                    | Request::ImportPur(..)
-            )
-        {
-            return;
-        }
-        match self.board.boards.requests.try_send(request) {
-            Ok(()) => self.board.in_flight += 1,
-            Err(_) => self.board.message = moth_ui::text(moth_ui::Text::StorageBusy).into(),
-        }
-    }
-    /// Sends a whole command list as one undo step.
-    fn persist_batch(&mut self, commands: Vec<(Command, Option<Handle>)>) {
-        self.persist(moth_platform::boards::Request::ApplyBatch(commands));
-    }
-    /// Opens an undo group for a burst of asynchronous inserts (drop/paste).
-    fn begin_batch(&mut self) {
-        if !self.board.batching
-            && self
-                .board
-                .boards
-                .requests
-                .try_send(moth_platform::boards::Request::BeginBatch)
-                .is_ok()
-        {
-            self.board.batching = true;
-        }
-    }
-    /// Closes the undo group once the burst has fully drained to an idle board.
-    fn end_batch(&mut self) {
-        if self.board.batching
-            && self
-                .board
-                .boards
-                .requests
-                .try_send(moth_platform::boards::Request::EndBatch)
-                .is_ok()
-        {
-            self.board.batching = false;
-        }
-    }
-    fn discard(&mut self) {
-        self.board.discard();
-    }
-    fn open_board(&mut self, path: std::path::PathBuf) {
-        if self.board.scene.is_empty()
-            && self.board.in_flight == 0
-            && self.board.pasting == 0
-            && self.board.pending.is_empty()
-            && self.board.waiting.is_empty()
-            && !self.board.discarding
-        {
-            self.board.path = path.to_string_lossy().into_owned();
-            self.persist(moth_platform::boards::Request::Open(path));
-        } else {
-            self.board.message = moth_ui::text(moth_ui::Text::OpenEmpty).into();
-        }
-    }
-    fn import_foreign(&mut self, path: std::path::PathBuf) {
-        if self.modal.confirm_close {
-            return;
-        }
-        if !self.board.scene.is_empty() || !self.board.path.is_empty() || !self.board.idle() {
-            let count = self.tabs.len();
-            self.new_board();
-            if self.tabs.len() == count {
-                return;
-            }
-        }
-        self.library = false;
-        self.cards.clear();
-        self.catalog.dismiss_editor();
-        self.board.path = String::new();
-        if self.board.idle() {
-            let request = if path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("pur"))
-            {
-                moth_platform::boards::Request::ImportPur(path)
-            } else {
-                moth_platform::boards::Request::ImportBee(path)
-            };
-            self.persist(request);
-        }
-    }
-    fn import(&mut self, path: std::path::PathBuf) {
-        if self.tools.locked {
-            return;
-        }
-        if self.board.discarding {
-            return;
-        }
-        // A new drop supersedes a pending arrangement prompt.
-        self.board.arrange_prompt = None;
-        if path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("moth"))
-        {
-            self.open_board(path);
-            return;
-        }
-        if path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("bee") || e.eq_ignore_ascii_case("pur"))
-        {
-            self.import_foreign(path);
-            return;
-        }
-        if self.board.scene.len() + self.board.waiting.len() + self.board.pending.len() >= 1_000_000
-        {
-            self.board.message = moth_ui::text(moth_ui::Text::BoardFull).into();
-            return;
-        }
-        if self.board.waiting.len() >= 1024 {
-            self.board.message = moth_ui::text(moth_ui::Text::ImportBusy).into();
-            return;
-        }
-        match self.board.storage.register(path) {
-            Ok(h) => self.board.waiting.push(h),
-            Err(e) => self.board.message = e.to_string(),
-        }
-        self.pump();
-    }
     fn open_files(&mut self) {
-        if self.modal.confirm_close {
+        if self.workspace.confirm_close {
             return;
         }
         let files = rfd::FileDialog::new()
@@ -475,63 +285,20 @@ impl App {
             {
                 self.open_in_tab(path);
             } else {
-                if self.library {
+                if self.workspace.library {
                     self.new_board();
                 }
                 self.import(path);
             }
         }
     }
-    fn pump(&mut self) {
-        while let Some(&handle) = self.board.waiting.last() {
-            match self.board.decode.requests.try_send(moth_io::Request {
-                handle,
-                side: 256,
-                format: self.image_format(),
-            }) {
-                Ok(()) => {
-                    self.board.waiting.pop();
-                    self.board.pending.insert(handle, Pending::Import);
-                }
-                Err(_) => break,
-            }
-        }
-    }
-    fn insertion_point(&self) -> [f32; 2] {
-        if self.board.viewport.is_finite() {
-            let p = self.board.viewport.center();
-            return self.board.camera.world([p.x, p.y]);
-        }
-        let point = self
-            .shell
-            .window
-            .as_ref()
-            .map(|w| {
-                let size = w.inner_size().to_logical::<f32>(w.scale_factor());
-                [size.width / 2., size.height / 2.]
-            })
-            .unwrap_or([0., 0.]);
-        self.board.camera.world(point)
-    }
-    /// The cursor in world space, falling back to the viewport centre when unknown or off-canvas.
-    fn cursor_point(&self) -> [f32; 2] {
-        if let Some(cursor) = self.cursor
-            && self.board.viewport.is_finite()
-            && self
-                .board
-                .viewport
-                .contains(egui::pos2(cursor[0], cursor[1]))
-        {
-            return self.board.camera.world(cursor);
-        }
-        self.insertion_point()
-    }
+
     /// Creates an empty note at `world` and opens the inline editor for it.
     fn add_note(&mut self, world: [f32; 2]) {
         if self.tools.locked {
             return;
         }
-        if self.board.discarding || !self.board.idle() {
+        if self.workspace.board.discarding || !self.workspace.board.idle() {
             return;
         }
         let [width, height] = moth_scene::note_size("");
@@ -543,13 +310,14 @@ impl App {
                 width,
                 height,
             },
-            self.board.scene.top(),
+            self.workspace.board.scene.top(),
         );
         let id = item.id;
-        self.persist(moth_platform::boards::Request::Apply(
-            Command::Insert(item),
-            None,
-        ));
+        self.workspace
+            .persist(moth_platform::boards::Request::Apply(
+                Command::Insert(item),
+                None,
+            ));
         self.editing = Some(Editing {
             id,
             original: String::new(),
@@ -563,7 +331,7 @@ impl App {
         if self.tools.locked {
             return;
         }
-        let Some(item) = self.board.scene.get(id) else {
+        let Some(item) = self.workspace.board.scene.get(id) else {
             return;
         };
         let Some(text) = item.note() else {
@@ -601,6 +369,7 @@ impl App {
                 height,
             };
             if self
+                .workspace
                 .board
                 .scene
                 .get(editing.id)
@@ -612,111 +381,61 @@ impl App {
                 });
             }
         }
-        self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+        self.workspace
+            .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
     }
-    fn complete(&mut self, done: moth_io::Completion) {
-        let Some(pending) = self.board.pending.remove(&done.request.handle) else {
-            return;
-        };
-        let paste = matches!(pending, Pending::Paste);
-        let insert = paste || matches!(pending, Pending::Import);
-        match done.result {
-            Ok(image) => {
-                if matches!(pending,Pending::Preview(hash) if hash!=image.hash) {
-                    self.board.failed.insert(done.request.handle);
-                    self.board.message = moth_ui::text(moth_ui::Text::SourceChanged).into();
-                    return;
-                }
-                if insert {
-                    self.begin_batch();
-                    // Both pastes and drops land under the cursor; drops cascade to stay visible.
-                    let (p, offset) = if paste {
-                        (self.cursor_point(), 0.)
-                    } else {
-                        (
-                            self.cursor_point(),
-                            (self.board.scene.len() % 10) as f32 * 24.,
-                        )
-                    };
-                    let width = (image.original[0] as f32).min(600.);
-                    let height = width * image.original[1] as f32 / image.original[0] as f32;
-                    let mut item = Item::image(
-                        image.hash,
-                        Rect {
-                            x: p[0] - width / 2. + offset,
-                            y: p[1] - height / 2. + offset,
-                            width,
-                            height,
-                        },
-                        self.board.scene.top(),
-                    );
-                    if !paste {
-                        item.name = self.board.storage.source_name(done.request.handle);
-                    }
-                    self.board.burst.push(item.id);
-                    self.persist(moth_platform::boards::Request::Apply(
-                        Command::Insert(item),
-                        Some(done.request.handle),
-                    ));
-                }
-                if let Some(gpu) = &mut self.shell.gpu {
-                    gpu.registry.upload(&gpu.device, &gpu.queue, &image);
-                }
-            }
-            Err(e) => {
-                if insert && let Some(hash) = done.failure_hash {
-                    self.begin_batch();
-                    let p = self.cursor_point();
-                    let mut item = Item::image(
-                        hash,
-                        Rect {
-                            x: p[0] - 120.,
-                            y: p[1] - 90.,
-                            width: 240.,
-                            height: 180.,
-                        },
-                        self.board.scene.top(),
-                    );
-                    if !paste {
-                        item.name = self.board.storage.source_name(done.request.handle);
-                    }
-                    self.board.burst.push(item.id);
-                    self.persist(moth_platform::boards::Request::Apply(
-                        Command::Insert(item),
-                        Some(done.request.handle),
-                    ));
-                }
-                self.board.failed.insert(done.request.handle);
-                self.board.message = e.to_string();
-                tracing::warn!(error=%e,"image load failed");
-            }
-        }
-    }
+
     fn results(&mut self) {
-        // Inactive tabs finish journal work, but share one GPU cache with the active tab.
-        let gpu = self.shell.gpu.take();
-        for index in 0..self.tabs.len() {
-            std::mem::swap(&mut self.board, &mut self.tabs[index]);
-            self.drain_results();
-            std::mem::swap(&mut self.board, &mut self.tabs[index]);
+        let cursor = self.cursor;
+        let fallback = self
+            .shell
+            .window
+            .as_ref()
+            .map(|w| {
+                let size = w.inner_size().to_logical::<f32>(w.scale_factor());
+                [size.width / 2., size.height / 2.]
+            })
+            .unwrap_or([0., 0.]);
+        let format = self.image_format();
+        let events = self.workspace.pump(workspace::Pump {
+            format,
+            cursor,
+            fallback,
+            auto_arrange: self.tools.auto_arrange,
+            threshold: self.tools.threshold,
+            upload: &mut |image| self.shell.upload(image),
+            events: Vec::new(),
+        });
+        for event in events {
+            match event {
+                workspace::Event::TabChanged => self.reset_board_ui(),
+                workspace::Event::Opened => self.editing = None,
+                workspace::Event::Preferences(values) => {
+                    self.tools.load(&values);
+                    self.shell.ctx.set_theme(if self.tools.dark {
+                        egui::Theme::Dark
+                    } else {
+                        egui::Theme::Light
+                    });
+                    self.shell.ctx.set_zoom_factor(self.tools.ui_scale);
+                }
+            }
         }
-        self.shell.gpu = gpu;
-        self.drain_results();
-        if self.library
-            && self.refresh_library
+        if self.workspace.library
+            && self.workspace.refresh_library
             && self
                 .library_worker
                 .requests
                 .try_send(moth_platform::library::Request::Refresh(
-                    self.recent_paths.clone(),
+                    self.workspace.recent_paths.clone(),
                 ))
                 .is_ok()
         {
-            self.refresh_library = false;
+            self.workspace.refresh_library = false;
         }
         while let Ok(result) = self.library_worker.results.try_recv() {
             match result {
-                Ok(entry) if self.library => {
+                Ok(entry) if self.workspace.library => {
                     let path = entry.path;
                     let index = self.cards.iter().position(|c| c.path == path);
                     if index.is_none() && self.cards.len() >= moth_platform::library::MAX_BOARDS {
@@ -765,213 +484,21 @@ impl App {
                         self.cards.push(card);
                     }
                 }
-                Err(error) => self.board.message = error,
+                Err(error) => self.workspace.board.message = error,
                 _ => {}
             }
         }
     }
-    fn drain_results(&mut self) {
-        while let Ok(done) = self.board.boards.results.try_recv() {
-            use moth_platform::boards::Completion;
-            match done {
-                Completion::Recovery(paths) => self.recovery_paths = paths,
-                Completion::Recent(paths) => {
-                    if self.recent_paths.is_empty() {
-                        self.recent_paths = paths;
-                        self.refresh_library = true;
-                    }
-                }
-                Completion::Preferences(values) => {
-                    self.tools.load(&values);
-                    self.shell.ctx.set_theme(if self.tools.dark {
-                        egui::Theme::Dark
-                    } else {
-                        egui::Theme::Light
-                    });
-                    self.shell.ctx.set_zoom_factor(self.tools.ui_scale);
-                }
-                Completion::Settings(code) => {
-                    if let Some(language) = moth_ui::Locale::from_code(&code) {
-                        moth_ui::set_locale(language);
-                    }
-                }
-                done => {
-                    self.board.in_flight = self.board.in_flight.saturating_sub(1);
-                    match done {
-                        Completion::Applied(command, source) => {
-                            match self.board.scene.apply(command) {
-                                Ok(_) => {
-                                    if let Some((hash, handle)) = source {
-                                        self.board.sources.insert(hash, handle);
-                                    }
-                                    self.board.dirty = true;
-                                }
-                                Err(e) => self.board.message = e.to_string(),
-                            }
-                            self.board
-                                .selection
-                                .retain(|id| self.board.scene.get(*id).is_some());
-                        }
-                        Completion::AppliedBatch(commands, sources) => {
-                            let inserted: HashSet<_> = commands
-                                .iter()
-                                .filter_map(|c| match c {
-                                    Command::Insert(item)
-                                        if self.board.scene.get(item.id).is_none() =>
-                                    {
-                                        Some(item.id)
-                                    }
-                                    _ => None,
-                                })
-                                .collect();
-                            for command in commands {
-                                if let Err(e) = self.board.scene.apply(command) {
-                                    self.board.message = e.to_string();
-                                }
-                            }
-                            for (hash, handle) in sources {
-                                self.board.sources.insert(hash, handle);
-                            }
-                            if !inserted.is_empty() {
-                                self.board.selection = inserted;
-                            }
-                            self.board.dirty = true;
-                            self.board
-                                .selection
-                                .retain(|id| self.board.scene.get(*id).is_some());
-                        }
-                        Completion::Opened(scene, sources, recovered) => {
-                            self.board.scene = scene;
-                            self.board.sources = sources;
-                            self.editing = None;
-                            self.recovery_paths.clear();
-                            self.board.dirty = recovered;
-                            self.board.message = moth_ui::text(if recovered {
-                                moth_ui::Text::Recovered
-                            } else {
-                                moth_ui::Text::Opened
-                            })
-                            .into();
-                            self.fit();
-                        }
-                        Completion::Imported(commands, sources, skipped) => {
-                            self.board.scene = Scene::default();
-                            self.editing = None;
-                            for command in commands {
-                                if let Err(e) = self.board.scene.apply(command) {
-                                    self.board.message = e.to_string();
-                                }
-                            }
-                            self.board.sources = sources;
-                            self.board.path = String::new();
-                            self.board.dirty = true;
-                            self.board.message = moth_ui::text(if skipped == 0 {
-                                moth_ui::Text::Imported
-                            } else {
-                                moth_ui::Text::ImportSkipped
-                            })
-                            .into();
-                            self.fit();
-                        }
-                        Completion::Exported(value) => {
-                            self.board.message = if value.is_empty() {
-                                moth_ui::text(moth_ui::Text::Exported).into()
-                            } else {
-                                value
-                            };
-                        }
-                        Completion::Saved => {
-                            self.board.dirty = false;
-                            let path = std::path::PathBuf::from(&self.board.path);
-                            self.recent_paths.retain(|p| p != &path);
-                            self.recent_paths.insert(0, path);
-                            self.recent_paths
-                                .truncate(moth_platform::library::MAX_BOARDS);
-                            self.refresh_library = true;
-                            self.board.message = moth_ui::text(moth_ui::Text::Saved).into();
-                            if self.board.close_after_save {
-                                self.discard();
-                            }
-                        }
-                        Completion::Failed(e) => {
-                            self.board.message = e;
-                            self.board.close_after_save = false;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        while let Ok(done) = self.board.decode.results.try_recv() {
-            self.complete(done);
-        }
-        while let Ok(result) = self.board.clipboard.results.try_recv() {
-            match result {
-                moth_platform::ClipboardCompletion::Discarded(result) => match result {
-                    Ok(()) => self.board.discarded = true,
-                    Err(error) => {
-                        self.board.discarding = false;
-                        self.board.message = error.to_string();
-                    }
-                },
-                moth_platform::ClipboardCompletion::Pasted(Ok((handle, image))) => {
-                    self.board.pasting = self.board.pasting.saturating_sub(1);
-                    if self.board.scene.len() + self.board.waiting.len() + self.board.pending.len()
-                        < 1_000_000
-                    {
-                        self.board.pending.insert(handle, Pending::Paste);
-                        self.complete(moth_io::Completion {
-                            request: moth_io::Request {
-                                handle,
-                                side: 256,
-                                format: self.image_format(),
-                            },
-                            result: Ok(image),
-                            failure_hash: None,
-                        });
-                    } else {
-                        self.board.message = moth_ui::text(moth_ui::Text::BoardFull).into();
-                    }
-                }
-                moth_platform::ClipboardCompletion::Files(paths) => {
-                    self.board.pasting = self.board.pasting.saturating_sub(1);
-                    for path in paths {
-                        self.import(path);
-                    }
-                }
-                moth_platform::ClipboardCompletion::Pasted(Err(
-                    moth_platform::PlatformError::EmptyClipboard,
-                )) => {
-                    self.board.pasting = self.board.pasting.saturating_sub(1);
-                    self.board.message = moth_ui::text(moth_ui::Text::ClipboardEmpty).into();
-                }
-                moth_platform::ClipboardCompletion::Pasted(Err(e)) => {
-                    self.board.pasting = self.board.pasting.saturating_sub(1);
-                    self.board.message = e.to_string();
-                }
-            }
-        }
-        self.pump();
-        if self.board.batching && self.board.idle() && self.board.arrange_prompt.is_none() {
-            if !self.board.burst.is_empty()
-                && (self.tools.auto_arrange || self.board.burst.len() > self.tools.threshold)
-            {
-                self.board.arrange_prompt = Some(std::mem::take(&mut self.board.burst));
-            } else {
-                self.board.burst.clear();
-                self.end_batch();
-            }
-        }
-    }
+
     fn fit(&mut self) {
-        self.board.fit();
+        self.workspace.board.fit();
     }
     /// Applies one user intent as a single side effect. Close-with-save ordering
     /// is expressed by `SaveAndClose` itself, never by the order intents arrive in.
     fn apply(&mut self, intent: Intent, event_loop: &ActiveEventLoop) {
         match intent {
             Intent::Paste => {
-                if !self.board.discarding {
+                if !self.workspace.board.discarding {
                     self.paste();
                 }
             }
@@ -980,33 +507,33 @@ impl App {
                 self.redraw();
             }
             Intent::Zoom(factor) => {
-                self.board.camera.zoom_at(
+                self.workspace.board.camera.zoom_at(
                     [
-                        self.board.viewport.center().x,
-                        self.board.viewport.center().y,
+                        self.workspace.board.viewport.center().x,
+                        self.workspace.board.viewport.center().y,
                     ],
                     factor,
                 );
                 self.redraw();
             }
             Intent::Home => {
-                self.library = true;
-                self.refresh_library = true;
-                self.board.viewport = egui::Rect::NOTHING;
+                self.workspace.library = true;
+                self.workspace.refresh_library = true;
+                self.workspace.board.viewport = egui::Rect::NOTHING;
             }
             Intent::New => self.new_board(),
             Intent::Open => self.open_files(),
             Intent::Save => {
-                if self.board.path.is_empty() {
+                if self.workspace.board.path.is_empty() {
                     self.modal.dialog = Some(());
                     self.modal.dialog_focus = true;
                     self.modal.dialog_path.clear();
                 } else {
-                    self.board.save();
+                    self.workspace.board.save();
                 }
             }
-            Intent::Undo => self.persist(moth_platform::boards::Request::Undo),
-            Intent::Redo => self.persist(moth_platform::boards::Request::Redo),
+            Intent::Undo => self.workspace.persist(moth_platform::boards::Request::Undo),
+            Intent::Redo => self.workspace.persist(moth_platform::boards::Request::Redo),
             Intent::Overlay => self.toggle_overlay(event_loop),
             Intent::Pin => {
                 self.pinned = !self.pinned;
@@ -1018,7 +545,7 @@ impl App {
                         false,
                     )
                 {
-                    self.board.message = error;
+                    self.workspace.board.message = error;
                 }
             }
             Intent::Tab(index) => self.activate(index),
@@ -1044,9 +571,10 @@ impl App {
             }
             Intent::Language(language) => {
                 moth_ui::set_locale(language);
-                self.persist(moth_platform::boards::Request::SaveSettings(
-                    language.code().to_owned(),
-                ));
+                self.workspace
+                    .persist(moth_platform::boards::Request::SaveSettings(
+                        language.code().to_owned(),
+                    ));
             }
             Intent::OpenPath(path) => {
                 if path
@@ -1055,7 +583,7 @@ impl App {
                 {
                     self.open_in_tab(path);
                 } else {
-                    if self.library {
+                    if self.workspace.library {
                         self.new_board();
                     }
                     self.import(path);
@@ -1063,50 +591,56 @@ impl App {
             }
             Intent::SaveAs(path) => {
                 self.modal.dialog = None;
-                self.board.path = path.to_string_lossy().into_owned();
-                self.board.save();
+                self.workspace.board.path = path.to_string_lossy().into_owned();
+                self.workspace.board.save();
             }
             Intent::CancelDialog => self.modal.dialog = None,
             Intent::SaveAndClose => {
-                self.board.close_after_save = true;
-                if self.board.path.is_empty() {
+                self.workspace.board.close_after_save = true;
+                if self.workspace.board.path.is_empty() {
                     self.modal.dialog_path.clear();
                     self.modal.dialog = Some(());
                     self.modal.dialog_focus = true;
                 } else {
-                    self.board.save();
+                    self.workspace.board.save();
                 }
             }
-            Intent::Discard => self.discard(),
+            Intent::Discard => self.workspace.discard(),
             Intent::KeepOpen => {
-                self.modal.confirm_close = false;
-                self.modal.closing_window = false;
-                self.board.close_after_save = false;
+                self.workspace.confirm_close = false;
+                self.workspace.closing_window = false;
+                self.workspace.board.close_after_save = false;
             }
             Intent::AddNote(world) => self.add_note(world),
             Intent::EditNote(id) => self.edit_note(id),
             Intent::CommitNote => self.finish_editing(),
             Intent::Commands(commands) => {
-                self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+                self.workspace
+                    .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
             }
             Intent::Arrange(mode, ids) => {
                 let mut items: Vec<_> = ids
                     .iter()
-                    .filter_map(|id| self.board.scene.get(*id))
+                    .filter_map(|id| self.workspace.board.scene.get(*id))
                     .collect();
                 items.sort_unstable_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
-                let target_width = self.board.viewport.width() / self.board.camera.zoom;
+                let target_width =
+                    self.workspace.board.viewport.width() / self.workspace.board.camera.zoom;
                 let commands = arrange::arrange(&items, mode, target_width, self.tools.gap);
                 if !commands.is_empty() {
-                    self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+                    self.workspace
+                        .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
                 }
             }
             Intent::FitSelection => self.fit_selection(),
-            Intent::Export(target) => self.persist(moth_platform::boards::Request::Export(target)),
-            Intent::NeedsFit => self.board.needs_fit = true,
-            Intent::ResetCamera => self.board.camera = Camera::default(),
+            Intent::Export(target) => self
+                .workspace
+                .persist(moth_platform::boards::Request::Export(target)),
+            Intent::NeedsFit => self.workspace.board.needs_fit = true,
+            Intent::ResetCamera => self.workspace.board.camera = Camera::default(),
             Intent::Focus(step) => {
                 let mut items: Vec<_> = self
+                    .workspace
                     .board
                     .scene
                     .items()
@@ -1116,11 +650,11 @@ impl App {
                 if !items.is_empty() {
                     let current = items
                         .iter()
-                        .position(|i| self.board.selection.contains(&i.id));
+                        .position(|i| self.workspace.board.selection.contains(&i.id));
                     let next = current.map_or(if step > 0 { 0 } else { items.len() - 1 }, |i| {
                         (i as i32 + step).rem_euclid(items.len() as i32) as usize
                     });
-                    self.board.selection = HashSet::from([items[next].id]);
+                    self.workspace.board.selection = HashSet::from([items[next].id]);
                     self.fit_selection();
                 }
             }
@@ -1131,7 +665,7 @@ impl App {
                     egui::Theme::Light
                 });
                 self.shell.ctx.set_zoom_factor(self.tools.ui_scale);
-                for tab in &mut self.tabs {
+                for tab in &mut self.workspace.tabs {
                     let values = std::collections::BTreeMap::from([(
                         "undo_limit".to_owned(),
                         self.tools.undo_limit.to_string(),
@@ -1147,48 +681,52 @@ impl App {
                         tab.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
                     }
                 }
-                self.persist(moth_platform::boards::Request::Preferences(
-                    self.tools
-                        .preferences()
-                        .into_iter()
-                        .map(|(k, v)| (k.to_owned(), v))
-                        .collect(),
-                ));
+                self.workspace
+                    .persist(moth_platform::boards::Request::Preferences(
+                        self.tools
+                            .preferences()
+                            .into_iter()
+                            .map(|(k, v)| (k.to_owned(), v))
+                            .collect(),
+                    ));
             }
             Intent::OriginalGeometry(ids, mode) => {
-                self.persist(moth_platform::boards::Request::OriginalGeometry { ids, mode });
+                self.workspace
+                    .persist(moth_platform::boards::Request::OriginalGeometry { ids, mode });
             }
-            Intent::DismissArrangePrompt => self.board.arrange_prompt = None,
+            Intent::DismissArrangePrompt => self.workspace.board.arrange_prompt = None,
             Intent::FocusItem(id) => {
                 if self
+                    .workspace
                     .board
                     .focus_return
                     .as_ref()
                     .is_some_and(|(rid, _)| *rid == id)
                 {
-                    if let Some((_, camera)) = self.board.focus_return.take() {
-                        self.board.camera = camera;
+                    if let Some((_, camera)) = self.workspace.board.focus_return.take() {
+                        self.workspace.board.camera = camera;
                     }
                 } else {
-                    self.board.focus_return = Some((id, self.board.camera));
-                    self.board.selection = HashSet::from([id]);
+                    self.workspace.board.focus_return = Some((id, self.workspace.board.camera));
+                    self.workspace.board.selection = HashSet::from([id]);
                     self.fit_selection();
                 }
             }
             Intent::SetViewFlags { locked, grayscale } => {
-                self.board.locked = locked;
-                self.board.grayscale = grayscale;
+                self.workspace.board.locked = locked;
+                self.workspace.board.grayscale = grayscale;
             }
-            Intent::DismissRecovery => self.recovery_paths.clear(),
+            Intent::DismissRecovery => self.workspace.recovery_paths.clear(),
         }
     }
     /// Fits the camera to the current selection, if any.
     fn fit_selection(&mut self) {
         let selected: Vec<_> = self
+            .workspace
             .board
             .selection
             .iter()
-            .filter_map(|id| self.board.scene.get(*id))
+            .filter_map(|id| self.workspace.board.scene.get(*id))
             .collect();
         if selected.is_empty() {
             return;
@@ -1203,12 +741,15 @@ impl App {
                 a[1].max(i.rect.rotated_envelope(i.transform.rotation).upper()[1]),
             ]
         });
-        self.board.camera.zoom = ((self.board.viewport.width() - 48.) / (max[0] - min[0]))
-            .min((self.board.viewport.height() - 48.) / (max[1] - min[1]))
+        self.workspace.board.camera.zoom = ((self.workspace.board.viewport.width() - 48.)
+            / (max[0] - min[0]))
+            .min((self.workspace.board.viewport.height() - 48.) / (max[1] - min[1]))
             .clamp(0.01, 64.);
-        self.board.camera.origin = [
-            (min[0] + max[0]) / 2. - self.board.viewport.center().x / self.board.camera.zoom,
-            (min[1] + max[1]) / 2. - self.board.viewport.center().y / self.board.camera.zoom,
+        self.workspace.board.camera.origin = [
+            (min[0] + max[0]) / 2.
+                - self.workspace.board.viewport.center().x / self.workspace.board.camera.zoom,
+            (min[1] + max[1]) / 2.
+                - self.workspace.board.viewport.center().y / self.workspace.board.camera.zoom,
         ];
         self.redraw();
     }
@@ -1216,14 +757,18 @@ impl App {
     fn transform_keys(&self, event: &KeyEvent) -> Option<Vec<Command>> {
         if self.command
             || self.shell.ctx.egui_wants_keyboard_input()
-            || self.board.selection.is_empty()
-            || !self.board.idle()
+            || self.workspace.board.selection.is_empty()
+            || !self.workspace.board.idle()
         {
             return None;
         }
         let shift = self.shell.ctx.input(|input| input.modifiers.shift);
         let transform_selection = |change: fn(Transform) -> Transform| {
-            transform_selection(&self.board.scene, &self.board.selection, change)
+            transform_selection(
+                &self.workspace.board.scene,
+                &self.workspace.board.selection,
+                change,
+            )
         };
         Some(match (event.physical_key, shift) {
             (PhysicalKey::Code(KeyCode::KeyR), false) => {
@@ -1262,7 +807,7 @@ impl App {
                 NativeEvent::Drop(path) => self.import(path),
                 NativeEvent::Error(error) => {
                     tracing::warn!(%error, "native input failed");
-                    self.board.message = error;
+                    self.workspace.board.message = error;
                     self.redraw();
                 }
             }
@@ -1273,27 +818,31 @@ impl App {
             Input::Zoom { position, .. } | Input::Pan { position, .. } => *position,
             Input::Pointer(p) => p.position,
         });
-        if self.modal.confirm_close || self.library || self.modal.dialog.is_some() {
+        if self.workspace.confirm_close || self.workspace.library || self.modal.dialog.is_some() {
             return;
         }
         match input {
             Input::Pan { position, delta } => {
                 if self
+                    .workspace
                     .board
                     .viewport
                     .contains(egui::pos2(position[0], position[1]))
                 {
-                    self.board.camera.origin[0] -= delta[0] / self.board.camera.zoom;
-                    self.board.camera.origin[1] -= delta[1] / self.board.camera.zoom;
+                    self.workspace.board.camera.origin[0] -=
+                        delta[0] / self.workspace.board.camera.zoom;
+                    self.workspace.board.camera.origin[1] -=
+                        delta[1] / self.workspace.board.camera.zoom;
                 }
             }
             Input::Zoom { position, factor } => {
                 if self
+                    .workspace
                     .board
                     .viewport
                     .contains(egui::pos2(position[0], position[1]))
                 {
-                    self.board.camera.zoom_at(position, factor);
+                    self.workspace.board.camera.zoom_at(position, factor);
                 }
             }
             Input::Pointer(p) => {
@@ -1308,6 +857,7 @@ impl App {
                 }
                 if p.phase == Phase::Down
                     && !self
+                        .workspace
                         .board
                         .viewport
                         .contains(egui::pos2(p.position[0], p.position[1]))
@@ -1316,17 +866,18 @@ impl App {
                 }
                 if (self.tools.picking || self.tools.coordinates)
                     && p.phase == Phase::Down
-                    && self.board.idle()
+                    && self.workspace.board.idle()
                 {
-                    let world = self.board.camera.world(p.position);
+                    let world = self.workspace.board.camera.world(p.position);
                     let id = self
+                        .workspace
                         .board
                         .scene
                         .query(Rect {
                             x: world[0],
                             y: world[1],
-                            width: 1. / self.board.camera.zoom,
-                            height: 1. / self.board.camera.zoom,
+                            width: 1. / self.workspace.board.camera.zoom,
+                            height: 1. / self.workspace.board.camera.zoom,
                         })
                         .into_iter()
                         .rev()
@@ -1336,21 +887,22 @@ impl App {
                         })
                         .map(|item| item.id);
                     if let Some(id) = id {
-                        self.persist(moth_platform::boards::Request::Export(
-                            if self.tools.coordinates {
-                                moth_platform::export::Target::Info { id, point: world }
-                            } else {
-                                moth_platform::export::Target::Sample {
-                                    id,
-                                    point: world,
-                                    format: match self.tools.color_format {
-                                        1 => moth_platform::export::ColorFormat::Rgb,
-                                        2 => moth_platform::export::ColorFormat::Hsv,
-                                        _ => moth_platform::export::ColorFormat::Hex,
-                                    },
-                                }
-                            },
-                        ));
+                        self.workspace
+                            .persist(moth_platform::boards::Request::Export(
+                                if self.tools.coordinates {
+                                    moth_platform::export::Target::Info { id, point: world }
+                                } else {
+                                    moth_platform::export::Target::Sample {
+                                        id,
+                                        point: world,
+                                        format: match self.tools.color_format {
+                                            1 => moth_platform::export::ColorFormat::Rgb,
+                                            2 => moth_platform::export::ColorFormat::Hsv,
+                                            _ => moth_platform::export::ColorFormat::Hex,
+                                        },
+                                    }
+                                },
+                            ));
                     }
                     self.tools.picking = false;
                     self.tools.coordinates = false;
@@ -1360,9 +912,11 @@ impl App {
                     self.drag = None;
                     self.moving = None;
                     self.drag_pointer = None;
-                    self.board.camera.zoom_at(g.anchor, g.zoom);
-                    self.board.camera.origin[0] -= g.pan[0] / self.board.camera.zoom;
-                    self.board.camera.origin[1] -= g.pan[1] / self.board.camera.zoom;
+                    self.workspace.board.camera.zoom_at(g.anchor, g.zoom);
+                    self.workspace.board.camera.origin[0] -=
+                        g.pan[0] / self.workspace.board.camera.zoom;
+                    self.workspace.board.camera.origin[1] -=
+                        g.pan[1] / self.workspace.board.camera.zoom;
                     return;
                 }
                 if self.gestures.active() {
@@ -1380,20 +934,22 @@ impl App {
                 match p.phase {
                     Phase::Down
                         if self
+                            .workspace
                             .board
                             .viewport
                             .contains(egui::pos2(p.position[0], p.position[1])) =>
                     {
-                        if !p.pan && !self.board.pan && self.board.idle() {
-                            let world = self.board.camera.world(p.position);
+                        if !p.pan && !self.workspace.board.pan && self.workspace.board.idle() {
+                            let world = self.workspace.board.camera.world(p.position);
                             if let Some(item) = self
+                                .workspace
                                 .board
                                 .scene
                                 .query(Rect {
                                     x: world[0],
                                     y: world[1],
-                                    width: 1. / self.board.camera.zoom,
-                                    height: 1. / self.board.camera.zoom,
+                                    width: 1. / self.workspace.board.camera.zoom,
+                                    height: 1. / self.workspace.board.camera.zoom,
                                 })
                                 .into_iter()
                                 .rev()
@@ -1405,24 +961,25 @@ impl App {
                             {
                                 self.moving = Some((item.id, item.rect));
                                 self.drag_duplicate = self.shell.ctx.input(|i| i.modifiers.alt);
-                                if !self.board.selection.contains(&item.id) {
+                                if !self.workspace.board.selection.contains(&item.id) {
                                     if !self.shell.ctx.input(|i| i.modifiers.shift) {
-                                        self.board.selection.clear();
+                                        self.workspace.board.selection.clear();
                                     }
-                                    self.board.selection.insert(item.id);
+                                    self.workspace.board.selection.insert(item.id);
                                 }
                             }
                         }
-                        self.drag = Some((p.position, p.position, p.pan || self.board.pan));
+                        self.drag =
+                            Some((p.position, p.position, p.pan || self.workspace.board.pan));
                         self.drag_pointer = Some((p.kind, p.id));
                     }
                     Phase::Move => {
                         if let Some((_, last, pan)) = self.drag.as_mut() {
                             if *pan {
-                                self.board.camera.origin[0] -=
-                                    (p.position[0] - last[0]) / self.board.camera.zoom;
-                                self.board.camera.origin[1] -=
-                                    (p.position[1] - last[1]) / self.board.camera.zoom;
+                                self.workspace.board.camera.origin[0] -=
+                                    (p.position[0] - last[0]) / self.workspace.board.camera.zoom;
+                                self.workspace.board.camera.origin[1] -=
+                                    (p.position[1] - last[1]) / self.workspace.board.camera.zoom;
                             }
                             *last = p.position;
                         }
@@ -1431,40 +988,53 @@ impl App {
                         self.drag_pointer = None;
                         if let Some((start, _, false)) = self.drag.take() {
                             if let Some((_id, _rect)) = self.moving.take() {
-                                let dx = (p.position[0] - start[0]) / self.board.camera.zoom;
-                                let dy = (p.position[1] - start[1]) / self.board.camera.zoom;
+                                let dx =
+                                    (p.position[0] - start[0]) / self.workspace.board.camera.zoom;
+                                let dy =
+                                    (p.position[1] - start[1]) / self.workspace.board.camera.zoom;
                                 if !self.tools.locked
-                                    && dx.abs() + dy.abs() > 0.5 / self.board.camera.zoom
+                                    && dx.abs() + dy.abs() > 0.5 / self.workspace.board.camera.zoom
                                 {
                                     let mut items: Vec<_> = self
+                                        .workspace
                                         .board
                                         .selection
                                         .iter()
-                                        .filter_map(|id| self.board.scene.get(*id))
+                                        .filter_map(|id| self.workspace.board.scene.get(*id))
                                         .collect();
                                     items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
                                     let commands = arrange::translate(
                                         &items,
                                         [dx, dy],
                                         self.drag_duplicate,
-                                        self.board.scene.top(),
+                                        self.workspace.board.scene.top(),
                                     );
-                                    self.persist_batch(
+                                    self.workspace.persist_batch(
                                         commands.into_iter().map(|c| (c, None)).collect(),
                                     );
                                 }
                                 return;
                             }
-                            let a = self.board.camera.world(start);
-                            let b = self.board.camera.world(p.position);
+                            let a = self.workspace.board.camera.world(start);
+                            let b = self.workspace.board.camera.world(p.position);
                             let rect = Rect {
                                 x: a[0].min(b[0]),
                                 y: a[1].min(b[1]),
-                                width: (a[0] - b[0]).abs().max(1. / self.board.camera.zoom),
-                                height: (a[1] - b[1]).abs().max(1. / self.board.camera.zoom),
+                                width: (a[0] - b[0])
+                                    .abs()
+                                    .max(1. / self.workspace.board.camera.zoom),
+                                height: (a[1] - b[1])
+                                    .abs()
+                                    .max(1. / self.workspace.board.camera.zoom),
                             };
-                            self.board.selection =
-                                self.board.scene.query(rect).iter().map(|i| i.id).collect();
+                            self.workspace.board.selection = self
+                                .workspace
+                                .board
+                                .scene
+                                .query(rect)
+                                .iter()
+                                .map(|i| i.id)
+                                .collect();
                         }
                     }
                     Phase::Cancel => {
@@ -1478,7 +1048,8 @@ impl App {
         }
     }
     fn frame(&mut self, event_loop: &ActiveEventLoop) -> anyhow::Result<()> {
-        let _span = tracing::trace_span!("frame", zoom = self.board.camera.zoom).entered();
+        let _span =
+            tracing::trace_span!("frame", zoom = self.workspace.board.camera.zoom).entered();
         if self.shell.lost() {
             self.recover()?;
         }
@@ -1486,9 +1057,12 @@ impl App {
             return Ok(());
         };
         self.results();
-        if self.board.discarded {
+        if self.workspace.board.discarded {
             self.finish_close(event_loop)?;
-            if self.modal.closing_window && self.tabs.is_empty() && self.board.discarded {
+            if self.workspace.closing_window
+                && self.workspace.tabs.is_empty()
+                && self.workspace.board.discarded
+            {
                 return Ok(());
             }
         }
@@ -1505,10 +1079,10 @@ impl App {
                     chrome::chrome(
                         ui,
                         chrome::Chrome {
-                            board: &mut self.board,
-                            tabs: &self.tabs,
+                            board: &mut self.workspace.board,
+                            tabs: &self.workspace.tabs,
                             gpu,
-                            library: self.library,
+                            library: self.workspace.library,
                             pinned: self.pinned,
                             catalog: &mut self.catalog,
                             cards: &self.cards,
@@ -1519,11 +1093,11 @@ impl App {
                         &mut intents,
                     );
                 }
-                if !self.library {
+                if !self.workspace.library {
                     canvas::canvas(
                         ui,
                         canvas::Canvas {
-                            board: &mut self.board,
+                            board: &mut self.workspace.board,
                             tools: &mut self.tools,
                             editing: &mut self.editing,
                             drag: self.drag,
@@ -1537,8 +1111,7 @@ impl App {
                 }
                 self.modal.show(
                     ui,
-                    &self.board,
-                    &self.recovery_paths,
+                    &self.workspace,
                     self.tools.auto_arrange,
                     self.tools.default_arrange,
                     &mut intents,
@@ -1555,19 +1128,19 @@ impl App {
             let Some(gpu) = gpu else {
                 return Ok(());
             };
-            let p = self
-                .board
-                .camera
-                .world([self.board.viewport.min.x, self.board.viewport.min.y]);
-            let visible = self.board.scene.query(Rect {
+            let p = self.workspace.board.camera.world([
+                self.workspace.board.viewport.min.x,
+                self.workspace.board.viewport.min.y,
+            ]);
+            let visible = self.workspace.board.scene.query(Rect {
                 x: p[0],
                 y: p[1],
-                width: if self.library {
+                width: if self.workspace.library {
                     0.
                 } else {
-                    self.board.viewport.width() / self.board.camera.zoom
+                    self.workspace.board.viewport.width() / self.workspace.board.camera.zoom
                 },
-                height: self.board.viewport.height() / self.board.camera.zoom,
+                height: self.workspace.board.viewport.height() / self.workspace.board.camera.zoom,
             });
             for item in &visible {
                 // Notes have no source bytes; only images request decode previews.
@@ -1576,14 +1149,15 @@ impl App {
                 };
                 let side = moth_render::preview_side(
                     item.rect.width.max(item.rect.height)
-                        * self.board.camera.zoom
+                        * self.workspace.board.camera.zoom
                         * output.pixels_per_point,
                 );
                 if !gpu.registry.resident(blob, side)
-                    && let Some(&handle) = self.board.sources.get(&blob)
-                    && !self.board.pending.contains_key(&handle)
-                    && !self.board.failed.contains(&handle)
+                    && let Some(&handle) = self.workspace.board.sources.get(&blob)
+                    && !self.workspace.board.pending.contains_key(&handle)
+                    && !self.workspace.board.failed.contains(&handle)
                     && self
+                        .workspace
                         .board
                         .decode
                         .requests
@@ -1594,13 +1168,18 @@ impl App {
                         })
                         .is_ok()
                 {
-                    self.board.pending.insert(handle, Pending::Preview(blob));
+                    self.workspace
+                        .board
+                        .pending
+                        .insert(handle, Pending::Preview(blob));
                 }
             }
             visible
         };
         let frame = shell::Frame {
-            grid: !self.library && !self.board.scene.is_empty() && self.overlay.is_none(),
+            grid: !self.workspace.library
+                && !self.workspace.board.scene.is_empty()
+                && self.overlay.is_none(),
             opacity: self.overlay.as_ref().map_or(1., |overlay| overlay.opacity),
             clear: if self.overlay.is_some() {
                 wgpu::Color::TRANSPARENT
@@ -1619,12 +1198,12 @@ impl App {
                     a: 1.,
                 }
             },
-            viewport: self.board.viewport,
+            viewport: self.workspace.board.viewport,
             grayscale: self.tools.grayscale,
         };
         match self
             .shell
-            .render(output, &visible, self.board.camera, frame)?
+            .render(output, &visible, self.workspace.board.camera, frame)?
         {
             shell::Present::Presented => {}
             shell::Present::Recovered => {
@@ -1665,17 +1244,17 @@ impl ApplicationHandler<Wake> for App {
             )
         {
             tracing::warn!(%error, "native input startup failed");
-            self.board.message = error.to_string();
+            self.workspace.board.message = error.to_string();
         }
         if let Err(e) = self.recover() {
             tracing::error!(%e,"renderer creation failed");
-            self.board.message = e.to_string();
+            self.workspace.board.message = e.to_string();
             self.startup_error = Some(e);
             event_loop.exit();
         }
         let startup = std::mem::take(&mut self.startup);
         if !startup.is_empty() {
-            self.library = false;
+            self.workspace.library = false;
         }
         for path in startup {
             self.import(path);
@@ -1700,10 +1279,10 @@ impl ApplicationHandler<Wake> for App {
             Wake::Ready => {
                 self.native_input();
                 self.results();
-                if self.board.discarded
+                if self.workspace.board.discarded
                     && let Err(error) = self.finish_close(event_loop)
                 {
-                    self.board.message = error.to_string();
+                    self.workspace.board.message = error.to_string();
                 }
                 self.redraw();
             }
@@ -1726,7 +1305,7 @@ impl ApplicationHandler<Wake> for App {
             if let Some(overlay) = &mut self.overlay {
                 if matches!(event, WindowEvent::RedrawRequested) {
                     if let Err(error) = overlay.frame() {
-                        self.board.message = error.to_string();
+                        self.workspace.board.message = error.to_string();
                         overlay.exit = true;
                     }
                 } else {
@@ -1741,7 +1320,7 @@ impl ApplicationHandler<Wake> for App {
                             overlay.click_through,
                         )
                     {
-                        self.board.message = error;
+                        self.workspace.board.message = error;
                         overlay.click_through = false;
                     } else {
                         overlay.applied = (overlay.on_top, overlay.click_through);
@@ -1784,7 +1363,7 @@ impl ApplicationHandler<Wake> for App {
             WindowEvent::RedrawRequested => {
                 if let Err(e) = self.frame(event_loop) {
                     tracing::error!(%e,"frame failed");
-                    self.board.message = e.to_string();
+                    self.workspace.board.message = e.to_string();
                     if self.overlay.is_some() {
                         self.toggle_overlay(event_loop);
                     }
@@ -1824,8 +1403,8 @@ impl ApplicationHandler<Wake> for App {
             WindowEvent::DroppedFile(path) => self.import(path),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 if self.modal.dialog.is_some()
-                    || self.modal.confirm_close
-                    || self.board.arrange_prompt.is_some()
+                    || self.workspace.confirm_close
+                    || self.workspace.board.arrange_prompt.is_some()
                 {
                     return;
                 }
@@ -1837,13 +1416,13 @@ impl ApplicationHandler<Wake> for App {
                 } else if self.command && event.physical_key == PhysicalKey::Code(KeyCode::KeyO) {
                     self.open_files();
                 } else if self.command && event.physical_key == PhysicalKey::Code(KeyCode::KeyL) {
-                    self.library = true;
-                    self.refresh_library = true;
+                    self.workspace.library = true;
+                    self.workspace.refresh_library = true;
                     self.redraw();
                 } else if self.command && event.physical_key == PhysicalKey::Code(KeyCode::KeyW) {
                     self.request_close(false);
                 } else if self.command && event.logical_key == Key::Named(NamedKey::Tab) {
-                    if !self.tabs.is_empty() {
+                    if !self.workspace.tabs.is_empty() {
                         self.activate(1);
                     }
                 } else if (self.overlay.is_some()
@@ -1856,38 +1435,38 @@ impl ApplicationHandler<Wake> for App {
                     && (event.physical_key == PhysicalKey::Code(KeyCode::KeyV)
                         || matches!(event.logical_key,Key::Character(ref c) if c.eq_ignore_ascii_case("v")))
                 {
-                    if !self.board.discarding {
+                    if !self.workspace.board.discarding {
                         self.paste();
                     }
                 } else if self.command
                     && event.physical_key == PhysicalKey::Code(KeyCode::KeyS)
-                    && self.board.idle()
+                    && self.workspace.board.idle()
                 {
-                    if self.board.path.is_empty() {
+                    if self.workspace.board.path.is_empty() {
                         self.modal.dialog = Some(());
                         self.modal.dialog_focus = true;
                         self.modal.dialog_path.clear();
                         self.redraw();
                     } else {
-                        self.persist(moth_platform::boards::Request::Save(
-                            std::path::PathBuf::from(&self.board.path),
+                        self.workspace.persist(moth_platform::boards::Request::Save(
+                            std::path::PathBuf::from(&self.workspace.board.path),
                         ));
                     }
                 } else if self.command
                     && !self.shell.ctx.egui_wants_keyboard_input()
                     && event.physical_key == PhysicalKey::Code(KeyCode::KeyZ)
-                    && self.board.in_flight == 0
+                    && self.workspace.board.in_flight == 0
                 {
-                    self.persist(moth_platform::boards::Request::Undo);
+                    self.workspace.persist(moth_platform::boards::Request::Undo);
                 } else if self.command
                     && !self.shell.ctx.egui_wants_keyboard_input()
                     && event.physical_key == PhysicalKey::Code(KeyCode::KeyY)
-                    && self.board.in_flight == 0
+                    && self.workspace.board.in_flight == 0
                 {
-                    self.persist(moth_platform::boards::Request::Redo);
+                    self.workspace.persist(moth_platform::boards::Request::Redo);
                 } else if !self.shell.ctx.egui_wants_keyboard_input()
                     && !self.command
-                    && self.board.idle()
+                    && self.workspace.board.idle()
                     && matches!(
                         event.logical_key,
                         Key::Named(
@@ -1910,33 +1489,38 @@ impl ApplicationHandler<Wake> for App {
                         _ => [0., distance],
                     };
                     let items: Vec<_> = self
+                        .workspace
                         .board
                         .selection
                         .iter()
-                        .filter_map(|id| self.board.scene.get(*id))
+                        .filter_map(|id| self.workspace.board.scene.get(*id))
                         .collect();
-                    let commands = arrange::translate(&items, delta, false, self.board.scene.top());
-                    self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+                    let commands =
+                        arrange::translate(&items, delta, false, self.workspace.board.scene.top());
+                    self.workspace
+                        .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
                 } else if let Some(commands) = self.transform_keys(&event) {
                     if event.physical_key == PhysicalKey::Code(KeyCode::Digit0)
                         && self.shell.ctx.input(|i| i.modifiers.shift)
                     {
-                        self.persist(moth_platform::boards::Request::OriginalGeometry {
-                            ids: self.board.selection.iter().copied().collect(),
-                            mode: moth_platform::export::Geometry::All,
-                        });
+                        self.workspace
+                            .persist(moth_platform::boards::Request::OriginalGeometry {
+                                ids: self.workspace.board.selection.iter().copied().collect(),
+                                mode: moth_platform::export::Geometry::All,
+                            });
                     } else {
-                        self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+                        self.workspace
+                            .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
                     }
                 } else if !self.shell.ctx.egui_wants_keyboard_input()
                     && event.logical_key == Key::Character("v".into())
                 {
-                    self.board.pan = false;
+                    self.workspace.board.pan = false;
                     self.redraw();
                 } else if !self.shell.ctx.egui_wants_keyboard_input()
                     && event.logical_key == Key::Character("h".into())
                 {
-                    self.board.pan = true;
+                    self.workspace.board.pan = true;
                     self.redraw();
                 } else if !self.shell.ctx.egui_wants_keyboard_input()
                     && event.logical_key == Key::Named(NamedKey::Home)

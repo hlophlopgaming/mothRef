@@ -36,6 +36,19 @@ pub(super) struct Session {
     pub(super) arrange_prompt: Option<Vec<Uuid>>,
 }
 impl Session {
+    pub(super) fn cursor_point(&self, cursor: Option<[f32; 2]>, fallback: [f32; 2]) -> [f32; 2] {
+        let point = cursor
+            .filter(|p| self.viewport.is_finite() && self.viewport.contains(egui::pos2(p[0], p[1])))
+            .unwrap_or_else(|| {
+                if self.viewport.is_finite() {
+                    [self.viewport.center().x, self.viewport.center().y]
+                } else {
+                    fallback
+                }
+            });
+        self.camera.world(point)
+    }
+
     pub(super) fn new(wake: Arc<dyn Fn() + Send + Sync>, discover: bool) -> anyhow::Result<Self> {
         let storage = Arc::new(moth_platform::DesktopStorage::default());
         Self::with_storage(storage, wake, discover)
@@ -235,6 +248,42 @@ mod tests {
         first.boards.finish().unwrap();
         second.boards.finish().unwrap();
         // Decode/clipboard handles keep no files open after their owning sessions are dropped.
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn request_close_preserves_an_unsaved_board_until_confirmed() {
+        let root = std::env::temp_dir().join(format!("mothref-close-request-{}", Uuid::now_v7()));
+        let mut board = Session::with_storage(
+            Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+            Arc::new(|| {}),
+            false,
+        )
+        .unwrap();
+        let item = Item::image(
+            BlobId::from([7; 32]),
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 30.,
+                height: 40.,
+            },
+            None,
+        );
+        let id = item.id;
+        board.scene.apply(Command::Insert(item)).unwrap();
+        board.dirty = true;
+        let mut workspace = workspace::Workspace::new(board, Arc::new(|| {}));
+        let identity = workspace.board.ui_id;
+        assert!(matches!(
+            workspace.request_close(true),
+            workspace::TabChange::None
+        ));
+        assert!(workspace.confirm_close && workspace.closing_window);
+        assert!(!workspace.board.discarding && !workspace.board.discarded);
+        assert!(workspace.board.scene.get(id).is_some());
+        assert_eq!(workspace.board.ui_id, identity);
+        assert!(matches!(workspace.activate(0), workspace::TabChange::None));
+        workspace.board.boards.finish().unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]

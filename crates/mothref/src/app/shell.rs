@@ -46,6 +46,12 @@ pub(super) struct Shell {
 }
 
 impl Shell {
+    pub(super) fn upload(&mut self, image: &moth_io::Decoded) {
+        if let Some(gpu) = &mut self.gpu {
+            gpu.registry.upload(&gpu.device, &gpu.queue, image);
+        }
+    }
+
     /// Whether the GPU device was lost since the last frame.
     pub(super) fn lost(&self) -> bool {
         self.gpu

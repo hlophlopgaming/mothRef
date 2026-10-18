@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Save-as dialog, close confirmation, arrangement prompt and recovery browser.
-use std::path::PathBuf;
 
-use super::{Intent, Session, arrange};
+use super::{Intent, arrange, workspace::Workspace};
 
 /// Modal state owned by the application, drawn as egui popups each frame.
 #[derive(Default)]
@@ -10,8 +9,6 @@ pub(super) struct Modal {
     pub(super) dialog: Option<()>,
     pub(super) dialog_path: String,
     pub(super) dialog_focus: bool,
-    pub(super) confirm_close: bool,
-    pub(super) closing_window: bool,
 }
 
 impl Modal {
@@ -19,12 +16,13 @@ impl Modal {
     pub(super) fn show(
         &mut self,
         ui: &mut egui::Ui,
-        board: &Session,
-        recovery_paths: &[PathBuf],
+        workspace: &Workspace,
         auto_arrange: bool,
         default_arrange: u8,
         intents: &mut Vec<Intent>,
     ) {
+        let board = &workspace.board;
+        let recovery_paths = &workspace.recovery_paths;
         if !recovery_paths.is_empty() && board.scene.is_empty() {
             egui::Window::new(moth_ui::text(moth_ui::Text::Recovery)).show(ui.ctx(), |ui| {
                 for path in recovery_paths {
@@ -79,7 +77,7 @@ impl Modal {
                 });
             });
         }
-        if self.confirm_close && self.dialog.is_none() {
+        if workspace.confirm_close && self.dialog.is_none() {
             egui::Modal::new(egui::Id::new("confirm_close")).show(ui.ctx(), |ui| {
                 ui.set_max_width(380.);
                 ui.heading(moth_ui::text(moth_ui::Text::SaveQuestion));

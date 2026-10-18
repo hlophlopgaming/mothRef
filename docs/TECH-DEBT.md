@@ -28,7 +28,7 @@ after each, workspace-wide checks once at the end.
 - [x] **Step 4 — Rendering moves into `Shell::render`.**
   Surface texture, Lost/Outdated/Occluded, egui buffers, `registry.draw`, present,
   free egui textures, deadline. Visible-item collection and LOD requests stay outside.
-- [ ] **Step 5 — Tabs and worker results move into `Workspace`.**
+- [x] **Step 5 — Tabs and worker results move into `Workspace`.**
   `reset_board_ui` consolidates the tab-switch reset. `Workspace::{activate,new_board,
   open_in_tab,request_close,finish_close}` return a `TabChange`; `results`/
   `drain_results`/`complete` become `Workspace::pump`. Test: `request_close` on a
