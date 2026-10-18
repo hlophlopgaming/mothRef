@@ -45,6 +45,7 @@ mod intent;
 mod modal;
 mod overlay;
 mod session;
+mod shell;
 mod tools;
 use intent::Intent;
 use session::{MAX_TABS, Session};
@@ -65,12 +66,7 @@ pub struct App {
     tabs: Vec<Session>,
     library: bool,
     pub startup_error: Option<anyhow::Error>,
-    window: Option<Arc<Window>>,
-    gpu: Option<Gpu>,
-    ctx: egui::Context,
-    egui: Option<egui_winit::State>,
-    wake: Arc<dyn Fn() + Send + Sync>,
-    proxy: EventLoopProxy<Wake>,
+    shell: shell::Shell,
     recovery_paths: Vec<std::path::PathBuf>,
     recent_paths: Vec<std::path::PathBuf>,
     input: Adapter,
@@ -80,14 +76,13 @@ pub struct App {
     drag: Option<([f32; 2], [f32; 2], bool)>,
     drag_pointer: Option<(moth_platform::input::Kind, u64)>,
     native_pressed: Option<(moth_platform::input::Kind, u64)>,
-    deadline: Option<Instant>,
-    software: bool,
     startup: Vec<std::path::PathBuf>,
 }
 impl App {
     /// Canvas texture format for decode requests; RGBA8 until the GPU exists.
     fn image_format(&self) -> moth_io::ImageFormat {
-        self.gpu
+        self.shell
+            .gpu
             .as_ref()
             .map(|g| g.registry.image_format())
             .unwrap_or_default()
@@ -108,6 +103,16 @@ impl App {
         ctx.set_request_repaint_callback(move |info| {
             let _ = repaint.send_event(Wake::Repaint(info.delay));
         });
+        let shell = shell::Shell {
+            window: None,
+            gpu: None,
+            ctx,
+            egui: None,
+            software: std::env::args().any(|a| a == "--software"),
+            wake,
+            proxy,
+            deadline: None,
+        };
         Ok(Self {
             board,
             tools: tools::Tools::default(),
@@ -124,12 +129,7 @@ impl App {
             tabs: Vec::new(),
             library: true,
             startup_error: None,
-            window: None,
-            gpu: None,
-            ctx,
-            egui: None,
-            wake,
-            proxy,
+            shell,
             recovery_paths: Vec::new(),
             recent_paths: Vec::new(),
             input: Adapter::default(),
@@ -139,8 +139,6 @@ impl App {
             drag: None,
             drag_pointer: None,
             native_pressed: None,
-            deadline: None,
-            software: std::env::args().any(|a| a == "--software"),
             startup: std::env::args_os()
                 .skip(1)
                 .filter(|a| a != "--software")
@@ -149,7 +147,7 @@ impl App {
         })
     }
     fn toggle_overlay(&mut self, event_loop: &ActiveEventLoop) {
-        let Some(window) = self.window.clone() else {
+        let Some(window) = self.shell.window.clone() else {
             return;
         };
         if self.overlay.is_some() {
@@ -160,11 +158,11 @@ impl App {
             } else {
                 self.overlay = None;
             }
-        } else if self.gpu.as_ref().is_some_and(|gpu| gpu.transparent) {
+        } else if self.shell.gpu.as_ref().is_some_and(|gpu| gpu.transparent) {
             match overlay::Overlay::new(
                 event_loop,
-                self.wake.clone(),
-                self.software,
+                self.shell.wake.clone(),
+                self.shell.software,
                 moth_platform::Desktop.window_capabilities(&window).on_top,
             ) {
                 Ok(overlay) => {
@@ -210,7 +208,7 @@ impl App {
         self.moving = None;
         self.drag_pointer = None;
         self.gestures.cancel();
-        if let Some(gpu) = &mut self.gpu {
+        if let Some(gpu) = &mut self.shell.gpu {
             gpu.registry.clear();
         }
         self.redraw();
@@ -227,7 +225,7 @@ impl App {
             self.board.message = moth_ui::text(moth_ui::Text::TabLimit).into();
             return;
         }
-        match Session::new(self.wake.clone(), false) {
+        match Session::new(self.shell.wake.clone(), false) {
             Ok(board) => {
                 let previous = std::mem::replace(&mut self.board, board);
                 self.tabs.push(previous);
@@ -285,48 +283,26 @@ impl App {
         } else if self.modal.closing_window {
             event_loop.exit();
         } else {
-            self.board = Session::new(self.wake.clone(), false)?;
+            self.board = Session::new(self.shell.wake.clone(), false)?;
             self.library = true;
             self.refresh_library = true;
-            if let Some(gpu) = &mut self.gpu {
+            if let Some(gpu) = &mut self.shell.gpu {
                 gpu.registry.clear();
             }
         }
         Ok(())
     }
     fn redraw(&self) {
-        if let Some(w) = &self.window {
+        if let Some(w) = &self.shell.window {
             w.request_redraw();
         }
     }
     fn recover(&mut self) -> anyhow::Result<()> {
         self.native_pressed = None;
-        self.gpu = None;
         self.cards.clear();
         self.catalog.dismiss_editor();
         self.refresh_library = self.library;
-        self.ctx = egui::Context::default();
-        moth_ui::theme(&self.ctx);
-        let proxy = self.proxy.clone();
-        self.ctx.set_request_repaint_callback(move |info| {
-            let _ = proxy.send_event(Wake::Repaint(info.delay));
-        });
-        if let Some(window) = &self.window {
-            self.gpu = Some(pollster::block_on(Gpu::new(
-                window.clone(),
-                self.wake.clone(),
-                self.software,
-            ))?);
-            self.egui = Some(egui_winit::State::new(
-                self.ctx.clone(),
-                egui::ViewportId::ROOT,
-                window.as_ref(),
-                Some(window.scale_factor() as f32),
-                window.theme(),
-                Some(2048),
-            ));
-        }
-        Ok(())
+        self.shell.recover()
     }
     fn paste(&mut self) {
         if self.tools.locked {
@@ -527,6 +503,7 @@ impl App {
             return self.board.camera.world([p.x, p.y]);
         }
         let point = self
+            .shell
             .window
             .as_ref()
             .map(|w| {
@@ -612,7 +589,7 @@ impl App {
         if editing.draft.trim().is_empty() {
             commands.push(Command::Remove(editing.id));
         } else {
-            let [width, height] = canvas::measure_note(&self.ctx, &editing.draft);
+            let [width, height] = canvas::measure_note(&self.shell.ctx, &editing.draft);
             commands.push(Command::SetText {
                 id: editing.id,
                 text: editing.draft,
@@ -682,7 +659,7 @@ impl App {
                         Some(done.request.handle),
                     ));
                 }
-                if let Some(gpu) = &mut self.gpu {
+                if let Some(gpu) = &mut self.shell.gpu {
                     gpu.registry.upload(&gpu.device, &gpu.queue, &image);
                 }
             }
@@ -717,13 +694,13 @@ impl App {
     }
     fn results(&mut self) {
         // Inactive tabs finish journal work, but share one GPU cache with the active tab.
-        let gpu = self.gpu.take();
+        let gpu = self.shell.gpu.take();
         for index in 0..self.tabs.len() {
             std::mem::swap(&mut self.board, &mut self.tabs[index]);
             self.drain_results();
             std::mem::swap(&mut self.board, &mut self.tabs[index]);
         }
-        self.gpu = gpu;
+        self.shell.gpu = gpu;
         self.drain_results();
         if self.library
             && self.refresh_library
@@ -761,7 +738,7 @@ impl App {
                         .into_iter()
                         .enumerate()
                         .map(|(i, mip)| {
-                            self.ctx.load_texture(
+                            self.shell.ctx.load_texture(
                                 format!("library-{}-{i}", path.display()),
                                 egui::ColorImage::from_rgba_unmultiplied(
                                     [mip.width as usize, mip.height as usize],
@@ -806,12 +783,12 @@ impl App {
                 }
                 Completion::Preferences(values) => {
                     self.tools.load(&values);
-                    self.ctx.set_theme(if self.tools.dark {
+                    self.shell.ctx.set_theme(if self.tools.dark {
                         egui::Theme::Dark
                     } else {
                         egui::Theme::Light
                     });
-                    self.ctx.set_zoom_factor(self.tools.ui_scale);
+                    self.shell.ctx.set_zoom_factor(self.tools.ui_scale);
                 }
                 Completion::Settings(code) => {
                     if let Some(language) = moth_ui::Locale::from_code(&code) {
@@ -1033,7 +1010,7 @@ impl App {
             Intent::Overlay => self.toggle_overlay(event_loop),
             Intent::Pin => {
                 self.pinned = !self.pinned;
-                if let Some(window) = &self.window
+                if let Some(window) = &self.shell.window
                     && let Err(error) = moth_platform::Desktop.window_effects(
                         window,
                         self.overlay.is_some(),
@@ -1051,17 +1028,17 @@ impl App {
             }
             Intent::CloseWindow => self.request_close(true),
             Intent::Drag => {
-                if let Some(window) = &self.window {
+                if let Some(window) = &self.shell.window {
                     let _ = window.drag_window();
                 }
             }
             Intent::Minimize => {
-                if let Some(window) = &self.window {
+                if let Some(window) = &self.shell.window {
                     window.set_minimized(true);
                 }
             }
             Intent::Maximize => {
-                if let Some(window) = &self.window {
+                if let Some(window) = &self.shell.window {
                     window.set_maximized(!window.is_maximized());
                 }
             }
@@ -1148,12 +1125,12 @@ impl App {
                 }
             }
             Intent::PreferencesDirty => {
-                self.ctx.set_theme(if self.tools.dark {
+                self.shell.ctx.set_theme(if self.tools.dark {
                     egui::Theme::Dark
                 } else {
                     egui::Theme::Light
                 });
-                self.ctx.set_zoom_factor(self.tools.ui_scale);
+                self.shell.ctx.set_zoom_factor(self.tools.ui_scale);
                 for tab in &mut self.tabs {
                     let values = std::collections::BTreeMap::from([(
                         "undo_limit".to_owned(),
@@ -1238,13 +1215,13 @@ impl App {
     /// Rotation, mirroring and reset keys; they act on the selection and need an idle board.
     fn transform_keys(&self, event: &KeyEvent) -> Option<Vec<Command>> {
         if self.command
-            || self.ctx.egui_wants_keyboard_input()
+            || self.shell.ctx.egui_wants_keyboard_input()
             || self.board.selection.is_empty()
             || !self.board.idle()
         {
             return None;
         }
-        let shift = self.ctx.input(|input| input.modifiers.shift);
+        let shift = self.shell.ctx.input(|input| input.modifiers.shift);
         let transform_selection = |change: fn(Transform) -> Transform| {
             transform_selection(&self.board.scene, &self.board.selection, change)
         };
@@ -1270,8 +1247,8 @@ impl App {
         for event in events {
             match event {
                 NativeEvent::Pointer(p) => {
-                    let modifiers = self.ctx.input(|input| input.modifiers);
-                    if let Some(state) = &mut self.egui {
+                    let modifiers = self.shell.ctx.input(|input| input.modifiers);
+                    if let Some(state) = &mut self.shell.egui {
                         pen_ui(
                             state.egui_input_mut(),
                             p,
@@ -1322,6 +1299,7 @@ impl App {
             Input::Pointer(p) => {
                 if p.phase == Phase::Down
                     && self
+                        .shell
                         .ctx
                         .layer_id_at(egui::pos2(p.position[0], p.position[1]))
                         .is_some_and(|layer| layer.order != egui::Order::Background)
@@ -1426,9 +1404,9 @@ impl App {
                                 })
                             {
                                 self.moving = Some((item.id, item.rect));
-                                self.drag_duplicate = self.ctx.input(|i| i.modifiers.alt);
+                                self.drag_duplicate = self.shell.ctx.input(|i| i.modifiers.alt);
                                 if !self.board.selection.contains(&item.id) {
-                                    if !self.ctx.input(|i| i.modifiers.shift) {
+                                    if !self.shell.ctx.input(|i| i.modifiers.shift) {
                                         self.board.selection.clear();
                                     }
                                     self.board.selection.insert(item.id);
@@ -1501,14 +1479,10 @@ impl App {
     }
     fn frame(&mut self, event_loop: &ActiveEventLoop) -> anyhow::Result<()> {
         let _span = tracing::trace_span!("frame", zoom = self.board.camera.zoom).entered();
-        if self
-            .gpu
-            .as_ref()
-            .is_some_and(|g| g.lost.load(Ordering::Acquire))
-        {
+        if self.shell.lost() {
             self.recover()?;
         }
-        let Some(window) = self.window.clone() else {
+        let Some(window) = self.shell.window.clone() else {
             return Ok(());
         };
         self.results();
@@ -1518,219 +1492,155 @@ impl App {
                 return Ok(());
             }
         }
-        let size = window.inner_size();
-        if size.width == 0 || size.height == 0 {
-            return Ok(());
-        }
-        let Some(gpu) = &mut self.gpu else {
-            return Ok(());
-        };
-        let Some(state) = &mut self.egui else {
-            return Ok(());
-        };
-        let texture = match gpu.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                self.recover()?;
-                self.redraw();
-                return Ok(());
-            }
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return Ok(());
-            }
-            _ => return Err(anyhow::anyhow!("Surface validation failed")),
-        };
         let mut actions = moth_ui::Actions::default();
         let mut intents: Vec<Intent> = Vec::new();
-        let mut output = self.ctx.run_ui(state.take_egui_input(&window), |ui| {
-            if self.overlay.is_none() {
-                chrome::chrome(
-                    ui,
-                    chrome::Chrome {
-                        board: &mut self.board,
-                        tabs: &self.tabs,
-                        gpu,
-                        library: self.library,
-                        pinned: self.pinned,
-                        catalog: &mut self.catalog,
-                        cards: &self.cards,
-                        library_worker: &self.library_worker,
-                        window: window.as_ref(),
-                    },
-                    &mut actions,
-                    &mut intents,
-                );
-            }
-            if !self.library {
-                canvas::canvas(
-                    ui,
-                    canvas::Canvas {
-                        board: &mut self.board,
-                        tools: &mut self.tools,
-                        editing: &mut self.editing,
-                        drag: self.drag,
-                        moving: self.moving,
-                        gpu,
-                        overlay: self.overlay.is_some(),
-                    },
-                    &mut actions,
-                    &mut intents,
-                );
-            }
-            self.modal.show(
-                ui,
-                &self.board,
-                &self.recovery_paths,
-                self.tools.auto_arrange,
-                self.tools.default_arrange,
-                &mut intents,
-            );
-        });
-        state.handle_platform_output(&window, output.platform_output);
-        gpu.registry.grayscale = self.tools.grayscale;
-        let p = self
-            .board
-            .camera
-            .world([self.board.viewport.min.x, self.board.viewport.min.y]);
-        let visible = self.board.scene.query(Rect {
-            x: p[0],
-            y: p[1],
-            width: if self.library {
-                0.
-            } else {
-                self.board.viewport.width() / self.board.camera.zoom
-            },
-            height: self.board.viewport.height() / self.board.camera.zoom,
-        });
-        for item in &visible {
-            // Notes have no source bytes; only images request decode previews.
-            let Some(blob) = item.blob() else {
-                continue;
+        let output = {
+            let state = self.shell.egui.as_mut();
+            let gpu = self.shell.gpu.as_ref();
+            let (Some(state), Some(gpu)) = (state, gpu) else {
+                return Ok(());
             };
-            let side = moth_render::preview_side(
-                item.rect.width.max(item.rect.height)
-                    * self.board.camera.zoom
-                    * output.pixels_per_point,
-            );
-            if !gpu.registry.resident(blob, side)
-                && let Some(&handle) = self.board.sources.get(&blob)
-                && !self.board.pending.contains_key(&handle)
-                && !self.board.failed.contains(&handle)
-                && self
-                    .board
-                    .decode
-                    .requests
-                    .try_send(moth_io::Request {
-                        handle,
-                        side,
-                        format: gpu.registry.image_format(),
-                    })
-                    .is_ok()
-            {
-                self.board.pending.insert(handle, Pending::Preview(blob));
-            }
-        }
-        let jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);
-        let screen = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [size.width, size.height],
-            pixels_per_point: output.pixels_per_point,
+            self.shell.ctx.run_ui(state.take_egui_input(&window), |ui| {
+                if self.overlay.is_none() {
+                    chrome::chrome(
+                        ui,
+                        chrome::Chrome {
+                            board: &mut self.board,
+                            tabs: &self.tabs,
+                            gpu,
+                            library: self.library,
+                            pinned: self.pinned,
+                            catalog: &mut self.catalog,
+                            cards: &self.cards,
+                            library_worker: &self.library_worker,
+                            window: window.as_ref(),
+                        },
+                        &mut actions,
+                        &mut intents,
+                    );
+                }
+                if !self.library {
+                    canvas::canvas(
+                        ui,
+                        canvas::Canvas {
+                            board: &mut self.board,
+                            tools: &mut self.tools,
+                            editing: &mut self.editing,
+                            drag: self.drag,
+                            moving: self.moving,
+                            gpu,
+                            overlay: self.overlay.is_some(),
+                        },
+                        &mut actions,
+                        &mut intents,
+                    );
+                }
+                self.modal.show(
+                    ui,
+                    &self.board,
+                    &self.recovery_paths,
+                    self.tools.auto_arrange,
+                    self.tools.default_arrange,
+                    &mut intents,
+                );
+            })
         };
-        for (id, delta) in &output.textures_delta.set {
-            for part in delta {
-                gpu.registry
-                    .ui
-                    .update_texture(&gpu.device, &gpu.queue, *id, part);
-            }
-        }
-        let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        let buffers =
-            gpu.registry
-                .ui
-                .update_buffers(&gpu.device, &gpu.queue, &mut encoder, &jobs, &screen);
-        let view = texture.texture.create_view(&Default::default());
-        let scale = output.pixels_per_point;
-        let draw_result = gpu.registry.draw(
-            &gpu.device,
-            &gpu.queue,
-            moth_render::Target {
-                grid: !self.library && !self.board.scene.is_empty() && self.overlay.is_none(),
-                opacity: self.overlay.as_ref().map_or(1., |overlay| overlay.opacity),
-                view: &view,
-                screen: [size.width as f32 / scale, size.height as f32 / scale],
-                clip: Some(canvas::canvas_clip(
-                    self.board.viewport,
-                    scale,
-                    [size.width, size.height],
-                )),
-                clear: if self.overlay.is_some() {
-                    wgpu::Color::TRANSPARENT
-                } else if !self.tools.dark {
-                    wgpu::Color {
-                        r: 0.9,
-                        g: 0.91,
-                        b: 0.93,
-                        a: 1.,
-                    }
-                } else {
-                    wgpu::Color {
-                        r: 17. / 255.,
-                        g: 19. / 255.,
-                        b: 23. / 255.,
-                        a: 1.,
-                    }
-                },
-            },
-            &visible,
-            self.board.camera,
-        );
-        if let Err(error) = draw_result {
-            for id in &output.textures_delta.free {
-                gpu.registry.ui.free_texture(id);
-            }
-            output.textures_delta.clear();
-            return Err(error.into());
-        }
-        {
-            let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("UI"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                ..Default::default()
-            });
-            gpu.registry
-                .ui
-                .render(&mut pass.forget_lifetime(), &jobs, &screen);
-        }
-        gpu.queue
-            .submit(buffers.into_iter().chain([encoder.finish()]));
-        window.pre_present_notify();
-        gpu.queue.present(texture);
-        for id in &output.textures_delta.free {
-            gpu.registry.ui.free_texture(id);
-        }
-        output.textures_delta.clear();
-        self.deadline = output
-            .viewport_output
-            .get(&egui::ViewportId::ROOT)
-            .and_then(|o| Instant::now().checked_add(o.repaint_delay));
         intents.extend(intent::intents_from_actions(actions));
         for intent in intents {
             self.apply(intent, event_loop);
+        }
+        // Visible items and decode requests are document work, not rendering.
+        let visible = {
+            let gpu = self.shell.gpu.as_ref();
+            let Some(gpu) = gpu else {
+                return Ok(());
+            };
+            let p = self
+                .board
+                .camera
+                .world([self.board.viewport.min.x, self.board.viewport.min.y]);
+            let visible = self.board.scene.query(Rect {
+                x: p[0],
+                y: p[1],
+                width: if self.library {
+                    0.
+                } else {
+                    self.board.viewport.width() / self.board.camera.zoom
+                },
+                height: self.board.viewport.height() / self.board.camera.zoom,
+            });
+            for item in &visible {
+                // Notes have no source bytes; only images request decode previews.
+                let Some(blob) = item.blob() else {
+                    continue;
+                };
+                let side = moth_render::preview_side(
+                    item.rect.width.max(item.rect.height)
+                        * self.board.camera.zoom
+                        * output.pixels_per_point,
+                );
+                if !gpu.registry.resident(blob, side)
+                    && let Some(&handle) = self.board.sources.get(&blob)
+                    && !self.board.pending.contains_key(&handle)
+                    && !self.board.failed.contains(&handle)
+                    && self
+                        .board
+                        .decode
+                        .requests
+                        .try_send(moth_io::Request {
+                            handle,
+                            side,
+                            format: gpu.registry.image_format(),
+                        })
+                        .is_ok()
+                {
+                    self.board.pending.insert(handle, Pending::Preview(blob));
+                }
+            }
+            visible
+        };
+        let frame = shell::Frame {
+            grid: !self.library && !self.board.scene.is_empty() && self.overlay.is_none(),
+            opacity: self.overlay.as_ref().map_or(1., |overlay| overlay.opacity),
+            clear: if self.overlay.is_some() {
+                wgpu::Color::TRANSPARENT
+            } else if !self.tools.dark {
+                wgpu::Color {
+                    r: 0.9,
+                    g: 0.91,
+                    b: 0.93,
+                    a: 1.,
+                }
+            } else {
+                wgpu::Color {
+                    r: 17. / 255.,
+                    g: 19. / 255.,
+                    b: 23. / 255.,
+                    a: 1.,
+                }
+            },
+            viewport: self.board.viewport,
+            grayscale: self.tools.grayscale,
+        };
+        match self
+            .shell
+            .render(output, &visible, self.board.camera, frame)?
+        {
+            shell::Present::Presented => {}
+            shell::Present::Recovered => {
+                self.cards.clear();
+                self.catalog.dismiss_editor();
+                self.redraw();
+                return Ok(());
+            }
+            shell::Present::Skipped => return Ok(()),
         }
         Ok(())
     }
 }
 impl ApplicationHandler<Wake> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_none() {
+        if self.shell.window.is_none() {
             match event_loop.create_window(
                 Window::default_attributes()
                     .with_title(moth_ui::text(moth_ui::Text::Title))
@@ -1738,7 +1648,7 @@ impl ApplicationHandler<Wake> for App {
                     .with_transparent(true)
                     .with_inner_size(winit::dpi::LogicalSize::new(1440., 900.)),
             ) {
-                Ok(w) => self.window = Some(Arc::new(w)),
+                Ok(w) => self.shell.window = Some(Arc::new(w)),
                 Err(e) => {
                     tracing::error!(%e,"window creation failed");
                     self.startup_error = Some(e.into());
@@ -1747,11 +1657,11 @@ impl ApplicationHandler<Wake> for App {
                 }
             }
         }
-        if let Some(window) = &self.window
+        if let Some(window) = &self.shell.window
             && let Err(error) = self.input.attach(
                 window.clone(),
                 event_loop.owned_display_handle(),
-                self.wake.clone(),
+                self.shell.wake.clone(),
             )
         {
             tracing::warn!(%error, "native input startup failed");
@@ -1780,8 +1690,8 @@ impl ApplicationHandler<Wake> for App {
         self.drag_pointer = None;
         self.gestures.cancel();
         self.command = false;
-        self.gpu = None;
-        self.egui = None;
+        self.shell.gpu = None;
+        self.shell.egui = None;
     }
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Wake) {
         tracing::trace!(?event, "wake");
@@ -1801,7 +1711,8 @@ impl ApplicationHandler<Wake> for App {
                 if delay.is_zero() {
                     self.redraw();
                 } else if let Some(deadline) = Instant::now().checked_add(delay) {
-                    self.deadline = Some(self.deadline.map_or(deadline, |d| d.min(deadline)));
+                    self.shell.deadline =
+                        Some(self.shell.deadline.map_or(deadline, |d| d.min(deadline)));
                 }
             }
         }
@@ -1822,7 +1733,7 @@ impl ApplicationHandler<Wake> for App {
                     overlay.event(&event);
                 }
                 if overlay.applied != (overlay.on_top, overlay.click_through) {
-                    if let Some(window) = &self.window
+                    if let Some(window) = &self.shell.window
                         && let Err(error) = moth_platform::Desktop.window_effects(
                             window,
                             true,
@@ -1843,10 +1754,10 @@ impl ApplicationHandler<Wake> for App {
             self.redraw();
             return;
         }
-        let Some(window) = self.window.clone() else {
+        let Some(window) = self.shell.window.clone() else {
             return;
         };
-        if let Some(state) = &mut self.egui {
+        if let Some(state) = &mut self.shell.egui {
             let response = state.on_window_event(&window, &event);
             if matches!(event, WindowEvent::ModifiersChanged(_)) {
                 self.command = state
@@ -1880,14 +1791,15 @@ impl ApplicationHandler<Wake> for App {
                 }
             }
             WindowEvent::Resized(size) => {
-                if let Some(gpu) = &mut self.gpu {
+                if let Some(gpu) = &mut self.shell.gpu {
                     gpu.resize(size.width, size.height);
                 }
                 self.redraw();
             }
             WindowEvent::CloseRequested => self.request_close(true),
             WindowEvent::Focused(false) => {
-                if let (Some((kind, id)), Some(state)) = (self.native_pressed, &mut self.egui) {
+                if let (Some((kind, id)), Some(state)) = (self.native_pressed, &mut self.shell.egui)
+                {
                     pen_ui(
                         state.egui_input_mut(),
                         moth_platform::input::Pointer {
@@ -1918,7 +1830,7 @@ impl ApplicationHandler<Wake> for App {
                     return;
                 }
                 if self.command
-                    && !self.ctx.egui_wants_keyboard_input()
+                    && !self.shell.ctx.egui_wants_keyboard_input()
                     && event.physical_key == PhysicalKey::Code(KeyCode::KeyN)
                 {
                     self.new_board();
@@ -1940,7 +1852,7 @@ impl ApplicationHandler<Wake> for App {
                 {
                     self.toggle_overlay(event_loop);
                 } else if self.command
-                    && !self.ctx.egui_wants_keyboard_input()
+                    && !self.shell.ctx.egui_wants_keyboard_input()
                     && (event.physical_key == PhysicalKey::Code(KeyCode::KeyV)
                         || matches!(event.logical_key,Key::Character(ref c) if c.eq_ignore_ascii_case("v")))
                 {
@@ -1962,18 +1874,18 @@ impl ApplicationHandler<Wake> for App {
                         ));
                     }
                 } else if self.command
-                    && !self.ctx.egui_wants_keyboard_input()
+                    && !self.shell.ctx.egui_wants_keyboard_input()
                     && event.physical_key == PhysicalKey::Code(KeyCode::KeyZ)
                     && self.board.in_flight == 0
                 {
                     self.persist(moth_platform::boards::Request::Undo);
                 } else if self.command
-                    && !self.ctx.egui_wants_keyboard_input()
+                    && !self.shell.ctx.egui_wants_keyboard_input()
                     && event.physical_key == PhysicalKey::Code(KeyCode::KeyY)
                     && self.board.in_flight == 0
                 {
                     self.persist(moth_platform::boards::Request::Redo);
-                } else if !self.ctx.egui_wants_keyboard_input()
+                } else if !self.shell.ctx.egui_wants_keyboard_input()
                     && !self.command
                     && self.board.idle()
                     && matches!(
@@ -1986,7 +1898,7 @@ impl ApplicationHandler<Wake> for App {
                         )
                     )
                 {
-                    let distance = if self.ctx.input(|i| i.modifiers.shift) {
+                    let distance = if self.shell.ctx.input(|i| i.modifiers.shift) {
                         10.
                     } else {
                         1.
@@ -2007,7 +1919,7 @@ impl ApplicationHandler<Wake> for App {
                     self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
                 } else if let Some(commands) = self.transform_keys(&event) {
                     if event.physical_key == PhysicalKey::Code(KeyCode::Digit0)
-                        && self.ctx.input(|i| i.modifiers.shift)
+                        && self.shell.ctx.input(|i| i.modifiers.shift)
                     {
                         self.persist(moth_platform::boards::Request::OriginalGeometry {
                             ids: self.board.selection.iter().copied().collect(),
@@ -2016,17 +1928,17 @@ impl ApplicationHandler<Wake> for App {
                     } else {
                         self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
                     }
-                } else if !self.ctx.egui_wants_keyboard_input()
+                } else if !self.shell.ctx.egui_wants_keyboard_input()
                     && event.logical_key == Key::Character("v".into())
                 {
                     self.board.pan = false;
                     self.redraw();
-                } else if !self.ctx.egui_wants_keyboard_input()
+                } else if !self.shell.ctx.egui_wants_keyboard_input()
                     && event.logical_key == Key::Character("h".into())
                 {
                     self.board.pan = true;
                     self.redraw();
-                } else if !self.ctx.egui_wants_keyboard_input()
+                } else if !self.shell.ctx.egui_wants_keyboard_input()
                     && event.logical_key == Key::Named(NamedKey::Home)
                 {
                     self.fit();
@@ -2036,9 +1948,9 @@ impl ApplicationHandler<Wake> for App {
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if let Some(deadline) = self.deadline {
+        if let Some(deadline) = self.shell.deadline {
             if deadline <= Instant::now() {
-                self.deadline = None;
+                self.shell.deadline = None;
                 self.redraw();
                 event_loop.set_control_flow(ControlFlow::Wait);
             } else if deadline.duration_since(Instant::now()) < Duration::from_secs(3600) {

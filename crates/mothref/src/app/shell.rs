@@ -1,0 +1,193 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Renderer lifetime: the surface, egui state and one frame's draw+present.
+use std::{sync::Arc, time::Instant};
+
+use winit::{event_loop::EventLoopProxy, window::Window};
+
+use super::{Wake, canvas};
+use crate::gpu::Gpu;
+use moth_scene::{Camera, Item};
+
+/// The canvas draw parameters that do not depend on the per-frame surface view.
+#[derive(Clone, Copy)]
+pub(super) struct Frame {
+    /// Draw the decorative grid when a board is visible.
+    pub grid: bool,
+    /// Global viewing opacity (overlay mode).
+    pub opacity: f32,
+    /// Clear colour for the canvas attachment.
+    pub clear: wgpu::Color,
+    /// Canvas viewport in logical pixels, for the clip rectangle.
+    pub viewport: egui::Rect,
+    /// View-only grayscale, never changes board content.
+    pub grayscale: bool,
+}
+
+/// How a render attempt ended, so the caller can react without reaching into the GPU.
+pub(super) enum Present {
+    /// A frame was drawn and presented.
+    Presented,
+    /// The surface or device was lost; the renderer was rebuilt.
+    Recovered,
+    /// Nothing to draw: zero-sized, occluded or timed out.
+    Skipped,
+}
+
+/// Owns the window surface, GPU device, egui context and frame deadline.
+pub(super) struct Shell {
+    pub(super) window: Option<Arc<Window>>,
+    pub(super) gpu: Option<Gpu>,
+    pub(super) ctx: egui::Context,
+    pub(super) egui: Option<egui_winit::State>,
+    pub(super) software: bool,
+    pub(super) wake: Arc<dyn Fn() + Send + Sync>,
+    pub(super) proxy: EventLoopProxy<Wake>,
+    pub(super) deadline: Option<Instant>,
+}
+
+impl Shell {
+    /// Whether the GPU device was lost since the last frame.
+    pub(super) fn lost(&self) -> bool {
+        self.gpu
+            .as_ref()
+            .is_some_and(|g| g.lost.load(std::sync::atomic::Ordering::Acquire))
+    }
+
+    /// Recreates the egui context and the GPU/egui state, keeping scene data intact.
+    pub(super) fn recover(&mut self) -> anyhow::Result<()> {
+        self.gpu = None;
+        self.ctx = egui::Context::default();
+        moth_ui::theme(&self.ctx);
+        let proxy = self.proxy.clone();
+        self.ctx.set_request_repaint_callback(move |info| {
+            let _ = proxy.send_event(Wake::Repaint(info.delay));
+        });
+        if let Some(window) = &self.window {
+            self.gpu = Some(pollster::block_on(Gpu::new(
+                window.clone(),
+                self.wake.clone(),
+                self.software,
+            ))?);
+            self.egui = Some(egui_winit::State::new(
+                self.ctx.clone(),
+                egui::ViewportId::ROOT,
+                window.as_ref(),
+                Some(window.scale_factor() as f32),
+                window.theme(),
+                Some(2048),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Tessellates, draws and presents one frame, updating the deadline.
+    pub(super) fn render(
+        &mut self,
+        mut output: egui::FullOutput,
+        items: &[&Item],
+        camera: Camera,
+        frame: Frame,
+    ) -> anyhow::Result<Present> {
+        let Some(window) = &self.window else {
+            return Ok(Present::Skipped);
+        };
+        let size = window.inner_size();
+        if size.width == 0 || size.height == 0 {
+            return Ok(Present::Skipped);
+        }
+        if let Some(state) = &mut self.egui {
+            state.handle_platform_output(window, output.platform_output);
+        }
+        let Some(gpu) = &mut self.gpu else {
+            return Ok(Present::Skipped);
+        };
+        let texture = match gpu.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
+                self.recover()?;
+                return Ok(Present::Recovered);
+            }
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(Present::Skipped);
+            }
+            _ => return Err(anyhow::anyhow!("Surface validation failed")),
+        };
+        gpu.registry.grayscale = frame.grayscale;
+        let jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);
+        let screen = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [size.width, size.height],
+            pixels_per_point: output.pixels_per_point,
+        };
+        for (id, delta) in &output.textures_delta.set {
+            for part in delta {
+                gpu.registry
+                    .ui
+                    .update_texture(&gpu.device, &gpu.queue, *id, part);
+            }
+        }
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        let buffers =
+            gpu.registry
+                .ui
+                .update_buffers(&gpu.device, &gpu.queue, &mut encoder, &jobs, &screen);
+        let view = texture.texture.create_view(&Default::default());
+        let scale = output.pixels_per_point;
+        let draw_result = gpu.registry.draw(
+            &gpu.device,
+            &gpu.queue,
+            moth_render::Target {
+                grid: frame.grid,
+                opacity: frame.opacity,
+                view: &view,
+                screen: [size.width as f32 / scale, size.height as f32 / scale],
+                clip: Some(canvas::canvas_clip(
+                    frame.viewport,
+                    scale,
+                    [size.width, size.height],
+                )),
+                clear: frame.clear,
+            },
+            items,
+            camera,
+        );
+        if let Err(error) = draw_result {
+            for id in &output.textures_delta.free {
+                gpu.registry.ui.free_texture(id);
+            }
+            output.textures_delta.clear();
+            return Err(error.into());
+        }
+        {
+            let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("UI"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            gpu.registry
+                .ui
+                .render(&mut pass.forget_lifetime(), &jobs, &screen);
+        }
+        gpu.queue
+            .submit(buffers.into_iter().chain([encoder.finish()]));
+        window.pre_present_notify();
+        gpu.queue.present(texture);
+        for id in &output.textures_delta.free {
+            gpu.registry.ui.free_texture(id);
+        }
+        output.textures_delta.clear();
+        self.deadline = output
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .and_then(|o| Instant::now().checked_add(o.repaint_delay));
+        Ok(Present::Presented)
+    }
+}

@@ -20,12 +20,12 @@ after each, workspace-wide checks once at the end.
   Every direct assignment inside `run_ui` becomes an intent. Widget-local input
   (`&mut String` / `&mut bool` text fields, `board.view.pan` in the toolbar) stays.
   The `tools.preference_dirty` / `tools.fit` mailboxes become intents from `Tools::show`.
-- [ ] **Step 3 — Extract UI sections from `frame()`.**
+- [x] **Step 3 — Extract UI sections from `frame()`.**
   `app/chrome.rs` (toolbar/tabs/status), `app/canvas.rs` (CentralPanel: notes,
   selection, overlays), `app/modal.rs` (board_path, confirm_close, arrange_prompt,
   recovery). `draw_note` / `measure_note` / `screen_corners` / `canvas_clip` move to
   `canvas.rs`. `frame()` reads as surface check → results → run_ui → apply → render.
-- [ ] **Step 4 — Rendering moves into `Shell::render`.**
+- [x] **Step 4 — Rendering moves into `Shell::render`.**
   Surface texture, Lost/Outdated/Occluded, egui buffers, `registry.draw`, present,
   free egui textures, deadline. Visible-item collection and LOD requests stay outside.
 - [ ] **Step 5 — Tabs and worker results move into `Workspace`.**
