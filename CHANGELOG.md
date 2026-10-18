@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add canvas cursors and mouse/pen hover outlines, animated toolbar/tab feedback and a subtle library-card lift.
+
 - Animate item entry, removal and acknowledged arrangement/undo geometry changes using bounded presentation copies.
 
 - Smooth discrete wheel zoom around the pointer and fit/focus transitions; keep continuous input direct and add touch-pan inertia.

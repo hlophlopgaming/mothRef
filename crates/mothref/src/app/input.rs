@@ -7,6 +7,7 @@ pub(super) struct InputState {
     pub adapter: Adapter,
     pub gestures: Gestures,
     pub cursor: Option<[f32; 2]>,
+    pub hover: bool,
     pub command: bool,
     pub native_pressed: Option<(Kind, u64)>,
 }

@@ -917,6 +917,8 @@ impl App {
                 }
             }
             Input::Pointer(p) => {
+                self.input.hover = p.kind == moth_platform::input::Kind::Mouse
+                    || (p.kind == moth_platform::input::Kind::Pen && p.pressure == 0.);
                 if p.phase == Phase::Down
                     && self
                         .shell
@@ -1040,12 +1042,6 @@ impl App {
                                     item.rect.contains_rotated(item.transform.rotation, world)
                                 })
                             {
-                                self.motion.start(
-                                    world,
-                                    item.rect.width.hypot(item.rect.height)
-                                        * self.workspace.board.view.camera.zoom,
-                                );
-                                self.motion.sample(p.position[0], Instant::now());
                                 self.moving = Some((item.id, item.rect));
                                 self.drag_duplicate =
                                     self.shell.context().input(|i| i.modifiers.alt);
@@ -1056,6 +1052,27 @@ impl App {
                                     self.workspace.board.selection.insert(item.id);
                                 }
                             }
+                        }
+                        if self.moving.is_some() {
+                            let mut bounds = egui::Rect::NOTHING;
+                            for item in self
+                                .workspace
+                                .board
+                                .selection
+                                .iter()
+                                .filter_map(|id| self.workspace.board.scene.get(*id))
+                            {
+                                let corners = item.rect.rotated_envelope(item.transform.rotation);
+                                bounds = bounds.union(egui::Rect::from_min_max(
+                                    egui::pos2(corners.lower()[0], corners.lower()[1]),
+                                    egui::pos2(corners.upper()[0], corners.upper()[1]),
+                                ));
+                            }
+                            self.motion.start(
+                                self.workspace.board.view.camera.world(p.position),
+                                bounds.size().length() * self.workspace.board.view.camera.zoom,
+                            );
+                            self.motion.sample(p.position[0], Instant::now());
                         }
                         self.drag = Some((
                             p.position,
@@ -1162,7 +1179,9 @@ impl App {
                 .selection
                 .iter()
                 .take(301)
-                .filter_map(|id| self.workspace.board.scene.get(*id).cloned())
+                .filter_map(|id| self.workspace.board.scene.get(*id))
+                .filter(|item| motion::copyable(item))
+                .cloned()
                 .collect();
             let zoom = self.workspace.board.view.camera.zoom;
             self.motion.cancel(
@@ -1261,6 +1280,9 @@ impl App {
                             editing: &mut self.editing,
                             drag: self.drag,
                             moving: self.moving,
+                            pointer: self.input.cursor.filter(|_| self.input.hover),
+                            motion: &self.motion,
+                            duplicate: self.drag_duplicate,
                             gpu,
                             overlay: self.overlay.is_some(),
                         },
@@ -1315,9 +1337,8 @@ impl App {
                     .iter()
                     .filter_map(|id| self.workspace.board.scene.get(*id))
                     .map(|item| {
-                        let mut item = item.clone();
-                        item.rect = canvas::preview_rect(item.rect, self.drag, camera.zoom);
-                        item
+                        self.motion
+                            .preview(item, self.drag, camera.zoom, self.tools.reduced_motion)
                     })
                     .collect()
             } else {
@@ -1336,6 +1357,9 @@ impl App {
                 .into_iter()
                 .filter(|item| !drag_ids.contains(&item.id)),
         );
+        if self.workspace.library {
+            previews.clear();
+        }
         let preview_ids: HashSet<_> = previews.iter().map(|item| item.id).collect();
         let mut visible = self.workspace.board.visible(
             &gpu.registry,

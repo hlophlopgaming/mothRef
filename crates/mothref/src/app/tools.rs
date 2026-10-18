@@ -123,7 +123,10 @@ impl Tools {
     }
     pub fn preferences(&self) -> Vec<(&'static str, String)> {
         vec![
-            ("reduced_motion", self.reduced_motion.to_string()),
+            (
+                moth_platform::settings::REDUCED_MOTION,
+                self.reduced_motion.to_string(),
+            ),
             ("wheel", self.wheel.to_string()),
             ("scale_with_window", self.scale_with_window.to_string()),
             ("undo_limit", self.undo_limit.to_string()),
@@ -137,7 +140,7 @@ impl Tools {
     }
     pub fn load(&mut self, values: &std::collections::BTreeMap<String, String>) {
         self.reduced_motion = values
-            .get("reduced_motion")
+            .get(moth_platform::settings::REDUCED_MOTION)
             .and_then(|v| v.parse().ok())
             .unwrap_or(false);
         self.wheel = values
@@ -193,12 +196,11 @@ impl Tools {
         let mut export = None;
         let mut note = false;
         let mut intents = Vec::new();
-        if !self.open {
-            return (commands, export, note, intents);
-        }
         let mut open = self.open;
         egui::Window::new(text(Text::Tools))
             .open(&mut open)
+            .fade_in(!self.reduced_motion)
+            .fade_out(!self.reduced_motion)
             .default_width(280.)
             .max_width(ui.content_rect().width().max(1.))
             .max_height(ui.content_rect().height().max(1.))

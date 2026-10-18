@@ -306,6 +306,36 @@ fn pair(t: &[(u64, [f32; 2])]) -> Option<([f32; 2], f32)> {
 mod tests {
     use super::*;
     #[test]
+    fn continuous_wheel_input_preserves_device_intent() {
+        let mut adapter = Adapter::default();
+        let event = WindowEvent::MouseWheel {
+            device_id: winit::event::DeviceId::dummy(),
+            delta: MouseScrollDelta::PixelDelta(winit::dpi::PhysicalPosition::new(0., 20.)),
+            phase: TouchPhase::Moved,
+        };
+        assert!(matches!(
+            adapter.event(&event, 1.),
+            Some(Input::Zoom {
+                continuous: true,
+                ..
+            })
+        ));
+        adapter.wheel = 1;
+        let event = WindowEvent::MouseWheel {
+            device_id: winit::event::DeviceId::dummy(),
+            delta: MouseScrollDelta::PixelDelta(winit::dpi::PhysicalPosition::new(0., 0.)),
+            phase: TouchPhase::Ended,
+        };
+        assert!(matches!(
+            adapter.event(&event, 1.),
+            Some(Input::Pan {
+                continuous: true,
+                finished: true,
+                ..
+            })
+        ));
+    }
+    #[test]
     fn wheel_preferences_and_modifiers_route_through_normalized_pan() {
         let event = WindowEvent::MouseWheel {
             device_id: winit::event::DeviceId::dummy(),

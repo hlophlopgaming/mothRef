@@ -87,7 +87,7 @@ impl CameraMotion {
                 )
                 .as_secs_f32()
                 .max(0.001);
-            for (_, delta) in &self.samples {
+            for (_, delta) in self.samples.iter().skip(1) {
                 for (v, d) in self.velocity.iter_mut().zip(delta) {
                     *v += d / dt;
                 }
@@ -148,6 +148,28 @@ fn interpolate(from: Camera, to: Camera, anchor: Option<[f32; 2]>, t: f32) -> Ca
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn inertia_expires_and_stationary_release_does_not_glide() {
+        let now = Instant::now();
+        let mut motion = CameraMotion::default();
+        let mut camera = Camera::default();
+        motion.pan_sample([10., 0.], now);
+        motion.pan_sample([10., 0.], now + Duration::from_millis(20));
+        motion.release(now + Duration::from_millis(100), false);
+        assert_eq!(motion.velocity, [0.; 2]);
+        motion.pan_sample([10., 0.], now);
+        motion.pan_sample([10., 0.], now + Duration::from_millis(20));
+        motion.release(now + Duration::from_millis(21), false);
+        assert!(motion.velocity[0] > 0.);
+        for frame in 1..=240 {
+            motion.step(
+                &mut camera,
+                now + Duration::from_secs_f32(frame as f32 / 120.),
+                false,
+            );
+        }
+        assert!(!motion.step(&mut camera, now + Duration::from_secs(3), false));
+    }
     #[test]
     fn wheel_anchor_stays_fixed_and_fit_finishes_exactly() {
         let from = Camera {

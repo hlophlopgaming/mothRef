@@ -308,6 +308,20 @@ impl Library {
                                             egui::vec2(width, preview_height),
                                             egui::Sense::click(),
                                         );
+                                        let lift = ui.ctx().animate_bool_with_time(
+                                            response.id.with("lift"),
+                                            response.hovered(),
+                                            ui.style().animation_time,
+                                        );
+                                        let rect = egui::Rect::from_center_size(
+                                            rect.center() - egui::vec2(0., lift * 2.),
+                                            rect.size() * (1. + lift * 0.01),
+                                        );
+                                        ui.painter().rect_filled(
+                                            rect.translate(egui::vec2(0., 3. * lift)),
+                                            10.,
+                                            Color32::BLACK.gamma_multiply(0.2 * lift),
+                                        );
                                         ui.painter().rect_filled(rect, 10., BACKGROUND);
                                         if c.previews.is_empty() {
                                             icons::paint(ui, rect, Icon::Image, MUTED);
@@ -351,11 +365,11 @@ impl Library {
                                                 Color32::WHITE,
                                             );
                                         }
-                                        if response.hovered() {
+                                        if lift > 0. {
                                             ui.painter().rect_stroke(
                                                 rect,
                                                 10.,
-                                                egui::Stroke::new(1., ACCENT),
+                                                egui::Stroke::new(1., ACCENT.gamma_multiply(lift)),
                                                 egui::StrokeKind::Inside,
                                             );
                                         }

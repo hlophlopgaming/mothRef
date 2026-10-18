@@ -221,9 +221,30 @@ pub fn button(ui: &mut Ui, icon: Icon, label: &str, selected: bool) -> Response 
             }))
             .selected(selected),
     );
+    let hover = ui.ctx().animate_bool_with_time(
+        response.id.with("hover"),
+        response.hovered(),
+        ui.style().animation_time,
+    );
+    let pressed = ui.ctx().animate_bool_with_time(
+        response.id.with("pressed"),
+        response.is_pointer_button_down_on(),
+        ui.style().animation_time,
+    );
+    if hover > 0. || pressed > 0. {
+        ui.painter().rect_stroke(
+            response.rect.shrink(1.),
+            5.,
+            Stroke::new(
+                1. + pressed,
+                super::ACCENT.gamma_multiply(hover * 0.5 + pressed * 0.5),
+            ),
+            egui::StrokeKind::Inside,
+        );
+    }
     paint(
         ui,
-        response.rect,
+        response.rect.translate(egui::vec2(0., -hover + pressed)),
         icon,
         if selected {
             super::ACCENT

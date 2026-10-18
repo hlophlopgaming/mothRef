@@ -133,10 +133,15 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                                     };
                                     let response =
                                         ui.selectable_label(tab.active && !status.library, label);
-                                    if tab.active && !status.library {
+                                    let emphasis = ui.ctx().animate_bool_with_time(
+                                        response.id.with("emphasis"),
+                                        response.hovered() || (tab.active && !status.library),
+                                        ui.style().animation_time,
+                                    );
+                                    if emphasis > 0. {
                                         ui.painter().line_segment(
                                             [response.rect.left_top(), response.rect.right_top()],
-                                            egui::Stroke::new(2., ACCENT),
+                                            egui::Stroke::new(2., ACCENT.gamma_multiply(emphasis)),
                                         );
                                     }
                                     if response.clicked() {

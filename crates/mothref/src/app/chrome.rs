@@ -65,8 +65,16 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
         &mut ctx.board.view.pan,
         &tab_labels,
     );
+    let opacity = ui.ctx().animate_bool_with_time(
+        egui::Id::new("library_visibility"),
+        ctx.library,
+        ui.style().animation_time * 1.4,
+    );
     if ctx.library {
+        let previous_opacity = ui.opacity();
+        ui.multiply_opacity(opacity);
         let intent = ctx.catalog.show(ui, ctx.cards);
+        ui.set_opacity(previous_opacity);
         actions.new |= intent.new;
         actions.open |= intent.browse;
         if let Some(index) = intent.open {

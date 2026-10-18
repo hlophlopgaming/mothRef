@@ -6,6 +6,9 @@ use std::{
     io::{self, Read},
     path::Path,
 };
+/// Persistent accessibility preference; absent means motion is enabled.
+pub const REDUCED_MOTION: &str = "reduced_motion";
+
 /// Reads `settings.txt` into a `key=value` map; missing files read as empty.
 pub fn load(directory: &Path) -> io::Result<BTreeMap<String, String>> {
     std::fs::create_dir_all(directory)?;

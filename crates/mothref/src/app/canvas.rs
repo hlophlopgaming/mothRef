@@ -12,6 +12,9 @@ pub(super) struct Canvas<'a> {
     pub editing: &'a mut Option<Editing>,
     pub drag: Option<([f32; 2], [f32; 2], bool)>,
     pub moving: Option<(Uuid, Rect)>,
+    pub pointer: Option<[f32; 2]>,
+    pub motion: &'a super::motion::DragMotion,
+    pub duplicate: bool,
     pub gpu: &'a Gpu,
     pub overlay: bool,
 }
@@ -26,6 +29,9 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
         editing,
         drag,
         moving,
+        pointer,
+        motion,
+        duplicate,
         gpu,
         overlay,
     } = ctx;
@@ -54,6 +60,62 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
+            let hover = pointer
+                .filter(|p| view.viewport.contains(egui::pos2(p[0], p[1])))
+                .and_then(|p| {
+                    let world = view.camera.world(p);
+                    board
+                        .scene
+                        .query(Rect {
+                            x: world[0],
+                            y: world[1],
+                            width: 1. / view.camera.zoom,
+                            height: 1. / view.camera.zoom,
+                        })
+                        .into_iter()
+                        .rev()
+                        .find(|item| item.rect.contains_rotated(item.transform.rotation, world))
+                        .map(|item| item.id)
+                });
+            let over_canvas =
+                pointer.is_some_and(|p| view.viewport.contains(egui::pos2(p[0], p[1])));
+            if over_canvas || drag.is_some() {
+                ui.ctx()
+                    .set_cursor_icon(if tools.picking || tools.coordinates {
+                        egui::CursorIcon::Crosshair
+                    } else if drag.is_some_and(|(_, _, pan)| pan) || moving.is_some() {
+                        egui::CursorIcon::Grabbing
+                    } else if view.pan {
+                        egui::CursorIcon::Grab
+                    } else if hover.is_some_and(|id| board.selection.contains(&id)) {
+                        egui::CursorIcon::Move
+                    } else if hover.is_some() {
+                        egui::CursorIcon::Grab
+                    } else {
+                        egui::CursorIcon::Default
+                    });
+            }
+            let hover_key = egui::Id::new("canvas_hover_item");
+            if let Some(id) = hover {
+                ui.ctx().data_mut(|data| data.insert_temp(hover_key, id));
+            }
+            let fade = ui.ctx().animate_bool_with_time(
+                hover_key,
+                hover.is_some() && moving.is_none(),
+                if tools.reduced_motion { 0. } else { 0.09 },
+            );
+            if fade > 0.
+                && let Some(item) = ui
+                    .ctx()
+                    .data(|data| data.get_temp::<Uuid>(hover_key))
+                    .and_then(|id| board.scene.get(id))
+            {
+                let corners = screen_corners(&view.camera, item.rect, item.transform.rotation);
+                ui.painter().add(egui::Shape::closed_line(
+                    vec![corners[0], corners[1], corners[3], corners[2]],
+                    egui::Stroke::new(1., moth_ui::ACCENT.gamma_multiply(fade * 0.65)),
+                ));
+            }
             let previous = view.viewport;
             view.viewport = ui.max_rect();
             if tools.scale_with_window
@@ -83,19 +145,58 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
             let origin = view
                 .camera
                 .world([view.viewport.min.x, view.viewport.min.y]);
-            for item in board.scene.query(Rect {
+            let returning: std::collections::HashMap<_, _> = motion
+                .returning(std::time::Instant::now(), tools.reduced_motion)
+                .into_iter()
+                .map(|item| (item.id, item))
+                .collect();
+            let mut visible = board.scene.query(Rect {
                 x: origin[0],
                 y: origin[1],
                 width: view.viewport.width() / view.camera.zoom,
                 height: view.viewport.height() / view.camera.zoom,
-            }) {
+            });
+
+            let transitions = board.motion.copies(std::time::Instant::now());
+            if moving.is_some() || !transitions.is_empty() || !returning.is_empty() {
+                let mut ids: std::collections::HashSet<_> =
+                    visible.iter().map(|item| item.id).collect();
+                for id in board
+                    .selection
+                    .iter()
+                    .filter(|_| moving.is_some())
+                    .copied()
+                    .chain(transitions.iter().map(|item| item.id))
+                    .chain(returning.keys().copied())
+                {
+                    if ids.insert(id)
+                        && let Some(item) = board.scene.get(id)
+                    {
+                        visible.push(item);
+                    }
+                }
+            }
+            for item in visible {
                 let mut presented = board
                     .motion
                     .get(item.id, std::time::Instant::now())
                     .map(std::borrow::Cow::Owned)
                     .unwrap_or(std::borrow::Cow::Borrowed(item));
                 if moving.is_some() && board.selection.contains(&item.id) && !tools.locked {
-                    presented.to_mut().rect = preview_rect(item.rect, drag, view.camera.zoom);
+                    presented = std::borrow::Cow::Owned(motion.preview(
+                        item,
+                        drag,
+                        view.camera.zoom,
+                        tools.reduced_motion,
+                    ));
+                    if duplicate && item.blob().is_none() {
+                        draw_note(ui, &view.camera, item);
+                    }
+                }
+                if moving.is_none()
+                    && let Some(returning) = returning.get(&item.id).cloned()
+                {
+                    presented = std::borrow::Cow::Owned(returning);
                 }
                 let item = &presented;
                 match item.blob() {
@@ -126,7 +227,12 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     Some(_) => {}
                 }
             }
-            for ghost in board.motion.copies(std::time::Instant::now()) {
+            for ghost in returning.values() {
+                if ghost.blob().is_none() && board.scene.get(ghost.id).is_none() {
+                    draw_note(ui, &view.camera, ghost);
+                }
+            }
+            for ghost in transitions {
                 if ghost.blob().is_none() && board.scene.get(ghost.id).is_none() {
                     draw_note(ui, &view.camera, &ghost);
                 }

@@ -59,3 +59,34 @@ Manual checks pending on Linux, Windows and macOS (mouse, pen and touch):
 - [ ] Enable Reduce motion, restart, and verify the preference persists and motion is instant.
 - [ ] After zoom, fit, drag and import, wait one second: frame tracing stops and CPU returns to idle.
 - [ ] Repeat using --software and a small window.
+
+- [ ] Wheel zoom keeps a marked pixel under the pointer, including repeated ticks during animation.
+- [ ] Pinch/trackpad zoom and mouse/pen/touch pans follow input directly.
+- [ ] Touch/trackpad pan glides after release, but holding still before release and mouse-middle pan do not glide.
+- [ ] Fit, fit selection and focus return land at the same framing as before.
+- [ ] Paste/import/undo/redo/arrange animate; more than 300 changes skip transitions.
+- [ ] Mouse/pen hover fades; touch does not introduce hover actions. Toolbar, tabs, Tools and library feedback settle.
+
+No interactive frame resize handles exist in this branch; resize cursor behavior requires the future resize gesture.
+
+Motion automation uses the existing opacity/rotation GPU golden on a forced
+software adapter. This host initially had no fallback ICD. Mesa vulkan-swrast
+26.2.2 was extracted under ignored `target/software-driver/` (no system or Cargo
+dependency changes). Test invocations use
+`VK_DRIVER_FILES="$PWD/target/software-driver/lvp.json:/usr/share/vulkan/icd.d/radeon_icd.json"`
+to expose both llvmpipe and the normal RADV adapter.
+
+Automated Motion results (2026-10-19):
+
+- Formatting and changed-crate clippy/tests passed after each step.
+- Workspace clippy and tests passed, including the existing renderer goldens.
+- Final focused tests additionally cover a single frame transform for the whole
+  selection, cancellation ending repaint, and release commands preserving rotation.
+- Forced-software opacity/rotation golden passed with the local llvmpipe ICD.
+- `cargo xtask bench --quick`: 10,000 images, 100 frames, p99 5.813 ms,
+  textures 13.32 MiB, AMD Radeon RX 5700 XT / RADV. No comparable pre-change
+  measurement was captured; a percentage regression claim is not established.
+- `cargo xtask soak 300 5`: passed, 2,813 frames; RSS 159,540 KiB initially,
+  plateau 160,024 KiB through the end. It finished before the maintainer asked
+  not to wait five minutes; do not repeat a long soak for this task.
+- Native device behavior and actual idle CPU remain unverified; use the checklist above.
