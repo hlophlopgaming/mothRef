@@ -397,7 +397,7 @@ impl Workspace {
                     self.board.in_flight = self.board.in_flight.saturating_sub(1);
                     match done {
                         Completion::Applied(command, source) => {
-                            match self.board.scene.apply(command) {
+                            match self.board.apply_visual(command) {
                                 Ok(_) => {
                                     if let Some((hash, handle)) = source {
                                         self.board.sources.insert(hash, handle);
@@ -423,7 +423,7 @@ impl Workspace {
                                 })
                                 .collect();
                             for command in commands {
-                                if let Err(e) = self.board.scene.apply(command) {
+                                if let Err(e) = self.board.apply_visual(command) {
                                     self.board.message = e.to_string();
                                 }
                             }
@@ -439,6 +439,7 @@ impl Workspace {
                                 .retain(|id| self.board.scene.get(*id).is_some());
                         }
                         Completion::Opened(scene, sources, recovered) => {
+                            self.board.motion.clear();
                             self.board.scene = scene;
                             self.board.sources = sources;
                             if active {
@@ -455,12 +456,13 @@ impl Workspace {
                             self.board.fit();
                         }
                         Completion::Imported(commands, sources, skipped) => {
+                            self.board.motion.clear();
                             self.board.scene = Scene::default();
                             if active {
                                 pump.events.push(Event::Opened);
                             }
                             for command in commands {
-                                if let Err(e) = self.board.scene.apply(command) {
+                                if let Err(e) = self.board.apply_visual(command) {
                                     self.board.message = e.to_string();
                                 }
                             }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Animate item entry, removal and acknowledged arrangement/undo geometry changes using bounded presentation copies.
+
 - Smooth discrete wheel zoom around the pointer and fit/focus transitions; keep continuous input direct and add touch-pan inertia.
 
 - Add grab-point drag sway, a gentle lift and animated cancellation; add a localized reduced-motion preference.

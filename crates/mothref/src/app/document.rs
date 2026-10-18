@@ -42,6 +42,7 @@ impl View {
 }
 pub(super) struct Document {
     pub(super) view: View,
+    pub(super) motion: super::item_motion::Items,
     ui_id: Uuid,
     storage: Arc<moth_platform::DesktopStorage>,
     decode: moth_io::DecodePool,
@@ -70,6 +71,28 @@ pub(super) struct Document {
     pub(super) arrange_prompt: Option<Vec<Uuid>>,
 }
 impl Document {
+    /// Called only for commands acknowledged by the journal worker.
+    pub(super) fn apply_visual(
+        &mut self,
+        command: Command,
+    ) -> Result<Command, moth_scene::SceneError> {
+        let id = match &command {
+            Command::Insert(item) => Some(item.id),
+            Command::Remove(id) | Command::SetRect { id, .. } => Some(*id),
+            _ => None,
+        };
+        let now = Instant::now();
+        let before = id.and_then(|id| {
+            self.motion
+                .get(id, now)
+                .or_else(|| self.scene.get(id).cloned())
+        });
+        let inverse = self.scene.apply(command)?;
+        if let Some(id) = id {
+            self.motion.record(before, self.scene.get(id).cloned(), now);
+        }
+        Ok(inverse)
+    }
     pub(super) fn boards(&self) -> &moth_platform::boards::Worker {
         &self.boards
     }
@@ -170,6 +193,7 @@ impl Document {
         };
         Ok(Self {
             view: View::default(),
+            motion: super::item_motion::Items::default(),
             ui_id: Uuid::now_v7(),
             storage,
             decode,

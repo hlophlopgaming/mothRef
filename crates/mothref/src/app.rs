@@ -47,6 +47,7 @@ mod chrome;
 mod document;
 mod input;
 mod intent;
+mod item_motion;
 mod library;
 mod modal;
 mod motion;
@@ -66,6 +67,7 @@ pub struct App {
     modal: modal::Modal,
     camera_motion: camera_motion::CameraMotion,
     camera_active: bool,
+    items_active: bool,
     motion: motion::DragMotion,
     moving: Option<(Uuid, Rect)>,
     drag_duplicate: bool,
@@ -106,6 +108,7 @@ impl App {
             modal: modal::Modal::default(),
             camera_motion: camera_motion::CameraMotion::default(),
             camera_active: false,
+            items_active: false,
             motion: motion::DragMotion::default(),
             moving: None,
             drag_duplicate: false,
@@ -1184,6 +1187,11 @@ impl App {
             return Ok(());
         };
         self.results();
+        self.items_active = self
+            .workspace
+            .board
+            .motion
+            .step(Instant::now(), self.tools.reduced_motion);
         self.camera_active = self.camera_motion.step(
             &mut self.workspace.board.view.camera,
             Instant::now(),
@@ -1214,6 +1222,9 @@ impl App {
     fn run_ui(&mut self, window: &Window) -> Option<(egui::FullOutput, Vec<Intent>)> {
         let mut intents: Vec<Intent> = Vec::new();
         let ctx = self.shell.context().clone();
+        ctx.all_styles_mut(|style| {
+            style.animation_time = if self.tools.reduced_motion { 0. } else { 0.1 }
+        });
         let output = {
             let state = self.shell.egui.as_mut();
             let gpu = self.shell.gpu.as_ref();
@@ -1221,7 +1232,7 @@ impl App {
                 return None;
             };
             ctx.run_ui(state.take_egui_input(window), |ui| {
-                if self.motion.frames.active() || self.camera_active {
+                if self.motion.frames.active() || self.camera_active || self.items_active {
                     ui.ctx().request_repaint();
                 }
                 let chrome = if self.overlay.is_none() {
@@ -1316,6 +1327,15 @@ impl App {
             self.motion
                 .returning(Instant::now(), self.tools.reduced_motion),
         );
+        let drag_ids: HashSet<_> = previews.iter().map(|item| item.id).collect();
+        previews.extend(
+            self.workspace
+                .board
+                .motion
+                .copies(Instant::now())
+                .into_iter()
+                .filter(|item| !drag_ids.contains(&item.id)),
+        );
         let preview_ids: HashSet<_> = previews.iter().map(|item| item.id).collect();
         let mut visible = self.workspace.board.visible(
             &gpu.registry,
@@ -1323,9 +1343,10 @@ impl App {
             output.pixels_per_point,
         );
         if !previews.is_empty() {
-            if !self.drag_duplicate || self.moving.is_none() {
-                visible.retain(|item| !preview_ids.contains(&item.id));
-            }
+            visible.retain(|item| {
+                !preview_ids.contains(&item.id)
+                    || (self.drag_duplicate && self.moving.is_some() && drag_ids.contains(&item.id))
+            });
             visible.extend(previews.iter());
             visible.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
         }

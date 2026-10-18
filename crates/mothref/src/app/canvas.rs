@@ -89,6 +89,15 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                 width: view.viewport.width() / view.camera.zoom,
                 height: view.viewport.height() / view.camera.zoom,
             }) {
+                let mut presented = board
+                    .motion
+                    .get(item.id, std::time::Instant::now())
+                    .map(std::borrow::Cow::Owned)
+                    .unwrap_or(std::borrow::Cow::Borrowed(item));
+                if moving.is_some() && board.selection.contains(&item.id) && !tools.locked {
+                    presented.to_mut().rect = preview_rect(item.rect, drag, view.camera.zoom);
+                }
+                let item = &presented;
                 match item.blob() {
                     // Non-resident images show a placeholder until decoded.
                     Some(blob) if !gpu.registry.resident(blob, 1) => {
@@ -115,6 +124,11 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                         }
                     }
                     Some(_) => {}
+                }
+            }
+            for ghost in board.motion.copies(std::time::Instant::now()) {
+                if ghost.blob().is_none() && board.scene.get(ghost.id).is_none() {
+                    draw_note(ui, &view.camera, &ghost);
                 }
             }
             for &id in &board.selection {

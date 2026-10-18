@@ -103,11 +103,14 @@ impl DragMotion {
             item.rect.y + item.rect.height / 2.,
         ];
         let d = [center[0] - anchor[0], center[1] - anchor[1]];
-        let lift = if moving {
-            1. + 0.02 * (1. - (1. - (self.started.elapsed().as_secs_f32() / 0.12).min(1.)).powi(3))
+        let progress = if moving {
+            1. - (1. - (self.started.elapsed().as_secs_f32() / 0.12).min(1.)).powi(3)
         } else {
-            1.
+            self.returning
+                .as_ref()
+                .map_or(0., |(_, _, tween)| tween.value(Instant::now()))
         };
+        let lift = 1. + 0.02 * progress;
         item.rect.width *= lift;
         item.rect.height *= lift;
         item.rect.x = anchor[0] + (d[0] * cos - d[1] * sin) * lift - item.rect.width / 2.;
