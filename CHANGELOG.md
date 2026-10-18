@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add grab-point drag sway, a gentle lift and animated cancellation; add a localized reduced-motion preference.
+
 - Preview the entire selection during dragging, including Alt-drag copies, without changing board data.
 
 - Add view-only motion primitives with exact endpoints and reduced-motion support.

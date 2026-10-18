@@ -5,6 +5,8 @@ use egui::{Color32, Context};
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug)]
 pub enum Text {
+    /// Disable decorative motion and inertial movement.
+    ReducedMotion,
     /// Meaning of the preference difference marker.
     ChangedSetting,
     /// Stable arrangement order.

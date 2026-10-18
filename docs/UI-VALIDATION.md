@@ -47,3 +47,15 @@ cover the whole selection and group into a single undo step. Folder
 filters reflect parent folder names. Full folder management, tab tear-off,
 index watchers, notes, hierarchy, crop and other later-milestone tools remain
 roadmap work. The UI does not expose decorative controls for those features.
+
+## Motion
+
+Manual checks pending on Linux, Windows and macOS (mouse, pen and touch):
+
+- [ ] Drag a rotated image and multiple selected images; verify 1:1 translation and unchanged saved rotations.
+- [ ] Alt-drag leaves originals visible; release has no position jump.
+- [ ] Drag quickly then stop: sway settles; grabbing a corner uses that corner as pivot.
+- [ ] Cancel with Esc, focus loss and pointer cancellation: return without commands.
+- [ ] Enable Reduce motion, restart, and verify the preference persists and motion is instant.
+- [ ] After zoom, fit, drag and import, wait one second: frame tracing stops and CPU returns to idle.
+- [ ] Repeat using --software and a small window.

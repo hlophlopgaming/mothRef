@@ -48,6 +48,7 @@ mod input;
 mod intent;
 mod library;
 mod modal;
+mod motion;
 mod overlay;
 mod shell;
 mod tools;
@@ -62,6 +63,7 @@ pub struct App {
     pinned: bool,
     library_screen: library::LibraryScreen,
     modal: modal::Modal,
+    motion: motion::DragMotion,
     moving: Option<(Uuid, Rect)>,
     drag_duplicate: bool,
     editing: Option<Editing>,
@@ -99,6 +101,7 @@ impl App {
             pinned: false,
             library_screen: library::LibraryScreen::new(library_worker),
             modal: modal::Modal::default(),
+            motion: motion::DragMotion::default(),
             moving: None,
             drag_duplicate: false,
             editing: None,
@@ -166,6 +169,7 @@ impl App {
         self.library_screen.cards.clear();
         self.library_screen.catalog.dismiss_editor();
         self.editing = None;
+        self.motion = motion::DragMotion::default();
         self.drag = None;
         self.moving = None;
         self.drag_pointer = None;
@@ -974,6 +978,12 @@ impl App {
                                     item.rect.contains_rotated(item.transform.rotation, world)
                                 })
                             {
+                                self.motion.start(
+                                    world,
+                                    item.rect.width.hypot(item.rect.height)
+                                        * self.workspace.board.view.camera.zoom,
+                                );
+                                self.motion.sample(p.position[0], Instant::now());
                                 self.moving = Some((item.id, item.rect));
                                 self.drag_duplicate =
                                     self.shell.context().input(|i| i.modifiers.alt);
@@ -993,6 +1003,9 @@ impl App {
                         self.drag_pointer = Some((p.kind, p.id));
                     }
                     Phase::Move => {
+                        if self.moving.is_some() {
+                            self.motion.sample(p.position[0], Instant::now());
+                        }
                         if let Some((_, last, pan)) = self.drag.as_mut() {
                             if *pan {
                                 self.workspace.board.view.camera.origin[0] -= (p.position[0]
@@ -1031,6 +1044,12 @@ impl App {
                                         self.drag_duplicate,
                                         self.workspace.board.scene.top(),
                                     );
+                                    self.motion.release(
+                                        &commands,
+                                        &self.workspace.board.scene,
+                                        [dx, dy],
+                                        self.tools.reduced_motion,
+                                    );
                                     self.workspace.persist_batch(
                                         commands.into_iter().map(|c| (c, None)).collect(),
                                     );
@@ -1059,15 +1078,35 @@ impl App {
                                 .collect();
                         }
                     }
-                    Phase::Cancel => {
-                        self.drag = None;
-                        self.moving = None;
-                        self.drag_pointer = None;
-                    }
+                    Phase::Cancel => self.cancel_drag(),
                     _ => {}
                 }
             }
         }
+    }
+    fn cancel_drag(&mut self) {
+        if self.moving.is_some()
+            && let Some((a, b, false)) = self.drag
+        {
+            let items = self
+                .workspace
+                .board
+                .selection
+                .iter()
+                .take(301)
+                .filter_map(|id| self.workspace.board.scene.get(*id).cloned())
+                .collect();
+            let zoom = self.workspace.board.view.camera.zoom;
+            self.motion.cancel(
+                items,
+                [(b[0] - a[0]) / zoom, (b[1] - a[1]) / zoom],
+                self.tools.reduced_motion,
+            );
+        }
+        self.drag = None;
+        self.moving = None;
+        self.drag_pointer = None;
+        self.redraw();
     }
     fn frame(&mut self, event_loop: &ActiveEventLoop) -> anyhow::Result<()> {
         let _span =
@@ -1079,6 +1118,11 @@ impl App {
             return Ok(());
         };
         self.results();
+        self.motion.step(
+            Instant::now(),
+            self.tools.reduced_motion,
+            self.moving.is_some(),
+        );
         if self.workspace.board.discarded {
             self.finish_close(event_loop)?;
             if self.workspace.closing_window
@@ -1106,6 +1150,9 @@ impl App {
                 return None;
             };
             ctx.run_ui(state.take_egui_input(window), |ui| {
+                if self.motion.frames.active() {
+                    ui.ctx().request_repaint();
+                }
                 let chrome = if self.overlay.is_none() {
                     chrome::chrome(
                         ui,
@@ -1178,7 +1225,7 @@ impl App {
             grayscale: self.tools.grayscale,
         };
         let camera = self.workspace.board.view.camera;
-        let previews: Vec<_> =
+        let mut previews: Vec<_> =
             if self.moving.is_some() && !self.tools.locked && !self.workspace.library {
                 self.workspace
                     .board
@@ -1194,6 +1241,10 @@ impl App {
             } else {
                 Vec::new()
             };
+        previews.extend(
+            self.motion
+                .returning(Instant::now(), self.tools.reduced_motion),
+        );
         let preview_ids: HashSet<_> = previews.iter().map(|item| item.id).collect();
         let mut visible = self.workspace.board.visible(
             &gpu.registry,
@@ -1201,7 +1252,7 @@ impl App {
             output.pixels_per_point,
         );
         if !previews.is_empty() {
-            if !self.drag_duplicate {
+            if !self.drag_duplicate || self.moving.is_none() {
                 visible.retain(|item| !preview_ids.contains(&item.id));
             }
             visible.extend(previews.iter());
@@ -1397,14 +1448,16 @@ impl ApplicationHandler<Wake> for App {
                     );
                 }
                 self.input.native_pressed = None;
-                self.drag = None;
-                self.moving = None;
-                self.drag_pointer = None;
+                self.cancel_drag();
                 self.input.gestures.cancel();
                 self.input.command = false;
             }
             WindowEvent::DroppedFile(path) => self.import(path),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                if event.logical_key == Key::Named(NamedKey::Escape) && self.drag.is_some() {
+                    self.cancel_drag();
+                    return;
+                }
                 if self.modal.dialog.is_some()
                     || self.workspace.confirm_close
                     || self.workspace.board.arrange_prompt.is_some()

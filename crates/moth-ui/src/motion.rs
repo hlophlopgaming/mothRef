@@ -96,6 +96,30 @@ impl Spring {
             self.velocity = 0.;
         }
     }
+    /// Exact underdamped solution for a card hanging from its grab point.
+    pub fn step_damped(&mut self, dt: f32, damping: f32) {
+        if damping >= 1. {
+            self.step(dt);
+            return;
+        }
+        let dt = dt.clamp(0., 0.05);
+        let w = self.stiffness.max(0.).sqrt();
+        let a = w * damping.clamp(0., 0.999);
+        let b = (w * w - a * a).sqrt();
+        if b <= f32::EPSILON {
+            return;
+        }
+        let x = self.value - self.target;
+        let c = (self.velocity + a * x) / b;
+        let (sin, cos) = (b * dt).sin_cos();
+        let decay = (-a * dt).exp();
+        self.value = self.target + decay * (x * cos + c * sin);
+        self.velocity = decay * ((-a * x + b * c) * cos + (-a * c - b * x) * sin);
+        if self.settled() {
+            self.value = self.target;
+            self.velocity = 0.;
+        }
+    }
     /// Snapping negligible tails lets the event loop sleep.
     pub fn settled(&self) -> bool {
         (self.value - self.target).abs() < 0.0001 && self.velocity.abs() < 0.0001

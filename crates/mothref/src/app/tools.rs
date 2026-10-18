@@ -16,6 +16,7 @@ pub(super) struct Tools {
     pub locked: bool,
     pub grayscale: bool,
     pub dark: bool,
+    pub reduced_motion: bool,
     pub ui_scale: f32,
     pub threshold: usize,
     pub undo_limit: usize,
@@ -46,6 +47,7 @@ impl Default for Tools {
             locked: false,
             grayscale: false,
             dark: true,
+            reduced_motion: false,
             ui_scale: 1.,
             threshold: 5,
             undo_limit: 256,
@@ -121,6 +123,7 @@ impl Tools {
     }
     pub fn preferences(&self) -> Vec<(&'static str, String)> {
         vec![
+            ("reduced_motion", self.reduced_motion.to_string()),
             ("wheel", self.wheel.to_string()),
             ("scale_with_window", self.scale_with_window.to_string()),
             ("undo_limit", self.undo_limit.to_string()),
@@ -133,6 +136,10 @@ impl Tools {
         ]
     }
     pub fn load(&mut self, values: &std::collections::BTreeMap<String, String>) {
+        self.reduced_motion = values
+            .get("reduced_motion")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(false);
         self.wheel = values
             .get("wheel")
             .and_then(|v| v.parse().ok())
@@ -201,6 +208,7 @@ impl Tools {
                 ui.collapsing(text(Text::Settings), |ui| {
                     let before = self.preferences();
                     let defaults = Self::default();
+                    ui.checkbox(&mut self.reduced_motion, text(Text::ReducedMotion));
                     let label = preference(
                         Text::ScaleWithWindow,
                         self.scale_with_window != defaults.scale_with_window,

@@ -162,3 +162,5 @@ Volatile = Journaled recovery • PNG / JPEG • previews up to 2048 px
 Close = Discard and close
 Keep = Keep working
 CloseWarning = Save this board before closing? Discard deletes this session’s recovery files.
+
+ReducedMotion = Reduce motion
