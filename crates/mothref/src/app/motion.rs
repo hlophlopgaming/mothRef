@@ -3,6 +3,7 @@
 use super::*;
 use moth_ui::motion::{Ease, Motion, Spring, Tween};
 const MAX_ITEMS: usize = 300;
+pub(super) const DEFAULT_DRAG_OPACITY: f32 = 0.65;
 const SWAY_GAIN: f32 = 0.012 * std::f32::consts::PI / 180.;
 const SWAY_MAX: f32 = 6. * std::f32::consts::PI / 180.;
 const SWAY_STIFFNESS: f32 = 400.;
@@ -14,6 +15,8 @@ pub(super) fn copyable(item: &Item) -> bool {
 
 pub(super) struct DragMotion {
     pub frames: Motion,
+    animated: bool,
+    drag_opacity: f32,
     spring: Spring,
     samples: std::collections::VecDeque<(Instant, f32)>,
     last_sample: Option<Instant>,
@@ -29,6 +32,8 @@ impl Default for DragMotion {
     fn default() -> Self {
         Self {
             frames: Motion::default(),
+            animated: true,
+            drag_opacity: DEFAULT_DRAG_OPACITY,
             spring: Spring {
                 value: 0.,
                 velocity: 0.,
@@ -48,6 +53,10 @@ impl Default for DragMotion {
     }
 }
 impl DragMotion {
+    pub fn configure(&mut self, animated: bool, opacity: f32) {
+        self.animated = animated;
+        self.drag_opacity = opacity;
+    }
     pub fn start(&mut self, anchor: [f32; 2], diag: f32) {
         self.spring.value = 0.;
         self.spring.velocity = 0.;
@@ -77,6 +86,7 @@ impl DragMotion {
         self.last_sample = Some(now);
     }
     pub fn step(&mut self, now: Instant, reduced: bool, moving: bool) {
+        let reduced = reduced || !self.animated;
         self.frame_now = now;
         let dt = self.frames.begin(now, reduced);
         if reduced {
@@ -132,7 +142,10 @@ impl DragMotion {
         item
     }
     pub fn decorate(&self, item: &mut Item, anchor: [f32; 2], reduced: bool, moving: bool) {
-        if reduced {
+        if reduced || !self.animated {
+            if moving {
+                item.transform.opacity *= self.drag_opacity;
+            }
             return;
         }
         let angle = self.spring.value
@@ -168,6 +181,7 @@ impl DragMotion {
         item.transform.rotation += angle;
     }
     pub fn cancel(&mut self, items: Vec<Item>, delta: [f32; 2], reduced: bool) {
+        let reduced = reduced || !self.animated;
         self.awaiting = false;
         self.spring.target = 0.;
         self.release_lift = 1.
@@ -194,6 +208,7 @@ impl DragMotion {
         }
     }
     pub fn release(&mut self, commands: &[Command], scene: &Scene, delta: [f32; 2], reduced: bool) {
+        let reduced = reduced || !self.animated;
         self.spring.target = 0.;
         self.release_lift = 1.
             - (1.
@@ -291,6 +306,48 @@ impl DragMotion {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn disabled_animation_fades_only_the_live_preview() {
+        let mut scene = Scene::default();
+        let mut source = Item::text(
+            "reference",
+            Rect {
+                x: 10.,
+                y: 20.,
+                width: 40.,
+                height: 60.,
+            },
+            None,
+        );
+        source.transform.opacity = 0.8;
+        source.transform.rotation = 0.4;
+        scene.apply(Command::Insert(source.clone())).unwrap();
+        for reduced in [false, true] {
+            let mut motion = DragMotion::default();
+            motion.configure(false, 0.5);
+            motion.start([10., 20.], 72.);
+            motion.step(Instant::now(), reduced, true);
+            let preview =
+                motion.preview(&source, Some(([0., 0.], [100., 50.], false)), 1., reduced);
+            assert_eq!(
+                preview.rect,
+                Rect {
+                    x: 110.,
+                    y: 70.,
+                    ..source.rect
+                }
+            );
+            assert_eq!(preview.transform.rotation, source.transform.rotation);
+            assert_eq!(preview.transform.opacity, 0.4);
+            assert_eq!(scene.get(source.id), Some(&source));
+            assert!(!motion.frames.active());
+            let commands = arrange::translate(&[&source], [100., 50.], false, scene.top());
+            motion.release(&commands, &scene, [100., 50.], reduced);
+            let released = motion.returning(Instant::now(), reduced);
+            assert_eq!(released[0].transform.opacity, source.transform.opacity);
+            assert_eq!(released[0].transform.rotation, source.transform.rotation);
+        }
+    }
     #[test]
     fn released_image_keeps_final_position_while_storage_is_late() {
         for reduced in [false, true] {
@@ -474,7 +531,9 @@ mod tests {
             assert_eq!(source.transform.rotation, 0.);
             let mut reduced = source.clone();
             motion.decorate(&mut reduced, [0., 0.], true, true);
-            assert_eq!(reduced, source);
+            let mut faded = source.clone();
+            faded.transform.opacity *= DEFAULT_DRAG_OPACITY;
+            assert_eq!(reduced, faded);
         }
     }
 }

@@ -112,3 +112,14 @@ Automated Motion results (2026-10-19):
 - Appearance preferences remain deferred; no long stress run repeated.
 - Validation: formatting, mothref clippy (`-D warnings`) and all 31 mothref tests
   passed, including animated outline polygons and the software opacity/rotation golden.
+
+### Drag feedback preferences
+
+- [ ] In Tools → Settings, disable Animate dragging: preview follows input 1:1,
+  without sway/lift; opacity slider controls only the live preview (default 65%).
+- [ ] Release/cancel restores the original opacity; saved item opacity is unchanged.
+- [ ] Reduced motion also uses translucent dragging, without animation frames.
+- [ ] Restart: drag preferences persist. Re-enable animation: sway/lift return.
+- Validation: formatting, clippy for mothref/moth-ui (`-D warnings`) and all 45
+  tests passed, including preference round-trip/invalid values, transient opacity
+  restoration, scene immutability and the forced-software golden.

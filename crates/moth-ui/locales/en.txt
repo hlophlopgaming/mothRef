@@ -164,3 +164,6 @@ Keep = Keep working
 CloseWarning = Save this board before closing? Discard deletes this session’s recovery files.
 
 ReducedMotion = Reduce motion
+
+DragAnimation = Animate dragging
+DragOpacity = Drag opacity without animation

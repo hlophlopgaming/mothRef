@@ -17,6 +17,8 @@ pub(super) struct Tools {
     pub grayscale: bool,
     pub dark: bool,
     pub reduced_motion: bool,
+    pub drag_animation: bool,
+    pub drag_opacity: f32,
     pub ui_scale: f32,
     pub threshold: usize,
     pub undo_limit: usize,
@@ -48,6 +50,8 @@ impl Default for Tools {
             grayscale: false,
             dark: true,
             reduced_motion: false,
+            drag_animation: true,
+            drag_opacity: super::motion::DEFAULT_DRAG_OPACITY,
             ui_scale: 1.,
             threshold: 5,
             undo_limit: 256,
@@ -127,6 +131,8 @@ impl Tools {
                 moth_platform::settings::REDUCED_MOTION,
                 self.reduced_motion.to_string(),
             ),
+            ("drag_animation", self.drag_animation.to_string()),
+            ("drag_opacity", self.drag_opacity.to_string()),
             ("wheel", self.wheel.to_string()),
             ("scale_with_window", self.scale_with_window.to_string()),
             ("undo_limit", self.undo_limit.to_string()),
@@ -143,6 +149,15 @@ impl Tools {
             .get(moth_platform::settings::REDUCED_MOTION)
             .and_then(|v| v.parse().ok())
             .unwrap_or(false);
+        self.drag_animation = values
+            .get("drag_animation")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(true);
+        self.drag_opacity = values
+            .get("drag_opacity")
+            .and_then(|v| v.parse::<f32>().ok())
+            .filter(|v| v.is_finite() && (0.1..=1.).contains(v))
+            .unwrap_or(super::motion::DEFAULT_DRAG_OPACITY);
         self.wheel = values
             .get("wheel")
             .and_then(|v| v.parse().ok())
@@ -211,6 +226,13 @@ impl Tools {
                     let before = self.preferences();
                     let defaults = Self::default();
                     ui.checkbox(&mut self.reduced_motion, text(Text::ReducedMotion));
+                    ui.checkbox(&mut self.drag_animation, text(Text::DragAnimation));
+                    ui.add_enabled(
+                        !self.drag_animation || self.reduced_motion,
+                        egui::Slider::new(&mut self.drag_opacity, 0.1..=1.)
+                            .text(text(Text::DragOpacity)),
+                    );
+
                     let label = preference(
                         Text::ScaleWithWindow,
                         self.scale_with_window != defaults.scale_with_window,
@@ -774,6 +796,8 @@ mod tests {
             auto_arrange: true,
             default_arrange: 3,
             undo_limit: 42,
+            drag_animation: false,
+            drag_opacity: 0.42,
             ..Tools::default()
         };
         let map = source
@@ -787,11 +811,18 @@ mod tests {
         loaded.load(
             &[
                 ("ui_scale".into(), "NaN".into()),
+                ("drag_opacity".into(), "NaN".into()),
+                ("drag_animation".into(), "invalid".into()),
                 ("arrange_gap".into(), "inf".into()),
                 ("undo_limit".into(), "99999".into()),
             ]
             .into_iter()
             .collect(),
+        );
+        assert!(loaded.drag_animation);
+        assert_eq!(
+            loaded.drag_opacity,
+            super::super::motion::DEFAULT_DRAG_OPACITY
         );
         assert_eq!(loaded.ui_scale, 1.);
         assert_eq!(loaded.gap, 24.);

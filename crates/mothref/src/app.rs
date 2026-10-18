@@ -1221,6 +1221,8 @@ impl App {
             Instant::now(),
             self.tools.reduced_motion,
         );
+        self.motion
+            .configure(self.tools.drag_animation, self.tools.drag_opacity);
         self.motion.step(
             Instant::now(),
             self.tools.reduced_motion,
