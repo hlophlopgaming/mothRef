@@ -41,6 +41,7 @@ gif = "0.14"
 # Rayon processes baseline rows inline instead of queuing unbounded coefficient buffers.
 jpeg-decoder = { version = "0.3", default-features = false, features = ["rayon"] }
 arboard = { version = "3", features = ["wayland-data-control"] }
+rfd = "0.17"
 
 [profile.dev.package."*"]
 opt-level = 3

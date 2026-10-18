@@ -1,23 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Version-one append-only records. A checksummed footer commits one record.
 use crate::ReadSeek;
-use moth_scene::{BlobId, Command, Item, Rect, Scene, Transform, Uuid};
+use moth_scene::{BlobId, Command, Content, Item, Rect, Scene, Transform, Uuid};
 use std::{
     collections::HashMap,
     io::{self, SeekFrom, Write},
 };
 
-const HEADER: &[u8; 16] = b"MOTH\x02\0\0\0\0\0\0\0\0\0\0\0";
+const HEADER: &[u8; 16] = b"MOTH\x03\0\0\0\0\0\0\0\0\0\0\0";
+/// Schema-2 boards predate notes; the reader still accepts them.
+const HEADER_V2: &[u8; 16] = b"MOTH\x02\0\0\0\0\0\0\0\0\0\0\0";
 /// Schema-1 boards predate content transforms; the reader still accepts them.
 const HEADER_V1: &[u8; 16] = b"MOTH\x01\0\0\0\0\0\0\0\0\0\0\0";
 const FOOTER: &[u8; 8] = b"MOTHEND1";
 const FOOTER_SIZE: u64 = 96;
 /// Bounds allocations even for malicious input lengths.
 pub const MAX_RECORD: u64 = 256 * 1024 * 1024;
-/// Longest accepted command payload: the largest fractional index plus its fixed fields.
+/// Longest accepted image command payload: the largest fractional index plus its fixed fields.
 const MAX_COMMAND: u64 = 4182;
 /// Bytes of fixed command fields after the tag, before a schema-2 insert's fractional index.
 const INSERT_V2_FIXED: usize = 86;
+/// Bytes of fixed fields before a text insert's fractional index: tag, id, u32 length,
+/// rectangle and transform (the UTF-8 text sits between the length and the rectangle).
+const INSERT_TEXT_FIXED: usize = 1 + 16 + 4 + 16 + 21;
+/// Longest accepted text insert or SetText command (text plus a fractional index).
+const MAX_TEXT_COMMAND: u64 = INSERT_TEXT_FIXED as u64 + moth_scene::MAX_NOTE_BYTES as u64 + 4096;
 /// Bytes of fixed command fields in a transform record.
 const SET_TRANSFORM_LEN: usize = 1 + 16 + 21;
 /// Distinguishes unsupported files from recoverable torn tails.
@@ -85,14 +92,25 @@ pub fn append(
 pub fn encode(command: &Command) -> Vec<u8> {
     let mut bytes = Vec::new();
     match command {
-        Command::Insert(item) => {
-            bytes.push(4);
-            bytes.extend_from_slice(item.id.as_bytes());
-            bytes.extend_from_slice(item.blob.as_bytes());
-            rect_bytes(&mut bytes, item.rect);
-            transform_bytes(&mut bytes, item.transform);
-            bytes.extend_from_slice(item.z.as_bytes());
-        }
+        Command::Insert(item) => match &item.content {
+            Content::Image(blob) => {
+                bytes.push(4);
+                bytes.extend_from_slice(item.id.as_bytes());
+                bytes.extend_from_slice(blob.as_bytes());
+                rect_bytes(&mut bytes, item.rect);
+                transform_bytes(&mut bytes, item.transform);
+                bytes.extend_from_slice(item.z.as_bytes());
+            }
+            Content::Text(text) => {
+                bytes.push(6);
+                bytes.extend_from_slice(item.id.as_bytes());
+                bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
+                bytes.extend_from_slice(text.as_bytes());
+                rect_bytes(&mut bytes, item.rect);
+                transform_bytes(&mut bytes, item.transform);
+                bytes.extend_from_slice(item.z.as_bytes());
+            }
+        },
         Command::Remove(id) => {
             bytes.push(2);
             bytes.extend_from_slice(id.as_bytes());
@@ -106,6 +124,12 @@ pub fn encode(command: &Command) -> Vec<u8> {
             bytes.push(5);
             bytes.extend_from_slice(id.as_bytes());
             transform_bytes(&mut bytes, *transform);
+        }
+        Command::SetText { id, text } => {
+            bytes.push(7);
+            bytes.extend_from_slice(id.as_bytes());
+            bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(text.as_bytes());
         }
     }
     bytes
@@ -136,7 +160,8 @@ fn restore(bytes: &[u8], blobs: &HashMap<BlobId, Blob>) -> Result<Scene, Error> 
         rest = &rest[4..];
         let command = decode(rest.get(..size).ok_or(Error::Invalid)?)?;
         match &command {
-            Command::Insert(item) if blobs.contains_key(&item.blob) => {}
+            // A checkpoint may only insert items; image inserts must reference a committed blob.
+            Command::Insert(item) if item.blob().is_none_or(|blob| blobs.contains_key(&blob)) => {}
             _ => return Err(Error::Invalid),
         }
         scene.apply(command)?;
@@ -193,7 +218,9 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
         // Schema-1 insert: no transform fields, so content starts at identity.
         1 if bytes.len() > 65 && bytes.len() <= 4161 => Ok(Command::Insert(Item {
             id,
-            blob: BlobId::from_bytes(bytes[17..49].try_into().map_err(|_| Error::Invalid)?),
+            content: Content::Image(BlobId::from_bytes(
+                bytes[17..49].try_into().map_err(|_| Error::Invalid)?,
+            )),
             rect: rect()?,
             transform: Transform::default(),
             z: fractional_index::FractionalIndex::from_bytes(bytes[65..].to_vec())
@@ -202,11 +229,41 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
         4 if bytes.len() > INSERT_V2_FIXED && bytes.len() as u64 <= MAX_COMMAND => {
             Ok(Command::Insert(Item {
                 id,
-                blob: BlobId::from_bytes(bytes[17..49].try_into().map_err(|_| Error::Invalid)?),
+                content: Content::Image(BlobId::from_bytes(
+                    bytes[17..49].try_into().map_err(|_| Error::Invalid)?,
+                )),
                 rect: rect()?,
                 transform: transform(65)?,
                 z: fractional_index::FractionalIndex::from_bytes(bytes[INSERT_V2_FIXED..].to_vec())
                     .map_err(|_| Error::Invalid)?,
+            }))
+        }
+        6 if bytes.len() > INSERT_TEXT_FIXED && bytes.len() as u64 <= MAX_TEXT_COMMAND => {
+            let text_len =
+                u32::from_le_bytes(bytes[17..21].try_into().map_err(|_| Error::Invalid)?) as usize;
+            if text_len > moth_scene::MAX_NOTE_BYTES {
+                return Err(Error::Invalid);
+            }
+            let text_end = 21 + text_len;
+            let text = std::str::from_utf8(bytes.get(21..text_end).ok_or(Error::Invalid)?)
+                .map_err(|_| Error::Invalid)?;
+            let rect_start = text_end;
+            let rect = Rect {
+                x: float(rect_start, 0)?,
+                y: float(rect_start, 1)?,
+                width: float(rect_start, 2)?,
+                height: float(rect_start, 3)?,
+            };
+            let transform_start = rect_start + 16;
+            Ok(Command::Insert(Item {
+                id,
+                content: Content::Text(text.to_owned()),
+                rect,
+                transform: transform(transform_start)?,
+                z: fractional_index::FractionalIndex::from_bytes(
+                    bytes[transform_start + 21..].to_vec(),
+                )
+                .map_err(|_| Error::Invalid)?,
             }))
         }
         2 if bytes.len() == 17 => Ok(Command::Remove(id)),
@@ -215,6 +272,19 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             id,
             transform: transform(17)?,
         }),
+        7 if bytes.len() > 21 && bytes.len() as u64 <= MAX_TEXT_COMMAND => {
+            let text_len =
+                u32::from_le_bytes(bytes[17..21].try_into().map_err(|_| Error::Invalid)?) as usize;
+            if text_len > moth_scene::MAX_NOTE_BYTES {
+                return Err(Error::Invalid);
+            }
+            let text = std::str::from_utf8(bytes.get(21..21 + text_len).ok_or(Error::Invalid)?)
+                .map_err(|_| Error::Invalid)?;
+            Ok(Command::SetText {
+                id,
+                text: text.to_owned(),
+            })
+        }
         _ => Err(Error::Invalid),
     }
 }
@@ -224,7 +294,7 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
     reader.seek(SeekFrom::Start(0))?;
     let mut header = [0; 16];
     reader.read_exact(&mut header)?;
-    if &header != HEADER && &header != HEADER_V1 {
+    if &header != HEADER && &header != HEADER_V2 && &header != HEADER_V1 {
         return Err(Error::Invalid);
     }
     let length = reader.seek(SeekFrom::End(0))?;
@@ -279,7 +349,7 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
                     );
                 }
                 2 => {
-                    if size > MAX_COMMAND || board.scene.len() >= 1_000_000 {
+                    if size > MAX_TEXT_COMMAND || board.scene.len() >= 1_000_000 {
                         return Err(Error::Budget);
                     }
                     reader.seek(SeekFrom::Start(start))?;
@@ -287,7 +357,9 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
                     reader.read_exact(&mut bytes)?;
                     let command = decode(&bytes)?;
                     if let Command::Insert(item) = &command
-                        && !board.blobs.contains_key(&item.blob)
+                        && item
+                            .blob()
+                            .is_some_and(|blob| !board.blobs.contains_key(&blob))
                     {
                         return Err(Error::Invalid);
                     }
@@ -326,14 +398,18 @@ pub fn compact(storage: &dyn crate::Storage, handle: crate::Handle) -> Result<()
     let mut offset = 16;
     let mut copied = std::collections::HashSet::new();
     for item in board.scene.items() {
-        if !copied.insert(item.blob) {
+        // Notes carry no original bytes; only image blobs are copied forward.
+        let Some(blob_id) = item.blob() else {
+            continue;
+        };
+        if !copied.insert(blob_id) {
             continue;
         }
-        let blob = board.blobs.get(&item.blob).ok_or(Error::Invalid)?;
+        let blob = board.blobs.get(&blob_id).ok_or(Error::Invalid)?;
         reader.seek(SeekFrom::Start(blob.offset))?;
         let mut bytes = vec![0; blob.length as usize];
         reader.read_exact(&mut bytes)?;
-        if blake3::hash(&bytes) != item.blob {
+        if blake3::hash(&bytes) != blob_id {
             return Err(Error::Invalid);
         }
         offset = append(&mut writer, offset, 1, &bytes)?;
@@ -418,7 +494,7 @@ mod tests {
     #[test]
     fn unsupported_schema_is_rejected() {
         let (mut bytes, _) = base();
-        bytes[4] = 3;
+        bytes[4] = 4;
         assert!(matches!(read(&mut Cursor::new(bytes)), Err(Error::Invalid)));
     }
     #[test]
@@ -434,7 +510,7 @@ mod tests {
         assert_eq!(board.scene.len(), 1);
         let item = board.scene.items().next().unwrap();
         assert_eq!(item.transform, Transform::default());
-        assert!(board.blobs.contains_key(&item.blob));
+        assert!(board.blobs.contains_key(&item.blob().unwrap()));
     }
     #[test]
     fn transform_survives_records_checkpoints_and_truncation() {
@@ -514,6 +590,48 @@ mod tests {
             read(&mut Cursor::new(bytes)).unwrap().scene.get(item.id),
             Some(&item)
         );
+    }
+    #[test]
+    fn note_survives_insert_edit_checkpoint_and_truncation() {
+        let mut bytes = Vec::new();
+        initialize(&mut bytes).unwrap();
+        let rect = Rect {
+            x: 5.,
+            y: 6.,
+            width: 20.,
+            height: 10.,
+        };
+        let note = Item::text("hello", rect, None);
+        let id = note.id;
+        let offset = bytes.len() as u64;
+        append(&mut bytes, offset, 2, &encode(&Command::Insert(note))).unwrap();
+        let start = bytes.len();
+        append(
+            &mut bytes,
+            start as u64,
+            2,
+            &encode(&Command::SetText {
+                id,
+                text: "world".into(),
+            }),
+        )
+        .unwrap();
+        // A torn SetText never becomes a committed change.
+        for cut in start..bytes.len() {
+            let board = read(&mut Cursor::new(&bytes[..cut])).unwrap();
+            assert_eq!(board.scene.get(id).unwrap().note(), Some("hello"));
+        }
+        let board = read(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(board.scene.get(id).unwrap().note(), Some("world"));
+        assert!(board.blobs.is_empty());
+        // A checkpoint restores notes without any blob, and undo removes cleanly.
+        let restored = restore(&snapshot(&board.scene).unwrap(), &board.blobs).unwrap();
+        assert_eq!(restored.get(id), board.scene.get(id));
+        let mut scene = restored;
+        let inverse = scene.apply(Command::Remove(id)).unwrap();
+        assert!(scene.get(id).is_none());
+        scene.apply(inverse).unwrap();
+        assert_eq!(scene.get(id).unwrap().note(), Some("world"));
     }
     proptest! {
         #[test]

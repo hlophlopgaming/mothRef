@@ -86,9 +86,11 @@ Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](d
 - [x] Panic hook, crash report, decoder isolation (`catch_unwind`, header size checks)
 - [ ] Tests: truncated-file recovery, 1,000× `kill -9`, reader fuzzing, 8-hour soak test
 - [x] Recent files
-- [ ] Portability: compressed texture format chosen at runtime (BC7 / ASTC / ETC2 / uncompressed RGBA8); LOD caches in `.moth` stay rebuildable for any format
+- [x] Portability: compressed texture format chosen at runtime (BC7 on desktop, uncompressed RGBA8 fallback; ASTC deferred to M8); LOD caches in `.moth` stay rebuildable for any format
 
-**Status:** persistence, recovery and release packaging implemented; compressed-texture support and full soak qualification remain open. See [M1 validation notes](docs/M1-VALIDATION.md).
+**Status:** persistence, recovery and release packaging implemented; BC7/RGBA8
+runtime texture-format selection implemented (ASTC deferred to M8); the full soak
+qualification remains open. See [M1 validation notes](docs/M1-VALIDATION.md).
 
 **Exit criteria:** 1,000 random `kill -9` runs lose no more than 1 second of work; the soak test shows a flat RSS. → **Release 0.1**
 
@@ -591,6 +593,7 @@ Known issues to plan for: macOS notarization needs a paid Apple Developer accoun
 | 2026-10-16 | Maintainer tightens the immediate 4K paste target to 150 ms; qualification remains open. |
 | 2026-10-16 | Maintainer accepts approximately 200 ms durable 4K paste and closes TD-03; the 150 ms goal is withdrawn. Timing outliers and native qualification remain documented. |
 | 2026-10-16 | [Bounded WebP previews](docs/decisions/0003-bounded-webp-previews.md): maintainer permits full-frame static WebP with 8 MiB encoded/frame admission limits; internal codec allocations are separately qualified. GIF/BMP use row-based previews. |
+| 2026-10-18 | [Runtime texture format](docs/decisions/0006-runtime-texture-format.md): BC7 on desktop (target-gated `intel_tex_2`), RGBA8 fallback, ASTC deferred to M8; `.moth` stays GPU-format independent |
 
 | 2026-10-17 | [Reference workspace](docs/decisions/0004-reference-workspace.md): requested early UI slice uses four isolated sessions, a bounded catalog and a separate overlay controller; full M3/M5 remain open. |
 | 2026-10-17 | [M2 content transforms and schema 2](docs/decisions/0005-m2-content-transform.md): five-field per-item transform (rotation, flip, content offset/scale/rotation), frame-only indexed footprint, schema 2 records that keep reading schema 1 |

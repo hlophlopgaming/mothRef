@@ -614,7 +614,7 @@ mod tests {
         let path = storage.path(handle).unwrap();
         assert!(std::fs::metadata(&path).unwrap().len() < pixels.len() as u64 / 4);
         let bytes = std::fs::read(&path).unwrap();
-        assert_eq!(moth_io::decode(&bytes, 256).unwrap().mips[0].rgba, pixels);
+        assert_eq!(moth_io::decode(&bytes, 256).unwrap().mips[0].bytes, pixels);
         assert_eq!(preview.hash, moth_io::decode(&bytes, 256).unwrap().hash);
         assert!(path.starts_with(data_directory().unwrap()));
         let other = DesktopStorage::default();

@@ -233,7 +233,7 @@ mod tests {
         thread.join().unwrap();
         assert_eq!(std::fs::read(storage.path(handle).unwrap()).unwrap(), png);
         assert_eq!(image.original, [1, 1]);
-        assert_eq!(image.mips[0].rgba, [20, 40, 60, 255]);
+        assert_eq!(image.mips[0].bytes, [20, 40, 60, 255]);
         assert_eq!(image.hash, moth_io::decode(&png, 256).unwrap().hash);
         let worker =
             crate::boards::Worker::new(storage.clone(), std::sync::Arc::new(|| {})).unwrap();

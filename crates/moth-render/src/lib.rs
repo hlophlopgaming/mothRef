@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Instanced image quads and a fixed-budget, LRU array-texture registry.
 mod opacity;
-use moth_io::Decoded;
+use moth_io::{Decoded, ImageFormat};
 use moth_scene::{BlobId, Camera, Item};
 use std::sync::{
     Arc,
@@ -103,6 +103,8 @@ struct Slot {
     dimensions: [u32; 2],
     used: u64,
     original_side: u32,
+    /// Number of mips written for this image; the shader's lod clamps to this.
+    mips: u32,
 }
 struct Array {
     size: u32,
@@ -150,10 +152,16 @@ pub struct Registry {
     sampler: wgpu::Sampler,
     clock: u64,
     allocated: u64,
+    /// Texture format for image mips, chosen at runtime from adapter capabilities.
+    image_format: ImageFormat,
 }
 impl Registry {
-    /// RGBA8 is the universally supported fallback, chosen from adapter capabilities.
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    /// RGBA8 is the universally supported fallback; BC7 halves residency on adapters that support it.
+    pub fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        image_format: ImageFormat,
+    ) -> Self {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("images"),
             entries: &[
@@ -242,11 +250,16 @@ impl Registry {
             sampler,
             clock: 0,
             allocated: 0,
+            image_format,
         }
     }
     /// Reports actual texture allocation, rather than the sum of resident source sizes.
     pub fn allocated_bytes(&self) -> u64 {
         self.allocated + self.opacity.bytes()
+    }
+    /// Format decode requests must produce; driven by adapter capabilities.
+    pub fn image_format(&self) -> ImageFormat {
+        self.image_format
     }
     /// A matching or larger resident preview avoids repeated decoding during a frame.
     pub fn resident(&self, hash: BlobId, side: u32) -> bool {
@@ -258,6 +271,11 @@ impl Registry {
 
     /// Uploading replaces the least recently drawn layer within a size class.
     pub fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, image: &Decoded) {
+        // A device-loss recreation can change the chosen format; skip stale results.
+        // The preview path re-decodes with the current format on the next miss.
+        if image.format != self.image_format {
+            return;
+        }
         let Some(first) = image.mips.first() else {
             return;
         };
@@ -277,7 +295,7 @@ impl Registry {
         let index = if let Some(i) = free {
             i
         } else {
-            let bytes = array_bytes(size, layers);
+            let bytes = array_bytes(size, layers, self.image_format);
             while self.allocated + bytes > TEXTURE_BUDGET {
                 let oldest = self
                     .arrays
@@ -300,7 +318,7 @@ impl Registry {
                     for s in a.slots.iter().flatten() {
                         self.locations.remove(&s.hash);
                     }
-                    self.allocated -= array_bytes(a.size, a.slots.len() as u32);
+                    self.allocated -= array_bytes(a.size, a.slots.len() as u32, self.image_format);
                 }
             }
             let i = self
@@ -314,7 +332,7 @@ impl Registry {
             i
         };
         if self.arrays[index].is_none() {
-            let bytes = array_bytes(size, layers);
+            let bytes = array_bytes(size, layers, self.image_format);
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("image size class"),
                 size: wgpu::Extent3d {
@@ -322,10 +340,10 @@ impl Registry {
                     height: size,
                     depth_or_array_layers: layers,
                 },
-                mip_level_count: size.ilog2() + 1,
+                mip_level_count: mip_levels(size, self.image_format),
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                format: wgpu_format(self.image_format),
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
@@ -382,8 +400,19 @@ impl Registry {
             original_side: image.original[0].max(image.original[1]),
             dimensions: [first.width, first.height],
             used: self.clock,
+            mips: image.mips.len() as u32,
         });
         for (level, mip) in image.mips.iter().enumerate() {
+            // BC7 blocks are 4x4; the write extent and stride are block-aligned.
+            let (width, height, bytes_per_row, rows) = match self.image_format {
+                ImageFormat::Rgba8 => (mip.width, mip.height, mip.width * 4, mip.height),
+                ImageFormat::Bc7 => (
+                    mip.width.next_multiple_of(4),
+                    mip.height.next_multiple_of(4),
+                    mip.width.next_multiple_of(4) * 4,
+                    mip.height.div_ceil(4),
+                ),
+            };
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &array.texture,
@@ -395,15 +424,15 @@ impl Registry {
                     },
                     aspect: wgpu::TextureAspect::All,
                 },
-                &mip.rgba,
+                &mip.bytes,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(mip.width * 4),
-                    rows_per_image: Some(mip.height),
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(rows),
                 },
                 wgpu::Extent3d {
-                    width: mip.width,
-                    height: mip.height,
+                    width,
+                    height,
                     depth_or_array_layers: 1,
                 },
             );
@@ -499,8 +528,12 @@ impl Registry {
         let mut classes = Vec::with_capacity(instances.capacity());
         debug_assert!(items.len() <= MAX_INSTANCES);
         for item in items {
+            // Notes are drawn by the UI layer; this pipeline only renders images.
+            let Some(blob) = item.blob() else {
+                continue;
+            };
             let wanted = (item.rect.width.max(item.rect.height) * camera.zoom).max(1.);
-            let Some(&(class, layer)) = self.locations.get(&item.blob) else {
+            let Some(&(class, layer)) = self.locations.get(&blob) else {
                 continue;
             };
             let Some(slot) = self.arrays[class].as_ref().and_then(|a| a.slots[layer]) else {
@@ -522,7 +555,7 @@ impl Registry {
                 lod: ((slot.dimensions[0].max(slot.dimensions[1]) as f32 / wanted).log2()
                     - item.transform.content_scale.log2())
                 .max(0.)
-                .min(slot.dimensions[0].max(slot.dimensions[1]).ilog2() as f32),
+                .min(slot.mips.saturating_sub(1) as f32),
             });
             classes.push(class);
         }
@@ -548,7 +581,7 @@ impl Registry {
         self.opacity.clear();
         for array in &mut self.arrays {
             if let Some(a) = array.take() {
-                self.allocated -= array_bytes(a.size, a.slots.len() as u32);
+                self.allocated -= array_bytes(a.size, a.slots.len() as u32, self.image_format);
             }
         }
         self.locations.clear();
@@ -560,16 +593,66 @@ impl Drop for Registry {
         self.clear();
     }
 }
-fn array_bytes(size: u32, layers: u32) -> u64 {
-    (0..=size.ilog2())
-        .map(|m| u64::from((size >> m).max(1)).pow(2) * 4 * u64::from(layers))
+fn array_bytes(size: u32, layers: u32, format: ImageFormat) -> u64 {
+    (0..mip_levels(size, format))
+        .map(|m| {
+            u64::from((size >> m).max(1)).pow(2)
+                * match format {
+                    ImageFormat::Rgba8 => 4,
+                    ImageFormat::Bc7 => 1,
+                }
+                * u64::from(layers)
+        })
         .sum()
+}
+/// Texture format for image mips, from the runtime [`ImageFormat`] choice.
+fn wgpu_format(format: ImageFormat) -> wgpu::TextureFormat {
+    match format {
+        ImageFormat::Rgba8 => wgpu::TextureFormat::Rgba8UnormSrgb,
+        ImageFormat::Bc7 => wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+    }
+}
+/// Number of mip levels a texture of `size` gets: BC7 stops at 4x4 blocks.
+fn mip_levels(size: u32, format: ImageFormat) -> u32 {
+    match format {
+        ImageFormat::Rgba8 => size.ilog2() + 1,
+        ImageFormat::Bc7 => size.ilog2() - 1,
+    }
 }
 /// Preview requests use size classes to avoid decoding on every zoom tick.
 pub fn preview_side(pixels: f32) -> u32 {
     (pixels.ceil().clamp(1., 2048.) as u32)
         .next_power_of_two()
         .clamp(16, 2048)
+}
+
+/// Chooses the runtime image format from adapter capabilities: BC7 when the
+/// adapter can bind it, otherwise the universally supported RGBA8 fallback.
+pub fn pick_image_format(adapter: &wgpu::Adapter) -> ImageFormat {
+    if adapter
+        .features()
+        .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+    {
+        ImageFormat::Bc7
+    } else {
+        ImageFormat::Rgba8
+    }
+}
+
+/// Device descriptor that enables BC7 where the adapter supports it, so the
+/// compressed image path can actually create `Bc7RgbaUnormSrgb` textures.
+fn device_descriptor(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
+    let mut required = wgpu::Features::empty();
+    if adapter
+        .features()
+        .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+    {
+        required |= wgpu::Features::TEXTURE_COMPRESSION_BC;
+    }
+    wgpu::DeviceDescriptor {
+        required_features: required,
+        ..Default::default()
+    }
 }
 
 /// Shared native/headless initialization always retries with a software adapter.
@@ -592,10 +675,7 @@ pub async fn request_device(
             .map_err(|e| e.to_string())?,
         Err(e) => return Err(e.to_string()),
     };
-    match adapter
-        .request_device(&wgpu::DeviceDescriptor::default())
-        .await
-    {
+    match adapter.request_device(&device_descriptor(&adapter)).await {
         Ok((device, queue)) => Ok((adapter, device, queue)),
         Err(_) if !software => {
             let a = instance
@@ -603,7 +683,7 @@ pub async fn request_device(
                 .await
                 .map_err(|e| e.to_string())?;
             let (d, q) = a
-                .request_device(&wgpu::DeviceDescriptor::default())
+                .request_device(&device_descriptor(&a))
                 .await
                 .map_err(|e| e.to_string())?;
             Ok((a, d, q))
@@ -627,8 +707,13 @@ mod tests {
     use super::*;
     #[test]
     fn texture_budget_covers_all_classes() {
-        let bytes: u64 = CLASSES.iter().map(|&(s, l)| array_bytes(s, l)).sum();
-        assert!(bytes <= TEXTURE_BUDGET);
+        for format in [ImageFormat::Rgba8, ImageFormat::Bc7] {
+            let bytes: u64 = CLASSES
+                .iter()
+                .map(|&(s, l)| array_bytes(s, l, format))
+                .sum();
+            assert!(bytes <= TEXTURE_BUDGET, "{format:?} exceeds budget");
+        }
         assert_eq!(preview_side(257.), 512);
     }
 }

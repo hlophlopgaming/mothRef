@@ -219,12 +219,13 @@ impl State {
         let inverse = self.scene.apply(command.clone()).map_err(error)?;
         self.scene.apply(inverse.clone()).map_err(error)?;
         if let Command::Insert(item) = &command
-            && !self.blobs.contains(&item.blob)
+            && let Some(blob) = item.blob()
+            && !self.blobs.contains(&blob)
         {
             let handle = source
-                .or_else(|| self.sources.get(&item.blob).copied())
+                .or_else(|| self.sources.get(&blob).copied())
                 .ok_or_else(|| error("Original unavailable"))?;
-            let bytes = self.original(item.blob, handle)?;
+            let bytes = self.original(blob, handle)?;
             self.journal()?;
             let directory = self.storage.recovery_directory()?;
             let path = directory.join(format!("{}.source", uuid::Uuid::now_v7()));
@@ -234,13 +235,15 @@ impl State {
             sync_directory(&directory)?;
             let staged = self.storage.register(path)?;
             self.commit(1, &bytes)?;
-            self.blobs.insert(item.blob);
-            self.sources.insert(item.blob, staged);
+            self.blobs.insert(blob);
+            self.sources.insert(blob, staged);
         }
         self.commit(2, &board::encode(&command))?;
         self.scene.apply(command.clone()).map_err(error)?;
         let source = match &command {
-            Command::Insert(item) => self.sources.get(&item.blob).map(|h| (item.blob, *h)),
+            Command::Insert(item) => item
+                .blob()
+                .and_then(|blob| self.sources.get(&blob).map(|h| (blob, *h))),
             _ => None,
         };
         Ok((inverse, Completion::Applied(command, source)))
@@ -293,7 +296,8 @@ impl State {
         let live_bytes: u64 = self
             .scene
             .items()
-            .map(|i| previous.blobs.get(&i.blob).map_or(0, |b| b.length))
+            .filter_map(|i| i.blob())
+            .map(|blob| previous.blobs.get(&blob).map_or(0, |b| b.length))
             .sum();
         if file.metadata()?.len() > (live_bytes.saturating_mul(2)).max(1024 * 1024) {
             drop(file);
@@ -319,7 +323,7 @@ impl State {
         let directory = self.storage.recovery_directory()?;
         std::fs::create_dir_all(&directory)?;
         let mut sources = HashMap::new();
-        let wanted: HashSet<_> = loaded.scene.items().map(|i| i.blob).collect();
+        let wanted: HashSet<_> = loaded.scene.items().filter_map(|i| i.blob()).collect();
         for hash in wanted {
             let blob = loaded
                 .blobs
@@ -366,49 +370,114 @@ impl State {
         let storage = self.storage.clone();
         let directory = storage.recovery_directory()?;
         std::fs::create_dir_all(&directory)?;
-        struct Pending {
-            z: f32,
-            id: i64,
-            hash: BlobId,
-            rect: Rect,
-            handle: Handle,
+        enum Pending {
+            Image {
+                z: f32,
+                id: i64,
+                hash: BlobId,
+                rect: Rect,
+                rotation: f32,
+                flip: bool,
+                handle: Handle,
+            },
+            Text {
+                z: f32,
+                id: i64,
+                text: String,
+                rect: Rect,
+                rotation: f32,
+                flip: bool,
+            },
         }
         let mut pending = Vec::new();
         let file = File::open(&path)?;
-        let summary = moth_import::bee::read(file, &mut |image| {
-            let hash = blake3::hash(image.bytes);
-            let destination = directory.join(format!("{}.source", uuid::Uuid::now_v7()));
-            let mut staged = private_file(&destination)?;
-            staged.write_all(image.bytes)?;
-            staged.sync_all()?;
-            pending.push(Pending {
-                z: image.z,
-                id: image.id,
-                hash,
-                rect: Rect {
-                    x: image.x,
-                    y: image.y,
-                    width: image.width,
-                    height: image.height,
-                },
-                handle: storage.register(destination)?,
-            });
-            Ok(())
+        let summary = moth_import::bee::read(file, &mut |item| match item {
+            moth_import::bee::Item::Image(image) => {
+                let hash = blake3::hash(image.bytes);
+                let destination = directory.join(format!("{}.source", uuid::Uuid::now_v7()));
+                let mut staged = private_file(&destination)?;
+                staged.write_all(image.bytes)?;
+                staged.sync_all()?;
+                pending.push(Pending::Image {
+                    z: image.z,
+                    id: image.id,
+                    hash,
+                    rect: Rect {
+                        x: image.x,
+                        y: image.y,
+                        width: image.width,
+                        height: image.height,
+                    },
+                    rotation: image.rotation,
+                    flip: image.flip,
+                    handle: storage.register(destination)?,
+                });
+                Ok(())
+            }
+            moth_import::bee::Item::Text(note) => {
+                let [width, height] = moth_scene::note_size(&note.text);
+                pending.push(Pending::Text {
+                    z: note.z,
+                    id: note.id,
+                    text: note.text,
+                    rect: Rect {
+                        x: note.x,
+                        y: note.y,
+                        width: width * note.scale,
+                        height: height * note.scale,
+                    },
+                    rotation: note.rotation,
+                    flip: note.flip,
+                });
+                Ok(())
+            }
         })
         .map_err(error)?;
         sync_directory(&directory)?;
         // BeeRef stores z as a float; a stable sort preserves its stacking.
         pending.sort_by(|a, b| {
-            a.z.partial_cmp(&b.z)
+            let (az, aid) = match a {
+                Pending::Image { z, id, .. } | Pending::Text { z, id, .. } => (*z, *id),
+            };
+            let (bz, bid) = match b {
+                Pending::Image { z, id, .. } | Pending::Text { z, id, .. } => (*z, *id),
+            };
+            az.partial_cmp(&bz)
                 .unwrap_or(std::cmp::Ordering::Equal)
-                .then(a.id.cmp(&b.id))
+                .then(aid.cmp(&bid))
         });
         let mut commands = Vec::with_capacity(pending.len());
         let mut sources = HashMap::new();
         let mut inverses = Vec::with_capacity(pending.len());
         for item in pending {
-            let insert = Item::image(item.hash, item.rect, self.scene.top());
-            let (inverse, completion) = self.apply(Command::Insert(insert), Some(item.handle))?;
+            let (insert, source) = match item {
+                Pending::Image {
+                    hash,
+                    rect,
+                    rotation,
+                    flip,
+                    handle,
+                    ..
+                } => {
+                    let mut item = Item::image(hash, rect, self.scene.top());
+                    item.transform.rotation = rotation;
+                    item.transform.flip[0] = flip;
+                    (item, Some(handle))
+                }
+                Pending::Text {
+                    text,
+                    rect,
+                    rotation,
+                    flip,
+                    ..
+                } => {
+                    let mut item = Item::text(text, rect, self.scene.top());
+                    item.transform.rotation = rotation;
+                    item.transform.flip[0] = flip;
+                    (item, None)
+                }
+            };
+            let (inverse, completion) = self.apply(Command::Insert(insert), source)?;
             if let Completion::Applied(command, source) = completion {
                 commands.push(command);
                 if let Some((hash, handle)) = source {
@@ -831,26 +900,39 @@ mod tests {
         std::fs::remove_dir_all(loaded.storage.base_directory().unwrap()).unwrap();
     }
     #[test]
-    fn bee_import_journals_embedded_images() {
+    fn bee_import_journals_embedded_images_and_notes() {
         let mut state = state();
         let fixture = std::path::PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../corpus/bee/tiny.bee"
         ));
-        let (blob, rect) = match state.request(Request::ImportBee(fixture)).unwrap() {
+        let (image_rect, note) = match state.request(Request::ImportBee(fixture)).unwrap() {
             Some(Completion::Imported(commands, sources, skipped)) => {
-                assert_eq!(commands.len(), 1);
+                assert_eq!(commands.len(), 2);
                 assert_eq!(sources.len(), 1);
-                assert_eq!(skipped, 1);
-                let item = state.scene.items().next().unwrap();
-                (item.blob, item.rect)
+                assert_eq!(skipped, 0);
+                let image = state.scene.items().find(|i| i.blob().is_some()).unwrap();
+                let note = state
+                    .scene
+                    .items()
+                    .find(|i| i.note().is_some())
+                    .map(|i| (i.rect.x, i.rect.y, i.note().unwrap().to_owned()))
+                    .unwrap();
+                (image.rect, note)
             }
             _ => panic!("expected an import completion"),
         };
         assert_eq!(
-            (rect.x, rect.y, rect.width, rect.height),
+            (
+                image_rect.x,
+                image_rect.y,
+                image_rect.width,
+                image_rect.height
+            ),
             (10., 20., 2., 1.)
         );
+        assert_eq!((note.0, note.1), (30., 40.));
+        assert_eq!(note.2, "hi");
         // Every embedded original is journaled before it is acknowledged.
         let journal = state
             .storage
@@ -858,8 +940,36 @@ mod tests {
             .unwrap()
             .join("board.moth");
         let recovered = board::read(&mut File::open(journal).unwrap()).unwrap();
-        assert_eq!(recovered.scene.len(), 1);
-        assert!(recovered.blobs.contains_key(&blob));
+        assert_eq!(recovered.scene.len(), 2);
+        assert!(recovered.scene.items().any(|i| i.note() == Some("hi")));
+        state.journal = None;
+        state.storage.discard().unwrap();
+        std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn bee_import_applies_rotation_flip_and_scale() {
+        let mut state = state();
+        let fixture = std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/bee/transforms.bee"
+        ));
+        match state.request(Request::ImportBee(fixture)).unwrap() {
+            Some(Completion::Imported(commands, _, skipped)) => {
+                assert_eq!(commands.len(), 2);
+                assert_eq!(skipped, 0);
+            }
+            _ => panic!("expected an import completion"),
+        }
+        let image = state.scene.items().find(|i| i.blob().is_some()).unwrap();
+        assert!((image.transform.rotation - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+        assert_eq!(image.transform.flip, [true, false]);
+        assert_eq!((image.rect.width, image.rect.height), (8.0, 4.0));
+        let note = state.scene.items().find(|i| i.note().is_some()).unwrap();
+        assert!((note.transform.rotation - std::f32::consts::FRAC_PI_4).abs() < 1e-5);
+        assert_eq!(note.transform.flip, [true, false]);
+        let [w, h] = moth_scene::note_size("note");
+        assert_eq!((note.rect.width, note.rect.height), (w * 1.5, h * 1.5));
         state.journal = None;
         state.storage.discard().unwrap();
         std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();

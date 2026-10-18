@@ -161,6 +161,8 @@ pub enum Text {
     OnTop,
     /// Import clipboard content.
     PasteImage,
+    /// Creates a text note at the cursor.
+    AddNote,
     /// Unsaved board breadcrumb.
     NotSaved,
     /// Names a board before its first save.
@@ -302,9 +304,8 @@ fn en(key: Text) -> &'static str {
 
         Text::SourceChanged => "The source file changed. Its previous preview cannot be reloaded.",
         Text::Imported => "Imported a BeeRef board. Save it as a .moth file.",
-        Text::ImportSkipped => {
-            "Imported images from a BeeRef board; notes and unsupported transforms were skipped."
-        }
+        Text::ImportSkipped => "Imported a BeeRef board; unsupported transforms were skipped.",
+        Text::AddNote => "Add note",
         Text::BoardFull => "Board metadata budget full (1,000,000 images)",
         Text::ClipboardEmpty => {
             "Clipboard has no supported image, files, HTTP(S) image URL or HTML image."
@@ -422,8 +423,9 @@ fn ru(key: Text) -> &'static str {
         }
         Text::Imported => "Импортирована доска BeeRef. Сохраните её как файл .moth.",
         Text::ImportSkipped => {
-            "Импортированы изображения из доски BeeRef; заметки и неподдерживаемые преобразования пропущены."
+            "Импортирована доска BeeRef; неподдерживаемые преобразования пропущены."
         }
+        Text::AddNote => "Добавить заметку",
     }
 }
 
@@ -640,6 +642,7 @@ mod tests {
             Text::Overlay,
             Text::OnTop,
             Text::PasteImage,
+            Text::AddNote,
             Text::NotSaved,
             Text::Untitled,
             Text::Items,

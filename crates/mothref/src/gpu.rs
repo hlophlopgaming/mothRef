@@ -51,7 +51,11 @@ impl Gpu {
         }
         config.present_mode = wgpu::PresentMode::AutoVsync;
         surface.configure(&device, &config);
-        let registry = moth_render::Registry::new(&device, config.format);
+        let registry = moth_render::Registry::new(
+            &device,
+            config.format,
+            moth_render::pick_image_format(&adapter),
+        );
         let lost = moth_render::watch_device(&device, wake);
         Ok(Self {
             surface,

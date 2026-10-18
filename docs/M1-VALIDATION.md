@@ -41,9 +41,11 @@ or decoder path was changed for M1.
   this does not replace the eight-hour gate below.
 - Run and record the full **eight-hour** combined soak (`cargo xtask soak 28800`). The manually triggered GitHub workflow defaults to
   30 minutes; hosted runner job limits preclude one uninterrupted eight-hour job.
-- Runtime compressed texture upload/encoding (BC7 / ASTC / ETC2) is still open.
-  Current previews use portable RGBA8; schema-one originals are format-neutral
-  and contain no persistent GPU-specific LOD cache.
+- Runtime compressed texture upload/encoding is done for BC7 on desktop, with
+  RGBA8 (and the software adapter) as the portable fallback; the adapter is
+  probed at device creation. ASTC encoding is deferred to M8 (the mobile
+  milestone). Schema-one originals are format-neutral and contain no persistent
+  GPU-specific LOD cache.
 - Native manual save/recover/clipboard/close testing on Windows and macOS,
   including WM_QUERYENDSESSION and applicationShouldTerminate. All acknowledged
   mutations are already synced, but native desktop termination UX needs testing.

@@ -8,6 +8,39 @@ pub use uuid::Uuid;
 
 /// Identifies original bytes independently of a storage backend or GPU format.
 pub type BlobId = blake3::Hash;
+/// Upper bound on a note's UTF-8 length, shared by the scene and the format
+/// so a single over-long note can never blow past a command budget.
+pub const MAX_NOTE_BYTES: usize = 32 * 1024;
+/// What an item carries on the canvas. Images reference original bytes by hash;
+/// notes own their text (metadata only, still no pixels in the scene).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Content {
+    /// References original image bytes; the renderer supplies the pixels.
+    Image(BlobId),
+    /// Plain-text note. Font size is a fixed presentation constant.
+    Text(String),
+}
+/// Note font size in world units; the renderer and the UI share it so measured
+/// note frames match what is drawn.
+pub const NOTE_FONT_SIZE: f32 = 24.0;
+/// Estimates a note's frame from its text, so importers can size notes without
+/// a font. shortcut: assumes an average glyph advance of `0.6em`; the UI
+/// re-measures with the real font when a note is created or edited.
+pub fn note_size(text: &str) -> [f32; 2] {
+    let widest = text
+        .lines()
+        .map(str::chars)
+        .map(|c| c.count())
+        .max()
+        .unwrap_or(0)
+        .max(1) as f32;
+    let rows = if text.is_empty() {
+        1
+    } else {
+        text.lines().count()
+    } as f32;
+    [widest * NOTE_FONT_SIZE * 0.6, rows * NOTE_FONT_SIZE * 1.3]
+}
 /// World-space rectangle; validated before entering the spatial index.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rect {
@@ -117,8 +150,8 @@ impl Transform {
 pub struct Item {
     /// Associates updates with the same object across operations.
     pub id: Uuid,
-    /// References original content without retaining pixels.
-    pub blob: BlobId,
+    /// What the item shows: original image bytes or a note's text.
+    pub content: Content,
     /// Keeps indexed bounds available without decoding an image.
     pub rect: Rect,
     /// Frame and content transform; identity until the user manipulates the item.
@@ -131,10 +164,34 @@ impl Item {
     pub fn image(blob: BlobId, rect: Rect, above: Option<&FractionalIndex>) -> Self {
         Self {
             id: Uuid::now_v7(),
-            blob,
+            content: Content::Image(blob),
             rect,
             transform: Transform::default(),
             z: above.map(FractionalIndex::new_after).unwrap_or_default(),
+        }
+    }
+    /// Appends a note above the supplied fractional index.
+    pub fn text(text: impl Into<String>, rect: Rect, above: Option<&FractionalIndex>) -> Self {
+        Self {
+            id: Uuid::now_v7(),
+            content: Content::Text(text.into()),
+            rect,
+            transform: Transform::default(),
+            z: above.map(FractionalIndex::new_after).unwrap_or_default(),
+        }
+    }
+    /// The referenced image blob, or `None` for notes.
+    pub fn blob(&self) -> Option<BlobId> {
+        match self.content {
+            Content::Image(blob) => Some(blob),
+            Content::Text(_) => None,
+        }
+    }
+    /// The note text, or `None` for images.
+    pub fn note(&self) -> Option<&str> {
+        match &self.content {
+            Content::Text(text) => Some(text),
+            Content::Image(_) => None,
         }
     }
 }
@@ -178,6 +235,13 @@ pub enum Command {
         id: Uuid,
         /// Validated transform; invalid values leave the board unchanged.
         transform: Transform,
+    },
+    /// Replaces a note's text; the inverse carries the previous text.
+    SetText {
+        /// Stable identity prevents changes being applied to a reused slot.
+        id: Uuid,
+        /// New note text, bounded by [`MAX_NOTE_BYTES`].
+        text: String,
     },
 }
 /// Failed commands leave the board unchanged.
@@ -249,6 +313,21 @@ impl Scene {
                     item.transform = transform;
                 }
                 Ok(Command::SetTransform { id, transform: old })
+            }
+            Command::SetText { id, text } => {
+                if text.len() > MAX_NOTE_BYTES {
+                    return Err(SceneError::Invalid);
+                }
+                let item = self.items.get_mut(&id).ok_or(SceneError::Missing)?;
+                let Content::Text(old) = &item.content else {
+                    return Err(SceneError::Invalid);
+                };
+                let inverse = Command::SetText {
+                    id,
+                    text: old.clone(),
+                };
+                item.content = Content::Text(text);
+                Ok(inverse)
             }
         }
     }
@@ -529,5 +608,42 @@ mod tests {
             SceneError::Invalid
         );
         assert!(s.is_empty());
+    }
+    #[test]
+    fn note_text_roundtrips_through_insert_edit_and_undo() {
+        let mut scene = Scene::default();
+        let rect = Rect {
+            x: 0.,
+            y: 0.,
+            width: 10.,
+            height: 10.,
+        };
+        let note = Item::text("hello", rect, None);
+        let id = note.id;
+        assert_eq!(note.blob(), None);
+        assert_eq!(note.note(), Some("hello"));
+        let inverse = scene.apply(Command::Insert(note)).unwrap();
+        let undo = scene
+            .apply(Command::SetText {
+                id,
+                text: "world".into(),
+            })
+            .unwrap();
+        assert_eq!(scene.get(id).unwrap().note(), Some("world"));
+        scene.apply(undo).unwrap();
+        assert_eq!(scene.get(id).unwrap().note(), Some("hello"));
+        // SetText only targets notes, never images.
+        let image = Item::image(blake3::hash(b"i"), rect, None);
+        let image_id = image.id;
+        scene.apply(Command::Insert(image)).unwrap();
+        assert!(matches!(
+            scene.apply(Command::SetText {
+                id: image_id,
+                text: "nope".into(),
+            }),
+            Err(SceneError::Invalid)
+        ));
+        scene.apply(inverse).unwrap();
+        assert_eq!(scene.len(), 1);
     }
 }

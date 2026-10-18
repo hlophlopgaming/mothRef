@@ -102,12 +102,15 @@ and the storage/input abstractions throughout.
 
 ## M1 implementation and documentation debt
 
-- [ ] **TD-10 — Select compressed texture formats at runtime.**
-  [Renderer](../crates/moth-render/src/lib.rs) currently uploads RGBA8 previews.
-  Add supported compressed upload/encoding paths selected from adapter
-  capabilities, retaining RGBA8 and the software adapter fallback. Originals
-  and rebuildable LOD caches must remain GPU-format independent. Close with
-  capability/fallback coverage, golden images and memory/performance results.
+- [x] **TD-10 — Select compressed texture formats at runtime.**
+  [Renderer](../crates/moth-render/src/lib.rs) now picks BC7 when the adapter
+  reports `TEXTURE_COMPRESSION_BC` and falls back to RGBA8 (including the
+  software adapter). BC7 is encoded on the decode pool via `intel_tex_2`, a
+  target-gated x86/x86_64 dependency, so `aarch64-linux-android` keeps building
+  with RGBA8. ASTC/ETC2 are deferred to the mobile milestone (M8), where ARM
+  `astcenc` adds the ASTC path; originals and rebuildable LOD caches remain
+  GPU-format independent. Closed with capability/fallback coverage (unit
+  round-trip and a headless BC7 golden).
 - [x] **TD-11 — Reconcile historical architecture notes with M1.**
   [Architecture](ARCHITECTURE.md) previously described raw RGBA staging, a 512 MiB
   staging budget and deferred persistence in its M0 sections; later M0 validation

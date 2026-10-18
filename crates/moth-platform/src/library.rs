@@ -167,8 +167,11 @@ fn inspect(path: PathBuf) -> Entry {
         entry.count = board.scene.len();
         let mut hashes = Vec::new();
         for item in board.scene.items() {
-            if !hashes.contains(&item.blob) {
-                hashes.push(item.blob);
+            let Some(blob) = item.blob() else {
+                continue;
+            };
+            if !hashes.contains(&blob) {
+                hashes.push(blob);
             }
             if hashes.len() == 4 {
                 break;

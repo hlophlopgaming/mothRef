@@ -19,6 +19,13 @@ tracing.workspace = true
 
 [dev-dependencies]
 dhat = "0.3"
+bcdec_rs = "0.2"
+
+# BC7 is a desktop-GPU format; the Intel ISPC encoder's kernels are x86/x86_64
+# only. Mobile targets fall back to RGBA8 (and later ASTC), so the dependency
+# is gated off the aarch64-linux-android core check.
+[target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dependencies]
+intel_tex_2 = "0.5"
 
 # The core check needs no Android NDK; desktop builds keep SIMD enabled.
 [target.'cfg(target_os = "android")'.dependencies]

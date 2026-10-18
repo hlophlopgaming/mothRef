@@ -89,7 +89,8 @@ The event loop waits between input, worker completions and requested UI animatio
 frames. Zero-sized windows do not render. Surface loss, suspend/resume and device
 loss replace GPU/UI resources while retaining scene metadata, camera and source
 handles. Adapter creation retries a fallback adapter; `--software` forces it.
-RGBA8 is the baseline portable texture format; compressed formats remain M1.
+RGBA8 is the portable baseline; BC7 is chosen at runtime on adapters that
+support it, with RGBA8 as the fallback.
 
 ## Current limits
 
@@ -128,8 +129,9 @@ and source extraction run on the worker. The path field, recent/recovery buttons
 Save/Open and undo/redo controls provide pointer paths for all new operations.
 Undo/redo retains 256 commands per session; it is not restored from disk.
 
-RGBA8 preview uploads remain the portable baseline; runtime compressed texture
-support is an open release gate. Board I/O never runs on the event thread.
+RGBA8 preview uploads remain the portable baseline; the runtime image format is
+chosen from adapter capabilities (BC7 on desktop, RGBA8 fallback, ASTC planned
+for M8). Board I/O never runs on the event thread.
 See [M0 validation](M0-VALIDATION.md), [M1 validation](M1-VALIDATION.md) and the
 [debt backlog](TECH-DEBT.md) for historical measurements, executed checks and
 remaining gates. M0's earlier volatile-canvas and raw-staging descriptions are

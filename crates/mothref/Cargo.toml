@@ -22,3 +22,4 @@ egui-winit.workspace = true
 egui-wgpu.workspace = true
 pollster.workspace = true
 crossbeam-channel.workspace = true
+rfd.workspace = true

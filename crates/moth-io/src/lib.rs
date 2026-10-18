@@ -19,14 +19,26 @@ pub const MAX_PIXELS: u64 = 32 * 1024 * 1024;
 pub const MAX_SIDE: u32 = 2048;
 /// WebP has no reduced-output API; bound the permitted full RGBA frame to 8 MiB.
 pub const MAX_WEBP_FRAME_BYTES: u64 = 8 * 1024 * 1024;
+/// GPU texture format for the decoded mips, chosen at runtime from the adapter.
+///
+/// `Rgba8` is the portable baseline; `Bc7` (desktop) halves texture memory for
+/// the same residency. ASTC is the future mobile format and is added with M8.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ImageFormat {
+    /// Uncompressed RGBA8: universally supported, including software adapters.
+    #[default]
+    Rgba8,
+    /// BC7 blocks; encoding is x86/x86_64 only, so non-x86 targets never request it.
+    Bc7,
+}
 /// A single rebuildable LOD, suitable for one array layer.
 pub struct Mip {
     /// Positive extents preserve valid geometry and aspect ratio.
     pub width: u32,
     /// Positive extents preserve valid geometry and aspect ratio.
     pub height: u32,
-    /// Owned pixels can cross worker boundaries without borrowing a decoder.
-    pub rgba: Vec<u8>,
+    /// RGBA pixels, or BC7 blocks when the parent [`Decoded`] is `Bc7`.
+    pub bytes: Vec<u8>,
 }
 /// Original identity survives changes in preview resolution or GPU encoding.
 pub struct Decoded {
@@ -36,6 +48,8 @@ pub struct Decoded {
     pub original: [u32; 2],
     /// Lower levels let the renderer avoid oversized image samples.
     pub mips: Vec<Mip>,
+    /// Layout of each [`Mip::bytes`] payload.
+    pub format: ImageFormat,
 }
 /// Identifies a requested preview without giving core code a native path.
 #[derive(Clone, Copy, Debug)]
@@ -44,6 +58,8 @@ pub struct Request {
     pub handle: Handle,
     /// Bounds preview work independently of source dimensions.
     pub side: u32,
+    /// Target GPU format; the worker re-encodes decoded mips to this on success.
+    pub format: ImageFormat,
 }
 /// Failures become UI placeholders, including decoder panics.
 #[derive(Debug, thiserror::Error)]
@@ -216,7 +232,7 @@ fn pyramid(mut level: image::RgbaImage, hash: blake3::Hash, original: [u32; 2]) 
         mips.push(Mip {
             width,
             height,
-            rgba: level.into_raw(),
+            bytes: level.into_raw(),
         });
         match next {
             Some(n) => level = n,
@@ -227,7 +243,62 @@ fn pyramid(mut level: image::RgbaImage, hash: blake3::Hash, original: [u32; 2]) 
         hash,
         original,
         mips,
+        format: ImageFormat::Rgba8,
     }
+}
+/// Re-encodes decoded mips to the requested format; `Rgba8` is a no-op.
+///
+/// BC7 encoding is compiled only on x86/x86_64 (the encoder's kernels are ISPC).
+/// Non-x86 adapters never report BC7 support, so the `Bc7` arm is unreachable there.
+fn apply_format(format: ImageFormat, image: Decoded) -> Decoded {
+    match format {
+        ImageFormat::Bc7 => {
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            {
+                to_bc7(image)
+            }
+            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+            {
+                image
+            }
+        }
+        ImageFormat::Rgba8 => image,
+    }
+}
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+pub fn to_bc7(mut image: Decoded) -> Decoded {
+    image.format = ImageFormat::Bc7;
+    // BC7 blocks are 4x4; drop mips a compressed texture level cannot represent.
+    image.mips.retain(|m| m.width >= 4 && m.height >= 4);
+    for mip in &mut image.mips {
+        mip.bytes = encode_bc7(&mip.bytes, mip.width, mip.height);
+    }
+    image
+}
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+fn encode_bc7(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let w = width as usize;
+    let h = height as usize;
+    // Replicate edge texels out to the 4x4 block grid so partial blocks have no seams.
+    let pw = w.next_multiple_of(4);
+    let ph = h.next_multiple_of(4);
+    let mut padded = Vec::with_capacity(pw * ph * 4);
+    for y in 0..ph {
+        let row = &rgba[y.min(h - 1) * w * 4..][..w * 4];
+        padded.extend_from_slice(row);
+        for _ in w..pw {
+            padded.extend_from_slice(&row[(w - 1) * 4..]);
+        }
+    }
+    intel_tex_2::bc7::compress_blocks(
+        &intel_tex_2::bc7::alpha_very_fast_settings(),
+        &intel_tex_2::RgbaSurface {
+            data: &padded,
+            width: pw as u32,
+            height: ph as u32,
+            stride: (pw * 4) as u32,
+        },
+    )
 }
 const RGBA_MAGIC: &[u8; 8] = b"MOTHRG01";
 /// Writes original clipboard pixels without a PNG encode/decode round-trip.
@@ -559,7 +630,8 @@ impl DecodePool {
                                     reader.seek(std::io::SeekFrom::Start(0))?;
                                     let mut bytes = Vec::with_capacity(len as usize);
                                     reader.take(MAX_INPUT_BYTES + 1).read_to_end(&mut bytes)?;
-                                    let result = decode(&bytes, request.side);
+                                    let result = decode(&bytes, request.side)
+                                        .map(|image| apply_format(request.format, image));
                                     if result.is_err() {
                                         failure_hash = Some(blake3::hash(&bytes));
                                     }
@@ -594,7 +666,7 @@ mod tests {
         reference.apply_orientation(image::metadata::Orientation::Rotate90);
         let result = decode(bytes, 64).unwrap();
         assert_eq!(result.original, [17, 31]);
-        assert_eq!(result.mips[0].rgba, reference.into_rgba8().into_raw());
+        assert_eq!(result.mips[0].bytes, reference.into_rgba8().into_raw());
         for bytes in [
             include_bytes!("../../../corpus/images/lossless.webp").as_slice(),
             include_bytes!("../../../corpus/images/lossy.webp").as_slice(),
@@ -615,7 +687,7 @@ mod tests {
                 let expected = preview_rgba(31, 17, source.as_raw(), side).unwrap();
                 let actual = decode(bytes, side).unwrap();
                 assert_eq!(actual.original, [31, 17]);
-                assert_eq!(actual.mips[0].rgba, expected.mips[0].rgba);
+                assert_eq!(actual.mips[0].bytes, expected.mips[0].bytes);
             }
         }
         assert!(matches!(
@@ -645,7 +717,7 @@ mod tests {
             let expected = preview_rgba(7, 5, source.as_raw(), side).unwrap();
             let actual = decode(bytes, side).unwrap();
             assert_eq!(actual.original, [7, 5]);
-            assert_eq!(actual.mips[0].rgba, expected.mips[0].rgba);
+            assert_eq!(actual.mips[0].bytes, expected.mips[0].bytes);
         }
     }
     #[test]
@@ -661,8 +733,8 @@ mod tests {
         }
         top_down[22..26].copy_from_slice(&(-17i32).to_le_bytes());
         assert_eq!(
-            decode(&top_down, 8).unwrap().mips[0].rgba,
-            expected.mips[0].rgba
+            decode(&top_down, 8).unwrap().mips[0].bytes,
+            expected.mips[0].bytes
         );
         for (offset, value) in [(10, 0u32), (10, u32::MAX), (30, 1), (30, 2)] {
             let mut invalid = bytes.to_vec();
@@ -686,8 +758,8 @@ mod tests {
             let expected = preview_rgba(31, 17, source.as_raw(), 8).unwrap();
             let result = decode(bytes, 8).unwrap();
             assert_eq!(result.original, [31, 17]);
-            assert_eq!(result.mips[0].rgba, expected.mips[0].rgba);
-            assert_eq!(decode(bytes, 64).unwrap().mips[0].rgba, source.into_raw());
+            assert_eq!(result.mips[0].bytes, expected.mips[0].bytes);
+            assert_eq!(decode(bytes, 64).unwrap().mips[0].bytes, source.into_raw());
         }
     }
     #[test]
@@ -713,7 +785,7 @@ mod tests {
         let pixels = [10, 20, 30, 255].repeat(16);
         let preview = preview_rgba_with_hash(4, 4, &pixels, 2, hash).unwrap();
         assert_eq!(preview.hash, hash);
-        assert_eq!(preview.mips[0].rgba, [10, 20, 30, 255].repeat(4));
+        assert_eq!(preview.mips[0].bytes, [10, 20, 30, 255].repeat(4));
         assert!(preview_rgba_with_hash(4, 4, &pixels[..4], 2, hash).is_err());
     }
     #[test]
@@ -725,8 +797,8 @@ mod tests {
         assert_eq!(image.original, [16, 8]);
         let direct = preview_rgba(16, 8, &pixels, 16).unwrap();
         assert_eq!(direct.hash, image.hash);
-        assert_eq!(direct.mips[0].rgba, image.mips[0].rgba);
-        assert_eq!(image.mips[0].rgba, pixels);
+        assert_eq!(direct.mips[0].bytes, image.mips[0].bytes);
+        assert_eq!(image.mips[0].bytes, pixels);
         for end in 0..bytes.len() {
             assert!(decode(&bytes[..end], 16).is_err());
         }
@@ -764,11 +836,11 @@ mod tests {
             let preview = decode(bytes, 16).unwrap();
             let direct =
                 preview_rgba(source.width(), source.height(), source.as_raw(), 16).unwrap();
-            assert_eq!(preview.mips[0].rgba, direct.mips[0].rgba);
+            assert_eq!(preview.mips[0].bytes, direct.mips[0].bytes);
             if let Some(previous) = previous {
-                assert_eq!(preview.mips[0].rgba, previous);
+                assert_eq!(preview.mips[0].bytes, previous);
             }
-            previous = Some(preview.mips[0].rgba.clone());
+            previous = Some(preview.mips[0].bytes.clone());
         }
     }
     #[test]
@@ -794,7 +866,7 @@ mod tests {
         assert_eq!((decoded.mips[0].width, decoded.mips[0].height), (4, 8));
         let decoded = decode(include_bytes!("../../../corpus/images/cmyk.jpg"), 16).unwrap();
         assert_eq!(decoded.original, [8, 4]);
-        for pixel in decoded.mips[0].rgba.as_chunks::<4>().0 {
+        for pixel in decoded.mips[0].bytes.as_chunks::<4>().0 {
             for (actual, expected) in pixel.iter().zip([255u8, 127, 0, 255]) {
                 assert!(actual.abs_diff(expected) <= 2);
             }
@@ -836,24 +908,24 @@ mod tests {
     fn previews_average_all_source_pixels() {
         let pixels = [0, 0, 0, 255, 255, 255, 255, 255].repeat(2);
         let direct = preview_rgba(2, 2, &pixels, 1).unwrap();
-        assert_eq!(direct.mips[0].rgba, [128, 128, 128, 255]);
+        assert_eq!(direct.mips[0].bytes, [128, 128, 128, 255]);
         let mut encoded = Vec::new();
         write_png(&mut encoded, 2, 2, &pixels).unwrap();
         assert_eq!(
-            decode(&encoded, 1).unwrap().mips[0].rgba,
-            direct.mips[0].rgba
+            decode(&encoded, 1).unwrap().mips[0].bytes,
+            direct.mips[0].bytes
         );
     }
     #[test]
     fn transparent_colors_do_not_bleed_into_area_previews() {
         let pixels = [255, 0, 0, 0, 0, 0, 255, 255];
         let preview = preview_rgba(2, 1, &pixels, 1).unwrap();
-        assert_eq!(preview.mips[0].rgba, [0, 0, 255, 128]);
+        assert_eq!(preview.mips[0].bytes, [0, 0, 255, 128]);
         let mut encoded = Vec::new();
         write_png(&mut encoded, 2, 1, &pixels).unwrap();
         assert_eq!(
-            decode(&encoded, 1).unwrap().mips[0].rgba,
-            preview.mips[0].rgba
+            decode(&encoded, 1).unwrap().mips[0].bytes,
+            preview.mips[0].bytes
         );
     }
     #[test]
@@ -866,5 +938,37 @@ mod tests {
         let mut bytes = bytes.into_inner();
         bytes[16..20].copy_from_slice(&100000u32.to_be_bytes());
         assert!(decode(&bytes, 64).is_err());
+    }
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[test]
+    fn bc7_round_trip_stays_within_tolerance() {
+        let color = [128u8, 64, 32, 255];
+        // Block-aligned surface round-trips closely (BC7 is lossy).
+        let encoded = encode_bc7(&color.repeat(8 * 8), 8, 8);
+        assert_eq!(encoded.len(), 64); // 2x2 blocks of 16 bytes
+        let mut decoded = vec![0u8; 8 * 8 * 4];
+        for (block, out) in encoded
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .zip(decoded.as_chunks_mut::<64>().0.iter_mut())
+        {
+            bcdec_rs::bc7(block, out, 16);
+        }
+        let worst = decoded
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|p| {
+                p[..3]
+                    .iter()
+                    .zip(color[..3].iter())
+                    .map(|(&a, &b)| a.abs_diff(b))
+            })
+            .max()
+            .unwrap();
+        assert!(worst <= 4, "BC7 solid-color error {worst} exceeds 4");
+        // Non-block-aligned mips are padded to the 4x4 grid, not truncated.
+        assert_eq!(encode_bc7(&color.repeat(5 * 3), 5, 3).len(), 32);
     }
 }

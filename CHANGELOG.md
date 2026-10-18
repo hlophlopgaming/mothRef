@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Import BeeRef text notes alongside images, and add text notes to the board
+  format (schema 3): notes are imported, saved, reopened, created (context menu or
+  double-click empty canvas) and edited in place (double-click a note). Schema 1
+  and 2 boards still open.
+- Carry BeeRef item rotation, horizontal flip and scale through the import:
+  rotated/flipped images render correctly, and notes keep their rotation and
+  scale (flip is preserved in the file).
+
+- Open images and boards through the native file picker instead of typing a
+  path: the Open button (canvas, empty board and library) and Ctrl/Cmd+O now
+  browse the OS file manager and add the selected files to the board.
+
+- Choose the image texture format at runtime: BC7 on desktop adapters that
+  support it, uncompressed RGBA8 otherwise (including the software adapter).
+  Previews are encoded to BC7 on the decode pool, quartering texture memory for
+  the same residency. ASTC for mobile is deferred to the mobile milestone; the
+  `.moth` format stays GPU-format independent.
+
 ## 0.1.0-alpha.2 — 2026-10-17
 
 - Keep Undo, Redo and Save visually steady while edits are acknowledged by the journal.

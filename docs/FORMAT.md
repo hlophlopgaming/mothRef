@@ -1,15 +1,15 @@
-# MothRef format, schema 2
+# MothRef format, schema 3
 
 All integers and IEEE-754 f32 coordinates are little-endian. Core readers accept
 seekable byte streams; filesystem names are never serialized. Schema 1 is the
 first persistent format; there is no schema 0 board to migrate. Schema 2 adds item
-content transforms. The reader keeps the schema 1 record layouts, so every schema 1
-board and journal still opens: a schema 1 insert carries no transform and migrates
-to the identity transform. Future schemas must retain both readers and provide
-explicit migrations.
+content transforms; schema 3 adds text notes. The reader keeps the schema 1 and 2
+record layouts, so every older board and journal still opens: a schema 1 insert
+carries no transform and migrates to the identity transform. Future schemas must
+retain both readers and provide explicit migrations.
 
-The 16-byte header is `MOTH`, u32 schema version `2`, then eight zero bytes.
-Readers accept version 1 and version 2 and reject every other version. Every record
+The 16-byte header is `MOTH`, u32 schema version `3`, then eight zero bytes.
+Readers accept versions 1, 2 and 3 and reject every other version. Every record
 consists of a payload followed by a 96-byte footer:
 
 | Footer offset | Size | Meaning |
@@ -32,7 +32,7 @@ command returns an error, never a panic. Unsupported headers are rejected.
 Original blobs contain encoded source bytes unchanged. Their payload checksum is
 their content identity. The reader retains only offsets and lengths, never decoded
 pixels. A command inserting an image must reference a previously committed blob.
-No GPU texture format or disposable LOD cache is persisted in schema 1 or 2.
+No GPU texture format or disposable LOD cache is persisted in any schema.
 
 Commands use these layouts:
 
@@ -41,9 +41,14 @@ Commands use these layouts:
   fractional index. The rectangle starts at payload offset 49.
 - Insert (schema 2, tag `4`): tag `1` layout with a transform (21 bytes) between the
   rectangle and the fractional index; the index starts at payload offset 86.
+- Insert note (schema 3, tag `6`): UUIDv7 (16 bytes), u32 UTF-8 byte length, the
+  note text, a rectangle (four f32), a transform (21 bytes), then a validated
+  fractional index. The rectangle starts after the text.
 - Remove: u8 `2`, UUID (16 bytes).
 - SetRect: u8 `3`, UUID (16 bytes), rectangle (four f32).
 - SetTransform: u8 `5`, UUID (16 bytes), transform (21 bytes).
+- SetText (schema 3, tag `7`): u8 `7`, UUID (16 bytes), u32 UTF-8 byte length, the
+  note text. The inverse carries the previous text.
 
 A transform is f32 `rotation` (radians, around the frame centre), one u8 flag byte
 (bit 0 flips content horizontally, bit 1 flips it vertically), two f32
@@ -61,11 +66,12 @@ streams share this encoding. The desktop worker syncs an original before its
 insertion command, then syncs the command before acknowledging it to the UI.
 Acknowledged mutations therefore need no deferred shutdown flush.
 
-Limits: 256 MiB per record; 64 MiB per checkpoint; 4,182 bytes per command (4,161 for
-schema 1 inserts, whose fractional index starts 21 bytes earlier); one
-million scene items and blob entries in the reader. The current UI still limits
-boards to 10,000 items. The desktop journal/file budget is 8 GiB; exhaustion rejects
-new work instead of evicting originals. Undo/redo retains at most 256 commands.
+Limits: 256 MiB per record; 64 MiB per checkpoint; 4,182 bytes per image command
+(4,161 for schema 1 inserts, whose fractional index starts 21 bytes earlier);
+32 KiB of note text per insert/SetText; one million scene items and blob entries
+in the reader. The current UI still limits boards to 10,000 items. The desktop
+journal/file budget is 8 GiB; exhaustion rejects new work instead of evicting
+originals. Undo/redo retains at most 256 commands.
 
 Explicit saves append missing blobs and one checkpoint. Before updating a
 nonempty board, the desktop worker syncs an immutable backup in app-owned storage

@@ -8,10 +8,9 @@
 //!
 //! A `.bee` file is a SQLite database (see [`crate::sqlite`]) with an `items`
 //! table for metadata and an `sqlar` table holding the embedded original image
-//! bytes. Only images can be represented in the current scene model, so text
-//! notes and transforms MothRef cannot yet store (rotation, flip, opacity,
-//! grayscale, crop sub-rects) are counted in [`Summary`] and left out rather
-//! than guessed at.
+//! bytes. Images and text notes are imported; transforms MothRef cannot yet
+//! store (rotation, flip, opacity, grayscale, crop sub-rects) are counted in
+//! [`Summary`] and left out rather than guessed at.
 use crate::sqlite::{Database, Error as SqliteError, Value};
 use moth_format::ReadSeek;
 use std::collections::HashMap;
@@ -44,8 +43,39 @@ pub struct Image<'a> {
     pub height: f32,
     /// BeeRef's float z-order; callers sort by it to preserve stacking.
     pub z: f32,
+    /// Frame rotation in radians (converted from BeeRef's degrees).
+    pub rotation: f32,
+    /// Mirrored horizontally (BeeRef stores this as flip = -1).
+    pub flip: bool,
     /// Original encoded bytes exactly as BeeRef stored them.
     pub bytes: &'a [u8],
+}
+
+/// One text note extracted from a `.bee` board. Text owns its string because it
+/// is copied out of the JSON column, which the row callback drops.
+pub struct Text {
+    /// BeeRef's `items.id`, used only to order.
+    pub id: i64,
+    /// Scene top-left x, in BeeRef scene units.
+    pub x: f32,
+    /// Scene top-left y, in BeeRef scene units.
+    pub y: f32,
+    /// BeeRef's float z-order; callers sort by it to preserve stacking.
+    pub z: f32,
+    /// Frame rotation in radians (converted from BeeRef's degrees).
+    pub rotation: f32,
+    /// Mirrored horizontally (BeeRef stores this as flip = -1).
+    pub flip: bool,
+    /// BeeRef's uniform scale; the caller sizes the note frame by it.
+    pub scale: f32,
+    /// The note's text.
+    pub text: String,
+}
+
+/// One extracted item; images borrow their bytes, notes own their text.
+pub enum Item<'a> {
+    Image(Image<'a>),
+    Text(Text),
 }
 
 /// How much of the source board the importer could represent.
@@ -53,7 +83,7 @@ pub struct Image<'a> {
 pub struct Summary {
     /// Images emitted to the callback.
     pub images: usize,
-    /// Text notes, which the scene cannot store yet.
+    /// Text notes emitted to the callback.
     pub text: usize,
     /// Unknown items, missing payloads or geometry the scene rejects.
     pub unsupported: usize,
@@ -62,7 +92,7 @@ pub struct Summary {
 impl Summary {
     /// Total items left out of the import; drives the UI hint.
     pub fn skipped(&self) -> usize {
-        self.text + self.unsupported
+        self.unsupported
     }
 }
 
@@ -79,18 +109,21 @@ struct Meta {
     y: f32,
     z: f32,
     scale: f32,
+    rotation: f32,
+    flip: bool,
     crop: Option<[f32; 4]>,
     kind: Kind,
 }
 
-/// Reads every embedded image from a `.bee` source, in `sqlar` key order.
+/// Reads every image and text note from a `.bee` source.
 ///
-/// The callback runs once per image and receives borrowed bytes, so callers
-/// stream to disk without holding the whole board in memory. Ordering by z is
-/// the caller's job because only it knows how inserts become durable.
+/// The callback runs once per item; images receive borrowed bytes, notes receive
+/// owned text, so callers stream to disk without holding the whole board in
+/// memory. Ordering by z is the caller's job because only it knows how inserts
+/// become durable.
 pub fn read<S: ReadSeek>(
     source: S,
-    emit: &mut impl FnMut(Image<'_>) -> Result<(), Error>,
+    emit: &mut impl FnMut(Item<'_>) -> Result<(), Error>,
 ) -> Result<Summary, Error> {
     let mut database = Database::open(source)?;
     let items_root = database
@@ -109,25 +142,59 @@ pub fn read<S: ReadSeek>(
             Some("text") => Kind::Text,
             _ => Kind::Other,
         };
-        match kind {
-            Kind::Pixmap => expected_images += 1,
-            Kind::Text => summary.text += 1,
-            Kind::Other => summary.unsupported += 1,
-        }
-        let crop = values
+        let x = values.get(2).and_then(Value::real).unwrap_or(0.0) as f32;
+        let y = values.get(3).and_then(Value::real).unwrap_or(0.0) as f32;
+        let z = values.get(4).and_then(Value::real).unwrap_or(0.0) as f32;
+        let scale = values.get(5).and_then(Value::real).unwrap_or(1.0) as f32;
+        // BeeRef stores rotation in degrees (Qt convention, clockwise in screen
+        // coordinates); the scene uses radians with the same winding.
+        let rotation = values
+            .get(6)
+            .and_then(Value::real)
+            .unwrap_or(0.0)
+            .to_radians() as f32;
+        let flip = values
+            .get(7)
+            .and_then(Value::integer)
+            .is_some_and(|f| f == -1);
+        let data = values
             .get(8)
             .and_then(Value::text)
-            .and_then(|data| serde_json::from_str::<serde_json::Value>(data).ok())
-            .and_then(|data| crop(&data));
+            .and_then(|data| serde_json::from_str::<serde_json::Value>(data).ok());
+        match kind {
+            Kind::Pixmap => expected_images += 1,
+            Kind::Text => {
+                let text = data
+                    .as_ref()
+                    .and_then(|data| data.get("text"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                emit(Item::Text(Text {
+                    id: rowid,
+                    x,
+                    y,
+                    z,
+                    rotation,
+                    flip,
+                    scale,
+                    text,
+                }))?;
+                summary.text += 1;
+            }
+            Kind::Other => summary.unsupported += 1,
+        }
         meta.insert(
             rowid,
             Meta {
                 id: rowid,
-                x: values.get(2).and_then(Value::real).unwrap_or(0.0) as f32,
-                y: values.get(3).and_then(Value::real).unwrap_or(0.0) as f32,
-                z: values.get(4).and_then(Value::real).unwrap_or(0.0) as f32,
-                scale: values.get(5).and_then(Value::real).unwrap_or(1.0) as f32,
-                crop,
+                x,
+                y,
+                z,
+                scale,
+                rotation,
+                flip,
+                crop: data.as_ref().and_then(crop),
                 kind,
             },
         );
@@ -150,15 +217,17 @@ pub fn read<S: ReadSeek>(
         expected_images = expected_images.saturating_sub(1);
         match geometry(item) {
             Some((x, y, width, height)) => {
-                emit(Image {
+                emit(Item::Image(Image {
                     id: item.id,
                     x,
                     y,
                     width,
                     height,
                     z: item.z,
+                    rotation: item.rotation,
+                    flip: item.flip,
                     bytes,
-                })?;
+                }))?;
                 summary.images += 1;
             }
             None => summary.unsupported += 1,
@@ -207,30 +276,75 @@ mod tests {
     ));
 
     #[test]
-    fn reads_geometry_and_counts_skipped_items() {
+    fn reads_geometry_text_and_counts_skipped_items() {
         let mut images = Vec::new();
-        let summary = read(Cursor::new(FIXTURE), &mut |image| {
-            images.push((
-                image.id,
-                image.x,
-                image.y,
-                image.width,
-                image.height,
-                image.z,
-                image.bytes.to_vec(),
-            ));
-            Ok(())
+        let mut notes = Vec::new();
+        let summary = read(Cursor::new(FIXTURE), &mut |item| match item {
+            Item::Image(image) => {
+                images.push((
+                    image.id,
+                    image.x,
+                    image.y,
+                    image.width,
+                    image.height,
+                    image.z,
+                    image.bytes.to_vec(),
+                ));
+                Ok(())
+            }
+            Item::Text(note) => {
+                notes.push((note.id, note.x, note.y, note.z, note.text));
+                Ok(())
+            }
         })
         .unwrap();
         assert_eq!(summary.images, 1);
         assert_eq!(summary.text, 1);
-        assert_eq!(summary.skipped(), 1);
+        assert_eq!(summary.skipped(), 0);
         assert_eq!(images.len(), 1);
         let (_, x, y, width, height, z, bytes) = &images[0];
         assert_eq!((*x, *y), (10.0, 20.0));
         assert_eq!((*width, *height), (2.0, 1.0));
         assert_eq!(*z, 0.001);
         assert!(bytes.starts_with(b"\x89PNG"));
+        assert_eq!(notes.len(), 1);
+        let (id, x, y, z, text) = &notes[0];
+        assert_eq!(*id, 2);
+        assert_eq!((*x, *y), (30.0, 40.0));
+        assert_eq!(*z, 0.002);
+        assert_eq!(text, "hi");
+    }
+
+    #[test]
+    fn imports_rotation_flip_and_scale() {
+        const FIXTURE: &[u8] = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/bee/transforms.bee"
+        ));
+        let mut images = Vec::new();
+        let mut notes = Vec::new();
+        read(Cursor::new(FIXTURE), &mut |item| match item {
+            Item::Image(image) => {
+                images.push((image.width, image.height, image.rotation, image.flip));
+                Ok(())
+            }
+            Item::Text(note) => {
+                notes.push((note.scale, note.rotation, note.flip, note.text));
+                Ok(())
+            }
+        })
+        .unwrap();
+        // Pixmap: scale 2.0 on a 4x2 crop, rotated 90°, flipped horizontally.
+        let (width, height, rotation, flip) = images[0];
+        assert_eq!((width, height), (8.0, 4.0));
+        assert!((rotation - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+        assert!(flip);
+        // Text: scale 1.5, rotated 45°, flipped horizontally.
+        let (scale, rotation, flip, text) = &notes[0];
+        assert_eq!(*scale, 1.5);
+        assert!((rotation - std::f32::consts::FRAC_PI_4).abs() < 1e-5);
+        assert!(*flip);
+        assert_eq!(text, "note");
     }
 
     #[test]

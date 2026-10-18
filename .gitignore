@@ -5,3 +5,4 @@ dhat-heap.json
 /fuzz/artifacts/
 /fuzz/corpus/
 **/dhat-heap.json
+commands.md

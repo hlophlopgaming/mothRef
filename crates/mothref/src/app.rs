@@ -27,6 +27,17 @@ enum Pending {
     Paste,
     Preview(BlobId),
 }
+/// Inline note editor state; the draft is committed (or discarded) on focus loss.
+struct Editing {
+    id: Uuid,
+    /// Text before editing began, so an unchanged note is not rewritten.
+    original: String,
+    /// Live text as the user types.
+    draft: String,
+    /// World anchor where the editor floats, independent of scene timing.
+    anchor: [f32; 2],
+    focus: bool,
+}
 /// Ask how to arrange a burst of newly inserted images once it exceeds this count.
 /// shortcut: fixed threshold until the settings store lands; expose `arrange_prompt_threshold` then.
 const ARRANGE_PROMPT_THRESHOLD: usize = 5;
@@ -43,10 +54,11 @@ pub struct App {
     cards: Vec<moth_ui::library::Card>,
     catalog: moth_ui::library::Library,
     refresh_library: bool,
-    dialog: Option<bool>,
+    dialog: Option<()>,
     dialog_path: String,
     dialog_focus: bool,
     moving: Option<(Uuid, Rect)>,
+    editing: Option<Editing>,
     tabs: Vec<Session>,
     library: bool,
     closing_window: bool,
@@ -72,6 +84,13 @@ pub struct App {
     startup: Vec<std::path::PathBuf>,
 }
 impl App {
+    /// Canvas texture format for decode requests; RGBA8 until the GPU exists.
+    fn image_format(&self) -> moth_io::ImageFormat {
+        self.gpu
+            .as_ref()
+            .map(|g| g.registry.image_format())
+            .unwrap_or_default()
+    }
     pub fn new(proxy: EventLoopProxy<Wake>) -> anyhow::Result<Self> {
         let ready = proxy.clone();
         let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
@@ -100,6 +119,7 @@ impl App {
             dialog_path: String::new(),
             dialog_focus: false,
             moving: None,
+            editing: None,
             tabs: Vec::new(),
             library: true,
             closing_window: false,
@@ -176,6 +196,7 @@ impl App {
         self.library = false;
         self.cards.clear();
         self.catalog.dismiss_editor();
+        self.editing = None;
         self.drag = None;
         self.moving = None;
         self.drag_pointer = None;
@@ -442,14 +463,36 @@ impl App {
         }
         self.pump();
     }
+    fn open_files(&mut self) {
+        if self.confirm_close {
+            return;
+        }
+        let files = rfd::FileDialog::new()
+            .set_title(moth_ui::text(moth_ui::Text::Open))
+            .pick_files()
+            .unwrap_or_default();
+        for path in files {
+            if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("moth"))
+            {
+                self.open_in_tab(path);
+            } else {
+                if self.library {
+                    self.new_board();
+                }
+                self.import(path);
+            }
+        }
+    }
     fn pump(&mut self) {
         while let Some(&handle) = self.board.waiting.last() {
-            match self
-                .board
-                .decode
-                .requests
-                .try_send(moth_io::Request { handle, side: 256 })
-            {
+            match self.board.decode.requests.try_send(moth_io::Request {
+                handle,
+                side: 256,
+                format: self.image_format(),
+            }) {
                 Ok(()) => {
                     self.board.waiting.pop();
                     self.board.pending.insert(handle, Pending::Import);
@@ -485,6 +528,88 @@ impl App {
             return self.board.camera.world(cursor);
         }
         self.insertion_point()
+    }
+    /// Creates an empty note at `world` and opens the inline editor for it.
+    fn add_note(&mut self, world: [f32; 2]) {
+        if self.board.discarding || !self.board.idle() {
+            return;
+        }
+        let [width, height] = moth_scene::note_size("");
+        let item = Item::text(
+            "",
+            Rect {
+                x: world[0],
+                y: world[1],
+                width,
+                height,
+            },
+            self.board.scene.top(),
+        );
+        let id = item.id;
+        self.persist(moth_platform::boards::Request::Apply(
+            Command::Insert(item),
+            None,
+        ));
+        self.editing = Some(Editing {
+            id,
+            original: String::new(),
+            draft: String::new(),
+            anchor: world,
+            focus: true,
+        });
+    }
+    /// Opens the inline editor over an existing note.
+    fn edit_note(&mut self, id: Uuid) {
+        let Some(item) = self.board.scene.get(id) else {
+            return;
+        };
+        let Some(text) = item.note() else {
+            return;
+        };
+        self.editing = Some(Editing {
+            id,
+            original: text.to_owned(),
+            draft: text.to_owned(),
+            anchor: [item.rect.x, item.rect.y],
+            focus: true,
+        });
+    }
+    /// Commits or discards the inline editor's draft once it loses focus.
+    fn finish_editing(&mut self) {
+        let Some(editing) = self.editing.take() else {
+            return;
+        };
+        if editing.draft == editing.original {
+            return;
+        }
+        let mut commands = Vec::new();
+        if editing.draft.trim().is_empty() {
+            commands.push(Command::Remove(editing.id));
+        } else {
+            let [width, height] = measure_note(&self.ctx, &editing.draft);
+            commands.push(Command::SetText {
+                id: editing.id,
+                text: editing.draft,
+            });
+            let rect = Rect {
+                x: editing.anchor[0],
+                y: editing.anchor[1],
+                width,
+                height,
+            };
+            if self
+                .board
+                .scene
+                .get(editing.id)
+                .is_none_or(|i| i.rect != rect)
+            {
+                commands.push(Command::SetRect {
+                    id: editing.id,
+                    rect,
+                });
+            }
+        }
+        self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
     }
     fn complete(&mut self, done: moth_io::Completion) {
         let Some(pending) = self.board.pending.remove(&done.request.handle) else {
@@ -608,7 +733,7 @@ impl App {
                                 format!("library-{}-{i}", path.display()),
                                 egui::ColorImage::from_rgba_unmultiplied(
                                     [mip.width as usize, mip.height as usize],
-                                    &mip.rgba,
+                                    &mip.bytes,
                                 ),
                                 egui::TextureOptions::LINEAR,
                             )
@@ -686,6 +811,7 @@ impl App {
                         Completion::Opened(scene, sources, recovered) => {
                             self.board.scene = scene;
                             self.board.sources = sources;
+                            self.editing = None;
                             self.recovery_paths.clear();
                             self.board.dirty = recovered;
                             self.board.message = moth_ui::text(if recovered {
@@ -698,6 +824,7 @@ impl App {
                         }
                         Completion::Imported(commands, sources, skipped) => {
                             self.board.scene = Scene::default();
+                            self.editing = None;
                             for command in commands {
                                 if let Err(e) = self.board.scene.apply(command) {
                                     self.board.message = e.to_string();
@@ -755,7 +882,11 @@ impl App {
                     {
                         self.board.pending.insert(handle, Pending::Paste);
                         self.complete(moth_io::Completion {
-                            request: moth_io::Request { handle, side: 256 },
+                            request: moth_io::Request {
+                                handle,
+                                side: 256,
+                                format: self.image_format(),
+                            },
                             result: Ok(image),
                             failure_hash: None,
                         });
@@ -1047,6 +1178,9 @@ impl App {
         let mut commands = Vec::new();
         let mut arranged: Option<(arrange::Arrange, Vec<Uuid>)> = None;
         let mut fit_selection = false;
+        let mut commit_note = false;
+        let mut add_note_at: Option<[f32; 2]> = None;
+        let mut edit_note_id: Option<Uuid> = None;
         let mut output = self.ctx.run_ui(state.take_egui_input(&window), |ui| {
             if self.overlay.is_none() {
                 let active_title = self.board.title().to_owned();
@@ -1167,22 +1301,32 @@ impl App {
                             width: self.board.viewport.width() / self.board.camera.zoom,
                             height: self.board.viewport.height() / self.board.camera.zoom,
                         }) {
-                            if !gpu.registry.resident(item.blob, 1) {
-                                let p = self.board.camera.screen([item.rect.x, item.rect.y]);
-                                let rect = egui::Rect::from_min_size(
-                                    egui::pos2(p[0], p[1]),
-                                    egui::vec2(
-                                        item.rect.width * self.board.camera.zoom,
-                                        item.rect.height * self.board.camera.zoom,
-                                    ),
-                                );
-                                ui.painter().rect_filled(rect, 2., moth_ui::BACKGROUND);
-                                ui.painter().rect_stroke(
-                                    rect,
-                                    2.,
-                                    egui::Stroke::new(1., moth_ui::ACCENT),
-                                    egui::StrokeKind::Inside,
-                                );
+                            match item.blob() {
+                                // Non-resident images show a placeholder until decoded.
+                                Some(blob) if !gpu.registry.resident(blob, 1) => {
+                                    let p = self.board.camera.screen([item.rect.x, item.rect.y]);
+                                    let rect = egui::Rect::from_min_size(
+                                        egui::pos2(p[0], p[1]),
+                                        egui::vec2(
+                                            item.rect.width * self.board.camera.zoom,
+                                            item.rect.height * self.board.camera.zoom,
+                                        ),
+                                    );
+                                    ui.painter().rect_filled(rect, 2., moth_ui::BACKGROUND);
+                                    ui.painter().rect_stroke(
+                                        rect,
+                                        2.,
+                                        egui::Stroke::new(1., moth_ui::ACCENT),
+                                        egui::StrokeKind::Inside,
+                                    );
+                                }
+                                // Notes are drawn by the UI layer in screen space.
+                                None => {
+                                    if self.editing.as_ref().is_none_or(|e| e.id != item.id) {
+                                        draw_note(ui, &self.board.camera, item);
+                                    }
+                                }
+                                Some(_) => {}
                             }
                         }
                         for &id in &self.board.selection {
@@ -1205,6 +1349,20 @@ impl App {
                                 egui::Sense::click(),
                             );
                             response.context_menu(|ui| {
+                                if ui
+                                    .add_enabled(
+                                        self.board.idle() && self.editing.is_none(),
+                                        egui::Button::new(moth_ui::text(moth_ui::Text::AddNote)),
+                                    )
+                                    .clicked()
+                                {
+                                    if let Some(pos) = response.interact_pointer_pos() {
+                                        let world = self.board.camera.world([pos.x, pos.y]);
+                                        add_note_at = Some(world);
+                                    }
+                                    ui.close();
+                                }
+                                ui.separator();
                                 if ui.button(moth_ui::text(moth_ui::Text::Fit)).clicked() {
                                     actions.fit = true;
                                     ui.close();
@@ -1345,6 +1503,53 @@ impl App {
                                     });
                                 });
                             });
+                            // Double-click edits a note in place, or creates one on empty canvas.
+                            if response.double_clicked()
+                                && self.board.idle()
+                                && let Some(pos) = response.interact_pointer_pos()
+                            {
+                                let world = self.board.camera.world([pos.x, pos.y]);
+                                let hit = self
+                                    .board
+                                    .scene
+                                    .query(Rect {
+                                        x: world[0],
+                                        y: world[1],
+                                        width: 1. / self.board.camera.zoom,
+                                        height: 1. / self.board.camera.zoom,
+                                    })
+                                    .into_iter()
+                                    .rev()
+                                    .find(|i| i.rect.contains_rotated(i.transform.rotation, world));
+                                match hit {
+                                    Some(item) if item.note().is_some() => {
+                                        edit_note_id = Some(item.id)
+                                    }
+                                    None => add_note_at = Some(world),
+                                    _ => {}
+                                }
+                            }
+                            // The inline note editor floats above the canvas.
+                            if let Some(editing) = &mut self.editing {
+                                let anchor = self.board.camera.screen(editing.anchor);
+                                let zoom = self.board.camera.zoom;
+                                egui::Area::new(egui::Id::new("note_editor"))
+                                    .fixed_pos(egui::pos2(anchor[0], anchor[1]))
+                                    .show(ui.ctx(), |ui| {
+                                        let response =
+                                            egui::TextEdit::multiline(&mut editing.draft)
+                                                .desired_width((200. * zoom).max(120.))
+                                                .desired_rows(3)
+                                                .show(ui);
+                                        if editing.focus {
+                                            response.response.request_focus();
+                                            editing.focus = false;
+                                        }
+                                        if response.response.lost_focus() {
+                                            commit_note = true;
+                                        }
+                                    });
+                            }
                         }
                         if !self.board.scene.is_empty() && self.overlay.is_none() {
                             let tool = moth_ui::canvas::tools(
@@ -1436,7 +1641,7 @@ impl App {
                         }
                     });
             }
-            if let Some(saving) = self.dialog {
+            if self.dialog.is_some() {
                 egui::Modal::new(egui::Id::new("board_path")).show(ui.ctx(), |ui| {
                     ui.set_width(ui.ctx().content_rect().width().min(460.) - 40.);
                     ui.heading(moth_ui::text(moth_ui::Text::PathDialog));
@@ -1459,25 +1664,17 @@ impl App {
                         if ui
                             .add_enabled(
                                 !self.dialog_path.trim().is_empty(),
-                                egui::Button::new(moth_ui::text(if saving {
-                                    moth_ui::Text::Save
-                                } else {
-                                    moth_ui::Text::Open
-                                })),
+                                egui::Button::new(moth_ui::text(moth_ui::Text::Save)),
                             )
                             .clicked()
                             || submit
                         {
-                            if saving {
-                                let mut path = std::path::PathBuf::from(&self.dialog_path);
-                                if path.extension().is_none() {
-                                    path.set_extension("moth");
-                                }
-                                self.board.path = path.to_string_lossy().into_owned();
-                                save = true;
-                            } else {
-                                open = Some(std::path::PathBuf::from(&self.dialog_path));
+                            let mut path = std::path::PathBuf::from(&self.dialog_path);
+                            if path.extension().is_none() {
+                                path.set_extension("moth");
                             }
+                            self.board.path = path.to_string_lossy().into_owned();
+                            save = true;
                             self.dialog = None;
                         }
                     });
@@ -1525,7 +1722,7 @@ impl App {
                         {
                             if self.board.path.is_empty() {
                                 self.dialog_path.clear();
-                                self.dialog = Some(true);
+                                self.dialog = Some(());
                                 self.dialog_focus = true;
                             } else {
                                 save = true;
@@ -1576,25 +1773,31 @@ impl App {
             height: self.board.viewport.height() / self.board.camera.zoom,
         });
         for item in &visible {
+            // Notes have no source bytes; only images request decode previews.
+            let Some(blob) = item.blob() else {
+                continue;
+            };
             let side = moth_render::preview_side(
                 item.rect.width.max(item.rect.height)
                     * self.board.camera.zoom
                     * output.pixels_per_point,
             );
-            if !gpu.registry.resident(item.blob, side)
-                && let Some(&handle) = self.board.sources.get(&item.blob)
+            if !gpu.registry.resident(blob, side)
+                && let Some(&handle) = self.board.sources.get(&blob)
                 && !self.board.pending.contains_key(&handle)
                 && !self.board.failed.contains(&handle)
                 && self
                     .board
                     .decode
                     .requests
-                    .try_send(moth_io::Request { handle, side })
+                    .try_send(moth_io::Request {
+                        handle,
+                        side,
+                        format: gpu.registry.image_format(),
+                    })
                     .is_ok()
             {
-                self.board
-                    .pending
-                    .insert(handle, Pending::Preview(item.blob));
+                self.board.pending.insert(handle, Pending::Preview(blob));
             }
         }
         let jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);
@@ -1789,13 +1992,11 @@ impl App {
             ));
         }
         if actions.open {
-            self.dialog = Some(false);
-            self.dialog_focus = true;
-            self.dialog_path.clear();
+            self.open_files();
         }
         if actions.save {
             if self.board.path.is_empty() {
-                self.dialog = Some(true);
+                self.dialog = Some(());
                 self.dialog_focus = true;
                 self.dialog_path.clear();
             } else {
@@ -1830,6 +2031,15 @@ impl App {
         }
         if close {
             self.discard();
+        }
+        if let Some(world) = add_note_at {
+            self.add_note(world);
+        }
+        if let Some(id) = edit_note_id {
+            self.edit_note(id);
+        }
+        if commit_note {
+            self.finish_editing();
         }
         Ok(())
     }
@@ -2028,10 +2238,7 @@ impl ApplicationHandler<Wake> for App {
                 {
                     self.new_board();
                 } else if self.command && event.physical_key == PhysicalKey::Code(KeyCode::KeyO) {
-                    self.dialog = Some(false);
-                    self.dialog_focus = true;
-                    self.dialog_path.clear();
-                    self.redraw();
+                    self.open_files();
                 } else if self.command && event.physical_key == PhysicalKey::Code(KeyCode::KeyL) {
                     self.library = true;
                     self.refresh_library = true;
@@ -2060,7 +2267,7 @@ impl ApplicationHandler<Wake> for App {
                     && self.board.idle()
                 {
                     if self.board.path.is_empty() {
-                        self.dialog = Some(true);
+                        self.dialog = Some(());
                         self.dialog_focus = true;
                         self.dialog_path.clear();
                         self.redraw();
@@ -2136,6 +2343,87 @@ fn screen_corners(camera: &Camera, rect: Rect, rotation: f32) -> [egui::Pos2; 4]
         let point = camera.screen(corner);
         egui::pos2(point[0], point[1])
     })
+}
+/// Draws a note's card and text in screen space. shortcut: notes render in the
+/// UI layer, above images, ignoring z-interleave with images; upgrade with a
+/// text pipeline in the renderer when stacking between the two matters.
+fn draw_note(ui: &egui::Ui, camera: &Camera, item: &Item) {
+    let Some(text) = item.note() else {
+        return;
+    };
+    let zoom = camera.zoom;
+    let rows = text.lines().count().max(1) as f32;
+    // The frame is the note's text bounds; recover the font size from its height
+    // so an imported note scaled by BeeRef's `scale` renders at that size.
+    let font_size = (item.rect.height / (rows * 1.3)).max(4.0) * zoom;
+    let font = egui::FontId::proportional(font_size);
+    let color = egui::Color32::from_rgb(224, 226, 231);
+    let fill = egui::Color32::from_rgba_unmultiplied(39, 42, 50, 235);
+    let stroke = egui::Stroke::new(1., egui::Color32::from_rgb(48, 52, 60));
+    let rotation = item.transform.rotation;
+
+    // Upright notes take the simple rounded-card path.
+    if rotation.abs() < 1e-4 {
+        let p = camera.screen([item.rect.x, item.rect.y]);
+        let card = egui::Rect::from_min_size(
+            egui::pos2(p[0], p[1]),
+            egui::vec2(item.rect.width * zoom, item.rect.height * zoom),
+        );
+        ui.painter().rect_filled(card, 4. * zoom, fill);
+        ui.painter()
+            .rect_stroke(card, 4. * zoom, stroke, egui::StrokeKind::Inside);
+        let mut y = p[1];
+        for line in text.lines() {
+            ui.painter().text(
+                egui::pos2(p[0], y),
+                egui::Align2::LEFT_TOP,
+                line,
+                font.clone(),
+                color,
+            );
+            y += font_size * 1.3;
+        }
+        return;
+    }
+
+    // Rotated notes: polygon card plus per-line text rotated around its own top-left.
+    let corners = item.rect.corners(rotation).map(|corner| {
+        let s = camera.screen(corner);
+        egui::pos2(s[0], s[1])
+    });
+    ui.painter().add(egui::Shape::convex_polygon(
+        vec![corners[0], corners[1], corners[3], corners[2]],
+        fill,
+        stroke,
+    ));
+    let line_offset = egui::vec2(
+        (corners[2].x - corners[0].x) / rows,
+        (corners[2].y - corners[0].y) / rows,
+    );
+    for (i, line) in text.lines().enumerate() {
+        let pos = corners[0] + line_offset * i as f32;
+        let galley = ui.fonts_mut(|f| f.layout_no_wrap(line.to_owned(), font.clone(), color));
+        ui.painter().add(egui::Shape::Text(
+            egui::epaint::TextShape::new(pos, galley, color).with_angle(rotation),
+        ));
+    }
+}
+/// Measures a note's auto-sized frame in world units, using egui's bundled font.
+fn measure_note(ctx: &egui::Context, text: &str) -> [f32; 2] {
+    let font_size = moth_scene::NOTE_FONT_SIZE;
+    let font = egui::FontId::proportional(font_size);
+    let color = egui::Color32::WHITE;
+    let mut width = 0.0f32;
+    let mut lines = 0usize;
+    for line in text.lines() {
+        let galley = ctx.fonts_mut(|f| f.layout_no_wrap(line.to_owned(), font.clone(), color));
+        width = width.max(galley.size().x);
+        lines += 1;
+    }
+    if text.is_empty() || !text.ends_with('\n') {
+        lines = lines.max(1);
+    }
+    [width, lines as f32 * font_size * 1.3]
 }
 /// One transform change per selected item, grouped into one undo step by the caller.
 fn transform_selection(
