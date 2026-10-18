@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Version-one append-only records. A checksummed footer commits one record.
+//! Versioned append-only records. A checksummed footer commits one record.
 use crate::ReadSeek;
 use moth_scene::{BlobId, Command, Content, Item, Rect, Scene, Transform, Uuid};
 use std::{
@@ -7,7 +7,9 @@ use std::{
     io::{self, SeekFrom, Write},
 };
 
-const HEADER: &[u8; 16] = b"MOTH\x03\0\0\0\0\0\0\0\0\0\0\0";
+const HEADER: &[u8; 16] = b"MOTH\x04\0\0\0\0\0\0\0\0\0\0\0";
+/// Schema-3 boards predate appearance and source names.
+const HEADER_V3: &[u8; 16] = b"MOTH\x03\0\0\0\0\0\0\0\0\0\0\0";
 /// Schema-2 boards predate notes; the reader still accepts them.
 const HEADER_V2: &[u8; 16] = b"MOTH\x02\0\0\0\0\0\0\0\0\0\0\0";
 /// Schema-1 boards predate content transforms; the reader still accepts them.
@@ -17,14 +19,15 @@ const FOOTER_SIZE: u64 = 96;
 /// Bounds allocations even for malicious input lengths.
 pub const MAX_RECORD: u64 = 256 * 1024 * 1024;
 /// Longest accepted image command payload: the largest fractional index plus its fixed fields.
-const MAX_COMMAND: u64 = 4182;
+const MAX_COMMAND: u64 = 5213;
 /// Bytes of fixed command fields after the tag, before a schema-2 insert's fractional index.
 const INSERT_V2_FIXED: usize = 86;
 /// Bytes of fixed fields before a text insert's fractional index: tag, id, u32 length,
 /// rectangle and transform (the UTF-8 text sits between the length and the rectangle).
-const INSERT_TEXT_FIXED: usize = 1 + 16 + 4 + 16 + 21;
+const INSERT_TEXT_FIXED: usize = 1 + 16 + 4 + 16 + 26;
 /// Longest accepted text insert or SetText command (text plus a fractional index).
-const MAX_TEXT_COMMAND: u64 = INSERT_TEXT_FIXED as u64 + moth_scene::MAX_NOTE_BYTES as u64 + 4096;
+const MAX_TEXT_COMMAND: u64 =
+    INSERT_TEXT_FIXED as u64 + moth_scene::MAX_NOTE_BYTES as u64 + 4096 + 1026;
 /// Bytes of fixed command fields in a transform record.
 const SET_TRANSFORM_LEN: usize = 1 + 16 + 21;
 /// Distinguishes unsupported files from recoverable torn tails.
@@ -94,20 +97,24 @@ pub fn encode(command: &Command) -> Vec<u8> {
     match command {
         Command::Insert(item) => match &item.content {
             Content::Image(blob) => {
-                bytes.push(4);
+                bytes.push(8);
                 bytes.extend_from_slice(item.id.as_bytes());
                 bytes.extend_from_slice(blob.as_bytes());
                 rect_bytes(&mut bytes, item.rect);
                 transform_bytes(&mut bytes, item.transform);
+                bytes.extend_from_slice(&(item.name.len() as u16).to_le_bytes());
+                bytes.extend_from_slice(item.name.as_bytes());
                 bytes.extend_from_slice(item.z.as_bytes());
             }
             Content::Text(text) => {
-                bytes.push(6);
+                bytes.push(9);
                 bytes.extend_from_slice(item.id.as_bytes());
                 bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
                 bytes.extend_from_slice(text.as_bytes());
                 rect_bytes(&mut bytes, item.rect);
                 transform_bytes(&mut bytes, item.transform);
+                bytes.extend_from_slice(&(item.name.len() as u16).to_le_bytes());
+                bytes.extend_from_slice(item.name.as_bytes());
                 bytes.extend_from_slice(item.z.as_bytes());
             }
         },
@@ -121,7 +128,7 @@ pub fn encode(command: &Command) -> Vec<u8> {
             rect_bytes(&mut bytes, *rect);
         }
         Command::SetTransform { id, transform } => {
-            bytes.push(5);
+            bytes.push(10);
             bytes.extend_from_slice(id.as_bytes());
             transform_bytes(&mut bytes, *transform);
         }
@@ -182,6 +189,8 @@ fn transform_bytes(bytes: &mut Vec<u8>, t: Transform) {
     }
     bytes.extend_from_slice(&t.content_scale.to_le_bytes());
     bytes.extend_from_slice(&t.content_rotation.to_le_bytes());
+    bytes.extend_from_slice(&t.opacity.to_le_bytes());
+    bytes.push(t.grayscale as u8);
 }
 fn decode(bytes: &[u8]) -> Result<Command, Error> {
     let id =
@@ -196,7 +205,11 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
         ))
     };
     let rect = || -> Result<Rect, Error> {
-        let start = if matches!(bytes[0], 1 | 4) { 49 } else { 17 };
+        let start = if matches!(bytes[0], 1 | 4 | 8) {
+            49
+        } else {
+            17
+        };
         Ok(Rect {
             x: float(start, 0)?,
             y: float(start, 1)?,
@@ -208,16 +221,48 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
         let flags = *bytes.get(start + 4).ok_or(Error::Invalid)?;
         Ok(Transform {
             rotation: float(start, 0)?,
+            opacity: if matches!(bytes[0], 8..=10) {
+                float(start + 21, 0)?
+            } else {
+                1.0
+            },
+            grayscale: if matches!(bytes[0], 8..=10) {
+                match bytes.get(start + 25) {
+                    Some(0) => false,
+                    Some(1) => true,
+                    _ => return Err(Error::Invalid),
+                }
+            } else {
+                false
+            },
             flip: [flags & 1 != 0, flags & 2 != 0],
             content_offset: [float(start + 5, 0)?, float(start + 5, 1)?],
             content_scale: float(start + 13, 0)?,
             content_rotation: float(start + 17, 0)?,
         })
     };
+    let name_index = |start: usize| -> Result<(String, usize), Error> {
+        let len = u16::from_le_bytes(
+            bytes
+                .get(start..start + 2)
+                .ok_or(Error::Invalid)?
+                .try_into()
+                .map_err(|_| Error::Invalid)?,
+        ) as usize;
+        if len > 1024 {
+            return Err(Error::Budget);
+        }
+        let end = start + 2 + len;
+        let name = std::str::from_utf8(bytes.get(start + 2..end).ok_or(Error::Invalid)?)
+            .map_err(|_| Error::Invalid)?
+            .to_owned();
+        Ok((name, end))
+    };
     match bytes[0] {
         // Schema-1 insert: no transform fields, so content starts at identity.
         1 if bytes.len() > 65 && bytes.len() <= 4161 => Ok(Command::Insert(Item {
             id,
+            name: String::new(),
             content: Content::Image(BlobId::from_bytes(
                 bytes[17..49].try_into().map_err(|_| Error::Invalid)?,
             )),
@@ -226,19 +271,31 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             z: fractional_index::FractionalIndex::from_bytes(bytes[65..].to_vec())
                 .map_err(|_| Error::Invalid)?,
         })),
-        4 if bytes.len() > INSERT_V2_FIXED && bytes.len() as u64 <= MAX_COMMAND => {
+        4 | 8
+            if bytes.len() > INSERT_V2_FIXED + if bytes[0] == 8 { 5 } else { 0 }
+                && bytes.len() as u64 <= MAX_COMMAND =>
+        {
+            let (name, index) = if bytes[0] == 8 {
+                name_index(91)?
+            } else {
+                (String::new(), 86)
+            };
             Ok(Command::Insert(Item {
                 id,
+                name,
                 content: Content::Image(BlobId::from_bytes(
                     bytes[17..49].try_into().map_err(|_| Error::Invalid)?,
                 )),
                 rect: rect()?,
                 transform: transform(65)?,
-                z: fractional_index::FractionalIndex::from_bytes(bytes[INSERT_V2_FIXED..].to_vec())
+                z: fractional_index::FractionalIndex::from_bytes(bytes[index..].to_vec())
                     .map_err(|_| Error::Invalid)?,
             }))
         }
-        6 if bytes.len() > INSERT_TEXT_FIXED && bytes.len() as u64 <= MAX_TEXT_COMMAND => {
+        6 | 9
+            if bytes.len() > INSERT_TEXT_FIXED - if bytes[0] == 6 { 5 } else { 0 }
+                && bytes.len() as u64 <= MAX_TEXT_COMMAND =>
+        {
             let text_len =
                 u32::from_le_bytes(bytes[17..21].try_into().map_err(|_| Error::Invalid)?) as usize;
             if text_len > moth_scene::MAX_NOTE_BYTES {
@@ -255,23 +312,29 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
                 height: float(rect_start, 3)?,
             };
             let transform_start = rect_start + 16;
+            let (name, index) = if bytes[0] == 9 {
+                name_index(transform_start + 26)?
+            } else {
+                (String::new(), transform_start + 21)
+            };
             Ok(Command::Insert(Item {
                 id,
+                name,
                 content: Content::Text(text.to_owned()),
                 rect,
                 transform: transform(transform_start)?,
-                z: fractional_index::FractionalIndex::from_bytes(
-                    bytes[transform_start + 21..].to_vec(),
-                )
-                .map_err(|_| Error::Invalid)?,
+                z: fractional_index::FractionalIndex::from_bytes(bytes[index..].to_vec())
+                    .map_err(|_| Error::Invalid)?,
             }))
         }
         2 if bytes.len() == 17 => Ok(Command::Remove(id)),
         3 if bytes.len() == 33 => Ok(Command::SetRect { id, rect: rect()? }),
-        5 if bytes.len() == SET_TRANSFORM_LEN => Ok(Command::SetTransform {
-            id,
-            transform: transform(17)?,
-        }),
+        5 | 10 if bytes.len() == SET_TRANSFORM_LEN + if bytes[0] == 10 { 5 } else { 0 } => {
+            Ok(Command::SetTransform {
+                id,
+                transform: transform(17)?,
+            })
+        }
         7 if bytes.len() > 21 && bytes.len() as u64 <= MAX_TEXT_COMMAND => {
             let text_len =
                 u32::from_le_bytes(bytes[17..21].try_into().map_err(|_| Error::Invalid)?) as usize;
@@ -294,7 +357,7 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
     reader.seek(SeekFrom::Start(0))?;
     let mut header = [0; 16];
     reader.read_exact(&mut header)?;
-    if &header != HEADER && &header != HEADER_V2 && &header != HEADER_V1 {
+    if &header != HEADER && &header != HEADER_V3 && &header != HEADER_V2 && &header != HEADER_V1 {
         return Err(Error::Invalid);
     }
     let length = reader.seek(SeekFrom::End(0))?;
@@ -494,8 +557,23 @@ mod tests {
     #[test]
     fn unsupported_schema_is_rejected() {
         let (mut bytes, _) = base();
-        bytes[4] = 4;
+        bytes[4] = 5;
         assert!(matches!(read(&mut Cursor::new(bytes)), Err(Error::Invalid)));
+    }
+    #[test]
+    fn schema_three_migrates_appearance_and_names() {
+        let bytes = include_bytes!("../../../corpus/moth/v3.moth");
+        assert_eq!(bytes[4], 3);
+        let old = read(&mut Cursor::new(bytes.as_slice())).unwrap();
+        for item in old.scene.items() {
+            assert_eq!(item.transform.opacity, 1.);
+            assert!(!item.transform.grayscale);
+            assert!(item.name.is_empty());
+        }
+        let migrated = restore(&snapshot(&old.scene).unwrap(), &old.blobs).unwrap();
+        for item in old.scene.items() {
+            assert_eq!(migrated.get(item.id), Some(item));
+        }
     }
     #[test]
     fn schema_one_board_still_loads() {
@@ -521,6 +599,7 @@ mod tests {
             content_offset: [-0.25, 1.5],
             content_scale: 2.5,
             content_rotation: -0.5,
+            ..Transform::default()
         };
         let mut scene = read(&mut Cursor::new(&bytes)).unwrap().scene;
         scene
@@ -635,10 +714,14 @@ mod tests {
     }
     proptest! {
         #[test]
-        fn scene_roundtrip(x in -10000f32..10000., y in -10000f32..10000., rotation in -10f32..10., scale in 0.01f32..100., dx in -5f32..5., dy in -5f32..5., mirror in any::<bool>(), spin in -10f32..10.) {
+        fn scene_roundtrip(x in -10000f32..10000., y in -10000f32..10000., rotation in -10f32..10., scale in 0.01f32..100., dx in -5f32..5., dy in -5f32..5., mirror in any::<bool>(), spin in -10f32..10., opacity in 0f32..=1., grayscale in any::<bool>(), name in "[a-zA-Z0-9_]{0,40}[.]png") {
             let (mut bytes,mut item)=base();
-            item.rect.x=x; item.rect.y=y;
-            item.transform=Transform{rotation,flip:[mirror,!mirror],content_offset:[dx,dy],content_scale:scale,content_rotation:spin};
+            item.rect.x=x; item.rect.y=y; item.name=name;
+            item.transform=Transform{opacity,grayscale,rotation,flip:[mirror,!mirror],content_offset:[dx,dy],content_scale:scale,content_rotation:spin};
+            let offset=bytes.len() as u64;
+            append(&mut bytes,offset,2,&encode(&Command::Remove(item.id))).unwrap();
+            let offset=bytes.len() as u64;
+            append(&mut bytes,offset,2,&encode(&Command::Insert(item.clone()))).unwrap();
             let offset=bytes.len() as u64;
             append(&mut bytes,offset,2,&encode(&Command::SetRect{id:item.id,rect:item.rect})).unwrap();
             let offset=bytes.len() as u64;

@@ -5,6 +5,7 @@ pub mod boards;
 mod clipboard_web;
 /// Native shutdown and bounded local crash reports.
 pub mod crash;
+pub mod export;
 pub mod input;
 /// Bounded read-only desktop board catalog.
 pub mod library;
@@ -115,6 +116,19 @@ impl DesktopStorage {
         );
         paths.insert(handle, path);
         Ok(handle)
+    }
+    /// Returns only registered metadata; no filesystem access occurs on the caller.
+    pub fn source_name(&self, handle: Handle) -> String {
+        self.paths
+            .lock()
+            .ok()
+            .and_then(|paths| {
+                paths
+                    .get(&handle)
+                    .and_then(|path| path.file_name())
+                    .map(|name| name.to_string_lossy().chars().take(256).collect())
+            })
+            .unwrap_or_default()
     }
     /// Persists clipboard originals on a worker before acknowledging a paste.
     pub fn stage_rgba(

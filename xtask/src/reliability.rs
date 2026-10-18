@@ -72,6 +72,47 @@ pub fn writer(path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 pub fn killtest(count: usize) -> anyhow::Result<()> {
+    killtest_impl(count, false)
+}
+/// Kills the real storage worker while importing distinct originals.
+pub fn load_killtest(count: usize) -> anyhow::Result<()> {
+    killtest_impl(count, true)
+}
+pub fn load_writer(path: &str) -> anyhow::Result<()> {
+    use moth_platform::boards::{Completion, Request, Worker};
+    let root = Path::new(path);
+    std::fs::create_dir_all(root)?;
+    let storage = std::sync::Arc::new(moth_platform::DesktopStorage::in_directory(
+        root.join("recovery"),
+    ));
+    let worker = Worker::new_tab(storage.clone(), std::sync::Arc::new(|| {}))?;
+    let source = root.join("input.png");
+    let handle = storage.register(source.clone())?;
+    let mut output = std::io::stdout().lock();
+    for index in 1u32.. {
+        let mut bytes = include_bytes!("../../corpus/images/rows.png").to_vec();
+        bytes.extend_from_slice(&index.to_le_bytes());
+        std::fs::write(&source, &bytes)?;
+        let image = moth_io::decode(&bytes, 256)?;
+        let mut item = item();
+        item.content = moth_scene::Content::Image(image.hash);
+        item.rect.x = index as f32;
+        worker
+            .requests
+            .send(Request::Apply(Command::Insert(item), Some(handle)))?;
+        anyhow::ensure!(
+            matches!(
+                worker.results.recv_timeout(Duration::from_secs(30))?,
+                Completion::Applied(_, _)
+            ),
+            "insert failed"
+        );
+        writeln!(output, "{index}")?;
+        output.flush()?;
+    }
+    Ok(())
+}
+fn killtest_impl(count: usize, loading: bool) -> anyhow::Result<()> {
     anyhow::ensure!(count > 0, "killtest needs at least one iteration");
     let directory =
         std::env::temp_dir().join(format!("mothref-killtest-{}", moth_scene::Uuid::now_v7()));
@@ -80,7 +121,11 @@ pub fn killtest(count: usize) -> anyhow::Result<()> {
     for iteration in 0..count {
         let path = directory.join("board.moth");
         let mut child = Process::new(std::env::current_exe()?)
-            .arg("kill-writer")
+            .arg(if loading {
+                "load-writer"
+            } else {
+                "kill-writer"
+            })
             .arg(&path)
             .stdout(Stdio::piped())
             .spawn()?;
@@ -105,19 +150,49 @@ pub fn killtest(count: usize) -> anyhow::Result<()> {
         for line in lines {
             acknowledged = line?.parse()?;
         }
-        let loaded = board::read(&mut File::open(&path)?)?;
-        let recovered = loaded
-            .scene
-            .items()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("lost original item"))?
-            .rect
-            .x as u32;
+        let journal = if loading {
+            let entry = std::fs::read_dir(path.join("recovery"))?
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("missing recovery directory"))??;
+            entry.path().join("board.moth")
+        } else {
+            path.clone()
+        };
+        let loaded = board::read(&mut File::open(journal)?)?;
+        let recovered = if loading {
+            anyhow::ensure!(
+                loaded.scene.items().all(|item| item
+                    .blob()
+                    .is_some_and(|blob| loaded.blobs.contains_key(&blob))),
+                "recovered image lost original"
+            );
+            loaded.scene.len() as u32
+        } else {
+            loaded
+                .scene
+                .items()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("lost original item"))?
+                .rect
+                .x as u32
+        };
         anyhow::ensure!(
             recovered >= acknowledged,
             "iteration {iteration}: lost acknowledged command {acknowledged}, recovered {recovered}"
         );
-        std::fs::remove_file(path)?;
+        if loading {
+            for index in 1..=acknowledged {
+                anyhow::ensure!(
+                    loaded.scene.items().any(|item| item.rect.x == index as f32),
+                    "iteration {iteration}: lost acknowledged image {index}"
+                );
+            }
+        }
+        if loading {
+            std::fs::remove_dir_all(path)?;
+        } else {
+            std::fs::remove_file(path)?;
+        }
     }
     std::fs::remove_dir(directory)?;
     println!("{count} process kills: no acknowledged commands lost");
@@ -125,7 +200,7 @@ pub fn killtest(count: usize) -> anyhow::Result<()> {
 }
 pub fn fixture() -> anyhow::Result<()> {
     std::fs::create_dir_all("corpus/moth")?;
-    // corpus/moth/v1.moth and v2.moth are frozen migration fixtures (schema 1 and 2);
+    // corpus/moth/v1.moth through v3.moth are frozen migration fixtures;
     // regenerating them with the current writer would erase that coverage.
     let mut bytes = Vec::new();
     board::initialize(&mut bytes)?;
@@ -139,7 +214,10 @@ pub fn fixture() -> anyhow::Result<()> {
         content_offset: [-0.25, 1.5],
         content_scale: 2.5,
         content_rotation: -0.5,
+        opacity: 0.4,
+        grayscale: true,
     };
+    item.name = "rows.png".into();
     scene.apply(Command::Insert(item))?;
     scene.apply(Command::Insert(Item::text(
         "a note",
@@ -153,7 +231,7 @@ pub fn fixture() -> anyhow::Result<()> {
     )))?;
     let offset = bytes.len() as u64;
     board::append(&mut bytes, offset, 3, &board::snapshot(&scene)?)?;
-    std::fs::write("corpus/moth/v3.moth", bytes)?;
+    std::fs::write("corpus/moth/v4.moth", bytes)?;
     Ok(())
 }
 pub fn roundtrip(path: &Path) -> anyhow::Result<()> {
@@ -233,12 +311,14 @@ impl Soak {
                 Completion::Recovery(_)
                 | Completion::Recent(_)
                 | Completion::Settings(_)
+                | Completion::Preferences(_)
                 | Completion::SettingsSaved => continue,
                 Completion::Failed(error) => anyhow::bail!(error),
                 Completion::Applied(_, _) | Completion::AppliedBatch(_, _) | Completion::Saved => {
                     break;
                 }
                 Completion::Opened(_, _, _) => anyhow::bail!("unexpected open completion"),
+                Completion::Exported(_) => anyhow::bail!("unexpected export completion"),
                 Completion::Imported(_, _, _) => anyhow::bail!("unexpected import completion"),
             }
         }

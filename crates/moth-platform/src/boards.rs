@@ -35,6 +35,17 @@ pub enum Request {
     ImportPur(PathBuf),
     /// Persist the selected interface language code (a two-letter tag).
     SaveSettings(String),
+    /// Persist a validated preference change together on the storage thread.
+    Preferences(std::collections::BTreeMap<String, String>),
+    /// Restore original image dimensions, optionally matching the first image's scale.
+    OriginalGeometry {
+        /// Stable image identities in reference order.
+        ids: Vec<moth_scene::Uuid>,
+        /// Original-backed reset or normalization to perform.
+        mode: super::export::Geometry,
+    },
+    /// Export from the worker scene without blocking a frame or changing the board.
+    Export(super::export::Target),
 }
 /// Worker completions are delivered only after durable writes.
 pub enum Completion {
@@ -44,8 +55,12 @@ pub enum Completion {
     Recent(Vec<PathBuf>),
     /// The persisted interface language, or a detected default on first launch.
     Settings(String),
+    /// Saved preferences loaded once at startup.
+    Preferences(std::collections::BTreeMap<String, String>),
     /// Confirms a settings write reached the catalog file.
     SettingsSaved,
+    /// Export succeeded; sampling/coordinate details are returned when applicable.
+    Exported(String),
     /// Applies an already-journaled mutation on the UI thread.
     Applied(Command, Option<(BlobId, Handle)>),
     /// Applies a whole journaled group as one unit.
@@ -100,6 +115,8 @@ struct State {
     /// Inverses accumulated by an open `BeginBatch` group, when one is open.
     batch: Option<Vec<Command>>,
     poisoned: bool,
+    clipboard: Option<arboard::Clipboard>,
+    undo_limit: usize,
 }
 fn error(e: impl std::fmt::Display) -> io::Error {
     io::Error::other(e.to_string())
@@ -127,7 +144,7 @@ fn create(path: &std::path::Path) -> io::Result<File> {
     sync_directory(super::parent_directory(path))?;
     Ok(file)
 }
-fn record(file: &mut File, kind: u8, bytes: &[u8]) -> io::Result<()> {
+fn append_record(file: &mut File, kind: u8, bytes: &[u8]) -> io::Result<()> {
     let offset = file.metadata()?.len();
     if offset.saturating_add(bytes.len() as u64 + 96) > 8 * 1024 * 1024 * 1024 {
         return Err(error(
@@ -135,6 +152,11 @@ fn record(file: &mut File, kind: u8, bytes: &[u8]) -> io::Result<()> {
         ));
     }
     board::append(file, offset, kind, bytes).map_err(error)?;
+    Ok(())
+}
+fn record(file: &mut File, kind: u8, bytes: &[u8]) -> io::Result<()> {
+    let _span = tracing::info_span!("durable_record", kind, bytes = bytes.len()).entered();
+    append_record(file, kind, bytes)?;
     file.flush()?;
     file.sync_all()
 }
@@ -182,7 +204,6 @@ impl State {
                 std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
             }
             self.journal = Some(create(&directory.join("board.moth"))?);
-            sync_directory(&directory)?;
             sync_directory(&self.storage.base_directory()?)?;
         }
         self.journal
@@ -196,7 +217,18 @@ impl State {
         }
         result
     }
+    // Pending records share the following command/snapshot sync; no completion precedes it.
+    fn append_pending(&mut self, kind: u8, bytes: &[u8]) -> io::Result<()> {
+        let result = self
+            .journal()
+            .and_then(|file| append_record(file, kind, bytes));
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result
+    }
     fn original(&self, hash: BlobId, handle: Handle) -> io::Result<Vec<u8>> {
+        let _span = tracing::info_span!("read_original").entered();
         let mut source = self.storage.open(handle)?;
         let size = source.seek(SeekFrom::End(0))?;
         if size > board::MAX_RECORD {
@@ -217,6 +249,14 @@ impl State {
         command: Command,
         source: Option<Handle>,
     ) -> io::Result<(Command, Completion)> {
+        self.apply_command(command, source, true)
+    }
+    fn apply_command(
+        &mut self,
+        command: Command,
+        source: Option<Handle>,
+        sync: bool,
+    ) -> io::Result<(Command, Completion)> {
         // Validate before committing; metadata-only inverse rollback cannot lose pixels.
         let inverse = self.scene.apply(command.clone()).map_err(error)?;
         self.scene.apply(inverse.clone()).map_err(error)?;
@@ -229,18 +269,26 @@ impl State {
                 .ok_or_else(|| error("Original unavailable"))?;
             let bytes = self.original(blob, handle)?;
             self.journal()?;
-            let directory = self.storage.recovery_directory()?;
-            let path = directory.join(format!("{}.source", uuid::Uuid::now_v7()));
-            let mut staged = private_file(&path)?;
-            staged.write_all(&bytes)?;
-            staged.sync_all()?;
-            sync_directory(&directory)?;
-            let staged = self.storage.register(path)?;
-            self.commit(1, &bytes)?;
+            let staged = if let Some(staged) = self.sources.get(&blob) {
+                *staged
+            } else {
+                let directory = self.storage.recovery_directory()?;
+                let path = directory.join(format!("{}.source", uuid::Uuid::now_v7()));
+                let mut staged = private_file(&path)?;
+                staged.write_all(&bytes)?;
+                // Recovery rebuilds this working copy from the synced journal.
+                self.storage.register(path)?
+            };
+            self.append_pending(1, &bytes)?;
             self.blobs.insert(blob);
             self.sources.insert(blob, staged);
         }
-        self.commit(2, &board::encode(&command))?;
+        let bytes = board::encode(&command);
+        if sync {
+            self.commit(2, &bytes)?;
+        } else {
+            self.append_pending(2, &bytes)?;
+        }
         self.scene.apply(command.clone()).map_err(error)?;
         let source = match &command {
             Command::Insert(item) => item
@@ -250,10 +298,10 @@ impl State {
         };
         Ok((inverse, Completion::Applied(command, source)))
     }
-    /// Records one undo step, trimming to the in-memory budget of 256 user actions.
+    /// Records one undo step, trimming to the configured in-memory action budget.
     fn push_undo(&mut self, step: Step) {
         self.undo.push_back(step);
-        if self.undo.len() > 256 {
+        if self.undo.len() > self.undo_limit {
             self.undo.pop_front();
         }
     }
@@ -264,6 +312,18 @@ impl State {
             Err(e) if e.kind() == io::ErrorKind::NotFound => create(&path)?,
             Err(e) => return Err(e),
         };
+        file.seek(SeekFrom::Start(0))?;
+        let mut header = [0u8; 16];
+        file.read_exact(&mut header)?;
+        if header[4] < 4 {
+            drop(file);
+            let handle = self.storage.register(path.clone())?;
+            let result = board::compact(self.storage.as_ref(), handle).map_err(error);
+            self.storage.forget(handle)?;
+            result?;
+            file = OpenOptions::new().read(true).append(true).open(&path)?;
+        }
+        file.seek(SeekFrom::Start(0))?;
         let previous = board::read(&mut file).map_err(error)?;
         // Backups are immutable, uniquely named recovery files; keep the latest three.
         if !previous.scene.is_empty() {
@@ -314,6 +374,7 @@ impl State {
         Ok(Completion::Saved)
     }
     fn open(&mut self, path: PathBuf) -> io::Result<Completion> {
+        let _span = tracing::info_span!("open_board").entered();
         self.claim(&path, true)?;
         if !self.scene.is_empty() {
             return Err(error(
@@ -321,7 +382,10 @@ impl State {
             ));
         }
         let mut file = File::open(&path)?;
-        let loaded = board::read(&mut file).map_err(error)?;
+        let loaded = {
+            let _span = tracing::info_span!("parse_moth").entered();
+            board::read(&mut file).map_err(error)?
+        };
         let directory = self.storage.recovery_directory()?;
         std::fs::create_dir_all(&directory)?;
         let mut sources = HashMap::new();
@@ -331,6 +395,7 @@ impl State {
                 .blobs
                 .get(&hash)
                 .ok_or_else(|| error("Missing original"))?;
+            let _span = tracing::info_span!("stage_original", bytes = blob.length).entered();
             let destination = directory.join(format!("{}.source", uuid::Uuid::now_v7()));
             let mut output = private_file(&destination)?;
             file.seek(SeekFrom::Start(blob.offset))?;
@@ -338,13 +403,12 @@ impl State {
             if copied != blob.length {
                 return Err(error("Truncated original"));
             }
-            output.sync_all()?;
+            // The journal, not this rebuildable working copy, owns durability.
             sources.insert(hash, self.storage.register(destination)?);
         }
-        sync_directory(&directory)?;
         for (hash, handle) in &sources {
             let bytes = self.original(*hash, *handle)?;
-            self.commit(1, &bytes)?;
+            self.append_pending(1, &bytes)?;
             self.blobs.insert(*hash);
         }
         self.commit(3, &board::snapshot(&loaded.scene).map_err(error)?)?;
@@ -366,6 +430,7 @@ impl State {
     /// Embedded originals are staged and journaled one at a time, so a crash
     /// mid-import recovers every image already acknowledged.
     fn import_foreign(&mut self, path: PathBuf) -> io::Result<Completion> {
+        let _span = tracing::info_span!("import_board").entered();
         if !self.scene.is_empty() {
             return Err(error("Import requires an empty board"));
         }
@@ -401,6 +466,7 @@ impl State {
                 return Err(error("Invalid imported transform or stacking order"));
             }
             if let Some(bytes) = item.bytes {
+                let _span = tracing::info_span!("stage_original", bytes = bytes.len()).entered();
                 let hash = blake3::hash(bytes);
                 let handle = if let Some(handle) = staged_sources.get(&hash) {
                     *handle
@@ -408,7 +474,7 @@ impl State {
                     let destination = directory.join(format!("{}.source", uuid::Uuid::now_v7()));
                     let mut staged = private_file(&destination)?;
                     staged.write_all(bytes)?;
-                    staged.sync_all()?;
+                    // No image is acknowledged until its journal record is synced.
                     let handle = storage.register(destination)?;
                     staged_sources.insert(hash, handle);
                     handle
@@ -489,7 +555,6 @@ impl State {
             .map_err(error)?
             .skipped()
         };
-        sync_directory(&directory)?;
         // Sort foreign stacking keys before assigning fractional scene indices.
         pending.sort_by(|a, b| {
             let (az, aid) = match a {
@@ -502,6 +567,7 @@ impl State {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then(aid.cmp(&bid))
         });
+        self.sources.extend(staged_sources);
         let mut commands = Vec::with_capacity(pending.len());
         let mut sources = HashMap::new();
         let mut inverses = Vec::with_capacity(pending.len());
@@ -529,7 +595,9 @@ impl State {
                     (item, None)
                 }
             };
-            let (inverse, completion) = self.apply(Command::Insert(insert), source)?;
+            // The final snapshot syncs this entire import before its single completion.
+            let (inverse, completion) =
+                self.apply_command(Command::Insert(insert), source, false)?;
             if let Completion::Applied(command, source) = completion {
                 commands.push(command);
                 if let Some((hash, handle)) = source {
@@ -577,7 +645,11 @@ impl State {
                     }
                 }
                 if !inverses.is_empty() {
-                    self.push_undo(Step::Group(inverses));
+                    if let Some(group) = &mut self.batch {
+                        group.extend(inverses);
+                    } else {
+                        self.push_undo(Step::Group(inverses));
+                    }
                 }
                 self.redo.clear();
                 Ok(Some(Completion::AppliedBatch(commands, sources)))
@@ -608,12 +680,52 @@ impl State {
                     .ok_or_else(|| error("Nothing to redo"))?;
                 Ok(Some(self.replay_redo(step)?))
             }
+            Request::Export(target) => {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    super::export::run(
+                        &self.storage,
+                        &self.scene,
+                        &self.sources,
+                        target,
+                        &mut self.clipboard,
+                    )
+                }))
+                .map_err(|_| error("Export decoder panicked"))??;
+                Ok(Some(Completion::Exported(result)))
+            }
             Request::Save(path) => Ok(Some(self.save(path)?)),
             Request::Open(path) => Ok(Some(self.open(path)?)),
             Request::ImportBee(path) | Request::ImportPur(path) => {
                 let result = self.import_foreign(path)?;
                 self.redo.clear();
                 Ok(Some(result))
+            }
+            Request::OriginalGeometry { ids, mode } => {
+                let commands = super::export::image_geometry(
+                    &self.storage,
+                    &self.scene,
+                    &self.sources,
+                    &ids,
+                    mode,
+                )?;
+                self.request(Request::ApplyBatch(
+                    commands.into_iter().map(|c| (c, None)).collect(),
+                ))
+            }
+            Request::Preferences(values) => {
+                super::settings::save_all(&self.storage.base_directory()?, &values)?;
+                if let Some(value) = values.get("undo_limit") {
+                    self.undo_limit = value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|n| *n <= 4096)
+                        .unwrap_or(256);
+                    self.undo
+                        .drain(..self.undo.len().saturating_sub(self.undo_limit));
+                    self.redo
+                        .drain(..self.redo.len().saturating_sub(self.undo_limit));
+                }
+                Ok(Some(Completion::SettingsSaved))
             }
             Request::SaveSettings(code) => {
                 let directory = self.storage.base_directory()?;
@@ -634,7 +746,7 @@ impl State {
                 let mut inverses = Vec::with_capacity(commands.len());
                 let mut applied = Vec::with_capacity(commands.len());
                 let mut sources = Vec::new();
-                for command in commands {
+                for command in commands.into_iter().rev() {
                     let (inverse, done) = self.apply(command, None)?;
                     inverses.push(inverse);
                     if let Completion::Applied(command, source) = done {
@@ -661,7 +773,7 @@ impl State {
                 let mut inverses = Vec::with_capacity(commands.len());
                 let mut applied = Vec::with_capacity(commands.len());
                 let mut sources = Vec::new();
-                for command in commands {
+                for command in commands.into_iter().rev() {
                     let (inverse, done) = self.apply(command, None)?;
                     inverses.push(inverse);
                     if let Completion::Applied(command, source) = done {
@@ -768,6 +880,13 @@ impl Worker {
                         }
                         wake();
                     }
+                    if let Ok(preferences) = storage
+                        .base_directory()
+                        .and_then(|d| super::settings::load(&d))
+                        && tx.send(Completion::Preferences(preferences)).is_err()
+                    {
+                        return;
+                    }
                     let language = storage
                         .base_directory()
                         .and_then(|directory| super::settings::load(&directory))
@@ -791,7 +910,17 @@ impl Worker {
                     redo: VecDeque::new(),
                     batch: None,
                     poisoned: false,
+                    clipboard: None,
+                    undo_limit: 256,
                 };
+                state.undo_limit = state
+                    .storage
+                    .base_directory()
+                    .and_then(|d| super::settings::load(&d))
+                    .ok()
+                    .and_then(|m| m.get("undo_limit").and_then(|s| s.parse::<usize>().ok()))
+                    .filter(|n| *n <= 4096)
+                    .unwrap_or(256);
                 while let Ok(request) = rx.recv() {
                     match state.request(request) {
                         Ok(Some(result)) => {
@@ -858,7 +987,38 @@ mod tests {
             redo: VecDeque::new(),
             batch: None,
             poisoned: false,
+            clipboard: None,
+            undo_limit: 256,
         }
+    }
+    #[test]
+    fn saving_schema_three_atomically_upgrades_appearance() {
+        let mut state = state();
+        let path = state.storage.base_directory().unwrap().join("old.moth");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, include_bytes!("../../../corpus/moth/v3.moth")).unwrap();
+        state.request(Request::Open(path.clone())).unwrap();
+        let original = state.scene.items().next().unwrap().clone();
+        let transform = moth_scene::Transform {
+            opacity: 0.25,
+            grayscale: true,
+            ..original.transform
+        };
+        state
+            .request(Request::Apply(
+                Command::SetTransform {
+                    id: original.id,
+                    transform,
+                },
+                None,
+            ))
+            .unwrap();
+        state.request(Request::Save(path.clone())).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap()[4], 4);
+        let loaded = board::read(&mut File::open(path).unwrap()).unwrap();
+        assert_eq!(loaded.scene.get(original.id).unwrap().transform, transform);
+        state.journal = None;
+        state.storage.discard().unwrap();
     }
     #[test]
     fn journal_undo_redo_save_open_and_compact() {
@@ -988,6 +1148,58 @@ mod tests {
             state.request(Request::Redo).unwrap();
             assert_eq!(board::snapshot(&state.scene).unwrap(), before);
             state.journal = None;
+            state.storage.discard().unwrap();
+            std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn foreign_import_stages_each_original_once() {
+        for fixture in ["bee/tiny.bee", "pur/v2.1-redbar.pur"] {
+            let mut state = state();
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../corpus")
+                .join(fixture);
+            let request = if fixture.ends_with("bee") {
+                Request::ImportBee(path)
+            } else {
+                Request::ImportPur(path)
+            };
+            state.request(request).unwrap();
+            let directory = state.storage.recovery_directory().unwrap();
+            let originals = std::fs::read_dir(&directory)
+                .unwrap()
+                .map(Result::unwrap)
+                .filter(|entry| entry.path().extension().is_some_and(|e| e == "source"))
+                .count();
+            assert_eq!(
+                originals,
+                state.sources.len(),
+                "staged originals were copied twice"
+            );
+            let recovered =
+                board::read(&mut File::open(directory.join("board.moth")).unwrap()).unwrap();
+            assert_eq!(recovered.scene.len(), state.scene.len());
+            assert_eq!(recovered.blobs.len(), state.sources.len());
+            state.journal = None;
+            // Power loss may discard working copies; the synced journal owns every original.
+            for entry in std::fs::read_dir(&directory).unwrap().map(Result::unwrap) {
+                if entry.path().extension().is_some_and(|e| e == "source") {
+                    std::fs::remove_file(entry.path()).unwrap();
+                }
+            }
+            let mut restored = self::state();
+            restored
+                .request(Request::Open(directory.join("board.moth")))
+                .unwrap();
+            assert_eq!(restored.scene.len(), state.scene.len());
+            for (hash, handle) in &restored.sources {
+                let bytes = restored.original(*hash, *handle).unwrap();
+                assert_eq!(blake3::hash(&bytes), *hash);
+            }
+            restored.journal = None;
+            restored.storage.discard().unwrap();
+            std::fs::remove_dir_all(restored.storage.base_directory().unwrap()).unwrap();
             state.storage.discard().unwrap();
             std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
         }
@@ -1171,6 +1383,49 @@ mod tests {
                 .request(Request::Apply(Command::Insert(item), Some(handle)))
                 .is_err()
         );
+        assert!(state.scene.is_empty());
+        state.storage.discard().unwrap();
+        std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
+    }
+    #[test]
+    fn arrangement_batch_stays_inside_the_import_undo_group() {
+        let mut state = state();
+        let item = Item::text(
+            "note",
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 20.,
+                height: 20.,
+            },
+            None,
+        );
+        let id = item.id;
+        state.request(Request::BeginBatch).unwrap();
+        state
+            .request(Request::Apply(Command::Insert(item), None))
+            .unwrap();
+        state
+            .request(Request::ApplyBatch(vec![(
+                Command::SetRect {
+                    id,
+                    rect: Rect {
+                        x: 100.,
+                        y: 100.,
+                        width: 20.,
+                        height: 20.,
+                    },
+                },
+                None,
+            )]))
+            .unwrap();
+        state.request(Request::EndBatch).unwrap();
+        assert_eq!(state.undo.len(), 1);
+        state.request(Request::Undo).unwrap();
+        assert!(state.scene.is_empty());
+        state.request(Request::Redo).unwrap();
+        assert_eq!(state.scene.get(id).unwrap().rect.x, 100.);
+        state.request(Request::Undo).unwrap();
         assert!(state.scene.is_empty());
         state.storage.discard().unwrap();
         std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();

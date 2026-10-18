@@ -2,10 +2,166 @@
 #![forbid(unsafe_code)]
 //! Shared theme and localized M0 controls.
 use egui::{Color32, Context};
-use std::sync::atomic::{AtomicU8, Ordering};
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug)]
 pub enum Text {
+    /// Meaning of the preference difference marker.
+    ChangedSetting,
+    /// Stable arrangement order.
+    ByLayer,
+    /// Localized preference.
+    ScaleWithWindow,
+    /// Localized preference.
+    WheelZoom,
+    /// Localized preference.
+    WheelPan,
+    /// Localized preference.
+    WheelOff,
+
+    /// Bounded in-memory undo depth.
+    UndoLimit,
+    /// Localized Duplicate control.
+    Duplicate,
+    /// Localized NudgeLeft control.
+    NudgeLeft,
+    /// Localized NudgeRight control.
+    NudgeRight,
+    /// Localized NudgeUp control.
+    NudgeUp,
+    /// Localized NudgeDown control.
+    NudgeDown,
+    /// Localized AlignLeft control.
+    AlignLeft,
+    /// Localized AlignRight control.
+    AlignRight,
+    /// Localized AlignTop control.
+    AlignTop,
+    /// Localized AlignBottom control.
+    AlignBottom,
+    /// Localized DistributeHorizontal control.
+    DistributeHorizontal,
+    /// Localized DistributeVertical control.
+    DistributeVertical,
+    /// Localized Stack control.
+    Stack,
+    /// Localized BringFront control.
+    BringFront,
+    /// Localized SendBack control.
+    SendBack,
+    /// Localized BringForward control.
+    BringForward,
+    /// Localized SendBackward control.
+    SendBackward,
+    /// Localized LockCanvas control.
+    LockCanvas,
+    /// Localized DarkTheme control.
+    DarkTheme,
+    /// Localized UiScale control.
+    UiScale,
+    /// Localized Settings control.
+    Settings,
+    /// Localized Defaults control.
+    Defaults,
+    /// Localized ByTime control.
+    ByTime,
+    /// Localized Random control.
+    Random,
+    /// Localized ArrangeThreshold control.
+    ArrangeThreshold,
+    /// Localized AutoArrange control.
+    AutoArrange,
+    /// Localized ResetRotation control.
+    ResetRotation,
+    /// Localized ResetFlip control.
+    ResetFlip,
+    /// Localized ResetCrop control.
+    ResetCrop,
+    /// Localized ResetScale control.
+    ResetScale,
+    /// Localized NormalizeScale control.
+    NormalizeScale,
+    /// Localized ResetCamera control.
+    ResetCamera,
+    /// Localized NextImage control.
+    NextImage,
+    /// Localized PreviousImage control.
+    PreviousImage,
+    /// Localized CanvasGrayscale control.
+    CanvasGrayscale,
+    /// Localized PackFit control.
+    PackFit,
+    /// Localized CoordinatePicker control.
+    CoordinatePicker,
+    /// Localized ExportZip control.
+    ExportZip,
+
+    /// Durable checkpoint status.
+    SaveState,
+    /// Durable edits awaiting a checkpoint.
+    Journaled,
+    /// Recovery protection is enabled.
+    RecoveryOn,
+    /// Camera controls.
+    ZoomIn,
+    /// Camera controls.
+    ZoomOut,
+    /// Editable camera percentage.
+    Zoom,
+    /// Localized Tools control.
+    Tools,
+    /// Localized Frame control.
+    Frame,
+    /// Localized Rotation control.
+    Rotation,
+    /// Localized Content control.
+    Content,
+    /// Localized ContentScale control.
+    ContentScale,
+    /// Localized OffsetX control.
+    OffsetX,
+    /// Localized OffsetY control.
+    OffsetY,
+    /// Localized Grayscale control.
+    Grayscale,
+    /// Localized Gap control.
+    Gap,
+    /// Localized ByFilename control.
+    ByFilename,
+    /// Localized ScaleSelection control.
+    ScaleSelection,
+    /// Localized Export control.
+    Export,
+    /// Localized Exported control.
+    Exported,
+    /// Localized ExportScene control.
+    ExportScene,
+    /// Localized ExportSelection control.
+    ExportSelection,
+    /// Localized ExportOriginal control.
+    ExportOriginal,
+    /// Localized ExportOriginals control.
+    ExportOriginals,
+    /// Localized CopyImage control.
+    CopyImage,
+    /// Localized SampleColor control.
+    SampleColor,
+    /// Localized ExportSide control.
+    ExportSide,
+    /// Localized ExportLimit control.
+    ExportLimit,
+    /// Localized CropRegion control.
+    CropRegion,
+    /// Localized Width control.
+    Width,
+    /// Localized Height control.
+    Height,
+    /// Localized PositionX control.
+    PositionX,
+    /// Localized PositionY control.
+    PositionY,
+    /// Localized EditSelection control.
+    EditSelection,
+
     /// Localized persistence control.
     StorageBusy,
     /// Localized persistence control.
@@ -180,260 +336,9 @@ pub enum Text {
     /// Explains that some imported items could not be represented.
     ImportSkipped,
 }
-/// Interface languages. English is the fallback; Russian ships with the 0.3 release.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Locale {
-    /// English, the default and the fallback when detection fails.
-    En,
-    /// Russian.
-    Ru,
-}
+mod localization;
+pub use localization::{Locale, locale, set_locale, text};
 
-impl Locale {
-    /// Every selectable language, listed under its own native name.
-    pub const ALL: [Locale; 2] = [Locale::En, Locale::Ru];
-    /// Native name keeps the language menu readable without translation.
-    pub const fn name(self) -> &'static str {
-        match self {
-            Locale::En => "English",
-            Locale::Ru => "Русский",
-        }
-    }
-    /// Two-letter code persisted in the settings file.
-    pub const fn code(self) -> &'static str {
-        match self {
-            Locale::En => "en",
-            Locale::Ru => "ru",
-        }
-    }
-    /// Maps a persisted or detected language code back to a locale.
-    pub fn from_code(code: &str) -> Option<Self> {
-        match code.trim().to_ascii_lowercase().as_str() {
-            "ru" => Some(Locale::Ru),
-            "en" => Some(Locale::En),
-            _ => None,
-        }
-    }
-}
-
-static CURRENT: AtomicU8 = AtomicU8::new(Locale::En as u8);
-
-/// Returns the active interface language.
-pub fn locale() -> Locale {
-    match CURRENT.load(Ordering::Relaxed) {
-        1 => Locale::Ru,
-        _ => Locale::En,
-    }
-}
-
-/// Switches the interface language; widgets repaint with the next frame.
-pub fn set_locale(language: Locale) {
-    CURRENT.store(language as u8, Ordering::Relaxed);
-}
-
-fn en(key: Text) -> &'static str {
-    match key {
-        Text::AllBoards => "All boards",
-        Text::Pinned => "Pinned",
-        Text::Stacks => "STACKS",
-        Text::ListView => "List view",
-        Text::GridView => "Grid view",
-        Text::Name => "Name",
-        Text::LastOpened => "Last opened",
-        Text::Boards => "boards",
-        Text::LibraryEmpty => "Your boards will appear here. Open a board or create a new one.",
-        Text::NoMatches => "No boards match your search.",
-        Text::Search => "Search…",
-        Text::ClickThrough => "Click-through",
-        Text::Opacity => "Opacity",
-        Text::ExitOverlay => "Exit overlay",
-        Text::OverlayUnsupported => "Transparent surfaces are unavailable on this adapter.",
-        Text::TabLimit => "Four boards are already open. Close one before opening another.",
-        Text::PathDialog => "Open or save a board",
-        Text::Cancel => "Cancel",
-        Text::Arrange => "Arrange",
-        Text::ArrangePrompt => "How should the added images be arranged?",
-        Text::Horizontal => "Horizontal",
-        Text::Vertical => "Vertical",
-        Text::Grid => "Grid",
-        Text::Optimal => "Optimal",
-        Text::Normalize => "Normalize",
-        Text::NormalizeWidth => "Width",
-        Text::NormalizeHeight => "Height",
-        Text::NormalizeSize => "Size",
-        Text::NormalizeArea => "Area",
-        Text::RotateCw => "Rotate 90° clockwise",
-        Text::RotateCcw => "Rotate 90° counter-clockwise",
-        Text::FlipHorizontal => "Flip horizontally",
-        Text::FlipVertical => "Flip vertically",
-        Text::ResetTransform => "Reset rotation and crop",
-        Text::Delete => "Delete",
-        Text::FitSelection => "Fit selection",
-        Text::Tags => "Tags",
-        Text::EditTags => "Edit tags",
-        Text::TagsHint => "armor, lighting, wip",
-        Text::Apply => "Apply",
-        Text::All => "All",
-        Text::SmartCollections => "SMART COLLECTIONS",
-        Text::Library => "Library",
-        Text::NewBoard => "New board",
-        Text::CloseTab => "Close board",
-        Text::CloseWindow => "Close window",
-        Text::Maximize => "Maximize",
-        Text::Minimize => "Minimize",
-        Text::Overlay => "Overlay mode",
-        Text::OnTop => "On top",
-        Text::PasteImage => "Paste image",
-        Text::NotSaved => "Untitled board · not saved yet",
-        Text::Untitled => "Untitled",
-        Text::Items => "items",
-        Text::Selected => "selected",
-        Text::SaveQuestion => "Save this board?",
-        Text::StorageBusy => "Storage is busy; wait for pending operations.",
-        Text::OpenEmpty => "Save and restart before opening another board.",
-        Text::Recovered => "Recovered the last valid checkpoint; torn bytes were ignored.",
-        Text::Opened => "Board opened. Changes are journaled automatically.",
-        Text::Saved => "Board saved.",
-        Text::Path => "Board path (.moth)",
-        Text::Save => "Save",
-        Text::Open => "Open",
-        Text::Undo => "Undo",
-        Text::Redo => "Redo",
-        Text::Recovery => "Recover a board",
-        Text::SaveClose => "Save and close",
-
-        Text::SourceChanged => "The source file changed. Its previous preview cannot be reloaded.",
-        Text::Imported => "Imported board. Save it as a .moth file.",
-        Text::ImportSkipped => "Imported board; unsupported items were skipped.",
-        Text::AddNote => "Add note",
-        Text::BoardFull => "Board metadata budget full (1,000,000 images)",
-        Text::ClipboardEmpty => {
-            "Clipboard has no supported image, files, HTTP(S) image URL or HTML image."
-        }
-        Text::ImportBusy => "Import queue is full; wait for pending images and try again.",
-        Text::Title => "MothRef",
-        Text::Paste => "Paste",
-        Text::Fit => "Fit board",
-        Text::Pan => "Pan",
-        Text::Select => "Select",
-        Text::ClipboardBusy => "Clipboard is busy; try again shortly.",
-        Text::Empty => "Drop images here, or paste an image to begin.",
-        Text::Volatile => "Journaled recovery • PNG / JPEG • previews up to 2048 px",
-        Text::Close => "Discard and close",
-        Text::Keep => "Keep working",
-        Text::CloseWarning => {
-            "Save this board before closing? Discard deletes this session’s recovery files."
-        }
-    }
-}
-// shortcut: Russian plural forms (Items/Boards) are simplified to one genitive form;
-// revisit with proper plural rules when a second slavic language is added.
-fn ru(key: Text) -> &'static str {
-    match key {
-        Text::StorageBusy => "Хранилище занято; дождитесь завершения операций.",
-        Text::OpenEmpty => "Сохраните и перезапустите, прежде чем открыть другую доску.",
-        Text::Recovered => {
-            "Восстановлена последняя корректная контрольная точка; повреждённые данные пропущены."
-        }
-        Text::Opened => "Доска открыта. Изменения журналируются автоматически.",
-        Text::Saved => "Доска сохранена.",
-        Text::Path => "Путь доски (.moth)",
-        Text::Save => "Сохранить",
-        Text::Open => "Открыть",
-        Text::Undo => "Отменить",
-        Text::Redo => "Вернуть",
-        Text::Recovery => "Восстановить доску",
-        Text::SaveClose => "Сохранить и закрыть",
-        Text::ClipboardBusy => "Буфер обмена занят; попробуйте ещё раз.",
-        Text::ImportBusy => "Очередь импорта переполнена; дождитесь и попробуйте снова.",
-        Text::ClipboardEmpty => {
-            "В буфере обмена нет поддерживаемого изображения, файлов, URL изображения или HTML-изображения."
-        }
-        Text::Title => "MothRef",
-        Text::Paste => "Вставить",
-        Text::Fit => "Уместить доску",
-        Text::Pan => "Перемещение",
-        Text::Select => "Выбор",
-        Text::Empty => "Перетащите изображения сюда или вставьте изображение.",
-        Text::Volatile => "Журналируемое восстановление • PNG / JPEG • превью до 2048 px",
-        Text::Close => "Отменить и закрыть",
-        Text::Keep => "Продолжить работу",
-        Text::CloseWarning => {
-            "Сохранить доску перед закрытием? При отмене удаляются файлы восстановления этой сессии."
-        }
-        Text::BoardFull => "Бюджет метаданных доски исчерпан (1 000 000 изображений)",
-        Text::AllBoards => "Все доски",
-        Text::Pinned => "Закреплённые",
-        Text::Stacks => "СТОПКИ",
-        Text::ListView => "Список",
-        Text::GridView => "Сетка",
-        Text::Name => "Имя",
-        Text::LastOpened => "Открыта",
-        Text::Boards => "доски",
-        Text::LibraryEmpty => "Здесь появятся ваши доски. Откройте или создайте новую.",
-        Text::NoMatches => "Нет досок, соответствующих поиску.",
-        Text::Search => "Поиск…",
-        Text::ClickThrough => "Сквозной клик",
-        Text::Opacity => "Непрозрачность",
-        Text::ExitOverlay => "Выйти из режима наложения",
-        Text::OverlayUnsupported => "Прозрачные поверхности недоступны на этом адаптере.",
-        Text::TabLimit => "Уже открыто четыре доски. Закройте одну, прежде чем открыть другую.",
-        Text::PathDialog => "Открыть или сохранить доску",
-        Text::Cancel => "Отмена",
-        Text::Arrange => "Расставить",
-        Text::ArrangePrompt => "Как расположить добавленные изображения?",
-        Text::Horizontal => "Горизонтально",
-        Text::Vertical => "Вертикально",
-        Text::Grid => "Сетка",
-        Text::Optimal => "Оптимально",
-        Text::Normalize => "Нормализовать",
-        Text::NormalizeWidth => "Ширина",
-        Text::NormalizeHeight => "Высота",
-        Text::NormalizeSize => "Размер",
-        Text::NormalizeArea => "Площадь",
-        Text::RotateCw => "Повернуть на 90° по часовой",
-        Text::RotateCcw => "Повернуть на 90° против часовой",
-        Text::FlipHorizontal => "Отразить по горизонтали",
-        Text::FlipVertical => "Отразить по вертикали",
-        Text::ResetTransform => "Сбросить поворот и кадрирование",
-        Text::Delete => "Удалить",
-        Text::FitSelection => "Уместить выделенное",
-        Text::Tags => "Теги",
-        Text::EditTags => "Изменить теги",
-        Text::TagsHint => "броня, освещение, в работе",
-        Text::Apply => "Применить",
-        Text::All => "Все",
-        Text::SmartCollections => "УМНЫЕ КОЛЛЕКЦИИ",
-        Text::Library => "Библиотека",
-        Text::NewBoard => "Новая доска",
-        Text::CloseTab => "Закрыть доску",
-        Text::CloseWindow => "Закрыть окно",
-        Text::Maximize => "Развернуть",
-        Text::Minimize => "Свернуть",
-        Text::Overlay => "Режим наложения",
-        Text::OnTop => "Поверх окон",
-        Text::PasteImage => "Вставить изображение",
-        Text::NotSaved => "Безымянная доска · ещё не сохранена",
-        Text::Untitled => "Безымянная",
-        Text::Items => "элементов",
-        Text::Selected => "выбрано",
-        Text::SaveQuestion => "Сохранить эту доску?",
-        Text::SourceChanged => {
-            "Исходный файл изменился. Предыдущее превью невозможно перезагрузить."
-        }
-        Text::Imported => "Доска импортирована. Сохраните её как файл .moth.",
-        Text::ImportSkipped => "Доска импортирована; неподдерживаемые элементы пропущены.",
-        Text::AddNote => "Добавить заметку",
-    }
-}
-
-/// Translation lookup has one entry point; widgets stay independent of the locale.
-pub fn text(key: Text) -> &'static str {
-    match locale() {
-        Locale::En => en(key),
-        Locale::Ru => ru(key),
-    }
-}
 /// Color tokens are shared by the canvas overlays and the egui theme.
 pub const BACKGROUND: Color32 = Color32::from_rgb(17, 19, 23);
 /// Selection color remains visible over both dark and bright images.
@@ -557,16 +462,122 @@ pub fn empty_board(ui: &mut egui::Ui) -> Actions {
     actions
 }
 
+/// Uses the active platform modifier and only advertises implemented bindings.
+pub fn tooltip(key: Text) -> String {
+    let shortcut = match key {
+        Text::NewBoard => "Ctrl+N",
+        Text::Open => "Ctrl+O",
+        Text::Save => "Ctrl+S",
+        Text::Undo => "Ctrl+Z",
+        Text::Redo => "Ctrl+Y",
+        Text::Paste | Text::PasteImage => "Ctrl+V",
+        Text::Library => "Ctrl+L",
+        Text::CloseTab => "Ctrl+W",
+        Text::Overlay => "Ctrl+T",
+        Text::Select => "V",
+        Text::Pan => "H",
+        Text::Fit => "Home",
+        _ => "",
+    };
+    if shortcut.is_empty() {
+        text(key).into()
+    } else {
+        let shortcut = if egui::os::OperatingSystem::default() == egui::os::OperatingSystem::Mac {
+            shortcut.replace("Ctrl", "⌘")
+        } else {
+            shortcut.into()
+        };
+        format!("{} ({shortcut})", text(key))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn every_text_key_has_a_non_empty_translation_and_switches_locale() {
         let keys = [
+            Text::Tools,
+            Text::Frame,
+            Text::Rotation,
+            Text::Content,
+            Text::ContentScale,
+            Text::OffsetX,
+            Text::OffsetY,
+            Text::Grayscale,
+            Text::Gap,
+            Text::ByFilename,
+            Text::ScaleSelection,
+            Text::Export,
+            Text::ScaleWithWindow,
+            Text::WheelZoom,
+            Text::WheelPan,
+            Text::WheelOff,
+            Text::UndoLimit,
+            Text::Duplicate,
+            Text::NudgeLeft,
+            Text::NudgeRight,
+            Text::NudgeUp,
+            Text::NudgeDown,
+            Text::AlignLeft,
+            Text::AlignRight,
+            Text::AlignTop,
+            Text::AlignBottom,
+            Text::DistributeHorizontal,
+            Text::DistributeVertical,
+            Text::Stack,
+            Text::BringFront,
+            Text::SendBack,
+            Text::BringForward,
+            Text::SendBackward,
+            Text::LockCanvas,
+            Text::DarkTheme,
+            Text::UiScale,
+            Text::Settings,
+            Text::Defaults,
+            Text::ByTime,
+            Text::Random,
+            Text::ArrangeThreshold,
+            Text::AutoArrange,
+            Text::ResetRotation,
+            Text::ResetFlip,
+            Text::ResetCrop,
+            Text::ResetScale,
+            Text::NormalizeScale,
+            Text::ResetCamera,
+            Text::NextImage,
+            Text::PreviousImage,
+            Text::CanvasGrayscale,
+            Text::PackFit,
+            Text::CoordinatePicker,
+            Text::ExportZip,
+            Text::ChangedSetting,
+            Text::ByLayer,
+            Text::Exported,
+            Text::ExportScene,
+            Text::ExportSelection,
+            Text::ExportOriginal,
+            Text::ExportOriginals,
+            Text::CopyImage,
+            Text::SampleColor,
+            Text::ExportSide,
+            Text::ExportLimit,
+            Text::CropRegion,
+            Text::Width,
+            Text::Height,
+            Text::PositionX,
+            Text::PositionY,
+            Text::EditSelection,
             Text::StorageBusy,
             Text::OpenEmpty,
             Text::Recovered,
             Text::Opened,
+            Text::SaveState,
+            Text::Journaled,
+            Text::RecoveryOn,
+            Text::ZoomIn,
+            Text::ZoomOut,
+            Text::Zoom,
             Text::Saved,
             Text::Path,
             Text::Save,
@@ -657,9 +668,9 @@ mod tests {
                 assert_eq!(locale(), language);
             }
         }
-        set_locale(Locale::En);
-        assert_eq!(Locale::from_code("ru"), Some(Locale::Ru));
-        assert_eq!(Locale::from_code("EN"), Some(Locale::En));
+        set_locale(Locale::EN);
+        assert_eq!(Locale::from_code("ru"), Some(Locale::RU));
+        assert_eq!(Locale::from_code("EN"), Some(Locale::EN));
         assert_eq!(Locale::from_code("de"), None);
     }
     fn status(library: bool) -> Status<'static> {
@@ -679,6 +690,26 @@ mod tests {
         }
     }
     #[test]
+    fn persistence_status_distinguishes_saved_journaled_and_untitled() {
+        for (path, dirty, expected) in [
+            ("board.moth", false, ["saved", "сохранено"]),
+            ("board.moth", true, ["journaled", "в журнале"]),
+            ("", false, ["recovery on", "восстановление включено"]),
+        ] {
+            let ctx = Context::default();
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                let mut state = status(false);
+                state.path = path;
+                state.dirty = dirty;
+                toolbar(ui, state, &mut false, &[]);
+            });
+            output.textures_delta.clear();
+            assert!(output.shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Text(t) if expected.contains(&t.galley.text()))
+            }));
+        }
+    }
+    #[test]
     fn toolbar_does_not_flash_while_journaling() {
         let draw = |idle| {
             let ctx = Context::default();
@@ -695,7 +726,12 @@ mod tests {
     }
     #[test]
     fn chrome_and_library_keep_a_usable_canvas_on_small_screens() {
-        for size in [egui::vec2(1440., 900.), egui::vec2(390., 844.)] {
+        for size in [
+            egui::vec2(1440., 900.),
+            egui::vec2(390., 844.),
+            egui::vec2(320., 640.),
+            egui::vec2(844., 390.),
+        ] {
             for library in [false, true] {
                 let ctx = Context::default();
                 theme(&ctx);
@@ -710,7 +746,11 @@ mod tests {
                             library::Library::default().show(ui, &[]);
                         } else {
                             egui::CentralPanel::default().show(ui, |ui| {
-                                assert!(ui.max_rect().height() > size.y / 2.);
+                                assert!(
+                                    ui.max_rect().height() > size.y / 2.,
+                                    "{size:?}: {:?}",
+                                    ui.max_rect()
+                                );
                                 let actions = empty_board(ui);
                                 assert!(!actions.paste && !actions.open);
                             });

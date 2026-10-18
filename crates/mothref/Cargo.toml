@@ -23,3 +23,8 @@ egui-wgpu.workspace = true
 pollster.workspace = true
 crossbeam-channel.workspace = true
 rfd.workspace = true
+
+fractional_index.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

@@ -34,6 +34,7 @@ struct Instance {
     region: [f32; 4],
     layer: u32,
     lod: f32,
+    appearance: [f32; 2],
 }
 /// Content geometry of one item, shared by rendering and the scene-level hit tests.
 struct Content {
@@ -140,6 +141,8 @@ pub enum RenderError {
 }
 /// Registry owns all canvas GPU resources; dropping it frees every board texture.
 pub struct Registry {
+    /// Optional view-only grayscale leaves image metadata unchanged.
+    pub grayscale: bool,
     /// UI GPU resources share the renderer lifetime and are freed with the registry.
     pub ui: egui_wgpu::Renderer,
     arrays: Vec<Option<Array>>,
@@ -192,7 +195,7 @@ impl Registry {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{label:Some("quads"),layout:Some(&pipeline_layout),vertex:wgpu::VertexState{module:&shader,entry_point:Some("vs"),buffers:&[Some(wgpu::VertexBufferLayout{array_stride:std::mem::size_of::<Instance>() as u64,step_mode:wgpu::VertexStepMode::Instance,attributes:&wgpu::vertex_attr_array![0=>Float32x2,1=>Float32x2,2=>Float32x2,3=>Float32x2,4=>Float32x2,5=>Float32x2,6=>Float32x2,7=>Float32x2,8=>Float32x4,9=>Uint32,10=>Float32]})],compilation_options:Default::default()},fragment:Some(wgpu::FragmentState{module:&shader,entry_point:Some("fs"),targets:&[Some(wgpu::ColorTargetState{format,blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})],compilation_options:wgpu::PipelineCompilationOptions{constants:&[("OUTPUT_SRGB",if format.is_srgb(){1.}else{0.})],..Default::default()}}),primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview_mask:None,cache:None});
+        let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{label:Some("quads"),layout:Some(&pipeline_layout),vertex:wgpu::VertexState{module:&shader,entry_point:Some("vs"),buffers:&[Some(wgpu::VertexBufferLayout{array_stride:std::mem::size_of::<Instance>() as u64,step_mode:wgpu::VertexStepMode::Instance,attributes:&wgpu::vertex_attr_array![0=>Float32x2,1=>Float32x2,2=>Float32x2,3=>Float32x2,4=>Float32x2,5=>Float32x2,6=>Float32x2,7=>Float32x2,8=>Float32x4,9=>Uint32,10=>Float32,11=>Float32x2]})],compilation_options:Default::default()},fragment:Some(wgpu::FragmentState{module:&shader,entry_point:Some("fs"),targets:&[Some(wgpu::ColorTargetState{format,blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})],compilation_options:wgpu::PipelineCompilationOptions{constants:&[("OUTPUT_SRGB",if format.is_srgb(){1.}else{0.})],..Default::default()}}),primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview_mask:None,cache:None});
         let grid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("canvas grid"),
             source: wgpu::ShaderSource::Wgsl(include_str!("grid.wgsl").into()),
@@ -239,6 +242,7 @@ impl Registry {
             ..Default::default()
         });
         Self {
+            grayscale: false,
             ui: egui_wgpu::Renderer::new(device, format, Default::default()),
             arrays: Vec::new(),
             locations: std::collections::HashMap::new(),
@@ -550,6 +554,14 @@ impl Registry {
                 frame: shape.frame,
                 region: shape.region,
                 layer: layer as u32,
+                appearance: [
+                    item.transform.opacity,
+                    if item.transform.grayscale || self.grayscale {
+                        1.
+                    } else {
+                        0.
+                    },
+                ],
                 // shortcut: content rotation is ignored when choosing the mip, so a rotated
                 // crop can alias by up to one level. Upgrade with a diagonal term if reported.
                 lod: ((slot.dimensions[0].max(slot.dimensions[1]) as f32 / wanted).log2()

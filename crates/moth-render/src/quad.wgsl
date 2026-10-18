@@ -7,6 +7,7 @@ struct Out {
     @location(2) @interpolate(flat) region: vec4<f32>,
     @location(3) @interpolate(flat) layer: u32,
     @location(4) @interpolate(flat) lod: f32,
+    @location(5) @interpolate(flat) appearance: vec2<f32>,
 }
 @group(0) @binding(0) var images: texture_2d_array<f32>;
 @group(0) @binding(1) var linear_sampler: sampler;
@@ -23,6 +24,7 @@ struct Out {
     @location(8) region: vec4<f32>,
     @location(9) layer: u32,
     @location(10) lod: f32,
+    @location(11) appearance: vec2<f32>,
 ) -> Out {
     // Two triangles over four corners; the CPU supplies rotated positions, so the shader
     // only picks one per vertex.
@@ -40,6 +42,7 @@ struct Out {
     out.region = region;
     out.layer = layer;
     out.lod = lod;
+    out.appearance = appearance;
     return out;
 }
 fn sample_mip(in: Out, level: f32) -> vec4<f32> {
@@ -58,7 +61,8 @@ fn sample_mip(in: Out, level: f32) -> vec4<f32> {
     if (any(in.frame < vec2(-0.0001)) || any(in.frame > vec2(1.0001))) {
         discard;
     }
-    let color = mix(sample_mip(in, floor(in.lod)), sample_mip(in, ceil(in.lod)), fract(in.lod));
+    var color = mix(sample_mip(in, floor(in.lod)), sample_mip(in, ceil(in.lod)), fract(in.lod));
+    color = vec4(mix(color.rgb, vec3(dot(color.rgb, vec3(0.2126, 0.7152, 0.0722))), in.appearance.y), color.a * in.appearance.x);
     if OUTPUT_SRGB { return color; }
     let gamma = select(color.rgb * 12.92, 1.055 * pow(color.rgb, vec3(1. / 2.4)) - 0.055, color.rgb > vec3(0.0031308));
     return vec4(gamma, color.a);

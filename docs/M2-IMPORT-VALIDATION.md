@@ -60,8 +60,8 @@ Linux: automated storage-worker integration and headless renderer tests passed;
 the native file-picker/drop/CLI workflow was not manually exercised.
 Windows/macOS: native import UI was not run in this Linux session.
 No PureRef executable was inspected. Tier-3 reliability/release checks were not
-run and remain the CI/maintainer gate. This does not close the all-versions or
-lossless-feature-parity exit criterion.
+run and remain the CI/maintainer gate. Coverage is limited to the verified samples and supported content described here;
+qualifying every PureRef version is not an M2 requirement.
 
 ## 4 GiB admission and private battle board
 

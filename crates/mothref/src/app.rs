@@ -38,16 +38,15 @@ struct Editing {
     anchor: [f32; 2],
     focus: bool,
 }
-/// Ask how to arrange a burst of newly inserted images once it exceeds this count.
-/// shortcut: fixed threshold until the settings store lands; expose `arrange_prompt_threshold` then.
-const ARRANGE_PROMPT_THRESHOLD: usize = 5;
 mod arrange;
 mod overlay;
 mod session;
+mod tools;
 use session::{MAX_TABS, Session};
 
 pub struct App {
     board: Session,
+    tools: tools::Tools,
     overlay: Option<overlay::Overlay>,
     pinned: bool,
     library_worker: moth_platform::library::Worker,
@@ -58,6 +57,7 @@ pub struct App {
     dialog_path: String,
     dialog_focus: bool,
     moving: Option<(Uuid, Rect)>,
+    drag_duplicate: bool,
     editing: Option<Editing>,
     tabs: Vec<Session>,
     library: bool,
@@ -109,6 +109,7 @@ impl App {
         });
         Ok(Self {
             board,
+            tools: tools::Tools::default(),
             overlay: None,
             pinned: false,
             library_worker,
@@ -119,6 +120,7 @@ impl App {
             dialog_path: String::new(),
             dialog_focus: false,
             moving: None,
+            drag_duplicate: false,
             editing: None,
             tabs: Vec::new(),
             library: true,
@@ -194,6 +196,16 @@ impl App {
             std::mem::swap(&mut self.board, &mut self.tabs[index - 1]);
         }
         self.library = false;
+        let preferences = self
+            .tools
+            .preferences()
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v))
+            .collect();
+        self.tools = tools::Tools::default();
+        self.tools.load(&preferences);
+        self.tools.locked = self.board.locked;
+        self.tools.grayscale = self.board.grayscale;
         self.cards.clear();
         self.catalog.dismiss_editor();
         self.editing = None;
@@ -320,6 +332,9 @@ impl App {
         Ok(())
     }
     fn paste(&mut self) {
+        if self.tools.locked {
+            return;
+        }
         if self.board.discarding {
             return;
         }
@@ -337,6 +352,21 @@ impl App {
     }
 
     fn persist(&mut self, request: moth_platform::boards::Request) {
+        use moth_platform::boards::Request;
+        if self.tools.locked
+            && matches!(
+                &request,
+                Request::Apply(..)
+                    | Request::ApplyBatch(..)
+                    | Request::OriginalGeometry { .. }
+                    | Request::Undo
+                    | Request::Redo
+                    | Request::ImportBee(..)
+                    | Request::ImportPur(..)
+            )
+        {
+            return;
+        }
         match self.board.boards.requests.try_send(request) {
             Ok(()) => self.board.in_flight += 1,
             Err(_) => self.board.message = moth_ui::text(moth_ui::Text::StorageBusy).into(),
@@ -435,6 +465,9 @@ impl App {
         }
     }
     fn import(&mut self, path: std::path::PathBuf) {
+        if self.tools.locked {
+            return;
+        }
         if self.board.discarding {
             return;
         }
@@ -539,6 +572,9 @@ impl App {
     }
     /// Creates an empty note at `world` and opens the inline editor for it.
     fn add_note(&mut self, world: [f32; 2]) {
+        if self.tools.locked {
+            return;
+        }
         if self.board.discarding || !self.board.idle() {
             return;
         }
@@ -568,6 +604,9 @@ impl App {
     }
     /// Opens the inline editor over an existing note.
     fn edit_note(&mut self, id: Uuid) {
+        if self.tools.locked {
+            return;
+        }
         let Some(item) = self.board.scene.get(id) else {
             return;
         };
@@ -645,7 +684,7 @@ impl App {
                     };
                     let width = (image.original[0] as f32).min(600.);
                     let height = width * image.original[1] as f32 / image.original[0] as f32;
-                    let item = Item::image(
+                    let mut item = Item::image(
                         image.hash,
                         Rect {
                             x: p[0] - width / 2. + offset,
@@ -655,6 +694,9 @@ impl App {
                         },
                         self.board.scene.top(),
                     );
+                    if !paste {
+                        item.name = self.board.storage.source_name(done.request.handle);
+                    }
                     self.board.burst.push(item.id);
                     self.persist(moth_platform::boards::Request::Apply(
                         Command::Insert(item),
@@ -669,7 +711,7 @@ impl App {
                 if insert && let Some(hash) = done.failure_hash {
                     self.begin_batch();
                     let p = self.cursor_point();
-                    let item = Item::image(
+                    let mut item = Item::image(
                         hash,
                         Rect {
                             x: p[0] - 120.,
@@ -679,6 +721,9 @@ impl App {
                         },
                         self.board.scene.top(),
                     );
+                    if !paste {
+                        item.name = self.board.storage.source_name(done.request.handle);
+                    }
                     self.board.burst.push(item.id);
                     self.persist(moth_platform::boards::Request::Apply(
                         Command::Insert(item),
@@ -780,6 +825,15 @@ impl App {
                         self.refresh_library = true;
                     }
                 }
+                Completion::Preferences(values) => {
+                    self.tools.load(&values);
+                    self.ctx.set_theme(if self.tools.dark {
+                        egui::Theme::Dark
+                    } else {
+                        egui::Theme::Light
+                    });
+                    self.ctx.set_zoom_factor(self.tools.ui_scale);
+                }
                 Completion::Settings(code) => {
                     if let Some(language) = moth_ui::Locale::from_code(&code) {
                         moth_ui::set_locale(language);
@@ -803,6 +857,17 @@ impl App {
                                 .retain(|id| self.board.scene.get(*id).is_some());
                         }
                         Completion::AppliedBatch(commands, sources) => {
+                            let inserted: HashSet<_> = commands
+                                .iter()
+                                .filter_map(|c| match c {
+                                    Command::Insert(item)
+                                        if self.board.scene.get(item.id).is_none() =>
+                                    {
+                                        Some(item.id)
+                                    }
+                                    _ => None,
+                                })
+                                .collect();
                             for command in commands {
                                 if let Err(e) = self.board.scene.apply(command) {
                                     self.board.message = e.to_string();
@@ -810,6 +875,9 @@ impl App {
                             }
                             for (hash, handle) in sources {
                                 self.board.sources.insert(hash, handle);
+                            }
+                            if !inserted.is_empty() {
+                                self.board.selection = inserted;
                             }
                             self.board.dirty = true;
                             self.board
@@ -848,6 +916,13 @@ impl App {
                             })
                             .into();
                             self.fit();
+                        }
+                        Completion::Exported(value) => {
+                            self.board.message = if value.is_empty() {
+                                moth_ui::text(moth_ui::Text::Exported).into()
+                            } else {
+                                value
+                            };
                         }
                         Completion::Saved => {
                             self.board.dirty = false;
@@ -921,12 +996,14 @@ impl App {
             }
         }
         self.pump();
-        if self.board.batching && self.board.idle() {
-            self.end_batch();
-            if self.board.burst.len() > ARRANGE_PROMPT_THRESHOLD {
+        if self.board.batching && self.board.idle() && self.board.arrange_prompt.is_none() {
+            if !self.board.burst.is_empty()
+                && (self.tools.auto_arrange || self.board.burst.len() > self.tools.threshold)
+            {
                 self.board.arrange_prompt = Some(std::mem::take(&mut self.board.burst));
             } else {
                 self.board.burst.clear();
+                self.end_batch();
             }
         }
     }
@@ -959,9 +1036,7 @@ impl App {
             (PhysicalKey::Code(KeyCode::KeyV), true) => {
                 transform_selection(|transform| mirrored(transform, 1))
             }
-            (PhysicalKey::Code(KeyCode::Digit0), true) => {
-                transform_selection(|_| Transform::default())
-            }
+            (PhysicalKey::Code(KeyCode::Digit0), true) => Vec::new(),
             _ => return None,
         })
     }
@@ -993,13 +1068,23 @@ impl App {
     }
     fn pointer(&mut self, input: Input) {
         self.cursor = Some(match &input {
-            Input::Zoom { position, .. } => *position,
+            Input::Zoom { position, .. } | Input::Pan { position, .. } => *position,
             Input::Pointer(p) => p.position,
         });
         if self.confirm_close || self.library || self.dialog.is_some() {
             return;
         }
         match input {
+            Input::Pan { position, delta } => {
+                if self
+                    .board
+                    .viewport
+                    .contains(egui::pos2(position[0], position[1]))
+                {
+                    self.board.camera.origin[0] -= delta[0] / self.board.camera.zoom;
+                    self.board.camera.origin[1] -= delta[1] / self.board.camera.zoom;
+                }
+            }
             Input::Zoom { position, factor } => {
                 if self
                     .board
@@ -1024,6 +1109,48 @@ impl App {
                         .viewport
                         .contains(egui::pos2(p.position[0], p.position[1]))
                 {
+                    return;
+                }
+                if (self.tools.picking || self.tools.coordinates)
+                    && p.phase == Phase::Down
+                    && self.board.idle()
+                {
+                    let world = self.board.camera.world(p.position);
+                    let id = self
+                        .board
+                        .scene
+                        .query(Rect {
+                            x: world[0],
+                            y: world[1],
+                            width: 1. / self.board.camera.zoom,
+                            height: 1. / self.board.camera.zoom,
+                        })
+                        .into_iter()
+                        .rev()
+                        .find(|item| {
+                            item.blob().is_some()
+                                && item.rect.contains_rotated(item.transform.rotation, world)
+                        })
+                        .map(|item| item.id);
+                    if let Some(id) = id {
+                        self.persist(moth_platform::boards::Request::Export(
+                            if self.tools.coordinates {
+                                moth_platform::export::Target::Info { id, point: world }
+                            } else {
+                                moth_platform::export::Target::Sample {
+                                    id,
+                                    point: world,
+                                    format: match self.tools.color_format {
+                                        1 => moth_platform::export::ColorFormat::Rgb,
+                                        2 => moth_platform::export::ColorFormat::Hsv,
+                                        _ => moth_platform::export::ColorFormat::Hex,
+                                    },
+                                }
+                            },
+                        ));
+                    }
+                    self.tools.picking = false;
+                    self.tools.coordinates = false;
                     return;
                 }
                 if let Some(g) = self.gestures.update(p) {
@@ -1074,8 +1201,13 @@ impl App {
                                 })
                             {
                                 self.moving = Some((item.id, item.rect));
-                                self.board.selection.clear();
-                                self.board.selection.insert(item.id);
+                                self.drag_duplicate = self.ctx.input(|i| i.modifiers.alt);
+                                if !self.board.selection.contains(&item.id) {
+                                    if !self.ctx.input(|i| i.modifiers.shift) {
+                                        self.board.selection.clear();
+                                    }
+                                    self.board.selection.insert(item.id);
+                                }
                             }
                         }
                         self.drag = Some((p.position, p.position, p.pan || self.board.pan));
@@ -1095,21 +1227,28 @@ impl App {
                     Phase::Up => {
                         self.drag_pointer = None;
                         if let Some((start, _, false)) = self.drag.take() {
-                            if let Some((id, rect)) = self.moving.take() {
+                            if let Some((_id, _rect)) = self.moving.take() {
                                 let dx = (p.position[0] - start[0]) / self.board.camera.zoom;
                                 let dy = (p.position[1] - start[1]) / self.board.camera.zoom;
-                                let moved = Rect {
-                                    x: rect.x + dx,
-                                    y: rect.y + dy,
-                                    ..rect
-                                };
-                                if moved.valid()
+                                if !self.tools.locked
                                     && dx.abs() + dy.abs() > 0.5 / self.board.camera.zoom
                                 {
-                                    self.persist(moth_platform::boards::Request::Apply(
-                                        Command::SetRect { id, rect: moved },
-                                        None,
-                                    ));
+                                    let mut items: Vec<_> = self
+                                        .board
+                                        .selection
+                                        .iter()
+                                        .filter_map(|id| self.board.scene.get(*id))
+                                        .collect();
+                                    items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
+                                    let commands = arrange::translate(
+                                        &items,
+                                        [dx, dy],
+                                        self.drag_duplicate,
+                                        self.board.scene.top(),
+                                    );
+                                    self.persist_batch(
+                                        commands.into_iter().map(|c| (c, None)).collect(),
+                                    );
                                 }
                                 return;
                             }
@@ -1189,6 +1328,7 @@ impl App {
         let mut commit_note = false;
         let mut add_note_at: Option<[f32; 2]> = None;
         let mut edit_note_id: Option<Uuid> = None;
+        let mut export = None;
         let mut output = self.ctx.run_ui(state.take_egui_input(&window), |ui| {
             if self.overlay.is_none() {
                 let active_title = self.board.title().to_owned();
@@ -1268,6 +1408,23 @@ impl App {
                     }
                 }
             }
+            if !self.library && self.overlay.is_none() {
+                egui::Panel::bottom("board_tools_button").show(ui, |ui| {
+                    if ui.button(moth_ui::text(moth_ui::Text::Tools)).clicked() {
+                        self.tools.open = !self.tools.open;
+                    }
+                });
+                let (edits, target, note) =
+                    self.tools.show(ui, &mut self.board, self.editing.is_some());
+                commands.extend(edits);
+                export = target;
+                if note {
+                    add_note_at = Some(self.board.camera.world([
+                        self.board.viewport.center().x,
+                        self.board.viewport.center().y,
+                    ]));
+                }
+            }
             if !self.recovery_paths.is_empty() && self.board.scene.is_empty() {
                 egui::Window::new(moth_ui::text(moth_ui::Text::Recovery)).show(ui.ctx(), |ui| {
                     for path in &self.recovery_paths {
@@ -1290,8 +1447,26 @@ impl App {
                 egui::CentralPanel::default()
                     .frame(egui::Frame::NONE)
                     .show(ui, |ui| {
+                        let previous = self.board.viewport;
                         self.board.viewport = ui.max_rect();
-                        if self.board.needs_fit {
+                        if self.tools.scale_with_window
+                            && previous.is_positive()
+                            && previous.size() != self.board.viewport.size()
+                        {
+                            let anchor = self
+                                .board
+                                .camera
+                                .world([previous.center().x, previous.center().y]);
+                            self.board.camera.zoom = (self.board.camera.zoom
+                                * (self.board.viewport.width() / previous.width())
+                                    .min(self.board.viewport.height() / previous.height()))
+                            .clamp(0.01, 64.);
+                            self.board.camera.origin = [
+                                anchor[0] - self.board.viewport.center().x / self.board.camera.zoom,
+                                anchor[1] - self.board.viewport.center().y / self.board.camera.zoom,
+                            ];
+                        }
+                        if self.board.needs_fit && self.board.in_flight == 0 {
                             self.board.fit();
                         }
                         if self.board.scene.is_empty() {
@@ -1351,6 +1526,53 @@ impl App {
                             }
                         }
                         if self.overlay.is_none() {
+                            let marquee = self
+                                .drag
+                                .filter(|(_, _, pan)| !pan && self.moving.is_none())
+                                .map(|(a, b, _)| {
+                                    let a = self.board.camera.world(a);
+                                    let b = self.board.camera.world(b);
+                                    Rect {
+                                        x: a[0].min(b[0]),
+                                        y: a[1].min(b[1]),
+                                        width: (a[0] - b[0]).abs(),
+                                        height: (a[1] - b[1]).abs(),
+                                    }
+                                });
+                            let mut bounds = egui::Rect::NOTHING;
+                            let mut count = 0;
+                            for item in self
+                                .board
+                                .selection
+                                .iter()
+                                .filter_map(|id| self.board.scene.get(*id))
+                            {
+                                let envelope = item.rect.rotated_envelope(item.transform.rotation);
+                                let lo = envelope.lower();
+                                let hi = envelope.upper();
+                                bounds = bounds.union(egui::Rect::from_min_max(
+                                    egui::pos2(lo[0], lo[1]),
+                                    egui::pos2(hi[0], hi[1]),
+                                ));
+                                count += 1;
+                            }
+                            if let Some(rect) = marquee {
+                                count = self.board.scene.query(rect).len();
+                                bounds = egui::Rect::from_min_size(
+                                    egui::pos2(rect.x, rect.y),
+                                    egui::vec2(rect.width, rect.height),
+                                );
+                            }
+                            if bounds.is_finite() {
+                                moth_ui::canvas::selection_badge(
+                                    ui.ctx(),
+                                    self.board.viewport,
+                                    count,
+                                    bounds.size(),
+                                );
+                            }
+                        }
+                        if self.overlay.is_none() {
                             let response = ui.interact(
                                 self.board.viewport,
                                 egui::Id::new("canvas_context"),
@@ -1385,13 +1607,16 @@ impl App {
                                         ui.close();
                                     }
                                     ui.separator();
-                                    let enabled = !self.board.selection.is_empty();
+                                    let enabled = !self.board.scene.is_empty();
                                     ui.add_enabled_ui(enabled, |ui| {
                                         let mut items: Vec<_> = self
                                             .board
-                                            .selection
-                                            .iter()
-                                            .filter_map(|id| self.board.scene.get(*id))
+                                            .scene
+                                            .items()
+                                            .filter(|i| {
+                                                self.board.selection.is_empty()
+                                                    || self.board.selection.contains(&i.id)
+                                            })
                                             .collect();
                                         items.sort_unstable_by(|a, b| {
                                             a.z.cmp(&b.z).then(a.id.cmp(&b.id))
@@ -1424,8 +1649,8 @@ impl App {
                                                     ),
                                                 ] {
                                                     if ui.button(moth_ui::text(label)).clicked() {
-                                                        commands.extend(arrange::arrange(
-                                                            &items,
+                                                        commands.extend(self.tools.arrange(
+                                                            &mut items,
                                                             mode,
                                                             target_width,
                                                         ));
@@ -1494,10 +1719,9 @@ impl App {
                                             .button(moth_ui::text(moth_ui::Text::ResetTransform))
                                             .clicked()
                                         {
-                                            commands.extend(transform_selection(
-                                                &self.board.scene,
-                                                &self.board.selection,
-                                                |_| Transform::default(),
+                                            self.tools.image_scale = Some((
+                                                items.iter().map(|i| i.id).collect(),
+                                                moth_platform::export::Geometry::All,
                                             ));
                                             ui.close();
                                         }
@@ -1533,8 +1757,26 @@ impl App {
                                     Some(item) if item.note().is_some() => {
                                         edit_note_id = Some(item.id)
                                     }
+                                    Some(item) => {
+                                        if self
+                                            .board
+                                            .focus_return
+                                            .as_ref()
+                                            .is_some_and(|(id, _)| *id == item.id)
+                                        {
+                                            if let Some((_, camera)) =
+                                                self.board.focus_return.take()
+                                            {
+                                                self.board.camera = camera;
+                                            }
+                                        } else {
+                                            self.board.focus_return =
+                                                Some((item.id, self.board.camera));
+                                            self.board.selection = HashSet::from([item.id]);
+                                            fit_selection = true;
+                                        }
+                                    }
                                     None => add_note_at = Some(world),
-                                    _ => {}
                                 }
                             }
                             // The inline note editor floats above the canvas.
@@ -1741,31 +1983,60 @@ impl App {
                 });
             }
             if let Some(ids) = self.board.arrange_prompt.clone() {
-                egui::Modal::new(egui::Id::new("arrange_prompt")).show(ui.ctx(), |ui| {
-                    ui.set_max_width(380.);
-                    ui.heading(moth_ui::text(moth_ui::Text::ArrangePrompt));
-                    ui.add_space(12.);
-                    ui.separator();
-                    ui.horizontal_wrapped(|ui| {
-                        for (label, mode) in [
-                            (moth_ui::Text::Horizontal, arrange::Arrange::Horizontal),
-                            (moth_ui::Text::Vertical, arrange::Arrange::Vertical),
-                            (moth_ui::Text::Grid, arrange::Arrange::Grid),
-                            (moth_ui::Text::Optimal, arrange::Arrange::Optimal),
-                        ] {
-                            if ui.button(moth_ui::text(label)).clicked() {
-                                arranged = Some((mode, ids.clone()));
+                if self.tools.auto_arrange {
+                    arranged = Some((tools::layout(self.tools.default_arrange).1, ids.clone()));
+                    self.board.arrange_prompt = None;
+                } else {
+                    egui::Modal::new(egui::Id::new("arrange_prompt")).show(ui.ctx(), |ui| {
+                        ui.set_max_width(380.);
+                        ui.heading(moth_ui::text(moth_ui::Text::ArrangePrompt));
+                        ui.add_space(12.);
+                        ui.separator();
+                        ui.horizontal_wrapped(|ui| {
+                            for (label, mode) in [
+                                (moth_ui::Text::Horizontal, arrange::Arrange::Horizontal),
+                                (moth_ui::Text::Vertical, arrange::Arrange::Vertical),
+                                (moth_ui::Text::Grid, arrange::Arrange::Grid),
+                                (moth_ui::Text::Optimal, arrange::Arrange::Optimal),
+                            ] {
+                                if ui.button(moth_ui::text(label)).clicked() {
+                                    arranged = Some((mode, ids.clone()));
+                                    self.board.arrange_prompt = None;
+                                }
+                            }
+                            if ui.button(moth_ui::text(moth_ui::Text::Cancel)).clicked() {
                                 self.board.arrange_prompt = None;
                             }
-                        }
-                        if ui.button(moth_ui::text(moth_ui::Text::Cancel)).clicked() {
-                            self.board.arrange_prompt = None;
-                        }
+                        });
                     });
-                });
+                }
             }
         });
         state.handle_platform_output(&window, output.platform_output);
+        if std::mem::take(&mut self.tools.reset_camera) {
+            self.board.camera = Camera::default();
+        }
+        if self.tools.focus != 0 {
+            let step = std::mem::take(&mut self.tools.focus);
+            let mut items: Vec<_> = self
+                .board
+                .scene
+                .items()
+                .filter(|i| i.blob().is_some())
+                .collect();
+            items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
+            if !items.is_empty() {
+                let current = items
+                    .iter()
+                    .position(|i| self.board.selection.contains(&i.id));
+                let next = current.map_or(if step > 0 { 0 } else { items.len() - 1 }, |i| {
+                    (i as i32 + step).rem_euclid(items.len() as i32) as usize
+                });
+                self.board.selection = HashSet::from([items[next].id]);
+                fit_selection = true;
+            }
+        }
+        gpu.registry.grayscale = self.tools.grayscale;
         let p = self
             .board
             .camera
@@ -1842,6 +2113,13 @@ impl App {
                 )),
                 clear: if self.overlay.is_some() {
                     wgpu::Color::TRANSPARENT
+                } else if !self.tools.dark {
+                    wgpu::Color {
+                        r: 0.9,
+                        g: 0.91,
+                        b: 0.93,
+                        a: 1.,
+                    }
                 } else {
                     wgpu::Color {
                         r: 17. / 255.,
@@ -1891,6 +2169,40 @@ impl App {
             .viewport_output
             .get(&egui::ViewportId::ROOT)
             .and_then(|o| Instant::now().checked_add(o.repaint_delay));
+        if std::mem::take(&mut self.tools.preference_dirty) {
+            self.ctx.set_theme(if self.tools.dark {
+                egui::Theme::Dark
+            } else {
+                egui::Theme::Light
+            });
+            self.ctx.set_zoom_factor(self.tools.ui_scale);
+            for tab in &mut self.tabs {
+                let values = std::collections::BTreeMap::from([(
+                    "undo_limit".to_owned(),
+                    self.tools.undo_limit.to_string(),
+                )]);
+                if tab
+                    .boards
+                    .requests
+                    .try_send(moth_platform::boards::Request::Preferences(values))
+                    .is_ok()
+                {
+                    tab.in_flight += 1;
+                } else {
+                    tab.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
+                }
+            }
+            self.persist(moth_platform::boards::Request::Preferences(
+                self.tools
+                    .preferences()
+                    .into_iter()
+                    .map(|(k, v)| (k.to_owned(), v))
+                    .collect(),
+            ));
+        }
+        if std::mem::take(&mut self.tools.fit) {
+            self.board.needs_fit = true;
+        }
         if fit_selection {
             let selected: Vec<_> = self
                 .board
@@ -1900,12 +2212,13 @@ impl App {
                 .collect();
             if !selected.is_empty() {
                 let min = selected.iter().fold([f32::INFINITY; 2], |a, i| {
-                    [a[0].min(i.rect.x), a[1].min(i.rect.y)]
+                    let e = i.rect.rotated_envelope(i.transform.rotation);
+                    [a[0].min(e.lower()[0]), a[1].min(e.lower()[1])]
                 });
                 let max = selected.iter().fold([f32::NEG_INFINITY; 2], |a, i| {
                     [
-                        a[0].max(i.rect.x + i.rect.width),
-                        a[1].max(i.rect.y + i.rect.height),
+                        a[0].max(i.rect.rotated_envelope(i.transform.rotation).upper()[0]),
+                        a[1].max(i.rect.rotated_envelope(i.transform.rotation).upper()[1]),
                     ]
                 });
                 self.board.camera.zoom = ((self.board.viewport.width() - 48.) / (max[0] - min[0]))
@@ -1930,10 +2243,16 @@ impl App {
                 .collect();
             items.sort_unstable_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
             let target_width = self.board.viewport.width() / self.board.camera.zoom;
-            let commands = arrange::arrange(&items, mode, target_width);
+            let commands = arrange::arrange(&items, mode, target_width, self.tools.gap);
             if !commands.is_empty() {
                 self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
             }
+        }
+        if let Some((ids, mode)) = self.tools.image_scale.take() {
+            self.persist(moth_platform::boards::Request::OriginalGeometry { ids, mode });
+        }
+        if let Some(target) = export {
+            self.persist(moth_platform::boards::Request::Export(target));
         }
         if actions.paste && !self.board.discarding {
             self.paste();
@@ -2188,6 +2507,7 @@ impl ApplicationHandler<Wake> for App {
                 self.redraw();
             }
         }
+        self.input.wheel = self.tools.wheel;
         if let Some(input) = self.input.event(&event, window.scale_factor()) {
             self.pointer(input);
             self.redraw();
@@ -2296,8 +2616,49 @@ impl ApplicationHandler<Wake> for App {
                     && self.board.in_flight == 0
                 {
                     self.persist(moth_platform::boards::Request::Redo);
-                } else if let Some(commands) = self.transform_keys(&event) {
+                } else if !self.ctx.egui_wants_keyboard_input()
+                    && !self.command
+                    && self.board.idle()
+                    && matches!(
+                        event.logical_key,
+                        Key::Named(
+                            NamedKey::ArrowLeft
+                                | NamedKey::ArrowRight
+                                | NamedKey::ArrowUp
+                                | NamedKey::ArrowDown
+                        )
+                    )
+                {
+                    let distance = if self.ctx.input(|i| i.modifiers.shift) {
+                        10.
+                    } else {
+                        1.
+                    };
+                    let delta = match event.logical_key {
+                        Key::Named(NamedKey::ArrowLeft) => [-distance, 0.],
+                        Key::Named(NamedKey::ArrowRight) => [distance, 0.],
+                        Key::Named(NamedKey::ArrowUp) => [0., -distance],
+                        _ => [0., distance],
+                    };
+                    let items: Vec<_> = self
+                        .board
+                        .selection
+                        .iter()
+                        .filter_map(|id| self.board.scene.get(*id))
+                        .collect();
+                    let commands = arrange::translate(&items, delta, false, self.board.scene.top());
                     self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+                } else if let Some(commands) = self.transform_keys(&event) {
+                    if event.physical_key == PhysicalKey::Code(KeyCode::Digit0)
+                        && self.ctx.input(|i| i.modifiers.shift)
+                    {
+                        self.persist(moth_platform::boards::Request::OriginalGeometry {
+                            ids: self.board.selection.iter().copied().collect(),
+                            mode: moth_platform::export::Geometry::All,
+                        });
+                    } else {
+                        self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+                    }
                 } else if !self.ctx.egui_wants_keyboard_input()
                     && event.logical_key == Key::Character("v".into())
                 {
@@ -2308,7 +2669,9 @@ impl ApplicationHandler<Wake> for App {
                 {
                     self.board.pan = true;
                     self.redraw();
-                } else if event.logical_key == Key::Named(NamedKey::Home) {
+                } else if !self.ctx.egui_wants_keyboard_input()
+                    && event.logical_key == Key::Named(NamedKey::Home)
+                {
                     self.fit();
                 }
             }
@@ -2365,9 +2728,13 @@ fn draw_note(ui: &egui::Ui, camera: &Camera, item: &Item) {
     // so an imported note scaled by BeeRef's `scale` renders at that size.
     let font_size = (item.rect.height / (rows * 1.3)).max(4.0) * zoom;
     let font = egui::FontId::proportional(font_size);
-    let color = egui::Color32::from_rgb(224, 226, 231);
-    let fill = egui::Color32::from_rgba_unmultiplied(39, 42, 50, 235);
-    let stroke = egui::Stroke::new(1., egui::Color32::from_rgb(48, 52, 60));
+    let color = egui::Color32::from_rgb(224, 226, 231).gamma_multiply(item.transform.opacity);
+    let fill = egui::Color32::from_rgba_unmultiplied(39, 42, 50, 235)
+        .gamma_multiply(item.transform.opacity);
+    let stroke = egui::Stroke::new(
+        1.,
+        egui::Color32::from_rgb(48, 52, 60).gamma_multiply(item.transform.opacity),
+    );
     let rotation = item.transform.rotation;
 
     // Upright notes take the simple rounded-card path.
@@ -2507,6 +2874,24 @@ fn pen_ui(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn resetting_geometry_keeps_image_appearance() {
+        let transform = Transform {
+            rotation: 1.,
+            content_scale: 2.,
+            opacity: 0.3,
+            grayscale: true,
+            ..Transform::default()
+        };
+        assert_eq!(
+            transform.reset_geometry(),
+            Transform {
+                opacity: 0.3,
+                grayscale: true,
+                ..Transform::default()
+            }
+        );
+    }
     use super::*;
     #[test]
     fn library_and_resized_canvas_keep_scissors_inside_the_surface() {

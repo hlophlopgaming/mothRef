@@ -71,8 +71,12 @@ impl Library {
         tags.dedup();
         if ui.available_width() > 700. {
             egui::Panel::left("library_sidebar")
-                .exact_size(232.)
-                .frame(egui::Frame::new().fill(PANEL).inner_margin(16))
+                .exact_size((ui.available_width() * 0.22).clamp(160., 280.))
+                .frame(
+                    egui::Frame::new()
+                        .fill(ui.visuals().panel_fill)
+                        .inner_margin(16),
+                )
                 .show(ui, |ui| {
                     self.search(ui);
                     ui.add_space(12.);

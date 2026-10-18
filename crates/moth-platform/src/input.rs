@@ -43,6 +43,13 @@ pub struct Pointer {
 }
 /// Wheel zoom shares the same gesture layer as two-finger pinch.
 pub enum Input {
+    /// Wheel pan is normalized here alongside pointer input.
+    Pan {
+        /// Pointer anchor used to reject scrolling over UI.
+        position: [f32; 2],
+        /// Logical point delta independent of the native wheel units.
+        delta: [f32; 2],
+    },
     /// Keeps normalized contacts separate from camera zoom intent.
     Pointer(Pointer),
     /// Shares camera zoom behavior across native wheel sources.
@@ -69,6 +76,10 @@ pub struct Adapter {
     position: [f32; 2],
     pan: bool,
     button: Option<MouseButton>,
+    /// Wheel preference: 0 zoom, 1 pan, 2 disabled. Pinch remains available.
+    pub wheel: u8,
+    shift: bool,
+    control: bool,
     #[cfg(target_os = "linux")]
     native: Option<wayland::Native>,
 }
@@ -105,6 +116,11 @@ impl Adapter {
     /// This is the only application code that reads raw native mouse events.
     pub fn event(&mut self, event: &WindowEvent, scale: f64) -> Option<Input> {
         let pointer = match event {
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.shift = modifiers.state().shift_key();
+                self.control = modifiers.state().control_key();
+                return None;
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 self.position = [(position.x / scale) as f32, (position.y / scale) as f32];
                 Pointer {
@@ -140,10 +156,24 @@ impl Adapter {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let y = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => *y * 40.,
-                    MouseScrollDelta::PixelDelta(p) => (p.y / scale) as f32,
+                let delta = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => [*x * 40., *y * 40.],
+                    MouseScrollDelta::PixelDelta(p) => [(p.x / scale) as f32, (p.y / scale) as f32],
                 };
+                if self.shift || self.wheel == 1 {
+                    return Some(Input::Pan {
+                        position: self.position,
+                        delta: if self.shift && self.control {
+                            [delta[1], delta[0]]
+                        } else {
+                            delta
+                        },
+                    });
+                }
+                if self.wheel == 2 {
+                    return None;
+                }
+                let y = delta[1];
                 return Some(Input::Zoom {
                     position: self.position,
                     factor: (y * 0.002).exp(),
@@ -259,6 +289,51 @@ fn pair(t: &[(u64, [f32; 2])]) -> Option<([f32; 2], f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn wheel_preferences_and_modifiers_route_through_normalized_pan() {
+        let event = WindowEvent::MouseWheel {
+            device_id: winit::event::DeviceId::dummy(),
+            delta: MouseScrollDelta::LineDelta(1., 2.),
+            phase: TouchPhase::Moved,
+        };
+        let mut adapter = Adapter::default();
+        assert!(matches!(adapter.event(&event,1.),Some(Input::Zoom {factor,..}) if factor>1.));
+        adapter.wheel = 1;
+        assert!(matches!(
+            adapter.event(&event, 1.),
+            Some(Input::Pan {
+                delta: [40., 80.],
+                ..
+            })
+        ));
+        adapter.wheel = 2;
+        assert!(adapter.event(&event, 1.).is_none());
+        adapter.event(
+            &WindowEvent::ModifiersChanged(winit::keyboard::ModifiersState::SHIFT.into()),
+            1.,
+        );
+        assert!(matches!(
+            adapter.event(&event, 1.),
+            Some(Input::Pan {
+                delta: [40., 80.],
+                ..
+            })
+        ));
+        adapter.event(
+            &WindowEvent::ModifiersChanged(
+                (winit::keyboard::ModifiersState::SHIFT | winit::keyboard::ModifiersState::CONTROL)
+                    .into(),
+            ),
+            1.,
+        );
+        assert!(matches!(
+            adapter.event(&event, 1.),
+            Some(Input::Pan {
+                delta: [80., 40.],
+                ..
+            })
+        ));
+    }
     #[test]
     fn releasing_another_button_does_not_end_pan() {
         let mut adapter = Adapter::default();

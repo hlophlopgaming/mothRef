@@ -41,26 +41,49 @@ pub fn tools(ctx: &Context, viewport: egui::Rect, pan: &mut bool) -> Actions {
     egui::Area::new(egui::Id::new("canvas_tools"))
         .fixed_pos(viewport.left_top() + egui::vec2(12., 12.))
         .show(ctx, |ui| {
+            // Separators fill the cross axis, so constrain it to the buttons.
+            let horizontal = viewport.height() < 360.;
+            let button_width = if ctx.content_rect().width() < 600. {
+                44.
+            } else {
+                36.
+            };
+            ui.set_max_width(if horizontal {
+                (viewport.width() - 24.).max(0.)
+            } else {
+                button_width + 10.
+            });
+            if horizontal {
+                ui.set_max_height(button_width + 10.);
+            }
             egui::Frame::new()
-                .fill(PANEL)
+                .fill(ui.visuals().panel_fill)
                 .corner_radius(12)
                 .inner_margin(5)
                 .stroke(egui::Stroke::new(1., Color32::from_rgb(47, 51, 59)))
                 .show(ui, |ui| {
-                    ui.vertical(|ui| {
-                        if icons::button(ui, Icon::Select, text(Text::Select), !*pan).clicked() {
+                    let layout = if horizontal {
+                        egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true)
+                    } else {
+                        egui::Layout::top_down(egui::Align::Min)
+                    };
+                    ui.with_layout(layout, |ui| {
+                        if icons::button(ui, Icon::Select, &tooltip(Text::Select), !*pan).clicked()
+                        {
                             *pan = false;
                         }
-                        if icons::button(ui, Icon::Pan, text(Text::Pan), *pan).clicked() {
+                        if icons::button(ui, Icon::Pan, &tooltip(Text::Pan), *pan).clicked() {
                             *pan = true;
                         }
                         a.paste =
-                            icons::button(ui, Icon::Paste, text(Text::Paste), false).clicked();
-                        a.open = icons::button(ui, Icon::Folder, text(Text::Open), false).clicked();
+                            icons::button(ui, Icon::Paste, &tooltip(Text::Paste), false).clicked();
+                        a.open =
+                            icons::button(ui, Icon::Folder, &tooltip(Text::Open), false).clicked();
                         ui.separator();
-                        a.fit = icons::button(ui, Icon::Fit, text(Text::Fit), false).clicked();
+                        a.fit = icons::button(ui, Icon::Fit, &tooltip(Text::Fit), false).clicked();
                         a.overlay =
-                            icons::button(ui, Icon::Overlay, text(Text::Overlay), false).clicked();
+                            icons::button(ui, Icon::Overlay, &tooltip(Text::Overlay), false)
+                                .clicked();
                     });
                 });
         });
@@ -82,7 +105,7 @@ pub fn minimap(
         .fixed_pos(viewport.right_bottom() - size - egui::vec2(16., 16.))
         .show(ctx, |ui| {
             egui::Frame::new()
-                .fill(PANEL)
+                .fill(ui.visuals().panel_fill)
                 .corner_radius(10)
                 .inner_margin(10)
                 .show(ui, |ui| {
@@ -120,9 +143,93 @@ pub fn minimap(
     click
 }
 
+/// Keeps selection measurements visible without retaining scene metadata.
+pub fn selection_badge(ctx: &Context, viewport: egui::Rect, count: usize, size: egui::Vec2) {
+    egui::Area::new(egui::Id::new("selection_badge"))
+        .fixed_pos(viewport.center_bottom() - egui::vec2(0., 8.))
+        .pivot(egui::Align2::CENTER_BOTTOM)
+        .interactable(false)
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(ui.visuals().panel_fill)
+                .inner_margin(8)
+                .corner_radius(6)
+                .show(ui, |ui| {
+                    ui.label(format!(
+                        "{} {} · {:.0} × {:.0}",
+                        count,
+                        text(Text::Selected),
+                        size.x,
+                        size.y
+                    ));
+                });
+        });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_rail_stays_compact_across_canvas_sizes() {
+        let ctx = Context::default();
+        let mut pan = true;
+        for size in [
+            egui::vec2(1430., 720.),
+            egui::vec2(800., 300.),
+            egui::vec2(320., 240.),
+            egui::vec2(320., 720.),
+            egui::vec2(1430., 720.),
+        ] {
+            let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            let input = || egui::RawInput {
+                screen_rect: Some(viewport),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input(), |ui| {
+                tools(ui.ctx(), viewport, &mut pan);
+            });
+            output.textures_delta.clear();
+            let mut output = ctx.run_ui(input(), |ui| {
+                tools(ui.ctx(), viewport, &mut pan);
+            });
+            output.textures_delta.clear();
+            let rail = output
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::Shape::Rect(r) if r.corner_radius == egui::CornerRadius::same(12) => {
+                        Some(r.rect)
+                    }
+                    _ => None,
+                })
+                .expect("tool rail paints its frame");
+            if size.y >= 360. {
+                assert!(rail.width() < 80., "tool rail expanded to {rail:?}");
+                assert!(rail.height() < 360., "tool rail expanded to {rail:?}");
+            } else {
+                assert!(rail.height() < 120., "horizontal rail expanded to {rail:?}");
+                assert!(
+                    rail.width() <= size.x - 24.,
+                    "rail leaves viewport: {rail:?}"
+                );
+            }
+        }
+    }
+    #[test]
+    fn badge_reports_count_and_world_size() {
+        let ctx = Context::default();
+        let draw = |ui: &mut egui::Ui| {
+            selection_badge(ui.ctx(), ui.max_rect(), 3, egui::vec2(120., 80.));
+        };
+        let mut warmup = ctx.run_ui(Default::default(), draw);
+        warmup.textures_delta.clear();
+        let mut output = ctx.run_ui(Default::default(), draw);
+        output.textures_delta.clear();
+        assert!(output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, egui::Shape::Text(t) if t.galley.text().contains("120 × 80") && t.galley.text().starts_with("3 "))
+        }));
+    }
 
     #[test]
     fn selection_outline_follows_frame_perimeter() {

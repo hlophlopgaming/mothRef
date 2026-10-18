@@ -40,7 +40,7 @@ crates/
 third_party/purcore/ local, attributed purcore safety fork (maintainer-authorized; decision 0007)
 extension/          browser extension (TypeScript, Manifest V3, Firefox + Chromium)
 xtask/              build helpers: bench, corpus, packaging
-corpus/             test files: .moth, .bee, .pur (all PureRef versions), images
+corpus/             test files: .moth, .bee, .pur (available verified samples), images
 docs/               FORMAT.md (the .moth spec), ARCHITECTURE.md, decisions
 ```
 

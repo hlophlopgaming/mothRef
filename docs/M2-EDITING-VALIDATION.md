@@ -1,0 +1,116 @@
+# M2 editing and export validation — 2026-10-18
+
+Scope: the first five M2 roadmap entries and the parity follow-up below. Existing notes, rotate/flip commands,
+normalization, basic arrangement, and the empty-board drop zone are reused.
+
+Board tools provides a touch-accessible inspector, arrangement, and export controls.
+Select an item, open **Board tools → Edit selection**, edit its frame or content
+transform, then **Apply**. Changes are journaled together as one undo step. Cancel
+restores the inspector draft. Geometry is numeric; direct handle dragging is not
+added by this slice. The gap, arrangement prompt threshold/default, auto-arrangement,
+wheel behavior, resize scaling, undo depth, theme and interface scale are persisted
+through the existing storage worker. View controls remain separate from board data.
+
+**Pick image color → HEX / RGB / HSV** arms one canvas click/tap, inversely maps the image's
+frame/content transforms and copies the selected representation of the source-preview color without applying
+item opacity/grayscale. The status reports all three representations. Scene and clipboard export and the picker use up to 2048-pixel
+source previews; PNG/SVG/PDF scene output is limited to a 4096-pixel longest side and
+64 MiB of generated SVG. Exporting original files streams unchanged bytes with a
+64 KiB buffer (up to the existing 256 MiB original-record limit). An original
+collection creates a new directory and deduplicates identical source hashes.
+Existing files/directories are refused. A failed new export may leave a partial
+output; the board and existing files remain untouched.
+
+Filename ordering uses filenames captured for newly opened/dropped images. Older
+boards and foreign imports without filenames retain empty names and a stable UUID
+tie breaker. Schema 1–3 load with opaque/color appearance and empty names; first
+save atomically upgrades the old stream to schema 4. Frozen old-version fixtures
+are retained, and `corpus/moth/v4.moth` covers the new fields.
+
+Checks:
+
+- Workspace formatting, Clippy with warnings denied, and workspace tests.
+- Property tests for command undo identity and checkpoint round trips, including
+  appearance and filenames; every-byte checkpoint truncation tests.
+- Schema-3 read/migration and storage-worker save-upgrade test.
+- Geometry reset regression: reproduced loss of appearance, then verified that
+  both the menu and shortcut preserve opacity/grayscale.
+- Headless GPU golden samples for half opacity and grayscale, alongside the
+  existing frame/content rotation, flip and clip cases.
+- PNG/SVG scene/selection/region export tests, original byte preservation,
+  directory export and exclusive-create refusal.
+- Existing decoder dhat allocation test (part of workspace tests).
+- Corpus round trip: 28 image/board fixtures.
+- `cargo deny check`: advisories, licenses, bans and sources passed.
+- Reader fuzzing: 1,272,081 runs in 31 seconds, no crash, seeded from schemas 1–4.
+
+- `cargo xtask killtest 50`: 50 process kills, no acknowledged commands lost.
+- `cargo xtask bench --quick`: AMD Radeon RX 5700 XT (RADV NAVI10),
+  10,000 distinct images, 100 frames, p99 **7.548 ms**, textures **13.32 MiB**.
+- `cargo xtask soak 300 5`: **2,815 frames in 300 seconds**; RSS settled at
+  **159,844 KiB** (about 156 MiB), flat from 60 seconds through the end.
+
+Native manual tests were not run on Windows/macOS, physical touch/pen devices,
+or the OS clipboard. The clipboard backend stays alive with its board worker;
+clipboard retention after closing that tab depends on the OS clipboard manager.
+Full-resolution tiled scene export and exact original-pixel sampling remain future
+work; originals exported to files preserve full resolution today.
+
+Tier-3 release qualification (1,000 kills, long fuzzing, long soak and enforced
+performance gates) remains for CI/maintainer execution, per AGENTS.md.
+
+
+## M2 parity follow-up
+
+Board tools now exposes alignment, distribution, center stacking, scale normalization,
+original-backed frame/crop/all resets, individual rotation/flip resets, layer steps and extremes, and touch-accessible duplication
+and nudges. Arrange/normalize/align act on all items when nothing is selected. Layouts
+support layer, filename, UUIDv7 insertion-time and random order; repeat a layout with
+the same item set to reverse it. Pack all and fit leaves the scene metadata unchanged
+except for journaled positions. Auto-arrangement stays inside the insertion undo group.
+Grouped undo/redo now applies dependent inverses in reverse order; a regression test
+covers insert + move, undo, redo and undo again.
+
+Alt+drag duplicates the selected items on release; ordinary drags move the selection.
+Arrow keys nudge by one world unit, Shift+arrows by ten. Board tools provides buttons
+for pointer/touch use. Canvas locks belong to each tab and gate the shared mutation
+path, import, paste and note creation; viewing, selection, exports and navigation remain
+available. The interface preferences survive tab changes. Modified settings show a localized
+asterisk marker and can be reset together. Double-click an image to
+focus it, then double-click it again to restore the camera.
+
+PDF uses one raster page with the same crop, selection, preview and resolution budgets
+as PNG. Transparency is composited over white. ZIP stores deduplicated, unchanged
+original bytes with hash-based filenames and validates each source hash; an empty
+selection exports all originals, otherwise it exports selected originals. Existing
+destinations are refused. Coordinate picking reports original-pixel X/Y, image name
+and dimensions in the status bar; the selection badge supplies selection dimensions.
+
+The overall M2 checkbox remains open. Remaining command-level gaps include file-path
+ordering/provenance and opening sources, per-image/default/automatic nearest-neighbor
+sampling, automatic bring-to-front, optional scrollbars/menu visibility, picking outside
+the window, color-gamut visualization, linked-image relinking, optional import downscale,
+and manual note wrapping. The picker rows remain unchecked because outside-window sampling
+and source information are not implemented. System-viewer launch is also still open.
+
+Native Windows/macOS, physical touch/pen, native clipboard/color copying and native
+viewer workflows are not manually qualified by this follow-up. Tier-3 gates remain
+CI/maintainer work.
+
+Follow-up checks (2026-10-18): workspace Clippy with warnings denied, workspace tests
+(including headless rendering goldens and decoder allocation checks), corpus round-trip
+(28 fixtures), and dependency license/advisory checks passed. Property tests cover the
+new edit commands' undo identity and checkpoint round trips. PDF tests verify page
+bounds, cross-reference offsets and raster bytes; ZIP tests read entries back with CRC
+validation and compare original hashes. Preference tests cover persistence, bounded
+reads and injection rejection; wheel tests cover zoom/pan/disabled and modifier routing.
+
+The 50-kill journal test passed. On the same RX 5700 XT adapter, the idle-machine
+final quick benchmark measured **7.360 ms p99** over 100 frames and **13.32 MiB** textures
+(previous recorded run: 7.548 ms; an earlier follow-up sample was 4.521 ms, so
+these short runs are timing samples, not a claimed speedup). No hot-path dependency was added: ZIP is used only by storage-worker export.
+
+The five-minute soak completed **2,849 frames in 300 seconds**, with RSS stable at
+**195,984 KiB** (about 191 MiB) from 55 seconds through the final sample. Original-backed
+reset and preference-marker additions made afterward add no retained buffers or caches;
+their regression/formatting/Clippy checks are included in the final check run.

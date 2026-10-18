@@ -1,15 +1,15 @@
-# MothRef format, schema 3
+# MothRef format, schema 4
 
 All integers and IEEE-754 f32 coordinates are little-endian. Core readers accept
-seekable byte streams; filesystem names are never serialized. Schema 1 is the
+seekable byte streams; native filesystem paths are never serialized. Schema 1 is the
 first persistent format; there is no schema 0 board to migrate. Schema 2 adds item
-content transforms; schema 3 adds text notes. The reader keeps the schema 1 and 2
-record layouts, so every older board and journal still opens: a schema 1 insert
+content transforms; schema 3 adds text notes; schema 4 adds appearance and source
+filenames. The reader keeps the schema 1, 2 and 3 record layouts, so every older board and journal still opens: a schema 1 insert
 carries no transform and migrates to the identity transform. Future schemas must
 retain both readers and provide explicit migrations.
 
-The 16-byte header is `MOTH`, u32 schema version `3`, then eight zero bytes.
-Readers accept versions 1, 2 and 3 and reject every other version. Every record
+The 16-byte header is `MOTH`, u32 schema version `4`, then eight zero bytes.
+Readers accept versions 1, 2, 3 and 4 and reject every other version. Every record
 consists of a payload followed by a 96-byte footer:
 
 | Footer offset | Size | Meaning |
@@ -58,6 +58,19 @@ A transform is f32 `rotation` (radians, around the frame centre), one u8 flag by
 and a non-positive `content_scale`. The scene rejects the same values, so a corrupt
 transform never enters a board. Content stays clipped by the frame, which keeps the
 item's indexed footprint the rotated rectangle.
+
+Schema 4 uses new tags `8` (image insert), `9` (note insert), and `10`
+(SetTransform). The 21-byte transform is extended by f32 opacity in `[0,1]` and
+one grayscale byte (`0` or `1`). Insert tags then store a u16 UTF-8 filename
+length (at most 1024 bytes), the filename, and the remaining fractional index.
+Thus image insert tag `8` has its filename length at offset 91. Note tag `9`
+places it immediately after the 26-byte transform. Tag `10` is 43 bytes total.
+Names are metadata only, never filesystem paths. Readers migrate tags `1`, `4`,
+`5`, `6` and `7` with opacity `1`, grayscale `false`, and an empty filename.
+Frozen migration fixtures are `corpus/moth/v1.moth` through `v3.moth`; `v4.moth`
+contains appearance and filename metadata. Desktop saves atomically compact an
+older board to schema 4 before appending a schema-4 checkpoint; journals start
+with the current header. No header or committed payload is rewritten in place.
 
 A checkpoint contains zero or more u32-length-prefixed Insert commands. The
 entire checkpoint is one record, so replacing the scene is atomic. Commands after

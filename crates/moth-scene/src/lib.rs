@@ -110,6 +110,10 @@ impl Rect {
 pub struct Transform {
     /// Rotates frame and content together around the frame centre, in radians.
     pub rotation: f32,
+    /// Multiplies rendered alpha without changing original pixels.
+    pub opacity: f32,
+    /// Displays luminance while preserving the original colors.
+    pub grayscale: bool,
     /// Mirrors content horizontally, then vertically, before `content_rotation`.
     pub flip: [bool; 2],
     /// Pans content inside the frame, in frame widths and heights.
@@ -123,6 +127,8 @@ impl Default for Transform {
     fn default() -> Self {
         Self {
             rotation: 0.0,
+            opacity: 1.0,
+            grayscale: false,
             flip: [false; 2],
             content_offset: [0.0; 2],
             content_scale: 1.0,
@@ -131,6 +137,15 @@ impl Default for Transform {
     }
 }
 impl Transform {
+    /// Geometry resets preserve appearance, which has separate editing controls.
+    pub fn reset_geometry(self) -> Self {
+        Self {
+            opacity: self.opacity,
+            grayscale: self.grayscale,
+            ..Self::default()
+        }
+    }
+
     /// Rejects values that would poison hit testing, culling or content mapping.
     pub fn valid(self) -> bool {
         [
@@ -143,6 +158,8 @@ impl Transform {
         .iter()
         .all(|v| v.is_finite() && v.abs() <= 1e9)
             && self.content_scale > 0.0
+            && self.opacity.is_finite()
+            && (0.0..=1.0).contains(&self.opacity)
     }
 }
 /// Persistent identity and ordering never depend on in-process indices.
@@ -150,6 +167,8 @@ impl Transform {
 pub struct Item {
     /// Associates updates with the same object across operations.
     pub id: Uuid,
+    /// Source filename only, retained for sorting without storing a native path.
+    pub name: String,
     /// What the item shows: original image bytes or a note's text.
     pub content: Content,
     /// Keeps indexed bounds available without decoding an image.
@@ -164,6 +183,7 @@ impl Item {
     pub fn image(blob: BlobId, rect: Rect, above: Option<&FractionalIndex>) -> Self {
         Self {
             id: Uuid::now_v7(),
+            name: String::new(),
             content: Content::Image(blob),
             rect,
             transform: Transform::default(),
@@ -174,11 +194,38 @@ impl Item {
     pub fn text(text: impl Into<String>, rect: Rect, above: Option<&FractionalIndex>) -> Self {
         Self {
             id: Uuid::now_v7(),
+            name: String::new(),
             content: Content::Text(text.into()),
             rect,
             transform: Transform::default(),
             z: above.map(FractionalIndex::new_after).unwrap_or_default(),
         }
+    }
+    /// Maps a world point back to original image coordinates, rejecting clipped or empty space.
+    pub fn source_uv(&self, point: [f32; 2], dimensions: [u32; 2]) -> Option<[f32; 2]> {
+        if dimensions.contains(&0) || !self.rect.contains_rotated(self.transform.rotation, point) {
+            return None;
+        }
+        let r = self.rect;
+        let t = self.transform;
+        let dx = point[0] - r.x - r.width / 2.;
+        let dy = point[1] - r.y - r.height / 2.;
+        let (sin, cos) = t.rotation.sin_cos();
+        let local = [dx * cos + dy * sin, -dx * sin + dy * cos];
+        let (sin, cos) = t.content_rotation.sin_cos();
+        let local = [
+            local[0] * cos + local[1] * sin - t.content_offset[0] * r.width,
+            -local[0] * sin + local[1] * cos - t.content_offset[1] * r.height,
+        ];
+        let fit =
+            (r.width / dimensions[0] as f32).max(r.height / dimensions[1] as f32) * t.content_scale;
+        let uv = [0, 1].map(|axis| {
+            let value = local[axis] / (dimensions[axis] as f32 * fit) + 0.5;
+            if t.flip[axis] { 1. - value } else { value }
+        });
+        uv.iter()
+            .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
+            .then_some(uv)
     }
     /// The referenced image blob, or `None` for notes.
     pub fn blob(&self) -> Option<BlobId> {
@@ -269,7 +316,11 @@ impl Scene {
     pub fn apply(&mut self, command: Command) -> Result<Command, SceneError> {
         match command {
             Command::Insert(item) => {
-                if !item.rect.valid() || !item.transform.valid() || item.id.get_version_num() != 7 {
+                if !item.rect.valid()
+                    || !item.transform.valid()
+                    || item.id.get_version_num() != 7
+                    || item.name.len() > 1024
+                {
                     return Err(SceneError::Invalid);
                 }
                 if self.items.contains_key(&item.id) {
@@ -427,6 +478,31 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     #[test]
+    fn source_mapping_undoes_crop_rotation_and_flip() {
+        let mut item = Item::image(
+            blake3::hash(b"mapping"),
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 100.,
+                height: 100.,
+            },
+            None,
+        );
+        assert_eq!(item.source_uv([25., 75.], [100, 100]), Some([0.25, 0.75]));
+        item.transform.flip[0] = true;
+        assert_eq!(item.source_uv([25., 75.], [100, 100]), Some([0.75, 0.75]));
+        item.transform.content_scale = 2.;
+        item.transform.content_offset = [0.25, 0.];
+        assert_eq!(item.source_uv([50., 50.], [100, 100]), Some([0.625, 0.5]));
+        item.transform.rotation = std::f32::consts::FRAC_PI_2;
+        let uv = item.source_uv([50., 75.], [100, 100]).unwrap();
+        assert!((uv[0] - 0.5).abs() < 1e-6 && (uv[1] - 0.5).abs() < 1e-6);
+        assert_eq!(item.source_uv([-1., 50.], [100, 100]), None);
+        item.transform.content_scale = 0.1;
+        assert_eq!(item.source_uv([0., 0.], [100, 100]), None);
+    }
+    #[test]
     fn indexed_bounds_follow_commands_and_undo() {
         let mut scene = Scene::default();
         assert_eq!(scene.bounds(), None);
@@ -453,12 +529,12 @@ mod tests {
         assert_eq!(scene.bounds(), None);
     }
     proptest! {
-     #[test] fn apply_undo_identity(x in -10000f32..10000., y in -10000f32..10000., w in 1f32..4096., h in 1f32..4096., rot in -10f32..10., scale in 0.01f32..100., dx in -10f32..10., dy in -10f32..10.) {
+     #[test] fn apply_undo_identity(x in -10000f32..10000., y in -10000f32..10000., w in 1f32..4096., h in 1f32..4096., rot in -10f32..10., scale in 0.01f32..100., dx in -10f32..10., dy in -10f32..10., opacity in 0f32..=1., grayscale in any::<bool>()) {
       let mut scene=Scene::default(); let item=Item::image(blake3::hash(b"image"),Rect{x,y,width:w,height:h},None);
       let id=item.id; let inverse=scene.apply(Command::Insert(item.clone())).unwrap();
       let snapshot=scene.query(item.rect).into_iter().cloned().collect::<Vec<_>>();
       let undo=scene.apply(Command::SetRect{id,rect:Rect{x:x+10.,..item.rect}}).unwrap(); scene.apply(undo).unwrap();
-      let transform=Transform{rotation:rot,content_offset:[dx,dy],content_scale:scale,..Transform::default()};
+      let transform=Transform{opacity,grayscale,rotation:rot,content_offset:[dx,dy],content_scale:scale,..Transform::default()};
       let undo=scene.apply(Command::SetTransform{id,transform}).unwrap();
       prop_assert_eq!(scene.get(id).unwrap().transform,transform);
       scene.apply(undo).unwrap();

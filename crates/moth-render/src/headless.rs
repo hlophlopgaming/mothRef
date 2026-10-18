@@ -282,12 +282,36 @@ pub async fn golden_transform(software: bool) -> Result<(), String> {
         height: 32.,
     };
     type Sample = ((u32, u32), Option<(u32, u32)>);
-    let cases: [(&str, Rect, Transform, &[Sample]); 6] = [
+    let cases: [(&str, Rect, Transform, &[Sample]); 9] = [
         (
             "identity",
             square,
             Transform::default(),
             // At scale 1 the source exactly covers the frame, so world equals source.
+            &[((19, 35), Some((4, 20))), ((43, 19), Some((28, 4)))],
+        ),
+        (
+            "canvas grayscale",
+            square,
+            Transform::default(),
+            &[((19, 35), Some((4, 20))), ((43, 19), Some((28, 4)))],
+        ),
+        (
+            "half opacity",
+            square,
+            Transform {
+                opacity: 0.5,
+                ..Transform::default()
+            },
+            &[((19, 35), Some((4, 20))), ((43, 19), Some((28, 4)))],
+        ),
+        (
+            "grayscale",
+            square,
+            Transform {
+                grayscale: true,
+                ..Transform::default()
+            },
             &[((19, 35), Some((4, 20))), ((43, 19), Some((28, 4)))],
         ),
         (
@@ -352,6 +376,7 @@ pub async fn golden_transform(software: bool) -> Result<(), String> {
     let texture = target(&device, 64, 64);
     let view = texture.create_view(&Default::default());
     for (name, rect, transform, samples) in cases {
+        registry.grayscale = name == "canvas grayscale";
         let mut scene = Scene::default();
         let mut item = Item::image(image.hash, rect, None);
         item.transform = transform;
@@ -386,6 +411,31 @@ pub async fn golden_transform(software: bool) -> Result<(), String> {
                 Some((source_x, source_y)) => [stripe(source_x), stripe(source_y), 0, 255],
                 None => [0, 0, 0, 255],
             };
+            let mut expected = expected;
+            if source.is_some() {
+                if transform.grayscale || registry.grayscale {
+                    let linear = |value: u8| {
+                        let v = value as f32 / 255.;
+                        if v <= 0.04045 {
+                            v / 12.92
+                        } else {
+                            ((v + 0.055) / 1.055).powf(2.4)
+                        }
+                    };
+                    let l = linear(expected[0]) * 0.2126
+                        + linear(expected[1]) * 0.7152
+                        + linear(expected[2]) * 0.0722;
+                    let g = if l <= 0.0031308 {
+                        12.92 * l
+                    } else {
+                        1.055 * l.powf(1. / 2.4) - 0.055
+                    };
+                    expected[..3].fill((g * 255.).round() as u8);
+                }
+                for channel in &mut expected[..3] {
+                    *channel = (*channel as f32 * transform.opacity).round() as u8;
+                }
+            }
             let pixel = &bytes[(y as usize * 256 + x as usize * 4)..][..4];
             if pixel.iter().zip(expected).any(|(&a, b)| a.abs_diff(b) > 3) {
                 return Err(format!(

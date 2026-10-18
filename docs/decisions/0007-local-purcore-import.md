@@ -30,7 +30,9 @@ claim of every PureRef version or feature. Linked images are never opened
 implicitly. Drawings, group decoration, rich/fixed-size notes, non-opaque items,
 unsupported flags and unrepresentable crops/transforms are skipped with the
 partial-import warning. Names, source strings and other metadata absent from
-MothRef's scene model are not persisted. The all-versions M2 checkbox stays open.
+MothRef's scene model are not persisted. M2 coverage is limited to verified files and supported content. Per the maintainer,
+qualifying every PureRef version is not required; extend coverage when
+reproducible sample files become available.
 
 Limits can reject large boards or records; increasing them needs memory evidence.
 No `.moth` schema or journal layout changes. Tier-3 reliability qualification

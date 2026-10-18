@@ -1,8 +1,10 @@
 # M1 validation
 
-M1's persistence implementation is present; **the reliability release is not yet
-qualified**. Do not mark the whole milestone or publish 0.1 as reliability-tested
-until all remaining gates below pass.
+M1's persistence implementation is present. Per maintainer direction on
+2026-10-18, the eight-hour soak and native Windows/macOS manual qualification
+are deferred to **1.2 or later** and do not block earlier releases. They remain
+unverified; earlier releases must not claim these checks passed. Short safety
+checks and automated cross-platform CI remain required.
 
 ## Executed on Linux, 2026-10-16
 
@@ -32,13 +34,13 @@ until all remaining gates below pass.
 not exist yet. Import readers and their fuzz targets belong to M2; no import code
 or decoder path was changed for M1.
 
-## Remaining release gates
+## Qualification follow-up (long soak and native manual checks: 1.2+)
 
 - A combined 30-minute render/persistence soak now passes: **17,048 frames**,
   second-half RSS **165,096–165,112 KiB**. It exercises journal writes, bounded
   undo/redo, saves, backups and compaction. Log:
   `/tmp/mothref-tech-debt-soak.log`. See the [follow-up](M0-VALIDATION.md) for scope;
-  this does not replace the eight-hour gate below.
+  this does not replace the deferred eight-hour qualification below.
 - Run and record the full **eight-hour** combined soak (`cargo xtask soak 28800`). The manually triggered GitHub workflow defaults to
   30 minutes; hosted runner job limits preclude one uninterrupted eight-hour job.
 - Runtime compressed texture upload/encoding is done for BC7 on desktop, with
@@ -63,7 +65,7 @@ binary architectures, Unix executable permissions and license notices were
 checked. The GitHub-built Linux binary opened the board fixture under X11,
 created its recovery journal, and exited successfully on SIGTERM while retaining
 that journal. This does not replace native Windows/macOS manual UX testing or the
-full M1 reliability gates above.
+deferred qualification above.
 
 ## Current product limits
 

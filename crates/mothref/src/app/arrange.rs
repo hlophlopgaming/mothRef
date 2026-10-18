@@ -5,10 +5,6 @@
 //! normalize matches its frame along one measure, arrange anchors the layout at its top-left.
 use moth_scene::{Command, Item, Rect};
 
-/// Gap between arranged frames, in world units.
-/// shortcut: fixed gap until a settings store lands (M2); the value matches the pre-existing menu.
-pub const GAP: f32 = 24.0;
-
 /// Which frame measure to match against the reference item.
 #[derive(Clone, Copy)]
 pub enum Normalize {
@@ -76,50 +72,61 @@ pub fn normalize(items: &[&Item], mode: Normalize) -> Vec<Command> {
 }
 
 /// Repositions frames starting at the reference anchor, keeping each frame's size.
-pub fn arrange(items: &[&Item], mode: Arrange, target_width: f32) -> Vec<Command> {
+pub fn arrange(items: &[&Item], mode: Arrange, target_width: f32, gap: f32) -> Vec<Command> {
+    if !gap.is_finite() || !(0.0..=10000.0).contains(&gap) {
+        return Vec::new();
+    }
     let Some(first) = items.first() else {
         return Vec::new();
     };
-    let start = (first.rect.x, first.rect.y);
+    let start = items.iter().fold((first.rect.x, first.rect.y), |a, i| {
+        (a.0.min(i.rect.x), a.1.min(i.rect.y))
+    });
     let mut commands = Vec::with_capacity(items.len());
     match mode {
-        Arrange::Horizontal => flow(items, usize::MAX, start, &mut commands),
-        Arrange::Vertical => flow(items, 1, start, &mut commands),
-        Arrange::Grid => flow(items, grid_columns(items.len()), start, &mut commands),
-        Arrange::Optimal => shelf(items, target_width, start, &mut commands),
+        Arrange::Horizontal => flow(items, usize::MAX, start, gap, &mut commands),
+        Arrange::Vertical => flow(items, 1, start, gap, &mut commands),
+        Arrange::Grid => flow(items, grid_columns(items.len()), start, gap, &mut commands),
+        Arrange::Optimal => shelf(items, target_width, start, gap, &mut commands),
     }
     commands
 }
 
 /// Places items in rows of `columns`, advancing each row by its tallest frame.
-fn flow(items: &[&Item], columns: usize, start: (f32, f32), commands: &mut Vec<Command>) {
+fn flow(items: &[&Item], columns: usize, start: (f32, f32), gap: f32, commands: &mut Vec<Command>) {
     let (mut x, mut y) = start;
     let mut row_height = 0.0;
     for (index, item) in items.iter().enumerate() {
         if index % columns == 0 && index > 0 {
             x = start.0;
-            y += row_height + GAP;
+            y += row_height + gap;
             row_height = 0.0;
         }
         push(commands, item, Rect { x, y, ..item.rect });
-        x += item.rect.width + GAP;
+        x += item.rect.width + gap;
         row_height = row_height.max(item.rect.height);
     }
 }
 
 /// Greedy shelf packing that wraps when a shelf would exceed `target_width`.
-fn shelf(items: &[&Item], target_width: f32, start: (f32, f32), commands: &mut Vec<Command>) {
-    let width = target_width.max(GAP);
+fn shelf(
+    items: &[&Item],
+    target_width: f32,
+    start: (f32, f32),
+    gap: f32,
+    commands: &mut Vec<Command>,
+) {
+    let width = target_width.max(gap);
     let (mut x, mut y) = start;
     let mut shelf_height = 0.0;
     for item in items {
         if x > start.0 && x + item.rect.width > start.0 + width {
             x = start.0;
-            y += shelf_height + GAP;
+            y += shelf_height + gap;
             shelf_height = 0.0;
         }
         push(commands, item, Rect { x, y, ..item.rect });
-        x += item.rect.width + GAP;
+        x += item.rect.width + gap;
         shelf_height = shelf_height.max(item.rect.height);
     }
 }
@@ -135,6 +142,170 @@ fn push(commands: &mut Vec<Command>, item: &Item, rect: Rect) {
     }
 }
 
+/// Frame alignment uses the visible rotated envelopes; stacking preserves z-order.
+#[derive(Clone, Copy)]
+pub enum Align {
+    Left,
+    Right,
+    Top,
+    Bottom,
+    Horizontal,
+    Vertical,
+    Stack,
+}
+pub fn align(items: &[&Item], mode: Align) -> Vec<Command> {
+    let Some(first) = items.first() else {
+        return Vec::new();
+    };
+    let envelopes: Vec<_> = items
+        .iter()
+        .map(|i| i.rect.rotated_envelope(i.transform.rotation))
+        .collect();
+    let min = envelopes.iter().fold([f32::INFINITY; 2], |a, r| {
+        [a[0].min(r.lower()[0]), a[1].min(r.lower()[1])]
+    });
+    let max = envelopes.iter().fold([f32::NEG_INFINITY; 2], |a, r| {
+        [a[0].max(r.upper()[0]), a[1].max(r.upper()[1])]
+    });
+    let axis = usize::from(matches!(mode, Align::Vertical));
+    let mut order: Vec<_> = (0..items.len()).collect();
+    order.sort_by(|a, b| {
+        envelopes[*a].lower()[axis]
+            .total_cmp(&envelopes[*b].lower()[axis])
+            .then(items[*a].id.cmp(&items[*b].id))
+    });
+    let total: f32 = envelopes
+        .iter()
+        .map(|r| r.upper()[axis] - r.lower()[axis])
+        .sum();
+    let gap = (max[axis] - min[axis] - total) / items.len().saturating_sub(1).max(1) as f32;
+    let mut cursor = min[axis];
+    order
+        .into_iter()
+        .filter_map(|index| {
+            let item = items[index];
+            let e = envelopes[index];
+            let mut r = item.rect;
+            match mode {
+                Align::Left => r.x += min[0] - e.lower()[0],
+                Align::Right => r.x += max[0] - e.upper()[0],
+                Align::Top => r.y += min[1] - e.lower()[1],
+                Align::Bottom => r.y += max[1] - e.upper()[1],
+                Align::Stack => {
+                    r.x = first.rect.x + (first.rect.width - r.width) / 2.;
+                    r.y = first.rect.y + (first.rect.height - r.height) / 2.;
+                }
+                Align::Horizontal | Align::Vertical => {
+                    if axis == 0 {
+                        r.x += cursor - e.lower()[0];
+                    } else {
+                        r.y += cursor - e.lower()[1];
+                    }
+                    cursor += e.upper()[axis] - e.lower()[axis] + gap;
+                }
+            }
+            r.valid().then_some(Command::SetRect {
+                id: item.id,
+                rect: r,
+            })
+        })
+        .collect()
+}
+/// Both pointer drags and nudges share the journaled geometry path.
+pub fn translate(
+    items: &[&Item],
+    delta: [f32; 2],
+    duplicate: bool,
+    top: Option<&fractional_index::FractionalIndex>,
+) -> Vec<Command> {
+    if delta.iter().any(|v| !v.is_finite()) {
+        return Vec::new();
+    }
+    let mut z = top.cloned();
+    let mut out = Vec::new();
+    for item in items {
+        let rect = Rect {
+            x: item.rect.x + delta[0],
+            y: item.rect.y + delta[1],
+            ..item.rect
+        };
+        if !rect.valid() {
+            return Vec::new();
+        }
+        if duplicate {
+            let mut copy = (*item).clone();
+            copy.id = moth_scene::Uuid::now_v7();
+            copy.rect = rect;
+            copy.z = z
+                .as_ref()
+                .map(fractional_index::FractionalIndex::new_after)
+                .unwrap_or_default();
+            z = Some(copy.z.clone());
+            out.push(Command::Insert(copy));
+        } else {
+            out.push(Command::SetRect { id: item.id, rect });
+        }
+    }
+    out
+}
+/// Reuse remove/insert commands so layer changes need no new journal encoding.
+pub fn reorder(
+    scene: &moth_scene::Scene,
+    selection: &std::collections::HashSet<moth_scene::Uuid>,
+    front: bool,
+    extreme: bool,
+) -> Vec<Command> {
+    use fractional_index::FractionalIndex as Z;
+    let mut ordered: Vec<_> = scene.items().collect();
+    ordered.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
+    if extreme {
+        ordered.sort_by_key(|i| selection.contains(&i.id) == front);
+    } else if front {
+        for index in (0..ordered.len().saturating_sub(1)).rev() {
+            if selection.contains(&ordered[index].id) && !selection.contains(&ordered[index + 1].id)
+            {
+                ordered.swap(index, index + 1);
+            }
+        }
+    } else {
+        for index in 1..ordered.len() {
+            if selection.contains(&ordered[index].id) && !selection.contains(&ordered[index - 1].id)
+            {
+                ordered.swap(index, index - 1);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut previous: Option<Z> = None;
+    let mut unselected = ordered
+        .iter()
+        .filter(|i| !selection.contains(&i.id))
+        .peekable();
+    for item in &ordered {
+        if !selection.contains(&item.id) {
+            previous = Some(item.z.clone());
+            unselected.next();
+            continue;
+        }
+        let next = unselected.peek().map(|i| &i.z);
+        let z = match (previous.as_ref(), next) {
+            (Some(a), Some(b)) => Z::new_between(a, b),
+            (Some(a), None) => Some(Z::new_after(a)),
+            (None, Some(b)) => Some(Z::new_before(b)),
+            (None, None) => Some(Z::default()),
+        };
+        let Some(z) = z else {
+            return Vec::new();
+        };
+        previous = Some(z.clone());
+        if z != item.z {
+            let mut changed = (*item).clone();
+            changed.z = z;
+            out.extend([Command::Remove(item.id), Command::Insert(changed)]);
+        }
+    }
+    out
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,6 +336,93 @@ mod tests {
             .collect()
     }
 
+    proptest::proptest! {
+        #[test]
+        fn editing_commands_undo_and_checkpoint_roundtrip(dx in -1000f32..1000.,dy in -1000f32..1000.,n in 2usize..20) {
+            let mut scene=Scene::default();
+            for i in 0..n {let item=Item::text(format!("note {i}"),Rect{x:i as f32*15.,y:i as f32*13.,width:10.+i as f32,height:20.},scene.top());scene.apply(Command::Insert(item)).unwrap();}
+            let mut original:Vec<_>=scene.items().cloned().collect();original.sort_by_key(|i|i.id);
+            for duplicate in [false,true] {
+                let mut items:Vec<_>=scene.items().collect();items.sort_by(|a,b|a.z.cmp(&b.z));
+                let mut commands=translate(&items,[dx,dy],duplicate,scene.top());
+                for mode in [Align::Left,Align::Right,Align::Top,Align::Bottom,Align::Horizontal,Align::Vertical,Align::Stack] {commands.extend(align(&items,mode));}
+                let selected=items.iter().take(2).map(|i|i.id).collect();
+                commands.extend(reorder(&scene,&selected,true,false));
+                let mut inverse=Vec::new();for c in commands {inverse.push(scene.apply(c).unwrap());}
+                let payload=moth_format::board::snapshot(&scene).unwrap();let mut bytes=Vec::new();moth_format::board::initialize(&mut bytes).unwrap();let offset=bytes.len() as u64;moth_format::board::append(&mut bytes,offset,3,&payload).unwrap();
+                let loaded=moth_format::board::read(&mut std::io::Cursor::new(bytes)).unwrap();
+                for item in scene.items() {proptest::prop_assert_eq!(loaded.scene.get(item.id),Some(item));}
+                for c in inverse.into_iter().rev() {scene.apply(c).unwrap();}
+                let mut after:Vec<_>=scene.items().cloned().collect();after.sort_by_key(|i|i.id);proptest::prop_assert_eq!(&after,&original);
+            }
+        }
+    }
+    #[test]
+    fn layer_steps_keep_selected_order_and_cross_one_neighbor() {
+        let mut scene = Scene::default();
+        let mut ids = Vec::new();
+        for n in 0..4 {
+            let item = Item::text(
+                n.to_string(),
+                Rect {
+                    x: 0.,
+                    y: 0.,
+                    width: 10.,
+                    height: 10.,
+                },
+                scene.top(),
+            );
+            ids.push(item.id);
+            scene.apply(Command::Insert(item)).unwrap();
+        }
+        for (front, extreme, expected) in [
+            (true, false, vec![0, 3, 1, 2]),
+            (false, false, vec![1, 2, 0, 3]),
+            (true, true, vec![0, 3, 1, 2]),
+            (false, true, vec![1, 2, 0, 3]),
+        ] {
+            let commands = reorder(
+                &scene,
+                &[ids[1], ids[2]].into_iter().collect(),
+                front,
+                extreme,
+            );
+            let mut undo = Vec::new();
+            for c in commands {
+                undo.push(scene.apply(c).unwrap());
+            }
+            let order: Vec<_> = scene
+                .query(Rect {
+                    x: 0.,
+                    y: 0.,
+                    width: 10.,
+                    height: 10.,
+                })
+                .iter()
+                .map(|i| i.id)
+                .collect();
+            assert_eq!(
+                order,
+                expected.into_iter().map(|i| ids[i]).collect::<Vec<_>>()
+            );
+            for c in undo.into_iter().rev() {
+                scene.apply(c).unwrap();
+            }
+        }
+    }
+    #[test]
+    fn alignment_uses_rotated_edges_and_distribution_preserves_extremes() {
+        let a = item(1, 20., 10.);
+        let mut b = item(2, 10., 20.);
+        b.rect.x = 100.;
+        b.rect.y = 200.;
+        b.transform.rotation = std::f32::consts::FRAC_PI_2;
+        let out = rects(&align(&[&a, &b], Align::Left));
+        assert!((out[1].x - 5.).abs() < 0.001);
+        let out = rects(&align(&[&a, &b], Align::Horizontal));
+        assert_eq!(out[0], a.rect);
+        assert_eq!(out[1], b.rect);
+    }
     #[test]
     fn normalize_width_equalizes_width_and_keeps_aspect() {
         let a = item(1, 100., 50.);
@@ -195,23 +453,32 @@ mod tests {
         let a = item(1, 100., 50.);
         let b = item(2, 80., 40.);
         let items = [&a, &b];
-        let vertical = rects(&arrange(&items, Arrange::Vertical, 1000.));
-        assert_eq!(vertical[1].y, vertical[0].y + 50. + GAP);
+        let vertical = rects(&arrange(&items, Arrange::Vertical, 1000., 24.));
+        assert_eq!(vertical[1].y, vertical[0].y + 50. + 24.);
         assert_eq!(vertical[1].x, vertical[0].x);
-        let horizontal = rects(&arrange(&items, Arrange::Horizontal, 1000.));
-        assert_eq!(horizontal[1].x, horizontal[0].x + 100. + GAP);
+        let horizontal = rects(&arrange(&items, Arrange::Horizontal, 1000., 24.));
+        assert_eq!(horizontal[1].x, horizontal[0].x + 100. + 24.);
         assert_eq!(horizontal[1].y, horizontal[0].y);
     }
 
     #[test]
+    fn custom_gap_and_invalid_gap() {
+        let a = item(1, 10., 20.);
+        let b = item(2, 10., 20.);
+        let out = rects(&arrange(&[&a, &b], Arrange::Horizontal, 100., 7.));
+        assert_eq!(out[1].x, 17.);
+        assert!(arrange(&[&a, &b], Arrange::Horizontal, 100., f32::NAN).is_empty());
+        assert!(arrange(&[&a, &b], Arrange::Horizontal, 100., -1.).is_empty());
+    }
+    #[test]
     fn arrange_grid_wraps_after_sqrt_columns() {
         let items: Vec<_> = (0..5).map(|n| item(n, 10., 10.)).collect();
         let refs: Vec<&Item> = items.iter().collect();
-        let out = rects(&arrange(&refs, Arrange::Grid, 1000.));
+        let out = rects(&arrange(&refs, Arrange::Grid, 1000., 24.));
         assert_eq!(grid_columns(5), 3);
         // row 2 starts at the reference x, one row down.
         assert_eq!(out[3].x, out[0].x);
-        assert_eq!(out[3].y, out[0].y + 10. + GAP);
+        assert_eq!(out[3].y, out[0].y + 10. + 24.);
     }
 
     #[test]
@@ -223,7 +490,7 @@ mod tests {
             scene.apply(Command::Insert(item.clone())).unwrap();
         }
         let mut commands = normalize(&refs, Normalize::Area);
-        commands.extend(arrange(&refs, Arrange::Grid, 1000.));
+        commands.extend(arrange(&refs, Arrange::Grid, 1000., 24.));
         let mut undo = Vec::new();
         for command in commands {
             undo.push(scene.apply(command).unwrap());

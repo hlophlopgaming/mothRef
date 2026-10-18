@@ -1,11 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![forbid(unsafe_code)]
 //! MothRef measurement tools.
+mod load;
 mod reliability;
 use std::time::{Duration, Instant};
 fn main() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some("load") => load::run(
+            std::path::Path::new(args.get(1).ok_or_else(|| {
+                anyhow::anyhow!("usage: cargo xtask load <board-or-image-directory> [save-as.moth]")
+            })?),
+            args.get(2).map(std::path::Path::new),
+        )?,
+        Some("load-writer") => {
+            reliability::load_writer(args.get(1).ok_or_else(|| anyhow::anyhow!("missing path"))?)?
+        }
+        Some("load-killtest") => {
+            reliability::load_killtest(args.get(1).map(|v| v.parse()).transpose()?.unwrap_or(50))?
+        }
         Some("killtest") => {
             reliability::killtest(args.get(1).map(|v| v.parse()).transpose()?.unwrap_or(1000))?
         }
@@ -174,7 +187,7 @@ fn main() -> anyhow::Result<()> {
             println!("{count} image and board fixtures validated");
         }
         _ => anyhow::bail!(
-            "usage: cargo xtask bench [--quick] [--enforce] [--software] | paste [--enforce] | soak [seconds] [sample-interval-seconds] | corpus | pur <board.pur>"
+            "usage: cargo xtask load <board-or-image-directory> [save-as.moth] | load-killtest [count] | bench [--quick] [--enforce] [--software] | paste [--enforce] | soak [seconds] [sample-interval-seconds] | corpus | pur <board.pur>"
         ),
     }
     Ok(())

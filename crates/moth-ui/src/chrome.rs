@@ -91,7 +91,7 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
     egui::Panel::top("brand")
         .frame(
             egui::Frame::new()
-                .fill(BACKGROUND)
+                .fill(ui.visuals().extreme_bg_color)
                 .inner_margin(egui::Margin::symmetric(12, 0)),
         )
         .show(ui, |ui| {
@@ -142,8 +142,13 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                                     if response.clicked() {
                                         a.tab = Some(tab.slot);
                                     }
-                                    if icons::button(ui, Icon::Close, text(Text::CloseTab), false)
-                                        .clicked()
+                                    if icons::button(
+                                        ui,
+                                        Icon::Close,
+                                        &tooltip(Text::CloseTab),
+                                        false,
+                                    )
+                                    .clicked()
                                     {
                                         a.close_tab = Some(tab.slot);
                                     }
@@ -151,15 +156,17 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                             });
                         });
                 }
-                a.new = icons::button(ui, Icon::Plus, text(Text::NewBoard), false).clicked();
+                a.new = icons::button(ui, Icon::Plus, &tooltip(Text::NewBoard), false).clicked();
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    a.close =
-                        icons::button(ui, Icon::Close, text(Text::CloseWindow), false).clicked();
+                    a.close = icons::button(ui, Icon::Close, &tooltip(Text::CloseWindow), false)
+                        .clicked();
                     if ui.ctx().content_rect().width() >= 600. {
-                        a.maximize = icons::button(ui, Icon::Maximize, text(Text::Maximize), false)
-                            .clicked();
+                        a.maximize =
+                            icons::button(ui, Icon::Maximize, &tooltip(Text::Maximize), false)
+                                .clicked();
                         a.minimize =
-                            icons::button(ui, Icon::Minus, text(Text::Minimize), false).clicked();
+                            icons::button(ui, Icon::Minus, &tooltip(Text::Minimize), false)
+                                .clicked();
                     }
                     let mut language = locale();
                     egui::ComboBox::from_id_salt("language")
@@ -181,7 +188,7 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
     egui::Panel::bottom("status")
         .frame(
             egui::Frame::new()
-                .fill(PANEL)
+                .fill(ui.visuals().panel_fill)
                 .inner_margin(egui::Margin::symmetric(16, 4)),
         )
         .show(ui, |ui| {
@@ -206,6 +213,14 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                     .size(10.)
                     .color(MUTED),
                 );
+                if status.dirty || !status.path.is_empty() {
+                    ui.label(text(if status.dirty {
+                        Text::Journaled
+                    } else {
+                        Text::SaveState
+                    }));
+                }
+                ui.label(text(Text::RecoveryOn));
                 if !status.message.is_empty() {
                     ui.colored_label(ACCENT, status.message);
                 }
@@ -217,24 +232,29 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
     egui::Panel::top("toolbar")
         .frame(
             egui::Frame::new()
-                .fill(PANEL)
-                .inner_margin(egui::Margin::symmetric(12, 4)),
+                .fill(ui.visuals().panel_fill)
+                .inner_margin(egui::Margin::symmetric(8, 2)),
         )
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                a.home = icons::button(ui, Icon::Home, text(Text::Library), false).clicked();
+                a.home = icons::button(ui, Icon::Home, &tooltip(Text::Library), false).clicked();
                 ui.separator();
                 ui.add_enabled_ui(status.idle, |ui| {
                     // Journal acknowledgements must not flash the toolbar.
                     ui.set_opacity(1.);
-                    a.undo = icons::button(ui, Icon::Undo, text(Text::Undo), false).clicked();
-                    a.redo = icons::button(ui, Icon::Redo, text(Text::Redo), false).clicked();
+                    a.undo = icons::button(ui, Icon::Undo, &tooltip(Text::Undo), false).clicked();
+                    a.redo = icons::button(ui, Icon::Redo, &tooltip(Text::Redo), false).clicked();
                 });
                 ui.separator();
-                ui.selectable_value(pan, false, text(Text::Select));
-                ui.selectable_value(pan, true, text(Text::Pan));
-                a.paste = ui.button(text(Text::PasteImage)).clicked();
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.selectable_value(pan, false, text(Text::Select))
+                    .on_hover_text(tooltip(Text::Select));
+                ui.selectable_value(pan, true, text(Text::Pan))
+                    .on_hover_text(tooltip(Text::Pan));
+                a.paste = ui
+                    .button(text(Text::PasteImage))
+                    .on_hover_text(tooltip(Text::PasteImage))
+                    .clicked();
+                {
                     ui.add_enabled_ui(status.idle, |ui| {
                         ui.set_opacity(1.);
                         a.save = ui
@@ -244,20 +264,34 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                                 )
                                 .fill(ACCENT),
                             )
+                            .on_hover_text(tooltip(Text::Save))
                             .clicked();
                     });
                     ui.add_enabled_ui(status.can_pin, |ui| {
-                        a.pin = icons::button(ui, Icon::Pin, text(Text::OnTop), status.pinned)
+                        a.pin = icons::button(ui, Icon::Pin, &tooltip(Text::OnTop), status.pinned)
                             .clicked();
                     });
                     a.overlay =
-                        icons::button(ui, Icon::Overlay, text(Text::Overlay), false).clicked();
-                    a.fit = icons::button(ui, Icon::Fit, text(Text::Fit), false).clicked();
-                    if ui.button("+").clicked() {
+                        icons::button(ui, Icon::Overlay, &tooltip(Text::Overlay), false).clicked();
+                    a.fit = icons::button(ui, Icon::Fit, &tooltip(Text::Fit), false).clicked();
+                    if ui.button("+").on_hover_text(text(Text::ZoomIn)).clicked() {
                         a.zoom = 1.25;
                     }
-                    ui.monospace(format!("{:.0}%", status.zoom * 100.));
-                    if ui.button("−").clicked() {
+                    let mut percent = status.zoom * 100.;
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut percent)
+                                .range(1.0..=6400.0)
+                                .suffix("%")
+                                .speed(1.0),
+                        )
+                        .on_hover_text(text(Text::Zoom))
+                        .changed()
+                        && percent.is_finite()
+                    {
+                        a.zoom = percent / (status.zoom * 100.);
+                    }
+                    if ui.button("−").on_hover_text(text(Text::ZoomOut)).clicked() {
                         a.zoom = 0.8;
                     }
                     if ui.available_width() > 100. {
@@ -275,7 +309,7 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                             .truncate(),
                         );
                     }
-                });
+                }
             });
         });
     a

@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- Build interface languages from translation catalogs, with automatic menu registration,
+  English fallback and validation; document how to add a language.
+
+- Keep the canvas tool rail compact instead of letting its separator stretch a
+  panel across the board; preserve wrapping controls in short windows.
+
+- Add Alt-drag duplication, selection dragging, arrow-key nudges, alignment,
+  distribution, stacking, layer controls and repeat-to-reverse arrangement.
+- Add per-tab canvas locks, canvas grayscale, image-focus toggling and persistent
+  theme, interface scale, undo-depth, wheel and arrangement preferences.
+- Export boards/selections as bounded raster PDFs and unchanged originals as ZIP;
+  add RGB/HSV color-copy choices and original-pixel coordinate information.
+- Fix grouped undo/redo ordering for dependent commands, including arranging an
+  insertion burst as one undo step.
+
+- Add saved/journaled and recovery status, editable toolbar zoom, live selection
+  measurements, shortcut tooltips, and wrapping controls for small screens.
+
+- Speed up bulk image imports and board opening by syncing originals with their
+  command/checkpoint in the recovery journal, and reusing foreign-import working
+  copies. Recovery still rebuilds originals from the journal before use.
+
+- Add Board tools with Apply-based frame scaling, arbitrary rotation, crop-content
+  pan/zoom/rotation, flips, opacity and grayscale; edits are journaled and undoable.
+  Arrange selections with a custom gap and source-filename ordering, or scale them
+  together. Schema 4 preserves appearance and filenames while reading schemas 1–3.
+- Export scenes, selections and cropped regions to PNG/SVG, copy images and sampled
+  HEX colors, and export one or all original images without re-encoding. Exports
+  never overwrite files. Scene/clipboard exports and sampling use up to 2048-pixel
+  source previews; scene output is capped at 4096 pixels on its longest side.
+
+
 - Accept `.pur` boards up to 4 GiB with separate payload and metadata budgets;
   legacy boards now stream originals instead of buffering the whole file.
   Import SQLite columns by name, fixing skipped images in PureRef 2.1.2 boards

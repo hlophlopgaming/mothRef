@@ -125,6 +125,14 @@ are copied into private recovery storage before acknowledgment, so external sour
 changes cannot destroy an acknowledged image. Scene metadata is duplicated in the
 worker to validate commands and provide checkpoints without blocking frames.
 
+The journal is the durable original store. Private `.source` files are working
+copies reconstructed when opening/recovering a board; they need no separate
+`fsync`. Foreign imports reuse their first working copy. A new blob and its insert
+share one journal sync, and opening/foreign import sync all pending records with the final checkpoint.
+Neither path acknowledges anything before that sync; append/sync failures poison
+the worker. Clipboard staging still syncs its original before handing it to the
+storage worker. No on-disk format or admission budget changes.
+
 Each explicit save appends missing original blobs and one atomic checkpoint.
 Three immutable backups per destination survive session discard. Compaction uses
 a sibling temporary object and atomic replacement. Recovery, recent-file discovery
