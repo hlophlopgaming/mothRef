@@ -80,13 +80,15 @@ impl App {
                         tab.view.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
                     }
                 }
-                self.persist(moth_platform::boards::Request::Preferences(
-                    self.tools
-                        .preferences()
-                        .into_iter()
-                        .map(|(k, v)| (k.to_owned(), v))
-                        .collect(),
-                ));
+                self.workspace
+                    .board
+                    .persist(moth_platform::boards::Request::Preferences(
+                        self.tools
+                            .preferences()
+                            .into_iter()
+                            .map(|(k, v)| (k.to_owned(), v))
+                            .collect(),
+                    ));
             }
             Intent::ScheduleFit => {
                 self.workspace.board.view.needs_fit = true;
@@ -130,7 +132,9 @@ impl App {
                 }
             }
             Intent::Commands(commands) => {
-                self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+                self.workspace
+                    .board
+                    .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
             }
             Intent::Arrange(mode, ids) => {
                 let mut items: Vec<_> = ids
@@ -142,18 +146,24 @@ impl App {
                     / self.workspace.board.view.camera.zoom;
                 let commands = arrange::arrange(&items, mode, target_width, self.tools.gap);
                 if !commands.is_empty() {
-                    self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+                    self.workspace
+                        .board
+                        .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
                 }
             }
             Intent::OriginalGeometry { ids, mode } => {
-                self.persist(moth_platform::boards::Request::OriginalGeometry { ids, mode });
+                self.workspace
+                    .board
+                    .persist(moth_platform::boards::Request::OriginalGeometry { ids, mode });
             }
             Intent::Export(target) => {
-                self.persist(moth_platform::boards::Request::Export(target));
+                self.workspace
+                    .board
+                    .persist(moth_platform::boards::Request::Export(target));
             }
             Intent::Paste => {
                 if !self.workspace.board.document.discarding {
-                    self.paste();
+                    self.workspace.board.paste();
                 }
             }
             Intent::FitAll => {
@@ -229,9 +239,11 @@ impl App {
             }
             Intent::Language(language) => {
                 moth_ui::set_locale(language);
-                self.persist(moth_platform::boards::Request::SaveSettings(
-                    language.code().to_owned(),
-                ));
+                self.workspace
+                    .board
+                    .persist(moth_platform::boards::Request::SaveSettings(
+                        language.code().to_owned(),
+                    ));
             }
             Intent::OpenDialog => {
                 self.open_files();
@@ -253,18 +265,24 @@ impl App {
                 }
             }
             Intent::Save => {
-                self.persist(moth_platform::boards::Request::Save(
-                    std::path::PathBuf::from(&self.workspace.board.document.path),
-                ));
+                self.workspace
+                    .board
+                    .persist(moth_platform::boards::Request::Save(
+                        std::path::PathBuf::from(&self.workspace.board.document.path),
+                    ));
             }
             Intent::Undo => {
-                self.persist(moth_platform::boards::Request::Undo);
+                self.workspace
+                    .board
+                    .persist(moth_platform::boards::Request::Undo);
             }
             Intent::Redo => {
-                self.persist(moth_platform::boards::Request::Redo);
+                self.workspace
+                    .board
+                    .persist(moth_platform::boards::Request::Redo);
             }
             Intent::Discard => {
-                self.discard();
+                self.workspace.board.discard();
             }
             Intent::AddNote(world) => {
                 self.add_note(world);

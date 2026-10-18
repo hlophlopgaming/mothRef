@@ -39,6 +39,13 @@ persistence identities.
 Behavior is unchanged; the named action flags in `frame()` still apply in their
 original order because the ordered tail is preserved. Collapsing those flags into
 a single `Vec<Intent>` is a cosmetic follow-up that must not reorder the
-close-flow (save-before-discard) applies. Tab lifecycle and document-worker
-methods stay on `App` as coordinators that route between subsystems rather than
-owning one kind of data. Native scenario validation (pen/touch) remains manual.
+close-flow (save-before-discard) applies.
+
+Document workers live with their data: `Document` owns
+`begin_batch`/`end_batch`/`pump`, `Session` owns
+`persist`/`persist_batch`/`discard`/`paste` (reading `view.locked`, which already
+mirrors `tools.locked`). The tab lifecycle and worker drain stay on `App` as
+coordinators: they orchestrate `Workspace`, `Modal`, `LibraryScreen`, `Shell` and
+`Tools`, so relocating them would turn a data-owning subsystem into a coordinator
+rather than remove coordination. Native scenario validation (pen/touch) remains
+manual.

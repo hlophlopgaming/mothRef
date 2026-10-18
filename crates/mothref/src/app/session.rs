@@ -32,6 +32,73 @@ impl Session {
     pub(super) fn fit(&mut self) {
         self.view.fit(&self.document.scene);
     }
+    /// Sends a persistence request, honouring the canvas lock against mutations.
+    pub(super) fn persist(&mut self, request: moth_platform::boards::Request) {
+        use moth_platform::boards::Request;
+        if self.view.locked
+            && matches!(
+                &request,
+                Request::Apply(..)
+                    | Request::ApplyBatch(..)
+                    | Request::OriginalGeometry { .. }
+                    | Request::Undo
+                    | Request::Redo
+                    | Request::ImportBee(..)
+                    | Request::ImportPur(..)
+            )
+        {
+            return;
+        }
+        match self.document.boards.requests.try_send(request) {
+            Ok(()) => self.document.in_flight += 1,
+            Err(_) => self.view.message = moth_ui::text(moth_ui::Text::StorageBusy).into(),
+        }
+    }
+    /// Sends a whole command list as one undo step.
+    pub(super) fn persist_batch(&mut self, commands: Vec<(Command, Option<Handle>)>) {
+        self.persist(moth_platform::boards::Request::ApplyBatch(commands));
+    }
+    /// Discards clipboard ownership once no work is in flight, closing the tab.
+    pub(super) fn discard(&mut self) {
+        if self.document.in_flight > 0
+            || self.document.pasting > 0
+            || !self.document.pending.is_empty()
+            || !self.document.waiting.is_empty()
+        {
+            self.view.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
+            return;
+        }
+        if !self.document.discarding {
+            match self
+                .document
+                .clipboard
+                .requests
+                .try_send(moth_platform::ClipboardRequest::Discard)
+            {
+                Ok(()) => self.document.discarding = true,
+                Err(_) => self.view.message = moth_ui::text(moth_ui::Text::ClipboardBusy).into(),
+            }
+        }
+    }
+    /// Queues a clipboard paste, superseding a pending arrangement prompt.
+    pub(super) fn paste(&mut self) {
+        if self.view.locked {
+            return;
+        }
+        if self.document.discarding {
+            return;
+        }
+        self.document.arrange_prompt = None;
+        match self
+            .document
+            .clipboard
+            .requests
+            .try_send(moth_platform::ClipboardRequest::Paste)
+        {
+            Ok(()) => self.document.pasting += 1,
+            Err(_) => self.view.message = moth_ui::text(moth_ui::Text::ClipboardBusy).into(),
+        }
+    }
 }
 
 #[cfg(test)]

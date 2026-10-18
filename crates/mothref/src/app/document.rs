@@ -73,4 +73,44 @@ impl Document {
             .filter(|n| !n.is_empty())
             .unwrap_or(moth_ui::text(moth_ui::Text::Untitled))
     }
+    /// Opens an undo group for a burst of asynchronous inserts (drop/paste).
+    pub(super) fn begin_batch(&mut self) {
+        if !self.batching
+            && self
+                .boards
+                .requests
+                .try_send(moth_platform::boards::Request::BeginBatch)
+                .is_ok()
+        {
+            self.batching = true;
+        }
+    }
+    /// Closes the undo group once the burst has fully drained to an idle board.
+    pub(super) fn end_batch(&mut self) {
+        if self.batching
+            && self
+                .boards
+                .requests
+                .try_send(moth_platform::boards::Request::EndBatch)
+                .is_ok()
+        {
+            self.batching = false;
+        }
+    }
+    /// Pushes queued image handles onto the decode pool, bounded by its capacity.
+    pub(super) fn pump(&mut self, format: moth_io::ImageFormat) {
+        while let Some(&handle) = self.waiting.last() {
+            match self.decode.requests.try_send(moth_io::Request {
+                handle,
+                side: 256,
+                format,
+            }) {
+                Ok(()) => {
+                    self.waiting.pop();
+                    self.pending.insert(handle, Pending::Import);
+                }
+                Err(_) => break,
+            }
+        }
+    }
 }
