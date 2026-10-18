@@ -179,3 +179,40 @@ executed on the final build and appropriate native platforms.
   must not reorder the close-flow (save-before-discard) applies.
 - [ ] Complete native scenario validation from `UI-VALIDATION.md` and
   `M2-EDITING-VALIDATION.md` for the final refactor, including physical pen/touch.
+
+## Remaining refactor plan
+
+Ordered, one PR each, each green in CI before the next.
+
+### A. `frame()` named flags → `Vec<Intent>`
+
+1. Enumerate every flag that can be set in one frame; the only order-sensitive
+   pair is the close flow's `save` (emit `Intent::Save`) before `close`
+   (`Intent::Discard`), because `discard()` refuses while `in_flight > 0` and the
+   save is what sets `in_flight`.
+2. Replace the `let mut close/save/open/undo/redo/commands/arranged/…` block with
+   `let mut intents: Vec<Intent> = Vec::new()` and push directly inside the
+   `run_ui` closure.
+3. Keep the close-flow tail ordered by construction: emit `Save` before `Discard`.
+4. Replace the ~33 ordered `if flag { self.apply(…) }` lines with
+   `for intent in intents { self.apply(intent, el)?; }`.
+5. Gate: `cargo test -p mothref`, `cargo clippy --workspace --all-targets -- -D warnings`,
+   and a manual `UI-VALIDATION.md` close-with-unsaved run.
+
+### B. Tab lifecycle / worker drain out of `App` (optional, decision first)
+
+Decision: these stay on `App` as coordinators unless the maintainer wants them in
+`Workspace`. If moved, each `Workspace` method must take `&mut Modal`, `&mut Tools`,
+`&mut LibraryScreen`, `&mut Gesture`, `&mut Gestures`, `&mut Shell`; first collapse
+`activate`'s "reset on tab switch" (tools reload, cards/catalog clear, modal editor
+drop, gesture/gestures cancel, gpu clear) into one helper so call sites stay short.
+`results`/`drain_results`/`complete` become `Workspace::pump_results(&mut Shell)`.
+The existing `parked_tabs_keep_separate_journals` test guards the tab identity
+invariant; add a close-flow ordering test if the split touches `request_close`.
+
+### C. Native scenario validation (manual, not automatable here)
+
+Run `UI-VALIDATION.md` and `M2-EDITING-VALIDATION.md` on real hardware: paste,
+import, multi-select move, duplicate-drag, marquee, notes, tabs, close-with-unsaved,
+library, overlay, physical pen/touch. Record OS/backend and observed recovery in
+the validation notes.
