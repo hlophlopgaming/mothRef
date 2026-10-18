@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Accept `.pur` boards up to 4 GiB with separate payload and metadata budgets;
+  legacy boards now stream originals instead of buffering the whole file.
+  Import SQLite columns by name, fixing skipped images in PureRef 2.1.2 boards
+  whose column order differs from 2.1.3. The 175-image FemaleFighterPosesPack
+  board passes import, `.moth` reload and grouped undo/redo checks.
+
+- Open PureRef `.pur` boards through file open, command-line arguments and drops.
+  Import supported embedded images and plain notes on the storage worker with
+  journal recovery and one-step undo. A local purcore safety fork bounds memory
+  and nesting; captured 1.10/2.1 boards are tested. Unsupported items are reported
+  as skipped; links, rich notes, drawings and some crops remain unsupported.
+
 - Import BeeRef text notes alongside images, and add text notes to the board
   format (schema 3): notes are imported, saved, reopened, created (context menu or
   double-click empty canvas) and edited in place (double-click a note). Schema 1

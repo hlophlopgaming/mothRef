@@ -119,6 +119,12 @@ fn main() -> anyhow::Result<()> {
                 start.elapsed().as_secs()
             );
         }
+        Some("pur") => {
+            let path = args
+                .get(1)
+                .ok_or_else(|| anyhow::anyhow!("usage: cargo xtask pur <board.pur>"))?;
+            reliability::roundtrip_pur(std::path::Path::new(path))?;
+        }
         Some("corpus") => {
             let mut count = 0;
             let mut directories = vec![std::path::PathBuf::from("corpus")];
@@ -157,7 +163,8 @@ fn main() -> anyhow::Result<()> {
                             count += 1;
                         }
                         Some("pur") => {
-                            anyhow::bail!("No PureRef import reader exists yet: {}", path.display())
+                            reliability::roundtrip_pur(&path)?;
+                            count += 1;
                         }
                         _ => {}
                     }
@@ -167,7 +174,7 @@ fn main() -> anyhow::Result<()> {
             println!("{count} image and board fixtures validated");
         }
         _ => anyhow::bail!(
-            "usage: cargo xtask bench [--quick] [--enforce] [--software] | paste [--enforce] | soak [seconds] [sample-interval-seconds] | corpus"
+            "usage: cargo xtask bench [--quick] [--enforce] [--software] | paste [--enforce] | soak [seconds] [sample-interval-seconds] | corpus | pur <board.pur>"
         ),
     }
     Ok(())

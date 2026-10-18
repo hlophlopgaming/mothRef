@@ -1,0 +1,9 @@
+[package]
+name = "purcore"
+version = "0.1.0-mothref.1"
+edition = "2024"
+license = "MIT AND GPL-3.0-or-later"
+
+[dependencies]
+md-5 = "0.11"
+thiserror = "2"

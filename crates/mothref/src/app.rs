@@ -407,7 +407,7 @@ impl App {
             self.board.message = moth_ui::text(moth_ui::Text::OpenEmpty).into();
         }
     }
-    fn import_bee(&mut self, path: std::path::PathBuf) {
+    fn import_foreign(&mut self, path: std::path::PathBuf) {
         if self.confirm_close {
             return;
         }
@@ -423,7 +423,15 @@ impl App {
         self.catalog.dismiss_editor();
         self.board.path = String::new();
         if self.board.idle() {
-            self.persist(moth_platform::boards::Request::ImportBee(path));
+            let request = if path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("pur"))
+            {
+                moth_platform::boards::Request::ImportPur(path)
+            } else {
+                moth_platform::boards::Request::ImportBee(path)
+            };
+            self.persist(request);
         }
     }
     fn import(&mut self, path: std::path::PathBuf) {
@@ -443,9 +451,9 @@ impl App {
         if path
             .extension()
             .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("bee"))
+            .is_some_and(|e| e.eq_ignore_ascii_case("bee") || e.eq_ignore_ascii_case("pur"))
         {
-            self.import_bee(path);
+            self.import_foreign(path);
             return;
         }
         if self.board.scene.len() + self.board.waiting.len() + self.board.pending.len() >= 1_000_000

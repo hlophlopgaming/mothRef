@@ -61,3 +61,16 @@ The negative animation fixture in `crates/moth-io/tests/fixtures/animated.webp`
 contains two 2×2 solid red/blue frames, generated with Pillow (synthetic,
 GPL-3.0-or-later). It is outside the successful-import corpus because static
 WebP admission intentionally rejects it.
+
+PureRef baseline corpus (LazyRef, MIT; see `THIRD_PARTY.md` and
+`third_party/purcore/LICENSE`): `pur/v1.10-redbar.pur` and
+`pur/v2.1-redbar.pur`, captured through the normal PureRef UI upstream.
+Both hold the same original 64×48 PNG, displayed at 1000×750 at (0,0).
+`cargo xtask corpus` imports them and checks conversion to `.moth` and reload.
+These two versions do not qualify all historical PureRef variants.
+
+Private local stress input: `FemaleFighterPosesPack.pur` (175 images, 198.54 MiB,
+PureRef 2.1.2), intentionally excluded from the committed corpus. Run
+`cargo xtask pur FemaleFighterPosesPack.pur` to check the real storage worker,
+`.moth` save/reload, original blob identities and grouped undo/redo. The schema
+column-order regression is represented in unit tests without redistributing art.

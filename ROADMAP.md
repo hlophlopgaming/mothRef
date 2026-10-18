@@ -51,7 +51,7 @@ M10–M13 (artist tools, review workflow, note-app interop, CLI and automation) 
 - [x] Benchmark boards and measurement harness
 - [x] UI skeleton on egui: custom theme, color tokens, transition animations
 - [x] Portability: storage behind a byte-stream trait (no `std::fs::Path` in core crates)
-- [ ] Portability: input abstraction — pointer events carry kind (mouse / touch / pen) and pressure; gestures are a separate layer
+- [x] Portability: input abstraction — pointer events carry kind (mouse / touch / pen) and pressure; gestures are a separate layer
 - [x] Portability: surface loss handled like device loss (recreate the renderer, keep the scene)
 - [x] CI: core crates (`moth-scene`, `moth-format`, `moth-io`) build for `aarch64-linux-android`
 
@@ -108,7 +108,9 @@ qualification remains open. See [M1 validation notes](docs/M1-VALIDATION.md).
 - [ ] Hotkey to jump between images (BeeRef #116); configurable keyboard and mouse bindings
 - [ ] Portability: responsive UI layout — no fixed desktop sizes, panels adapt to small screens
 - [x] `.bee` import (SQLite reader, embedded images, layout and stacking; notes and unsupported transforms are reported as skipped)
-- [ ] `.pur` import for all PureRef versions via `purcore` from [LazyRef](https://github.com/achrllrogia45/LazyRef) (pinned revision), plus our own test corpus
+- [ ] `.pur` import for all PureRef versions via `purcore` from [LazyRef](https://github.com/achrllrogia45/LazyRef), plus our own test corpus
+  - [x] Bounded local safety fork; 1.10/2.1 corpus and private 175-image 2.1.2 qualification, 4 GiB file admission, embedded-image/plain-note import, journal/undo integration
+  - [ ] Qualify other versions and extend unsupported content/transform coverage
 - [ ] All parity- and Milanote-checklist items tagged M2 (duplicate by Alt+drag, nudge, PDF export, dark theme, UI scale, normalize, arrange, align/distribute/stack, resets, pickers, canvas locks, export variants)
 
 **Exit criteria:** every BeeRef board opens losslessly; every feature in BeeRef's README and CHANGELOG is present; all M2 parity items are ticked. → **Release 0.3 (public alpha)**
@@ -599,3 +601,4 @@ Known issues to plan for: macOS notarization needs a paid Apple Developer accoun
 | 2026-10-17 | [M2 content transforms and schema 2](docs/decisions/0005-m2-content-transform.md): five-field per-item transform (rotation, flip, content offset/scale/rotation), frame-only indexed footprint, schema 2 records that keep reading schema 1 |
 | 2026-10-16 | Post-1.0 milestones M10 (artist tools), M11 (review and presentation), M12 (note-app interop through Markdown, JSON Canvas and URIs, not a single app's API); independent of M8/M9 |
 | 2026-10-17 | Post-1.0 milestone M13 (CLI and automation): headless subcommands built into the `mothref` binary with `clap`, `--json` output; reuses the single storage-worker write path; images may be fetched from URLs on explicit invocation |
+| 2026-10-18 | [Local purcore import fork](docs/decisions/0007-local-purcore-import.md): maintainer authorizes vendoring and local fixes; bounded path-free import, 1.10/2.1 baseline corpus; all-version qualification remains open |

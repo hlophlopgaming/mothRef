@@ -37,6 +37,7 @@ crates/
   moth-sync/        CRDT sync (M9, do not start before M8 is done)
   moth-web/         wasm32 entry point (M8)
   moth-thumb/       binary: thumbnails for file managers
+third_party/purcore/ local, attributed purcore safety fork (maintainer-authorized; decision 0007)
 extension/          browser extension (TypeScript, Manifest V3, Firefox + Chromium)
 xtask/              build helpers: bench, corpus, packaging
 corpus/             test files: .moth, .bee, .pur (all PureRef versions), images
@@ -72,10 +73,12 @@ cargo xtask killtest 50               # journal / autosave
 cargo xtask soak 300 5                # long-lived data: 5-minute smoke, RSS sampled every 5 s
 cargo +nightly fuzz run moth_reader  -- -max_total_time=30   # .moth reader changes
 cargo +nightly fuzz run image_reader -- -max_total_time=30   # decoder changes
+cargo +nightly fuzz run bee_reader   -- -max_total_time=30   # BeeRef import changes
+cargo +nightly fuzz run pur_reader   -- -max_total_time=30   # PureRef import changes
 cargo xtask bench --quick             # render, io, scene
 ```
 
-`bee_reader` and `pur_reader` fuzz targets do not exist yet; they arrive with the M2 importers. Do not try to run or create them before that.
+`bee_reader` and `pur_reader` cover the M2 importers; seed them from the corresponding corpus directories.
 
 ### Tier 3: release gate (CI / maintainer only)
 
@@ -198,7 +201,7 @@ Targets are in `ROADMAP.md`. Rules for agents:
 - MothRef is **GPL-3.0-or-later**. Every new dependency must be GPLv3-compatible (MIT, Apache-2.0, BSD, Zlib, ISC, MPL-2.0, LGPL, GPLv3). `cargo deny check` enforces this. Never add a dependency that is proprietary, GPLv2-only, or has no license.
 - New source files start with `// SPDX-License-Identifier: GPL-3.0-or-later`.
 - **Porting code** from another project (for example BeeRef, GPLv3; PureRef-format, MIT; LazyRef, MIT): keep the original copyright notice, note the source and commit in the file header, and add the project to `THIRD_PARTY.md`.
-- **`purcore` (LazyRef)** is used as a pinned git dependency. Do not fork it into this repository. Fix bugs upstream and bump the pin.
+- **`purcore` (LazyRef):** the maintainer authorized a local safety fork for PureRef import on 2026-10-18. Keep its source revision and attribution in `third_party/purcore/README.md`; see `docs/decisions/0007-local-purcore-import.md`. Other vendoring/forks still need explicit authorization.
 - **Clean-room rule for PureRef:** learn the `.pur` format only from files, `purcore` and PureRef-format. Never disassemble, decompile or inspect PureRef binaries, and never paste code or text from them. Generate test files with PureRef's normal UI only.
 - "PureRef", "BeeRef" and "Milanote" are mentioned only to describe compatibility. Do not use their logos, icons or UI assets.
 
@@ -222,7 +225,7 @@ Targets are in `ROADMAP.md`. Rules for agents:
 - Write a board file in place, or change the `.moth` format without a version bump, migration, corpus files and `docs/FORMAT.md` update.
 - Add an unbounded cache, an `Arc` cycle, or a GPU resource outside the registry.
 - Silence a test, a clippy lint or a `cargo deny` finding to make CI pass. Fix the cause or ask.
-- Add a dependency with an incompatible license, or vendor/fork `purcore`.
+- Add a dependency with an incompatible license, or vendor/fork `purcore` outside the authorized safety fork in section 9.
 - Use `std::fs` paths in core crates, read raw mouse events outside the input layer, or hard-code a GPU texture format (see "Portability").
 - Touch PureRef binaries in any way (see the clean-room rule).
 - Make network requests from the desktop app without an explicit user action (link previews load only on click; the update check can be disabled).

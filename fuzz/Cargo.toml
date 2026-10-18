@@ -9,6 +9,7 @@ license = "GPL-3.0-or-later"
 cargo-fuzz = true
 
 [dependencies]
+purcore = { path = "../third_party/purcore" }
 libfuzzer-sys = "0.4"
 moth-io = { path = "../crates/moth-io" }
 moth-format = { path = "../crates/moth-format" }
@@ -37,3 +38,10 @@ bench = false
 
 [workspace]
 members = ["."]
+
+[[bin]]
+name = "pur_reader"
+path = "fuzz_targets/pur_reader.rs"
+test = false
+doc = false
+bench = false

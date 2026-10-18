@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*", "xtask"]
+members = ["crates/*", "xtask", "third_party/purcore"]
 resolver = "3"
 
 [workspace.package]
@@ -9,6 +9,7 @@ license = "GPL-3.0-or-later"
 rust-version = "1.95"
 
 [workspace.dependencies]
+purcore = { path = "third_party/purcore", version = "=0.1.0-mothref.1" }
 moth-scene = { path = "crates/moth-scene", version = "0.1.0-alpha.2" }
 moth-format = { path = "crates/moth-format", version = "0.1.0-alpha.2" }
 moth-io = { path = "crates/moth-io", version = "0.1.0-alpha.2" }

@@ -31,6 +31,8 @@ pub enum Request {
     Open(PathBuf),
     /// Convert a BeeRef `.bee` database into reversible inserts on an empty board.
     ImportBee(PathBuf),
+    /// Convert a PureRef `.pur` board through the bounded local purcore fork.
+    ImportPur(PathBuf),
     /// Persist the selected interface language code (a two-letter tag).
     SaveSettings(String),
 }
@@ -359,11 +361,11 @@ impl State {
         }
         Ok(Completion::Opened(loaded.scene, sources, loaded.recovered))
     }
-    /// Converts a BeeRef board into inserts on the current (empty) board.
+    /// Converts a foreign board into inserts on the current (empty) board.
     ///
     /// Embedded originals are staged and journaled one at a time, so a crash
     /// mid-import recovers every image already acknowledged.
-    fn import_bee(&mut self, path: PathBuf) -> io::Result<Completion> {
+    fn import_foreign(&mut self, path: PathBuf) -> io::Result<Completion> {
         if !self.scene.is_empty() {
             return Err(error("Import requires an empty board"));
         }
@@ -372,69 +374,123 @@ impl State {
         std::fs::create_dir_all(&directory)?;
         enum Pending {
             Image {
-                z: f32,
+                z: f64,
                 id: i64,
                 hash: BlobId,
                 rect: Rect,
-                rotation: f32,
-                flip: bool,
+                transform: moth_scene::Transform,
                 handle: Handle,
             },
             Text {
-                z: f32,
+                z: f64,
                 id: i64,
                 text: String,
                 rect: Rect,
-                rotation: f32,
-                flip: bool,
+                transform: moth_scene::Transform,
             },
         }
         let mut pending = Vec::new();
-        let file = File::open(&path)?;
-        let summary = moth_import::bee::read(file, &mut |item| match item {
-            moth_import::bee::Item::Image(image) => {
-                let hash = blake3::hash(image.bytes);
-                let destination = directory.join(format!("{}.source", uuid::Uuid::now_v7()));
-                let mut staged = private_file(&destination)?;
-                staged.write_all(image.bytes)?;
-                staged.sync_all()?;
+        let mut metadata_bytes = 0usize;
+        let mut staged_sources = HashMap::new();
+        let mut emit = |item: moth_import::pur::Item<'_>| -> io::Result<()> {
+            metadata_bytes += item.text.map_or(0, str::len) + 256;
+            if pending.len() >= 8192 || metadata_bytes > 8 * 1024 * 1024 {
+                return Err(error("Import metadata exceeds 8 MiB / 8192-item budget"));
+            }
+            if !item.z.is_finite() || !item.rect.valid() || !item.transform.valid() {
+                return Err(error("Invalid imported transform or stacking order"));
+            }
+            if let Some(bytes) = item.bytes {
+                let hash = blake3::hash(bytes);
+                let handle = if let Some(handle) = staged_sources.get(&hash) {
+                    *handle
+                } else {
+                    let destination = directory.join(format!("{}.source", uuid::Uuid::now_v7()));
+                    let mut staged = private_file(&destination)?;
+                    staged.write_all(bytes)?;
+                    staged.sync_all()?;
+                    let handle = storage.register(destination)?;
+                    staged_sources.insert(hash, handle);
+                    handle
+                };
                 pending.push(Pending::Image {
-                    z: image.z,
-                    id: image.id,
+                    z: item.z,
+                    id: item.id,
                     hash,
-                    rect: Rect {
-                        x: image.x,
-                        y: image.y,
-                        width: image.width,
-                        height: image.height,
-                    },
-                    rotation: image.rotation,
-                    flip: image.flip,
-                    handle: storage.register(destination)?,
+                    rect: item.rect,
+                    transform: item.transform,
+                    handle,
                 });
-                Ok(())
-            }
-            moth_import::bee::Item::Text(note) => {
-                let [width, height] = moth_scene::note_size(&note.text);
+            } else {
                 pending.push(Pending::Text {
-                    z: note.z,
-                    id: note.id,
-                    text: note.text,
-                    rect: Rect {
-                        x: note.x,
-                        y: note.y,
-                        width: width * note.scale,
-                        height: height * note.scale,
-                    },
-                    rotation: note.rotation,
-                    flip: note.flip,
+                    z: item.z,
+                    id: item.id,
+                    text: item.text.unwrap_or("").to_owned(),
+                    rect: item.rect,
+                    transform: item.transform,
                 });
-                Ok(())
             }
-        })
-        .map_err(error)?;
+            Ok(())
+        };
+        let file = File::open(&path)?;
+        let skipped = if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("pur"))
+        {
+            moth_import::pur::read(file, &mut |item| {
+                emit(item)?;
+                Ok(())
+            })
+            .map_err(error)?
+            .skipped()
+        } else {
+            moth_import::bee::read(file, &mut |item| {
+                match item {
+                    moth_import::bee::Item::Image(image) => emit(moth_import::pur::Item {
+                        id: image.id,
+                        z: image.z as f64,
+                        rect: Rect {
+                            x: image.x,
+                            y: image.y,
+                            width: image.width,
+                            height: image.height,
+                        },
+                        transform: moth_scene::Transform {
+                            rotation: image.rotation,
+                            flip: [image.flip, false],
+                            ..Default::default()
+                        },
+                        bytes: Some(image.bytes),
+                        text: None,
+                    })?,
+                    moth_import::bee::Item::Text(note) => {
+                        let [width, height] = moth_scene::note_size(&note.text);
+                        emit(moth_import::pur::Item {
+                            id: note.id,
+                            z: note.z as f64,
+                            rect: Rect {
+                                x: note.x,
+                                y: note.y,
+                                width: width * note.scale,
+                                height: height * note.scale,
+                            },
+                            transform: moth_scene::Transform {
+                                rotation: note.rotation,
+                                flip: [note.flip, false],
+                                ..Default::default()
+                            },
+                            bytes: None,
+                            text: Some(&note.text),
+                        })?;
+                    }
+                }
+                Ok(())
+            })
+            .map_err(error)?
+            .skipped()
+        };
         sync_directory(&directory)?;
-        // BeeRef stores z as a float; a stable sort preserves its stacking.
+        // Sort foreign stacking keys before assigning fractional scene indices.
         pending.sort_by(|a, b| {
             let (az, aid) = match a {
                 Pending::Image { z, id, .. } | Pending::Text { z, id, .. } => (*z, *id),
@@ -454,26 +510,22 @@ impl State {
                 Pending::Image {
                     hash,
                     rect,
-                    rotation,
-                    flip,
+                    transform,
                     handle,
                     ..
                 } => {
                     let mut item = Item::image(hash, rect, self.scene.top());
-                    item.transform.rotation = rotation;
-                    item.transform.flip[0] = flip;
+                    item.transform = transform;
                     (item, Some(handle))
                 }
                 Pending::Text {
                     text,
                     rect,
-                    rotation,
-                    flip,
+                    transform,
                     ..
                 } => {
                     let mut item = Item::text(text, rect, self.scene.top());
-                    item.transform.rotation = rotation;
-                    item.transform.flip[0] = flip;
+                    item.transform = transform;
                     (item, None)
                 }
             };
@@ -492,7 +544,7 @@ impl State {
         if !inverses.is_empty() {
             self.push_undo(Step::Group(inverses));
         }
-        Ok(Completion::Imported(commands, sources, summary.skipped()))
+        Ok(Completion::Imported(commands, sources, skipped))
     }
     fn request(&mut self, request: Request) -> io::Result<Option<Completion>> {
         if self.poisoned {
@@ -558,8 +610,8 @@ impl State {
             }
             Request::Save(path) => Ok(Some(self.save(path)?)),
             Request::Open(path) => Ok(Some(self.open(path)?)),
-            Request::ImportBee(path) => {
-                let result = self.import_bee(path)?;
+            Request::ImportBee(path) | Request::ImportPur(path) => {
+                let result = self.import_foreign(path)?;
                 self.redo.clear();
                 Ok(Some(result))
             }
@@ -899,6 +951,48 @@ mod tests {
         std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
         std::fs::remove_dir_all(loaded.storage.base_directory().unwrap()).unwrap();
     }
+    #[test]
+    fn pur_import_recovers_originals_and_undoes_as_one_step() {
+        for name in ["v1.10-redbar.pur", "v2.1-redbar.pur"] {
+            let mut state = state();
+            let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../corpus/pur")
+                .join(name);
+            assert!(matches!(
+                state.request(Request::ImportPur(fixture)).unwrap(),
+                Some(Completion::Imported(_, _, 0))
+            ));
+            let before = board::snapshot(&state.scene).unwrap();
+            let journal = state
+                .storage
+                .recovery_directory()
+                .unwrap()
+                .join("board.moth");
+            let recovered = board::read(&mut File::open(&journal).unwrap()).unwrap();
+            assert_eq!(board::snapshot(&recovered.scene).unwrap(), before);
+            assert_eq!(recovered.blobs.len(), 1);
+            let image = state.scene.items().next().unwrap();
+            let hash = image.blob().unwrap();
+            let mut original = Vec::new();
+            state
+                .storage
+                .open(state.sources[&hash])
+                .unwrap()
+                .read_to_end(&mut original)
+                .unwrap();
+            assert_eq!(original.len(), 157);
+            assert_eq!(blake3::hash(&original), hash);
+            assert_eq!(state.undo.len(), 1);
+            state.request(Request::Undo).unwrap();
+            assert!(state.scene.is_empty());
+            state.request(Request::Redo).unwrap();
+            assert_eq!(board::snapshot(&state.scene).unwrap(), before);
+            state.journal = None;
+            state.storage.discard().unwrap();
+            std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
+        }
+    }
+
     #[test]
     fn bee_import_journals_embedded_images_and_notes() {
         let mut state = state();

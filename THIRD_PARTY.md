@@ -21,6 +21,17 @@ and checked with `cargo deny check`.
   learned from BeeRef's `beeref/fileio` (GPL-3.0-or-later, rbreu/beeref). No
   BeeRef source code is copied; the reader is an independent implementation of
   the documented SQLite layout.
-- SQLite file format: `crates/moth-import/src/sqlite.rs` implements a read-only
+- SQLite file format: `third_party/purcore/src/sqlite.rs` implements a read-only
   subset of the public SQLite 3 file format specification,
   https://www.sqlite.org/fileformat.html (public domain).
+
+- `third_party/purcore`: local fork of LazyRef's `purcore`, copyright (c) 2026
+  achrllrogia45, MIT; source commit
+  `e59ff1fb63a7ad3b4c6d52b0ab2de540e957b654`,
+  https://github.com/achrllrogia45/LazyRef. Original notice retained in
+  `third_party/purcore/LICENSE`. MothRef's SQLite reader and integration changes
+  are GPL-3.0-or-later. See the fork README for modifications and budgets.
+- `corpus/pur/v1.10-redbar.pur` and `v2.1-redbar.pur`: captured synthetic
+  red-rectangle boards copied unchanged from LazyRef's MIT-licensed test corpus
+  at the same revision (`legacy/S1_redbar.pur` and `S1_redbar-new.pur`).
+  Attribution and license are retained in `third_party/purcore/LICENSE`.

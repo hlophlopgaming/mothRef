@@ -175,9 +175,9 @@ pub enum Text {
     SaveQuestion,
     /// Shared localization key for SourceChanged.
     SourceChanged,
-    /// Confirms that a BeeRef board was imported.
+    /// Confirms that a foreign board was imported.
     Imported,
-    /// Explains that some BeeRef items could not be represented.
+    /// Explains that some imported items could not be represented.
     ImportSkipped,
 }
 /// Interface languages. English is the fallback; Russian ships with the 0.3 release.
@@ -303,8 +303,8 @@ fn en(key: Text) -> &'static str {
         Text::SaveClose => "Save and close",
 
         Text::SourceChanged => "The source file changed. Its previous preview cannot be reloaded.",
-        Text::Imported => "Imported a BeeRef board. Save it as a .moth file.",
-        Text::ImportSkipped => "Imported a BeeRef board; unsupported transforms were skipped.",
+        Text::Imported => "Imported board. Save it as a .moth file.",
+        Text::ImportSkipped => "Imported board; unsupported items were skipped.",
         Text::AddNote => "Add note",
         Text::BoardFull => "Board metadata budget full (1,000,000 images)",
         Text::ClipboardEmpty => {
@@ -421,10 +421,8 @@ fn ru(key: Text) -> &'static str {
         Text::SourceChanged => {
             "Исходный файл изменился. Предыдущее превью невозможно перезагрузить."
         }
-        Text::Imported => "Импортирована доска BeeRef. Сохраните её как файл .moth.",
-        Text::ImportSkipped => {
-            "Импортирована доска BeeRef; неподдерживаемые преобразования пропущены."
-        }
+        Text::Imported => "Доска импортирована. Сохраните её как файл .moth.",
+        Text::ImportSkipped => "Доска импортирована; неподдерживаемые элементы пропущены.",
         Text::AddNote => "Добавить заметку",
     }
 }
