@@ -2,6 +2,7 @@
 //! An independent interactive controller prevents click-through from trapping the user.
 use super::*;
 use moth_platform::Platform;
+use winit::keyboard::{Key, NamedKey};
 pub(super) struct Overlay {
     pub(super) window: Arc<Window>,
     gpu: Gpu,

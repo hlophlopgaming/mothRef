@@ -231,6 +231,7 @@ impl Tools {
                     let label = preference(Text::UndoLimit, self.undo_limit != defaults.undo_limit);
                     ui.add(egui::Slider::new(&mut self.undo_limit, 0..=4096).text(label));
                     let bytes = board
+                        .document
                         .scene
                         .items()
                         .take(128)
@@ -240,7 +241,7 @@ impl Tools {
                                 + i.note().map_or(0, str::len)
                         })
                         .sum::<usize>()
-                        / board.scene.len().clamp(1, 128);
+                        / board.document.scene.len().clamp(1, 128);
                     ui.label(format!(
                         "≈ {} KiB",
                         bytes.saturating_mul(self.undo_limit) / 1024
@@ -301,12 +302,12 @@ impl Tools {
                     }
                 });
                 ui.add_enabled(
-                    !editing && board.idle(),
+                    !editing && board.document.idle(),
                     egui::Checkbox::new(&mut self.locked, text(Text::LockCanvas)),
                 );
                 ui.checkbox(&mut self.grayscale, text(Text::CanvasGrayscale));
-                board.locked = self.locked;
-                board.grayscale = self.grayscale;
+                board.view.locked = self.locked;
+                board.view.grayscale = self.grayscale;
                 ui.horizontal_wrapped(|ui| {
                     if ui.button(text(Text::Fit)).clicked() {
                         self.fit = true;
@@ -321,12 +322,14 @@ impl Tools {
                         self.focus = 1;
                     }
                 });
-                ui.add_enabled_ui(board.idle(), |ui| {
+                ui.add_enabled_ui(board.document.idle(), |ui| {
                     let mut items: Vec<_> = board
+                        .document
                         .scene
                         .items()
                         .filter(|item| {
-                            board.selection.is_empty() || board.selection.contains(&item.id)
+                            board.view.selection.is_empty()
+                                || board.view.selection.contains(&item.id)
                         })
                         .collect();
                     items.sort_unstable_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
@@ -445,7 +448,7 @@ impl Tools {
                                     commands.extend(self.arrange(
                                         &mut items,
                                         mode,
-                                        board.viewport.width() / board.camera.zoom,
+                                        board.view.viewport.width() / board.view.camera.zoom,
                                     ));
                                 }
                             }
@@ -453,12 +456,12 @@ impl Tools {
                                 self.preference_dirty = true;
                             }
                             if ui.button(text(Text::PackFit)).clicked() {
-                                let mut all: Vec<_> = board.scene.items().collect();
+                                let mut all: Vec<_> = board.document.scene.items().collect();
                                 all.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
                                 commands.extend(arrange::arrange(
                                     &all,
                                     arrange::Arrange::Optimal,
-                                    board.viewport.width() / board.camera.zoom,
+                                    board.view.viewport.width() / board.view.camera.zoom,
                                     self.gap,
                                 ));
                                 self.fit = true;
@@ -525,7 +528,7 @@ impl Tools {
                                         &items,
                                         delta,
                                         duplicate,
-                                        board.scene.top(),
+                                        board.document.scene.top(),
                                     ));
                                 }
                             }
@@ -538,7 +541,7 @@ impl Tools {
                         ] {
                             if ui.button(text(key)).clicked() {
                                 commands.extend(arrange::reorder(
-                                    &board.scene,
+                                    &board.document.scene,
                                     &items.iter().map(|i| i.id).collect(),
                                     front,
                                     extreme,
@@ -606,7 +609,7 @@ impl Tools {
                         let valid = !self.path.is_empty() && (!self.crop || self.region.valid());
                         if ui
                             .add_enabled(
-                                valid && !board.scene.is_empty(),
+                                valid && !board.document.scene.is_empty(),
                                 egui::Button::new(text(Text::ExportScene)),
                             )
                             .clicked()
@@ -650,7 +653,7 @@ impl Tools {
                         }
                         if ui
                             .add_enabled(
-                                valid && !board.scene.is_empty(),
+                                valid && !board.document.scene.is_empty(),
                                 egui::Button::new(text(Text::ExportOriginals)),
                             )
                             .clicked()
@@ -659,7 +662,7 @@ impl Tools {
                         }
                         if ui
                             .add_enabled(
-                                valid && !board.scene.is_empty(),
+                                valid && !board.document.scene.is_empty(),
                                 egui::Button::new(text(Text::ExportZip)),
                             )
                             .clicked()

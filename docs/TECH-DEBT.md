@@ -150,7 +150,11 @@ executed on the final build and appropriate native platforms.
   releases the same state. Moving captures the full selection in `(z, id)` order;
   release uses the existing journaled batch path. The existing single-item
   outline preview is preserved; live dragging belongs to tactility/motion work.
-- [ ] Route UI and keyboard actions through `Intent` with one apply path.
+- [x] Introduce `Intent` and one `apply` path for the existing post-render UI
+  actions and keyboard shortcuts. Preserve frame ordering and shortcut guards;
+  original-geometry reset uses the same request from either source.
+- [ ] Replace the remaining UI action flags with a collected `Vec<Intent>`;
+  move remaining UI side effects into intents in the second Intent PR.
 - [ ] Replace screen/modal flags with `Screen` and `Modal`.
 - [ ] Extract `LibraryScreen`, then `Shell`, then `Workspace` in separate PRs.
 - [ ] Split `Session` into `Document` and `View` while preserving tab persistence
