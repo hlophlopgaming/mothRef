@@ -139,27 +139,29 @@ impl App {
             Input::Zoom { position, .. } | Input::Pan { position, .. } => *position,
             Input::Pointer(p) => p.position,
         });
-        if self.confirm_close || self.library || self.dialog.is_some() {
+        if !self.modal.accepts_canvas(self.screen) {
             return;
         }
         match input {
             Input::Pan { position, delta } => {
                 if self
                     .board
+                    .view
                     .viewport
                     .contains(egui::pos2(position[0], position[1]))
                 {
-                    self.board.camera.origin[0] -= delta[0] / self.board.camera.zoom;
-                    self.board.camera.origin[1] -= delta[1] / self.board.camera.zoom;
+                    self.board.view.camera.origin[0] -= delta[0] / self.board.view.camera.zoom;
+                    self.board.view.camera.origin[1] -= delta[1] / self.board.view.camera.zoom;
                 }
             }
             Input::Zoom { position, factor } => {
                 if self
                     .board
+                    .view
                     .viewport
                     .contains(egui::pos2(position[0], position[1]))
                 {
-                    self.board.camera.zoom_at(position, factor);
+                    self.board.view.camera.zoom_at(position, factor);
                 }
             }
             Input::Pointer(p) => {
@@ -174,6 +176,7 @@ impl App {
                 if p.phase == Phase::Down
                     && !self
                         .board
+                        .view
                         .viewport
                         .contains(egui::pos2(p.position[0], p.position[1]))
                 {
@@ -181,17 +184,18 @@ impl App {
                 }
                 if (self.tools.picking || self.tools.coordinates)
                     && p.phase == Phase::Down
-                    && self.board.idle()
+                    && self.board.document.idle()
                 {
-                    let world = self.board.camera.world(p.position);
+                    let world = self.board.view.camera.world(p.position);
                     let id = self
                         .board
+                        .document
                         .scene
                         .query(Rect {
                             x: world[0],
                             y: world[1],
-                            width: 1. / self.board.camera.zoom,
-                            height: 1. / self.board.camera.zoom,
+                            width: 1. / self.board.view.camera.zoom,
+                            height: 1. / self.board.view.camera.zoom,
                         })
                         .into_iter()
                         .rev()
@@ -223,9 +227,9 @@ impl App {
                 }
                 if let Some(g) = self.gestures.update(p) {
                     self.gesture.cancel();
-                    self.board.camera.zoom_at(g.anchor, g.zoom);
-                    self.board.camera.origin[0] -= g.pan[0] / self.board.camera.zoom;
-                    self.board.camera.origin[1] -= g.pan[1] / self.board.camera.zoom;
+                    self.board.view.camera.zoom_at(g.anchor, g.zoom);
+                    self.board.view.camera.origin[0] -= g.pan[0] / self.board.view.camera.zoom;
+                    self.board.view.camera.origin[1] -= g.pan[1] / self.board.view.camera.zoom;
                     return;
                 }
                 if self.gestures.active() {
@@ -243,20 +247,22 @@ impl App {
                     (_, Phase::Down)
                         if self
                             .board
+                            .view
                             .viewport
                             .contains(egui::pos2(p.position[0], p.position[1])) =>
                     {
                         let mut hit = None;
-                        if !p.pan && !self.board.pan && self.board.idle() {
-                            let world = self.board.camera.world(p.position);
+                        if !p.pan && !self.board.view.pan && self.board.document.idle() {
+                            let world = self.board.view.camera.world(p.position);
                             if let Some(item) = self
                                 .board
+                                .document
                                 .scene
                                 .query(Rect {
                                     x: world[0],
                                     y: world[1],
-                                    width: 1. / self.board.camera.zoom,
-                                    height: 1. / self.board.camera.zoom,
+                                    width: 1. / self.board.view.camera.zoom,
+                                    height: 1. / self.board.view.camera.zoom,
                                 })
                                 .into_iter()
                                 .rev()
@@ -267,29 +273,29 @@ impl App {
                                 })
                             {
                                 hit = Some(item.id);
-                                if !self.board.selection.contains(&item.id) {
+                                if !self.board.view.selection.contains(&item.id) {
                                     if !self.ctx.input(|i| i.modifiers.shift) {
-                                        self.board.selection.clear();
+                                        self.board.view.selection.clear();
                                     }
-                                    self.board.selection.insert(item.id);
+                                    self.board.view.selection.insert(item.id);
                                 }
                             }
                         }
                         self.gesture = Gesture::begin(
                             p,
-                            p.pan || self.board.pan,
+                            p.pan || self.board.view.pan,
                             hit,
-                            &self.board.scene,
-                            &self.board.selection,
+                            &self.board.document.scene,
+                            &self.board.view.selection,
                             self.ctx.input(|i| i.modifiers.alt),
                         );
                     }
-                    _ => match self.gesture.update(p, &mut self.board.camera) {
+                    _ => match self.gesture.update(p, &mut self.board.view.camera) {
                         Some(moving @ Gesture::Moving { .. }) => {
                             let commands = moving.commands(
                                 p.position,
-                                &self.board.camera,
-                                &self.board.scene,
+                                &self.board.view.camera,
+                                &self.board.document.scene,
                                 self.tools.locked,
                             );
                             if let Some(commands) = commands {
@@ -299,16 +305,22 @@ impl App {
                             }
                         }
                         Some(Gesture::Marquee { start, .. }) => {
-                            let a = self.board.camera.world(start);
-                            let b = self.board.camera.world(p.position);
+                            let a = self.board.view.camera.world(start);
+                            let b = self.board.view.camera.world(p.position);
                             let rect = Rect {
                                 x: a[0].min(b[0]),
                                 y: a[1].min(b[1]),
-                                width: (a[0] - b[0]).abs().max(1. / self.board.camera.zoom),
-                                height: (a[1] - b[1]).abs().max(1. / self.board.camera.zoom),
+                                width: (a[0] - b[0]).abs().max(1. / self.board.view.camera.zoom),
+                                height: (a[1] - b[1]).abs().max(1. / self.board.view.camera.zoom),
                             };
-                            self.board.selection =
-                                self.board.scene.query(rect).iter().map(|i| i.id).collect();
+                            self.board.view.selection = self
+                                .board
+                                .document
+                                .scene
+                                .query(rect)
+                                .iter()
+                                .map(|i| i.id)
+                                .collect();
                         }
                         _ => {}
                     },
