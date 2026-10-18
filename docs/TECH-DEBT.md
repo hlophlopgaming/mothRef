@@ -153,11 +153,21 @@ executed on the final build and appropriate native platforms.
 - [x] Introduce `Intent` and one `apply` path for the existing post-render UI
   actions and keyboard shortcuts. Preserve frame ordering and shortcut guards;
   original-geometry reset uses the same request from either source.
-- [ ] Replace the remaining UI action flags with a collected `Vec<Intent>`;
-  move remaining UI side effects into intents in the second Intent PR.
-- [ ] Replace screen/modal flags with `Screen` and `Modal`.
-- [ ] Extract `LibraryScreen`, then `Shell`, then `Workspace` in separate PRs.
-- [ ] Split `Session` into `Document` and `View` while preserving tab persistence
-  identities. Keep the existing isolated-journal regression test.
+- [x] Replace the screen/dialog/confirm flags with `Screen` and `Modal`. The
+  path dialog keeps its draft and focus inside `Modal::PathDialog`; the canvas
+  guard is a single `Modal::accepts_canvas(screen)`.
+- [x] Split `Session` into `Document` (scene, persistence identity, bounded
+  loading work) and `View` (camera, selection, presentation). Tabs keep their
+  own journal/storage identity; the isolated-journal regression test still
+  passes.
+- [x] Extract `LibraryScreen` (`show`/`pump`), `Shell` (window/gpu/egui,
+  `recreate`/`redraw`/`image_format`) and `Workspace` (board/tabs/screen and the
+  close-flow state). `App` now holds these subsystems instead of a scatter of
+  fields. Tab lifecycle and document-worker methods remain `App` coordinators:
+  they route between the subsystems rather than owning one kind of data.
+- [ ] Replace the remaining named action flags in `frame()` with a collected
+  `Vec<Intent>`. The ordered `apply` path already routes every UI and keyboard
+  action through one place; collapsing the flags is a cosmetic follow-up that
+  must not reorder the close-flow (save-before-discard) applies.
 - [ ] Complete native scenario validation from `UI-VALIDATION.md` and
   `M2-EDITING-VALIDATION.md` for the final refactor, including physical pen/touch.

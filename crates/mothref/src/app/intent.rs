@@ -57,13 +57,13 @@ impl App {
     pub(super) fn apply(&mut self, intent: Intent, event_loop: &ActiveEventLoop) {
         match intent {
             Intent::Preferences => {
-                self.ctx.set_theme(if self.tools.dark {
+                self.shell.ctx.set_theme(if self.tools.dark {
                     egui::Theme::Dark
                 } else {
                     egui::Theme::Light
                 });
-                self.ctx.set_zoom_factor(self.tools.ui_scale);
-                for tab in &mut self.tabs {
+                self.shell.ctx.set_zoom_factor(self.tools.ui_scale);
+                for tab in &mut self.workspace.tabs {
                     let values = std::collections::BTreeMap::from([(
                         "undo_limit".to_owned(),
                         self.tools.undo_limit.to_string(),
@@ -89,15 +89,16 @@ impl App {
                 ));
             }
             Intent::ScheduleFit => {
-                self.board.view.needs_fit = true;
+                self.workspace.board.view.needs_fit = true;
             }
             Intent::FitSelection => {
                 let selected: Vec<_> = self
+                    .workspace
                     .board
                     .view
                     .selection
                     .iter()
-                    .filter_map(|id| self.board.document.scene.get(*id))
+                    .filter_map(|id| self.workspace.board.document.scene.get(*id))
                     .collect();
                 if !selected.is_empty() {
                     let min = selected.iter().fold([f32::INFINITY; 2], |a, i| {
@@ -110,17 +111,22 @@ impl App {
                             a[1].max(i.rect.rotated_envelope(i.transform.rotation).upper()[1]),
                         ]
                     });
-                    self.board.view.camera.zoom = ((self.board.view.viewport.width() - 48.)
-                        / (max[0] - min[0]))
-                        .min((self.board.view.viewport.height() - 48.) / (max[1] - min[1]))
-                        .clamp(0.01, 64.);
-                    self.board.view.camera.origin = [
+                    self.workspace.board.view.camera.zoom =
+                        ((self.workspace.board.view.viewport.width() - 48.) / (max[0] - min[0]))
+                            .min(
+                                (self.workspace.board.view.viewport.height() - 48.)
+                                    / (max[1] - min[1]),
+                            )
+                            .clamp(0.01, 64.);
+                    self.workspace.board.view.camera.origin = [
                         (min[0] + max[0]) / 2.
-                            - self.board.view.viewport.center().x / self.board.view.camera.zoom,
+                            - self.workspace.board.view.viewport.center().x
+                                / self.workspace.board.view.camera.zoom,
                         (min[1] + max[1]) / 2.
-                            - self.board.view.viewport.center().y / self.board.view.camera.zoom,
+                            - self.workspace.board.view.viewport.center().y
+                                / self.workspace.board.view.camera.zoom,
                     ];
-                    self.redraw();
+                    self.shell.redraw();
                 }
             }
             Intent::Commands(commands) => {
@@ -129,10 +135,11 @@ impl App {
             Intent::Arrange(mode, ids) => {
                 let mut items: Vec<_> = ids
                     .iter()
-                    .filter_map(|id| self.board.document.scene.get(*id))
+                    .filter_map(|id| self.workspace.board.document.scene.get(*id))
                     .collect();
                 items.sort_unstable_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
-                let target_width = self.board.view.viewport.width() / self.board.view.camera.zoom;
+                let target_width = self.workspace.board.view.viewport.width()
+                    / self.workspace.board.view.camera.zoom;
                 let commands = arrange::arrange(&items, mode, target_width, self.tools.gap);
                 if !commands.is_empty() {
                     self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
@@ -145,7 +152,7 @@ impl App {
                 self.persist(moth_platform::boards::Request::Export(target));
             }
             Intent::Paste => {
-                if !self.board.document.discarding {
+                if !self.workspace.board.document.discarding {
                     self.paste();
                 }
             }
@@ -153,20 +160,20 @@ impl App {
                 self.fit();
             }
             Intent::Zoom(factor) => {
-                self.board.view.camera.zoom_at(
+                self.workspace.board.view.camera.zoom_at(
                     [
-                        self.board.view.viewport.center().x,
-                        self.board.view.viewport.center().y,
+                        self.workspace.board.view.viewport.center().x,
+                        self.workspace.board.view.viewport.center().y,
                     ],
                     factor,
                 );
-                self.redraw();
+                self.shell.redraw();
             }
             Intent::ToggleOverlay => {
                 self.toggle_overlay(event_loop);
             }
             Intent::TogglePin => {
-                let Some(window) = self.window.clone() else {
+                let Some(window) = self.shell.window.clone() else {
                     return;
                 };
 
@@ -177,12 +184,12 @@ impl App {
                     self.pinned,
                     false,
                 ) {
-                    self.board.view.message = error;
+                    self.workspace.board.view.message = error;
                 }
             }
             Intent::Library => {
-                self.screen = Screen::Library;
-                self.refresh_library = true;
+                self.workspace.screen = Screen::Library;
+                self.library.refresh = true;
             }
             Intent::NewBoard => {
                 self.new_board();
@@ -200,21 +207,21 @@ impl App {
                 self.request_close(closing_window);
             }
             Intent::Minimize => {
-                let Some(window) = self.window.clone() else {
+                let Some(window) = self.shell.window.clone() else {
                     return;
                 };
 
                 window.set_minimized(true);
             }
             Intent::ToggleMaximize => {
-                let Some(window) = self.window.clone() else {
+                let Some(window) = self.shell.window.clone() else {
                     return;
                 };
 
                 window.set_maximized(!window.is_maximized());
             }
             Intent::DragWindow => {
-                let Some(window) = self.window.clone() else {
+                let Some(window) = self.shell.window.clone() else {
                     return;
                 };
 
@@ -239,7 +246,7 @@ impl App {
                 {
                     self.open_in_tab(path);
                 } else {
-                    if self.screen == Screen::Library {
+                    if self.workspace.screen == Screen::Library {
                         self.new_board();
                     }
                     self.import(path);
@@ -247,7 +254,7 @@ impl App {
             }
             Intent::Save => {
                 self.persist(moth_platform::boards::Request::Save(
-                    std::path::PathBuf::from(&self.board.document.path),
+                    std::path::PathBuf::from(&self.workspace.board.document.path),
                 ));
             }
             Intent::Undo => {
@@ -269,8 +276,8 @@ impl App {
                 self.finish_editing();
             }
             Intent::Pan(pan) => {
-                self.board.view.pan = pan;
-                self.redraw();
+                self.workspace.board.view.pan = pan;
+                self.shell.redraw();
             }
         }
     }
@@ -278,12 +285,12 @@ impl App {
     pub(super) fn keyboard(&mut self, event: &KeyEvent, event_loop: &ActiveEventLoop) {
         if self.modal.path().is_some()
             || self.modal.confirming()
-            || self.board.document.arrange_prompt.is_some()
+            || self.workspace.board.document.arrange_prompt.is_some()
         {
             return;
         }
         if self.command
-            && !self.ctx.egui_wants_keyboard_input()
+            && !self.shell.ctx.egui_wants_keyboard_input()
             && event.physical_key == PhysicalKey::Code(KeyCode::KeyN)
         {
             self.apply(Intent::NewBoard, event_loop);
@@ -291,11 +298,11 @@ impl App {
             self.apply(Intent::OpenDialog, event_loop);
         } else if self.command && event.physical_key == PhysicalKey::Code(KeyCode::KeyL) {
             self.apply(Intent::Library, event_loop);
-            self.redraw();
+            self.shell.redraw();
         } else if self.command && event.physical_key == PhysicalKey::Code(KeyCode::KeyW) {
             self.apply(Intent::Close { window: false }, event_loop);
         } else if self.command && event.logical_key == Key::Named(NamedKey::Tab) {
-            if !self.tabs.is_empty() {
+            if !self.workspace.tabs.is_empty() {
                 self.apply(Intent::ActivateTab(1), event_loop);
             }
         } else if (self.overlay.is_some() && event.logical_key == Key::Named(NamedKey::Escape))
@@ -303,36 +310,36 @@ impl App {
         {
             self.apply(Intent::ToggleOverlay, event_loop);
         } else if self.command
-            && !self.ctx.egui_wants_keyboard_input()
+            && !self.shell.ctx.egui_wants_keyboard_input()
             && (event.physical_key == PhysicalKey::Code(KeyCode::KeyV)
                 || matches!(event.logical_key,Key::Character(ref c) if c.eq_ignore_ascii_case("v")))
         {
             self.apply(Intent::Paste, event_loop);
         } else if self.command
             && event.physical_key == PhysicalKey::Code(KeyCode::KeyS)
-            && self.board.document.idle()
+            && self.workspace.board.document.idle()
         {
-            if self.board.document.path.is_empty() {
+            if self.workspace.board.document.path.is_empty() {
                 self.apply(Intent::SaveDialog, event_loop);
-                self.redraw();
+                self.shell.redraw();
             } else {
                 self.apply(Intent::Save, event_loop);
             }
         } else if self.command
-            && !self.ctx.egui_wants_keyboard_input()
+            && !self.shell.ctx.egui_wants_keyboard_input()
             && event.physical_key == PhysicalKey::Code(KeyCode::KeyZ)
-            && self.board.document.in_flight == 0
+            && self.workspace.board.document.in_flight == 0
         {
             self.apply(Intent::Undo, event_loop);
         } else if self.command
-            && !self.ctx.egui_wants_keyboard_input()
+            && !self.shell.ctx.egui_wants_keyboard_input()
             && event.physical_key == PhysicalKey::Code(KeyCode::KeyY)
-            && self.board.document.in_flight == 0
+            && self.workspace.board.document.in_flight == 0
         {
             self.apply(Intent::Redo, event_loop);
-        } else if !self.ctx.egui_wants_keyboard_input()
+        } else if !self.shell.ctx.egui_wants_keyboard_input()
             && !self.command
-            && self.board.document.idle()
+            && self.workspace.board.document.idle()
             && matches!(
                 event.logical_key,
                 Key::Named(
@@ -343,7 +350,7 @@ impl App {
                 )
             )
         {
-            let distance = if self.ctx.input(|i| i.modifiers.shift) {
+            let distance = if self.shell.ctx.input(|i| i.modifiers.shift) {
                 10.
             } else {
                 1.
@@ -355,26 +362,31 @@ impl App {
                 _ => [0., distance],
             };
             let items: Vec<_> = self
+                .workspace
                 .board
                 .view
                 .selection
                 .iter()
-                .filter_map(|id| self.board.document.scene.get(*id))
+                .filter_map(|id| self.workspace.board.document.scene.get(*id))
                 .collect();
-            let commands =
-                arrange::translate(&items, delta, false, self.board.document.scene.top());
+            let commands = arrange::translate(
+                &items,
+                delta,
+                false,
+                self.workspace.board.document.scene.top(),
+            );
             self.apply(Intent::Commands(commands), event_loop);
         } else if let Some(intent) = self.transform_keys(event) {
             self.apply(intent, event_loop);
-        } else if !self.ctx.egui_wants_keyboard_input()
+        } else if !self.shell.ctx.egui_wants_keyboard_input()
             && event.logical_key == Key::Character("v".into())
         {
             self.apply(Intent::Pan(false), event_loop);
-        } else if !self.ctx.egui_wants_keyboard_input()
+        } else if !self.shell.ctx.egui_wants_keyboard_input()
             && event.logical_key == Key::Character("h".into())
         {
             self.apply(Intent::Pan(true), event_loop);
-        } else if !self.ctx.egui_wants_keyboard_input()
+        } else if !self.shell.ctx.egui_wants_keyboard_input()
             && event.logical_key == Key::Named(NamedKey::Home)
         {
             self.apply(Intent::FitAll, event_loop);
@@ -383,17 +395,17 @@ impl App {
     /// Rotation, mirroring and reset keys; they act on the selection and need an idle board.
     fn transform_keys(&self, event: &KeyEvent) -> Option<Intent> {
         if self.command
-            || self.ctx.egui_wants_keyboard_input()
-            || self.board.view.selection.is_empty()
-            || !self.board.document.idle()
+            || self.shell.ctx.egui_wants_keyboard_input()
+            || self.workspace.board.view.selection.is_empty()
+            || !self.workspace.board.document.idle()
         {
             return None;
         }
         transform_key(
             event.physical_key,
-            self.ctx.input(|input| input.modifiers.shift),
-            &self.board.document.scene,
-            &self.board.view.selection,
+            self.shell.ctx.input(|input| input.modifiers.shift),
+            &self.workspace.board.document.scene,
+            &self.workspace.board.view.selection,
         )
     }
 }
