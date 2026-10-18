@@ -6,3 +6,6 @@ dhat-heap.json
 /fuzz/corpus/
 **/dhat-heap.json
 commands.md
+
+# Local scratch and archives
+/images.tar.gz
