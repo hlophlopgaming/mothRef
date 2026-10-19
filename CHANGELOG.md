@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.5 — 2026-10-20
+
 - Add persistent image-cache settings: available-RAM allowance (1–50%), automatic
   adapter limits or a manual 32–512 MiB ceiling, with immediate application and
   reset to defaults. Include English and Russian explanations of preview eviction.
