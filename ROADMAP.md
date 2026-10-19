@@ -143,6 +143,9 @@ before the browser extension and advanced window integration.
 
 - [ ] Consistent multi-selection editing: move, scale, rotate, flip, duplicate, delete, reorder and arrange selected items together; show the affected selection and make each batch action one undo step
 - [ ] Configurable keyboard and mouse bindings: conflict detection, reset to defaults, and familiar BeeRef/PureRef-style navigation presets; show active bindings in tooltips and menus
+  - Use the [screenshot shortcut comparison](docs/SHORTCUTS.md) as a command/gesture inventory; an existing Tools action does not imply that its PureRef binding is implemented
+  - One action/binding registry for dispatch, tooltips, cheat sheet and palette; exact modifiers, text/modal focus isolation, and explicit conflict preview for optional presets
+  - Resolve Space focus versus Space+drag pan, Alt-drag pan versus duplicate, and arrows for focus/layering versus nudging; keep visible pen/touch alternatives
 - [ ] Hotkey to jump between images (BeeRef #116)
 - [ ] In-app shortcut cheat sheet: all actions and their current bindings (including custom bindings), grouped by category and searchable; open with `/` or from Help
 - [ ] Command Palette (Omnibar / Quick Search): search and run application actions, show their current shortcuts; open with Ctrl/⌘+K or a visible menu button, navigate with arrows, Enter to run, Esc to close
@@ -423,7 +426,7 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 
 #### Canvas and view (M0–M2)
 - [x] Fit scene / focus canvas (PR, BR) — M0
-- [x] Fit selection / focus image; double-click an image to zoom in, again to go back (PR, BR) — M0
+- [x] Fit selection / focus image; double-click a selected image to fit the entire group's width and height, again on the same image to go back; an unselected image focuses alone (PR, BR) — M0
 - [x] Reset camera; reset zoom to 100% (PR) — M0
 - [x] Focus next / previous image (PR; BeeRef #116)
 - [x] Optimize canvas — fit the canvas snugly around all items (PR)

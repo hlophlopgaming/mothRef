@@ -36,6 +36,10 @@ left-drag in Pan mode or middle-drag in either mode. Use the wheel or +/− cont
 to zoom; Select mode draws a selection rectangle. **Fit board** or Home frames
 all items. Touch supports single-contact pan/selection and two-contact pan/pinch.
 
+Double-click a selected image to fit the entire selected group in the canvas;
+double-click the same image again to return. See the [controls and PureRef shortcut
+comparison](docs/SHORTCUTS.md) for current bindings, differences and planned coverage.
+
 Previews support up to 10,000 items and 2048 pixels of detail per image. Native
 Wayland file drops are unavailable in winit 0.30; use X11/XWayland, image arguments
 or clipboard paste. Enter a `.moth` destination in **Board path** and choose
