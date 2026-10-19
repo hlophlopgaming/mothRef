@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Run portable GPU tests on the available adapter instead of requiring a software adapter that Metal does not provide; retain an explicit software-rendering check on Linux.
+
 ## 0.1.0-alpha.3 — 2026-10-19
 
 - Sharpen newly loaded previews and higher-detail zoom images gradually over 180 ms using existing mip levels, with bounded transitions and instant updates under reduced motion.

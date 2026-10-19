@@ -214,3 +214,25 @@ Automated Motion results (2026-10-19):
 - [ ] Enable reduced motion: quality changes immediately. After loading finishes,
   wait one second and verify no further idle frames.
 - No long soak repeated, per maintainer instruction.
+
+### Portable headless adapters
+
+- Focused clippy and all 47 renderer/app tests passed on hardware Vulkan and
+  llvmpipe Vulkan (including allocation and goldens). For the software run,
+  `LIBGL_ALWAYS_SOFTWARE=1` prevents an available hardware OpenGL adapter from
+  taking precedence over llvmpipe when normal adapter selection is requested.
+- Strict software quick benchmark passed: llvmpipe/LLVM 22.1.8, 10,000 images,
+  100 frames, p99 34.196 ms, image textures 13.32 MiB. This tests software usability,
+  not the discrete-GPU performance target; production rendering is unchanged.
+- Separate pending issue: AMD Mesa OpenGL returns image 0's pixels for image 4
+  after its detail upgrade in the residency golden. Hardware Vulkan and llvmpipe
+  Vulkan pass; no tolerance or assertion was relaxed for that backend failure.
+- Reproduced the macOS CI failure locally by exposing hardware Vulkan without a
+  software adapter: the refinement golden failed with `no fallback adapters`.
+- Renderer residency/refinement tests, the allocation test and the app transform
+  golden now request an available adapter, like the original portable goldens.
+  They still fail if no usable GPU exists; no assertion or test is skipped.
+- `--software` remains strict. Linux CI installs Mesa and additionally runs
+  `cargo xtask bench --quick --software`; Metal runners use their available GPU.
+- [ ] Native macOS Metal validation: run renderer and mothref tests, including
+  the refinement, budget, residency, allocation and transform checks.

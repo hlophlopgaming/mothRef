@@ -7,7 +7,7 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 fn upgrading_a_preview_does_not_clone_the_full_pyramid() {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let (_, device, queue) =
-        pollster::block_on(moth_render::request_device(&instance, None, true)).unwrap();
+        pollster::block_on(moth_render::request_device(&instance, None, false)).unwrap();
     let mut registry = moth_render::Registry::new(
         &device,
         wgpu::TextureFormat::Rgba8Unorm,

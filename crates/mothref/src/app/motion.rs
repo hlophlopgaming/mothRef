@@ -542,8 +542,8 @@ mod tests {
         );
     }
     #[test]
-    fn software_golden_covers_transient_opacity_and_rotation() {
-        pollster::block_on(moth_render::headless::golden_transform(true)).unwrap();
+    fn golden_covers_transient_opacity_and_rotation() {
+        pollster::block_on(moth_render::headless::golden_transform(false)).unwrap();
     }
     #[test]
     fn sway_is_bounded_settles_and_never_changes_source_rotation() {

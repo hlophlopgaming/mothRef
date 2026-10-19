@@ -24,6 +24,9 @@ jobs:
       - if: runner.os == 'Linux'
         run: cargo xtask killtest 1000
       - run: cargo xtask bench --quick
+      - name: Check software rendering where a fallback adapter is installed
+        if: runner.os == 'Linux'
+        run: cargo xtask bench --quick --software
   licenses:
     runs-on: ubuntu-latest
     steps:

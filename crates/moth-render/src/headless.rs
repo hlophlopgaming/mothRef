@@ -674,7 +674,7 @@ mod tests {
         pollster::block_on(async {
             let instance =
                 wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-            let (_, device, queue) = crate::request_device(&instance, None, true).await.unwrap();
+            let (_, device, queue) = crate::request_device(&instance, None, false).await.unwrap();
             let mut registry =
                 Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm, ImageFormat::Rgba8);
             let mut image = fixture(42, 128);
@@ -753,7 +753,7 @@ mod tests {
         pollster::block_on(async {
             let instance =
                 wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-            let (_, device, queue) = crate::request_device(&instance, None, true).await.unwrap();
+            let (_, device, queue) = crate::request_device(&instance, None, false).await.unwrap();
             let mut registry =
                 Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm, ImageFormat::Rgba8);
             registry.adapt_budget(256, crate::MAX_TEXTURE_BUDGET);
@@ -786,7 +786,7 @@ mod tests {
         pollster::block_on(async {
             let instance =
                 wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-            let (_, device, queue) = crate::request_device(&instance, None, true).await.unwrap();
+            let (_, device, queue) = crate::request_device(&instance, None, false).await.unwrap();
             let mut registry =
                 Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm, ImageFormat::Rgba8);
             let mut scene = Scene::default();
