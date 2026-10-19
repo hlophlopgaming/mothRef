@@ -192,3 +192,25 @@ Automated Motion results (2026-10-19):
 - [ ] Select four images (also try the 16-image grid), double-click one of them:
   the whole group is centered and fits both canvas dimensions with padding.
 - [ ] Double-click again to return; wheel zoom follows the cursor as before.
+
+### Progressive preview sharpness
+
+- Validation: workspace clippy (`-D warnings`), workspace tests, renderer dhat
+  check and software goldens passed. Quick benchmark, RX 5700 XT/RADV,
+  10,000 images/100 frames: before 5.736 ms p99, after 5.982 ms (+4.3%);
+  image textures remained 13.32 MiB. Single runs are not an idle-machine
+  performance qualification; the golden covers active fractional refinement.
+- Newly uploaded previews start at 32-pixel detail; upgrades start at the previously
+  displayed resolution, then move through fractional mip levels over 180 ms OutCubic.
+  No additional image textures, opacity layers or decoded pixel copies are used.
+- Presentation transitions live in moth-ui and are capped at 256 active images;
+  overflow updates immediately. Reduced motion finishes them instantly. Completed
+  or evicted transitions stop requesting frames; tab/device resets discard them.
+- Software golden compares coarse, fractional and sharp mip output with tolerance,
+  checks unchanged GPU allocation and verifies updates after eviction are harmless.
+- [ ] Open/import a board and zoom into references: previews sharpen smoothly,
+  including when another detail upload arrives during a transition; no blank frames.
+- [ ] Check transparent images, cropped/rotated images and software rendering.
+- [ ] Enable reduced motion: quality changes immediately. After loading finishes,
+  wait one second and verify no further idle frames.
+- No long soak repeated, per maintainer instruction.

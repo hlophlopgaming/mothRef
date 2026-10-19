@@ -669,6 +669,85 @@ pub async fn golden_bc7(software: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn detail_refinement_blends_mips_without_extra_textures_or_geometry_changes() {
+        use super::*;
+        pollster::block_on(async {
+            let instance =
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let (_, device, queue) = crate::request_device(&instance, None, true).await.unwrap();
+            let mut registry =
+                Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm, ImageFormat::Rgba8);
+            let mut image = fixture(42, 128);
+            for (level, mip) in image.mips.iter_mut().enumerate() {
+                for pixel in mip.bytes.as_chunks_mut::<4>().0 {
+                    pixel.copy_from_slice(if level == 0 {
+                        &[255, 0, 0, 255]
+                    } else {
+                        &[0, 0, 255, 255]
+                    });
+                }
+            }
+            registry.upload(&device, &queue, &image);
+            let allocated = registry.allocated_bytes();
+            let item = Item::image(
+                image.hash,
+                Rect {
+                    x: 0.,
+                    y: 0.,
+                    width: 128.,
+                    height: 128.,
+                },
+                None,
+            );
+            let texture = target(&device, 32, 32);
+            let view = texture.create_view(&Default::default());
+            for (level, expected) in [
+                (2., [0u8, 0, 255, 255]),
+                (0.5, [188, 0, 188, 255]),
+                (0., [255, 0, 0, 255]),
+            ] {
+                assert!(registry.set_detail_lod(image.hash, level));
+                assert_eq!(
+                    registry.preview_detail(image.hash),
+                    Some((128., 128. / level.exp2()))
+                );
+                registry
+                    .draw(
+                        &device,
+                        &queue,
+                        crate::Target {
+                            view: &view,
+                            screen: [32., 32.],
+                            clip: None,
+                            clear: wgpu::Color::BLACK,
+                            grid: false,
+                            opacity: 1.,
+                        },
+                        &[&item],
+                        Camera::default(),
+                    )
+                    .unwrap();
+                let pixels = readback(&device, &queue, &texture, 256).unwrap();
+                for y in 1..31 {
+                    for x in 1..31 {
+                        let offset = y * 256 + x * 4;
+                        assert!(
+                            pixels[offset..offset + 4]
+                                .iter()
+                                .zip(expected)
+                                .all(|(&actual, expected)| actual.abs_diff(expected) <= 3),
+                            "mip {level}: {:?}",
+                            &pixels[offset..offset + 4]
+                        );
+                    }
+                }
+                assert_eq!(registry.allocated_bytes(), allocated);
+            }
+            registry.clear();
+            assert!(!registry.set_detail_lod(image.hash, 2.));
+        });
+    }
+    #[test]
     fn adaptive_budget_releases_allocated_pages_when_image_count_falls() {
         use super::*;
         pollster::block_on(async {

@@ -2,6 +2,52 @@
 //! View-only motion; callers request another frame only while motion is active.
 use std::time::{Duration, Instant};
 
+/// Bounded view-only mip transitions; overflow upgrades immediately instead of queuing.
+pub struct Refinements<K> {
+    active: std::collections::HashMap<K, Tween>,
+}
+impl<K> Default for Refinements<K> {
+    fn default() -> Self {
+        Self {
+            active: std::collections::HashMap::new(),
+        }
+    }
+}
+impl<K: Eq + std::hash::Hash> Refinements<K> {
+    /// Starts at the displayed mip level; repeated upgrades replace their existing tween.
+    pub fn start(&mut self, key: K, level: f32, now: Instant, reduced: bool) -> bool {
+        if reduced
+            || !level.is_finite()
+            || level <= 0.
+            || (self.active.len() >= 256 && !self.active.contains_key(&key))
+        {
+            return false;
+        }
+        self.active.insert(
+            key,
+            Tween::new(level, 0., now, Duration::from_millis(180), Ease::OutCubic),
+        );
+        true
+    }
+    /// Applies levels and drops completed or evicted images; true means another frame is needed.
+    pub fn step(
+        &mut self,
+        now: Instant,
+        reduced: bool,
+        mut update: impl FnMut(&K, f32) -> bool,
+    ) -> bool {
+        self.active.retain(|key, tween| {
+            let done = reduced || tween.done(now);
+            update(key, if done { 0. } else { tween.value(now) }) && !done
+        });
+        !self.active.is_empty()
+    }
+    /// Renderer recreation and tab changes discard all presentation transitions.
+    pub fn clear(&mut self) {
+        self.active.clear();
+    }
+}
+
 /// Frame-rate independent convergence without overshoot.
 pub fn approach(current: f32, target: f32, rate: f32, dt: f32) -> f32 {
     current + (target - current) * -(-rate.max(0.) * dt.max(0.)).exp_m1()
@@ -163,6 +209,39 @@ impl Motion {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn refinement_finishes_stops_repainting_and_obeys_reduced_motion_and_budget() {
+        let now = Instant::now();
+        let mut motion = Refinements::default();
+        assert!(!motion.start(0, 0., now, false));
+        assert!(!motion.start(0, 3., now, true));
+        assert!(!motion.step(now, false, |_, _| panic!("no transition")));
+        assert!(motion.start(0, 3., now, false));
+        let mut previous = 3.;
+        for ms in [0, 30, 60, 90, 120, 150, 180] {
+            let active = motion.step(now + Duration::from_millis(ms), false, |_, level| {
+                assert!(level <= previous && level >= 0.);
+                previous = level;
+                true
+            });
+            assert_eq!(active, ms < 180);
+        }
+        assert_eq!(previous, 0.);
+        for key in 0..256 {
+            assert!(motion.start(key, 3., now, false));
+        }
+        assert!(!motion.start(256, 3., now, false));
+        assert!(motion.start(0, 2., now, false));
+        assert!(!motion.step(now, true, |_, level| {
+            assert_eq!(level, 0.);
+            true
+        }));
+        assert!(motion.start(0, 3., now, false));
+        assert!(
+            !motion.step(now, false, |_, _| false),
+            "evicted images stop animating"
+        );
+    }
     #[test]
     fn approach_is_monotonic_and_bounded() {
         let mut x = 0.;

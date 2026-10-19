@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Sharpen newly loaded previews and higher-detail zoom images gradually over 180 ms using existing mip levels, with bounded transitions and instant updates under reduced motion.
+
 - Double-click a selected image to fit the entire selection's width and height in the canvas; preserve the group instead of focusing only the clicked image. Restore the original wheel and toolbar zoom behavior.
 
 - Adapt the GPU image-cache limit to image count, release pages when it shrinks, and show allocated/current-limit memory in the status bar; cap discrete GPUs at 512 MiB and shared/software adapters at 96 MiB.

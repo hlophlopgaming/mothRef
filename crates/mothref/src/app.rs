@@ -178,6 +178,7 @@ impl App {
         self.library_screen.catalog.dismiss_editor();
         self.editing = None;
         self.motion = motion::DragMotion::default();
+        self.shell.refinements.clear();
         self.camera_motion.stop();
         self.drag = None;
         self.moving = None;
@@ -408,7 +409,7 @@ impl App {
             fallback,
             auto_arrange: self.tools.auto_arrange,
             threshold: self.tools.threshold,
-            upload: &mut |image| self.shell.upload(image),
+            upload: &mut |image| self.shell.upload(image, self.tools.reduced_motion),
             events: Vec::new(),
         });
         self.adapt_gpu_budget();
@@ -1219,6 +1220,16 @@ impl App {
             return Ok(());
         };
         self.results();
+        if let Some(gpu) = &mut self.shell.gpu {
+            let active = self.shell.refinements.step(
+                Instant::now(),
+                self.tools.reduced_motion,
+                |hash, level| gpu.registry.set_detail_lod(*hash, level),
+            );
+            if active {
+                self.shell.context().request_repaint();
+            }
+        }
         self.motion.sync(
             &self.workspace.board.scene,
             &mut self.workspace.board.motion,

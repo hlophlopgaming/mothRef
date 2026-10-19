@@ -43,6 +43,7 @@ pub(super) struct Shell {
     wake: Arc<dyn Fn() + Send + Sync>,
     proxy: EventLoopProxy<Wake>,
     pub(super) deadline: Option<Instant>,
+    pub(super) refinements: moth_ui::motion::Refinements<moth_scene::BlobId>,
 }
 
 impl Shell {
@@ -66,6 +67,7 @@ impl Shell {
             wake,
             proxy,
             deadline: None,
+            refinements: Default::default(),
         }
     }
     pub(super) fn context(&self) -> &egui::Context {
@@ -77,9 +79,22 @@ impl Shell {
     pub(super) fn software(&self) -> bool {
         self.software
     }
-    pub(super) fn upload(&mut self, image: &moth_io::Decoded) {
+    pub(super) fn upload(&mut self, image: &moth_io::Decoded, reduced: bool) {
         if let Some(gpu) = &mut self.gpu {
+            let before = gpu.registry.preview_detail(image.hash);
             gpu.registry.upload(&gpu.device, &gpu.queue, image);
+            if let Some((side, _)) = gpu.registry.preview_detail(image.hash)
+                && side > before.map_or(0., |(side, _)| side)
+            {
+                let previous = before.map_or(32., |(_, displayed)| displayed);
+                let level = (side / previous).log2().max(0.);
+                if self
+                    .refinements
+                    .start(image.hash, level, Instant::now(), reduced)
+                {
+                    gpu.registry.set_detail_lod(image.hash, level);
+                }
+            }
         }
     }
 
@@ -92,6 +107,7 @@ impl Shell {
 
     /// Recreates the egui context and the GPU/egui state, keeping scene data intact.
     pub(super) fn recover(&mut self) -> anyhow::Result<()> {
+        self.refinements.clear();
         self.gpu = None;
         self.ctx = egui::Context::default();
         moth_ui::theme(&self.ctx);

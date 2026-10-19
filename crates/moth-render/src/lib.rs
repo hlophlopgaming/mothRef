@@ -111,6 +111,7 @@ struct Slot {
     original_side: u32,
     /// Number of mips written for this image; the shader's lod clamps to this.
     mips: u32,
+    detail_lod: f32,
 }
 struct Array {
     size: u32,
@@ -318,6 +319,33 @@ impl Registry {
         self.upload_mip(device, queue, image, 0);
     }
 
+    /// Resident resolution and currently displayed detail, for view-only refinement.
+    pub fn preview_detail(&self, hash: BlobId) -> Option<(f32, f32)> {
+        let &(page, layer) = self.locations.get(&hash)?;
+        let slot = self.arrays[page].as_ref()?.slots[layer]?;
+        let side = slot.dimensions[0].max(slot.dimensions[1]) as f32;
+        Some((side, side / slot.detail_lod.exp2()))
+    }
+
+    /// A transient mip floor changes sharpness without changing image opacity or geometry.
+    pub fn set_detail_lod(&mut self, hash: BlobId, level: f32) -> bool {
+        let Some(&(page, layer)) = self.locations.get(&hash) else {
+            return false;
+        };
+        let Some(slot) = self.arrays[page]
+            .as_mut()
+            .and_then(|a| a.slots[layer].as_mut())
+        else {
+            return false;
+        };
+        slot.detail_lod = if level.is_finite() {
+            level.clamp(0., slot.mips.saturating_sub(1) as f32)
+        } else {
+            0.
+        };
+        true
+    }
+
     fn upload_mip(
         &mut self,
         device: &wgpu::Device,
@@ -458,6 +486,7 @@ impl Registry {
             dimensions: [first.width, first.height],
             used: self.clock,
             mips: (image.mips.len() - first_mip) as u32,
+            detail_lod: 0.,
         });
         for (level, mip) in image.mips.iter().skip(first_mip).enumerate() {
             // BC7 blocks are 4x4; the write extent and stride are block-aligned.
@@ -665,7 +694,7 @@ impl Registry {
                 // crop can alias by up to one level. Upgrade with a diagonal term if reported.
                 lod: ((slot.dimensions[0].max(slot.dimensions[1]) as f32 / wanted).log2()
                     - item.transform.content_scale.log2())
-                .max(0.)
+                .max(slot.detail_lod)
                 .min(slot.mips.saturating_sub(1) as f32),
             });
             classes.push(class);
