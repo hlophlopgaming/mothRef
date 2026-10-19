@@ -83,6 +83,16 @@ pub enum Text {
 
     /// Bounded in-memory undo depth.
     UndoLimit,
+    /// Cache settings keep memory limits visible and adjustable.
+    ImageCache,
+    /// Fraction of available physical memory allowed for image textures.
+    CacheRamPercent,
+    /// Adapter-based cache ceiling.
+    CacheAutomatic,
+    /// Explicit cache ceiling in MiB.
+    CacheLimit,
+    /// Explains demand allocation and safe preview eviction.
+    CacheHint,
     /// Localized Duplicate control.
     Duplicate,
     /// Localized NudgeLeft control.
@@ -582,6 +592,11 @@ mod tests {
             Text::WheelPan,
             Text::WheelOff,
             Text::UndoLimit,
+            Text::ImageCache,
+            Text::CacheRamPercent,
+            Text::CacheAutomatic,
+            Text::CacheLimit,
+            Text::CacheHint,
             Text::Duplicate,
             Text::NudgeLeft,
             Text::NudgeRight,

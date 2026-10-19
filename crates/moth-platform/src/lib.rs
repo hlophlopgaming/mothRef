@@ -11,8 +11,11 @@ pub mod input;
 pub mod library;
 /// Best-effort detection of the user's interface language.
 pub mod locale;
+/// Background sampling of available physical RAM for bounded image residency.
+pub mod memory;
 /// Plain-text app preferences.
 pub mod settings;
+mod source;
 use moth_format::{Handle, ReadSeek, Storage};
 use std::{
     collections::HashMap,
@@ -52,7 +55,7 @@ pub enum PlatformError {
 }
 /// The desktop catalog stores source identities, never image pixels.
 pub struct DesktopStorage {
-    paths: Mutex<HashMap<Handle, PathBuf>>,
+    paths: Mutex<HashMap<Handle, source::Source>>,
     board: uuid::Uuid,
     next_handle: std::sync::atomic::AtomicU64,
     directory: Option<PathBuf>,
@@ -103,6 +106,15 @@ impl DesktopStorage {
     }
     /// Registering an OS-provided path performs no filesystem access.
     pub fn register(&self, path: PathBuf) -> io::Result<Handle> {
+        self.register_source(source::Source { path, range: None })
+    }
+    fn register_range(&self, path: PathBuf, range: moth_format::board::Blob) -> io::Result<Handle> {
+        self.register_source(source::Source {
+            path,
+            range: Some(range),
+        })
+    }
+    fn register_source(&self, source: source::Source) -> io::Result<Handle> {
         let mut paths = self
             .paths
             .lock()
@@ -114,7 +126,7 @@ impl DesktopStorage {
             self.next_handle
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         );
-        paths.insert(handle, path);
+        paths.insert(handle, source);
         Ok(handle)
     }
     /// Returns only registered metadata; no filesystem access occurs on the caller.
@@ -125,7 +137,8 @@ impl DesktopStorage {
             .and_then(|paths| {
                 paths
                     .get(&handle)
-                    .and_then(|path| path.file_name())
+                    .filter(|source| source.range.is_none())
+                    .and_then(|source| source.path.file_name())
                     .map(|name| name.to_string_lossy().chars().take(256).collect())
             })
             .unwrap_or_default()
@@ -286,6 +299,16 @@ impl DesktopStorage {
         Ok(())
     }
     fn path(&self, handle: Handle) -> io::Result<PathBuf> {
+        let source = self.source(handle)?;
+        if source.range.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "original ranges are read-only",
+            ));
+        }
+        Ok(source.path)
+    }
+    fn source(&self, handle: Handle) -> io::Result<source::Source> {
         self.paths
             .lock()
             .map_err(|_| io::Error::other("storage lock poisoned"))?
@@ -327,7 +350,7 @@ impl Storage for DesktopStorage {
         Ok(())
     }
     fn open(&self, h: Handle) -> io::Result<Box<dyn ReadSeek>> {
-        Ok(Box::new(File::open(self.path(h)?)?))
+        self.source(h)?.open()
     }
     fn append(&self, h: Handle) -> io::Result<Box<dyn io::Write + Send>> {
         Ok(Box::new(
@@ -349,6 +372,8 @@ pub struct Capabilities {
 }
 /// Native operations have one boundary instead of platform cfgs in the app.
 pub trait Platform {
+    /// Queries physical RAM off the main thread; unknown systems use a fixed fallback.
+    fn available_memory(&self) -> Option<u64>;
     /// Lets callers adapt controls to available native operations.
     fn capabilities(&self) -> Capabilities;
     /// Compositors can reject topmost windows while still supporting transparent surfaces.
@@ -373,6 +398,11 @@ pub struct WindowCapabilities {
 /// M0 native clipboard backend; overlay capabilities are added with M3.
 pub struct Desktop;
 impl Platform for Desktop {
+    fn available_memory(&self) -> Option<u64> {
+        let mut system = sysinfo::System::new();
+        system.refresh_memory_specifics(sysinfo::MemoryRefreshKind::nothing().with_ram());
+        (system.total_memory() > 0).then(|| system.available_memory())
+    }
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             clipboard_images: true,
@@ -550,6 +580,34 @@ fn atomic_replace(source: &std::path::Path, target: &std::path::Path) -> io::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn original_ranges_cannot_be_used_as_writable_destinations() {
+        let root = std::env::temp_dir().join(format!("mothref-read-only-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir(&root).unwrap();
+        let storage = DesktopStorage::in_directory(root.clone());
+        let path = root.join("journal");
+        std::fs::write(&path, b"prefixIMAGEsuffix").unwrap();
+        let range = storage
+            .register_range(
+                path.clone(),
+                moth_format::board::Blob {
+                    offset: 6,
+                    length: 5,
+                },
+            )
+            .unwrap();
+        assert!(storage.append(range).is_err());
+        assert!(storage.sync(range).is_err());
+        assert!(storage.temporary(range).is_err());
+        let temporary = storage.register(root.join("temporary")).unwrap();
+        std::fs::write(root.join("temporary"), b"replacement").unwrap();
+        assert!(storage.replace(temporary, range).is_err());
+        assert!(storage.replace(range, temporary).is_err());
+        assert_eq!(std::fs::read(path).unwrap(), b"prefixIMAGEsuffix");
+        storage.forget(range).unwrap();
+        assert!(storage.open(range).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn atomic_replacement_creates_then_replaces_and_preserves_on_failure() {
         let root = std::env::temp_dir().join(format!("mothref-replace-{}", uuid::Uuid::now_v7()));

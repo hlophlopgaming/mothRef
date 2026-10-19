@@ -208,12 +208,12 @@ fn decode_inner(bytes: &[u8], side: u32) -> Result<Decoded, DecodeError> {
         | Orientation::Rotate270FlipH => [h, w],
         _ => [w, h],
     };
-    let side = side.min(image.width().max(image.height()));
-    Ok(pyramid(
-        image.thumbnail(side, side).into_rgba8(),
-        blake3::hash(bytes),
-        original,
-    ))
+    let image = if image.width().max(image.height()) > side {
+        image.thumbnail(side, side)
+    } else {
+        image
+    };
+    Ok(pyramid(image.into_rgba8(), blake3::hash(bytes), original))
 }
 fn pyramid(mut level: image::RgbaImage, hash: blake3::Hash, original: [u32; 2]) -> Decoded {
     let mut mips = Vec::new();
@@ -482,30 +482,48 @@ impl AreaPreview {
         bytes: &[u8],
         color: png::ColorType,
     ) -> Result<(), DecodeError> {
+        // Specialize the hot loop once per row, so channel counts and opaque alpha are constants.
+        match color {
+            png::ColorType::Grayscale => {
+                self.row_pixels(y, start, step, bytes, |[v]| [v, v, v, 255])
+            }
+            png::ColorType::GrayscaleAlpha => {
+                self.row_pixels(y, start, step, bytes, |[v, a]| [v, v, v, a])
+            }
+            png::ColorType::Rgb => {
+                self.row_pixels(y, start, step, bytes, |[r, g, b]| [r, g, b, 255])
+            }
+            png::ColorType::Rgba => self.row_pixels(y, start, step, bytes, |p| p),
+            png::ColorType::Indexed => Err(DecodeError::Budget),
+        }
+    }
+    fn row_pixels<const N: usize>(
+        &mut self,
+        y: u32,
+        start: u32,
+        step: u32,
+        bytes: &[u8],
+        rgba: impl Fn([u8; N]) -> [u8; 4],
+    ) -> Result<(), DecodeError> {
         let offset = (y * self.size[1] / self.source[1] * self.size[0]) as usize;
-        let channels = color.samples();
-        if bytes.len() != ((self.source[0] - start).div_ceil(step) as usize) * channels {
+        if bytes.len() != ((self.source[0] - start).div_ceil(step) as usize) * N {
             return Err(DecodeError::Budget);
         }
+        let pixels = bytes.as_chunks::<N>().0;
         let mut consumed = 0;
         for dx in 0..self.size[0] {
             let end = ((dx + 1) * self.source[0]).div_ceil(self.size[0]);
             let next = end.saturating_sub(start).div_ceil(step) as usize;
-            let sum = &mut self.sums[offset + dx as usize];
-            for p in bytes[consumed * channels..next * channels].chunks_exact(channels) {
-                let rgba = match color {
-                    png::ColorType::Grayscale => [p[0], p[0], p[0], 255],
-                    png::ColorType::GrayscaleAlpha => [p[0], p[0], p[0], p[1]],
-                    png::ColorType::Rgb => [p[0], p[1], p[2], 255],
-                    png::ColorType::Rgba => [p[0], p[1], p[2], p[3]],
-                    png::ColorType::Indexed => return Err(DecodeError::Budget),
-                };
+            let mut sum = self.sums[offset + dx as usize];
+            for &p in &pixels[consumed..next] {
+                let rgba = rgba(p);
                 let alpha = u64::from(rgba[3]);
                 for channel in 0..3 {
                     sum[channel] += u64::from(rgba[channel]) * alpha;
                 }
                 sum[3] += alpha;
             }
+            self.sums[offset + dx as usize] = sum;
             consumed = next;
         }
         Ok(())
@@ -659,6 +677,41 @@ impl DecodePool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn specialized_rows_match_scalar_area_sums() {
+        for color in [
+            png::ColorType::Grayscale,
+            png::ColorType::GrayscaleAlpha,
+            png::ColorType::Rgb,
+            png::ColorType::Rgba,
+        ] {
+            for side in [1, 8, 31] {
+                for (start, step) in [(0, 1), (0, 8), (4, 8), (2, 4), (1, 2)] {
+                    let mut preview = AreaPreview::new(31, 1, side, 1);
+                    let bytes: Vec<_> = (0..(31u32 - start).div_ceil(step) as usize
+                        * color.samples())
+                        .map(|n| (n * 53) as u8)
+                        .collect();
+                    preview.row(0, start, step, &bytes, color).unwrap();
+                    let mut expected = vec![[0u64; 4]; side as usize];
+                    for (i, p) in bytes.chunks_exact(color.samples()).enumerate() {
+                        let rgba = match color {
+                            png::ColorType::Grayscale => [p[0], p[0], p[0], 255],
+                            png::ColorType::GrayscaleAlpha => [p[0], p[0], p[0], p[1]],
+                            png::ColorType::Rgb => [p[0], p[1], p[2], 255],
+                            _ => [p[0], p[1], p[2], p[3]],
+                        };
+                        let sum = &mut expected[((start + i as u32 * step) * side / 31) as usize];
+                        for c in 0..3 {
+                            sum[c] += u64::from(rgba[c]) * u64::from(rgba[3]);
+                        }
+                        sum[3] += u64::from(rgba[3]);
+                    }
+                    assert_eq!(preview.sums, expected);
+                }
+            }
+        }
+    }
     #[test]
     fn webp_orientation_and_inner_dimension_budget() {
         let bytes = include_bytes!("../../../corpus/images/oriented.webp");

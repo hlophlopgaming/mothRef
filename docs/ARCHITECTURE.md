@@ -125,13 +125,28 @@ are copied into private recovery storage before acknowledgment, so external sour
 changes cannot destroy an acknowledged image. Scene metadata is duplicated in the
 worker to validate commands and provide checkpoints without blocking frames.
 
-The journal is the durable original store. Private `.source` files are working
-copies reconstructed when opening/recovering a board; they need no separate
-`fsync`. Foreign imports reuse their first working copy. A new blob and its insert
-share one journal sync, and opening/foreign import sync all pending records with the final checkpoint.
+The journal is the durable original store. Originals use opaque handles to bounded,
+read-only ranges in the session journal, with independent cursors for decoding,
+export and save; no separate `.source` copies are created. Opening `.moth` copies
+live originals in source-offset order, verifying their hashes before journaling.
+Foreign import journals unique originals directly during parsing. A new blob and
+its insert share one journal sync. Opening/import publishes the first durable item
+and then batches after 64 commands or 32 MiB of original data, allowing visible
+previews to decode while storage continues. Loading progress does not finish the
+request; editing/save remain blocked. Full `.moth` bounds keep its loading camera
+stable; foreign stream order is corrected to the source stacking order before
+completion, retaining stable ids and one import undo step. Errors preserve durable
+partial items and clear the UI destination so saving requires a separate filename.
+The final checkpoint commits the complete load. Board compaction never replaces the session
+journal, preserving original handles (decision 0011).
 Neither path acknowledges anything before that sync; append/sync failures poison
 the worker. Clipboard staging still syncs its original before handing it to the
 storage worker. No on-disk format or admission budget changes.
+
+Healthy `.moth` reads walk the adjacent footer chain backwards, then verify and
+apply records forwards. The temporary offset index is capped at one million
+entries (at most 8 MiB allocated); larger, torn, gapped or corrupt streams retain
+the scanner path. Payload and footer checksums remain mandatory (decision 0012).
 
 Each explicit save appends missing original blobs and one atomic checkpoint.
 Three immutable backups per destination survive session discard. Compaction uses
@@ -221,3 +236,17 @@ registry-managed intermediate texture has a separate 64 MiB ceiling and is freed
 on renderer clear. A separate interactive controller restores the main window's
 input and pin state on exit. Native capability flags disable unsupported actions.
 See [decision 0004](decisions/0004-reference-workspace.md).
+
+GPU image-cache growth follows actual allocated size-class pages, including mips
+and fallback images, rather than image-item count. A platform worker samples
+available physical RAM at most every two active seconds; the event loop only
+reads bounded messages. By default the ceiling is `(available RAM + current image pages) / 8`,
+capped at 96 MiB on shared/software adapters and 512 MiB on discrete GPUs. Settings
+allow 1–50% of that RAM base and either automatic adapter caps or a manual
+32–512 MiB cap (including on shared adapters). Unknown RAM uses the selected cap.
+The default remains 12.5% with automatic limits; invalid saved values fall back
+to these defaults. Changes apply immediately, persist through the existing
+settings worker, and reset with other preferences. Budget growth allocates nothing until an upload needs a
+page; lower ceilings immediately evict LRU pages, including below the normal
+32 MiB floor. Empty boards clear the cache. No timer wakes an idle application;
+pressure changes are observed on subsequent activity. See decision 0013.

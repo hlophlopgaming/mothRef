@@ -308,7 +308,8 @@ impl Soak {
         loop {
             use moth_platform::boards::Completion;
             match self.worker.results.recv_timeout(Duration::from_secs(30))? {
-                Completion::Recovery(_)
+                Completion::Loading { .. }
+                | Completion::Recovery(_)
                 | Completion::Recent(_)
                 | Completion::Settings(_)
                 | Completion::Preferences(_)
@@ -369,12 +370,16 @@ pub fn roundtrip_pur(path: &Path) -> anyhow::Result<()> {
     let result = (|| -> anyhow::Result<()> {
         let started = std::time::Instant::now();
         worker.requests.send(Request::ImportPur(path.to_owned()))?;
-        let (commands, sources, skipped) =
+        let (commands, sources, skipped) = loop {
             match worker.results.recv_timeout(Duration::from_secs(300))? {
-                Completion::Imported(commands, sources, skipped) => (commands, sources, skipped),
+                Completion::Loading { .. } => continue,
+                Completion::Imported(commands, sources, skipped) => {
+                    break (commands, sources, skipped);
+                }
                 Completion::Failed(error) => anyhow::bail!(error),
                 _ => anyhow::bail!("unexpected import completion"),
-            };
+            }
+        };
         let elapsed = started.elapsed();
         let mut scene = moth_scene::Scene::default();
         for command in commands {

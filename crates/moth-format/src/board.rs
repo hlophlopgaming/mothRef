@@ -351,8 +351,8 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
         _ => Err(Error::Invalid),
     }
 }
-/// Scans bounded buffers for committed records, skipping torn tails and abandoned writes.
-/// A valid later append can therefore follow a failed write without truncating the file.
+/// Reads adjacent footers directly, retaining bounded scanning for damaged streams.
+/// Torn tails and abandoned writes never prevent recovering later valid appends.
 pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
     reader.seek(SeekFrom::Start(0))?;
     let mut header = [0; 16];
@@ -361,6 +361,7 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
         return Err(Error::Invalid);
     }
     let length = reader.seek(SeekFrom::End(0))?;
+    let mut footers = footer_chain(reader, length)?.map(Vec::into_iter);
     let mut board = Board {
         scene: Scene::default(),
         blobs: HashMap::new(),
@@ -369,14 +370,29 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
     let mut position = 16u64;
     let mut committed = 16u64;
     let mut buffer = vec![0; 64 * 1024 + FOOTER_SIZE as usize];
-    while position + FOOTER_SIZE <= length {
+    'records: while position + FOOTER_SIZE <= length {
+        let indexed = footers.as_mut().and_then(Iterator::next);
+        if let Some(offset) = indexed {
+            position = offset;
+        } else if footers.is_some() {
+            break;
+        }
         reader.seek(SeekFrom::Start(position))?;
-        let count = ((length - position).min(buffer.len() as u64)) as usize;
+        let count = if indexed.is_some() {
+            FOOTER_SIZE as usize
+        } else {
+            ((length - position).min(buffer.len() as u64)) as usize
+        };
         reader.read_exact(&mut buffer[..count])?;
         let mut advance = count.saturating_sub(FOOTER_SIZE as usize - 1);
         for i in 0..advance {
             let f = &buffer[i..i + FOOTER_SIZE as usize];
             if &f[..8] != FOOTER || blake3::hash(&f[..64]).as_bytes() != &f[64..96] {
+                if indexed.is_some() {
+                    footers = None;
+                    position = committed;
+                    continue 'records;
+                }
                 continue;
             }
             let start = u64::from_le_bytes(f[8..16].try_into().map_err(|_| Error::Invalid)?);
@@ -396,6 +412,12 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
                 remaining -= n as u64;
             }
             if hash.finalize().as_bytes() != &f[32..64] {
+                if indexed.is_some() {
+                    // Corruption keeps the scanner's existing skip-and-recover semantics.
+                    footers = None;
+                    position = committed;
+                    continue 'records;
+                }
                 continue;
             }
             match f[24] {
@@ -450,6 +472,32 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
     Ok(board)
 }
 
+// Healthy files link backwards through adjacent footers; torn/gapped files use the scanner.
+fn footer_chain(reader: &mut dyn ReadSeek, mut end: u64) -> Result<Option<Vec<u64>>, Error> {
+    let mut offsets = Vec::new();
+    let mut footer = [0; FOOTER_SIZE as usize];
+    while end != 16 {
+        if end < 16 + FOOTER_SIZE || offsets.len() == 1_000_000 {
+            return Ok(None);
+        }
+        let offset = end - FOOTER_SIZE;
+        reader.seek(SeekFrom::Start(offset))?;
+        reader.read_exact(&mut footer)?;
+        if &footer[..8] != FOOTER || blake3::hash(&footer[..64]).as_bytes() != &footer[64..] {
+            return Ok(None);
+        }
+        let start = u64::from_le_bytes(footer[8..16].try_into().map_err(|_| Error::Invalid)?);
+        let size = u64::from_le_bytes(footer[16..24].try_into().map_err(|_| Error::Invalid)?);
+        if start < 16 || size > MAX_RECORD || start.checked_add(size) != Some(offset) {
+            return Ok(None);
+        }
+        offsets.push(offset);
+        end = start;
+    }
+    offsets.reverse();
+    Ok(Some(offsets))
+}
+
 /// Compacts live originals and one checkpoint through an atomic storage replacement.
 /// Failure before replacement leaves the original stream intact.
 pub fn compact(storage: &dyn crate::Storage, handle: crate::Handle) -> Result<(), Error> {
@@ -491,6 +539,39 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     use std::io::Cursor;
+    #[test]
+    fn healthy_records_are_hashed_without_scanning_their_payloads() {
+        struct Count(Cursor<Vec<u8>>, usize);
+        impl std::io::Read for Count {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                let count = std::io::Read::read(&mut self.0, bytes)?;
+                self.1 += count;
+                Ok(count)
+            }
+        }
+        impl std::io::Seek for Count {
+            fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+                std::io::Seek::seek(&mut self.0, from)
+            }
+        }
+        let original = vec![42; 2 * 1024 * 1024];
+        let (_, mut item) = base();
+        item.content = Content::Image(blake3::hash(&original));
+        let mut bytes = Vec::new();
+        initialize(&mut bytes).unwrap();
+        append(&mut bytes, 16, 1, &original).unwrap();
+        let offset = bytes.len() as u64;
+        append(
+            &mut bytes,
+            offset,
+            2,
+            &encode(&Command::Insert(item.clone())),
+        )
+        .unwrap();
+        let mut reader = Count(Cursor::new(bytes), 0);
+        assert_eq!(read(&mut reader).unwrap().scene.get(item.id), Some(&item));
+        assert!(reader.1 < original.len() + 2048);
+    }
     fn base() -> (Vec<u8>, Item) {
         let mut bytes = Vec::new();
         initialize(&mut bytes).unwrap();

@@ -182,7 +182,11 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     .get(item.id, motion.now())
                     .map(std::borrow::Cow::Owned)
                     .unwrap_or(std::borrow::Cow::Borrowed(item));
-                if moving.is_some() && board.selection.contains(&item.id) && !tools.locked {
+                if moving.is_some()
+                    && board.selection.contains(&item.id)
+                    && !tools.locked
+                    && !board.loading
+                {
                     presented = std::borrow::Cow::Owned(motion.preview(
                         item,
                         drag,

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Add persistent image-cache settings: available-RAM allowance (1–50%), automatic
+  adapter limits or a manual 32–512 MiB ceiling, with immediate application and
+  reset to defaults. Include English and Russian explanations of preview eviction.
+
+- Grow the GPU image cache by actual texture-page bytes instead of image count,
+  limiting it to one eighth of available RAM plus reclaimable image pages and
+  the existing adapter ceilings. Sample RAM in the background during activity
+  and evict LRU pages when memory becomes scarce.
+
+- Specialize area-preview accumulation by pixel format and reuse already-sized
+  decoded images, preserving alpha-weighted pixels, mip quality and decode budgets.
+
+- Show journaled image batches while boards are still loading, overlapping preview
+  decoding with storage. Keep editing/saving blocked until completion and preserve
+  partial loads as unsaved boards on errors. Read healthy `.moth` files through
+  their footer chain while retaining checksum verification and corruption recovery.
+
+- Read image originals directly from recovery-journal ranges when opening boards,
+  importing BeeRef/PureRef files and adding images. Avoid duplicate `.source`
+  files and their rereads while retaining journal-before-acknowledgment durability.
+
 - Add configurable exact keyboard and mouse chords, searchable binding settings, conflict previews, reset to defaults and optional BeeRef/PureRef-style navigation presets. Use Space to focus on tap or pan on drag; show current bindings in tooltips and menus.
 - Add the searchable command palette through Ctrl/Command+K or the Commands menu, with arrow-key navigation, Enter to run and Escape to close. Canvas actions stay isolated from text editors and modals.
 

@@ -49,6 +49,15 @@ pub enum Request {
 }
 /// Worker completions are delivered only after durable writes.
 pub enum Completion {
+    /// Durable loading progress; does not finish the outstanding open/import request.
+    Loading {
+        /// Commands whose originals and journal records have reached stable storage.
+        commands: Vec<Command>,
+        /// Newly available journal-backed originals.
+        sources: Vec<(BlobId, Handle)>,
+        /// Complete board bounds when known before loading the originals.
+        bounds: Option<Rect>,
+    },
     /// Offers existing journals without silently replacing the current board.
     Recovery(Vec<PathBuf>),
     /// Read-only recent-file suggestions, bounded to twenty entries.
@@ -65,13 +74,13 @@ pub enum Completion {
     Applied(Command, Option<(BlobId, Handle)>),
     /// Applies a whole journaled group as one unit.
     AppliedBatch(Vec<Command>, Vec<(BlobId, Handle)>),
-    /// Replaces an empty scene with recovered metadata and staged source identities.
+    /// Finishes loading recovered metadata and journal-backed originals.
     Opened(Scene, HashMap<BlobId, Handle>, bool),
-    /// Imported inserts, their staged originals and the count of skipped items.
+    /// Imported inserts, their journal-backed originals and the count of skipped items.
     Imported(Vec<Command>, HashMap<BlobId, Handle>, usize),
     /// Confirms an explicit save has reached stable storage.
     Saved,
-    /// Leaves the UI state unchanged on failure.
+    /// Keeps unacknowledged edits hidden; earlier durable loading progress remains available.
     Failed(String),
 }
 /// Storage work is bounded in both directions and never blocks a frame.
@@ -103,7 +112,20 @@ enum Step {
     Single(Command),
     Group(Vec<Command>),
 }
+struct Progress {
+    results: crossbeam_channel::Sender<Completion>,
+    wake: Arc<dyn Fn() + Send + Sync>,
+}
+#[derive(Default)]
+struct LoadBatch {
+    commands: Vec<Command>,
+    sources: Vec<(BlobId, Handle)>,
+    bytes: usize,
+    started: bool,
+    bounds: Option<Rect>,
+}
 struct State {
+    progress: Option<Progress>,
     destination: Option<Destination>,
     storage: Arc<DesktopStorage>,
     scene: Scene,
@@ -161,6 +183,34 @@ fn record(file: &mut File, kind: u8, bytes: &[u8]) -> io::Result<()> {
     file.sync_all()
 }
 impl State {
+    fn publish_loading(&mut self, batch: &mut LoadBatch, force: bool) -> io::Result<()> {
+        if batch.commands.is_empty()
+            || (!force
+                && batch.started
+                && batch.commands.len() < 64
+                && batch.bytes < 32 * 1024 * 1024)
+        {
+            return Ok(());
+        }
+        let result = self.journal().and_then(|file| file.sync_all());
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result?;
+        let completion = Completion::Loading {
+            commands: std::mem::take(&mut batch.commands),
+            sources: std::mem::take(&mut batch.sources),
+            bounds: batch.bounds.take(),
+        };
+        batch.started = true;
+        batch.bytes = 0;
+        if let Some(progress) = &self.progress {
+            progress.results.send(completion).map_err(error)?;
+            (progress.wake)();
+        }
+        Ok(())
+    }
+
     fn claim(&mut self, path: &std::path::Path, opening: bool) -> io::Result<()> {
         let canonical = if path.exists() {
             path.canonicalize()?
@@ -217,7 +267,7 @@ impl State {
         }
         result
     }
-    // Pending records share the following command/snapshot sync; no completion precedes it.
+    // Only command/checkpoint or loading-batch syncs can acknowledge pending records.
     fn append_pending(&mut self, kind: u8, bytes: &[u8]) -> io::Result<()> {
         let result = self
             .journal()
@@ -226,6 +276,18 @@ impl State {
             self.poisoned = true;
         }
         result
+    }
+    // Journal ranges stay valid: saves/compaction replace board files, never this journal.
+    fn append_original(&mut self, bytes: &[u8]) -> io::Result<Handle> {
+        let offset = self.journal()?.metadata()?.len();
+        self.append_pending(1, bytes)?;
+        self.storage.register_range(
+            self.storage.recovery_directory()?.join("board.moth"),
+            board::Blob {
+                offset,
+                length: bytes.len() as u64,
+            },
+        )
     }
     fn original(&self, hash: BlobId, handle: Handle) -> io::Result<Vec<u8>> {
         let _span = tracing::info_span!("read_original").entered();
@@ -268,18 +330,7 @@ impl State {
                 .or_else(|| self.sources.get(&blob).copied())
                 .ok_or_else(|| error("Original unavailable"))?;
             let bytes = self.original(blob, handle)?;
-            self.journal()?;
-            let staged = if let Some(staged) = self.sources.get(&blob) {
-                *staged
-            } else {
-                let directory = self.storage.recovery_directory()?;
-                let path = directory.join(format!("{}.source", uuid::Uuid::now_v7()));
-                let mut staged = private_file(&path)?;
-                staged.write_all(&bytes)?;
-                // Recovery rebuilds this working copy from the synced journal.
-                self.storage.register(path)?
-            };
-            self.append_pending(1, &bytes)?;
+            let staged = self.append_original(&bytes)?;
             self.blobs.insert(blob);
             self.sources.insert(blob, staged);
         }
@@ -386,233 +437,227 @@ impl State {
             let _span = tracing::info_span!("parse_moth").entered();
             board::read(&mut file).map_err(error)?
         };
-        let directory = self.storage.recovery_directory()?;
-        std::fs::create_dir_all(&directory)?;
-        let mut sources = HashMap::new();
-        let wanted: HashSet<_> = loaded.scene.items().filter_map(|i| i.blob()).collect();
-        for hash in wanted {
-            let blob = loaded
-                .blobs
-                .get(&hash)
-                .ok_or_else(|| error("Missing original"))?;
-            let _span = tracing::info_span!("stage_original", bytes = blob.length).entered();
-            let destination = directory.join(format!("{}.source", uuid::Uuid::now_v7()));
-            let mut output = private_file(&destination)?;
-            file.seek(SeekFrom::Start(blob.offset))?;
-            let copied = io::copy(&mut (&mut file).take(blob.length), &mut output)?;
-            if copied != blob.length {
-                return Err(error("Truncated original"));
+        let mut batch = LoadBatch {
+            bounds: loaded.scene.bounds(),
+            ..LoadBatch::default()
+        };
+        let mut items: Vec<_> = loaded.scene.items().collect();
+        let mut copied = HashSet::new();
+        items.sort_unstable_by_key(|item| {
+            item.blob()
+                .and_then(|hash| loaded.blobs.get(&hash))
+                .map_or(u64::MAX, |blob| blob.offset)
+        });
+        let loading = (|| -> io::Result<()> {
+            for item in items {
+                if let Some(hash) = item.blob()
+                    && !copied.contains(&hash)
+                {
+                    let blob = loaded
+                        .blobs
+                        .get(&hash)
+                        .ok_or_else(|| error("Missing original"))?;
+                    let _span =
+                        tracing::info_span!("stage_original", bytes = blob.length).entered();
+                    file.seek(SeekFrom::Start(blob.offset))?;
+                    let mut bytes = vec![0; blob.length as usize];
+                    file.read_exact(&mut bytes)?;
+                    if blake3::hash(&bytes) != hash {
+                        return Err(error("Source changed before it could be saved"));
+                    }
+                    let handle = self.append_original(&bytes)?;
+                    self.blobs.insert(hash);
+                    copied.insert(hash);
+                    self.sources.insert(hash, handle);
+                    batch.sources.push((hash, handle));
+                    batch.bytes += bytes.len();
+                }
+                let command = Command::Insert(item.clone());
+                if self.scene.is_empty() {
+                    self.undo.clear();
+                    self.redo.clear();
+                }
+                self.append_pending(2, &board::encode(&command))?;
+                self.scene.apply(command.clone()).map_err(error)?;
+                batch.commands.push(command);
+                self.publish_loading(&mut batch, false)?;
             }
-            // The journal, not this rebuildable working copy, owns durability.
-            sources.insert(hash, self.storage.register(destination)?);
+            Ok(())
+        })();
+        if !self.poisoned {
+            self.publish_loading(&mut batch, true)?;
         }
-        for (hash, handle) in &sources {
-            let bytes = self.original(*hash, *handle)?;
-            self.append_pending(1, &bytes)?;
-            self.blobs.insert(*hash);
-        }
+        loading?;
         self.commit(3, &board::snapshot(&loaded.scene).map_err(error)?)?;
-        self.sources = sources.clone();
+        self.sources.retain(|hash, _| copied.contains(hash));
+        self.blobs = copied;
         self.undo.clear();
         self.redo.clear();
-        for item in loaded.scene.items() {
-            self.scene
-                .apply(Command::Insert(item.clone()))
-                .map_err(error)?;
-        }
         if let Err(e) = recent(&self.storage.base_directory()?, Some(path)) {
             tracing::warn!(%e, "recent file catalog unavailable");
         }
-        Ok(Completion::Opened(loaded.scene, sources, loaded.recovered))
+        Ok(Completion::Opened(
+            loaded.scene,
+            self.sources.clone(),
+            loaded.recovered,
+        ))
     }
     /// Converts a foreign board into inserts on the current (empty) board.
     ///
-    /// Embedded originals are staged and journaled one at a time, so a crash
+    /// Embedded originals are journaled one at a time, so a crash
     /// mid-import recovers every image already acknowledged.
     fn import_foreign(&mut self, path: PathBuf) -> io::Result<Completion> {
         let _span = tracing::info_span!("import_board").entered();
         if !self.scene.is_empty() {
             return Err(error("Import requires an empty board"));
         }
-        let storage = self.storage.clone();
-        let directory = storage.recovery_directory()?;
-        std::fs::create_dir_all(&directory)?;
-        enum Pending {
-            Image {
-                z: f64,
-                id: i64,
-                hash: BlobId,
-                rect: Rect,
-                transform: moth_scene::Transform,
-                handle: Handle,
-            },
-            Text {
-                z: f64,
-                id: i64,
-                text: String,
-                rect: Rect,
-                transform: moth_scene::Transform,
-            },
+        struct Pending {
+            z: f64,
+            id: i64,
+            item: Item,
         }
         let mut pending = Vec::new();
         let mut metadata_bytes = 0usize;
-        let mut staged_sources = HashMap::new();
-        let mut emit = |item: moth_import::pur::Item<'_>| -> io::Result<()> {
-            metadata_bytes += item.text.map_or(0, str::len) + 256;
+        let mut batch = LoadBatch::default();
+        let mut emit = |source: moth_import::pur::Item<'_>| -> io::Result<()> {
+            metadata_bytes += source.text.map_or(0, str::len) + 256;
             if pending.len() >= 8192 || metadata_bytes > 8 * 1024 * 1024 {
                 return Err(error("Import metadata exceeds 8 MiB / 8192-item budget"));
             }
-            if !item.z.is_finite() || !item.rect.valid() || !item.transform.valid() {
+            if !source.z.is_finite() || !source.rect.valid() || !source.transform.valid() {
                 return Err(error("Invalid imported transform or stacking order"));
             }
-            if let Some(bytes) = item.bytes {
-                let _span = tracing::info_span!("stage_original", bytes = bytes.len()).entered();
+            let mut item = if let Some(bytes) = source.bytes {
                 let hash = blake3::hash(bytes);
-                let handle = if let Some(handle) = staged_sources.get(&hash) {
-                    *handle
-                } else {
-                    let destination = directory.join(format!("{}.source", uuid::Uuid::now_v7()));
-                    let mut staged = private_file(&destination)?;
-                    staged.write_all(bytes)?;
-                    // No image is acknowledged until its journal record is synced.
-                    let handle = storage.register(destination)?;
-                    staged_sources.insert(hash, handle);
-                    handle
-                };
-                pending.push(Pending::Image {
-                    z: item.z,
-                    id: item.id,
-                    hash,
-                    rect: item.rect,
-                    transform: item.transform,
-                    handle,
-                });
+                if !self.blobs.contains(&hash) {
+                    let handle = self.append_original(bytes)?;
+                    self.sources.insert(hash, handle);
+                    self.blobs.insert(hash);
+                    batch.sources.push((hash, handle));
+                    batch.bytes += bytes.len();
+                }
+                Item::image(hash, source.rect, self.scene.top())
             } else {
-                pending.push(Pending::Text {
-                    z: item.z,
-                    id: item.id,
-                    text: item.text.unwrap_or("").to_owned(),
-                    rect: item.rect,
-                    transform: item.transform,
-                });
+                Item::text(source.text.unwrap_or(""), source.rect, self.scene.top())
+            };
+            item.transform = source.transform;
+            let command = Command::Insert(item.clone());
+            let (inverse, _) = self.apply_command(command.clone(), None, false)?;
+            if pending.is_empty() {
+                self.undo.clear();
+                self.undo.push_back(Step::Group(Vec::new()));
+                self.redo.clear();
             }
-            Ok(())
+            if let Some(Step::Group(inverses)) = self.undo.back_mut() {
+                inverses.push(inverse);
+            }
+            pending.push(Pending {
+                z: source.z,
+                id: source.id,
+                item,
+            });
+            batch.commands.push(command);
+            self.publish_loading(&mut batch, false)
         };
-        let file = File::open(&path)?;
-        let skipped = if path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("pur"))
-        {
-            moth_import::pur::read(file, &mut |item| {
-                emit(item)?;
-                Ok(())
-            })
-            .map_err(error)?
-            .skipped()
-        } else {
-            moth_import::bee::read(file, &mut |item| {
-                match item {
-                    moth_import::bee::Item::Image(image) => emit(moth_import::pur::Item {
-                        id: image.id,
-                        z: image.z as f64,
-                        rect: Rect {
-                            x: image.x,
-                            y: image.y,
-                            width: image.width,
-                            height: image.height,
-                        },
-                        transform: moth_scene::Transform {
-                            rotation: image.rotation,
-                            flip: [image.flip, false],
-                            ..Default::default()
-                        },
-                        bytes: Some(image.bytes),
-                        text: None,
-                    })?,
-                    moth_import::bee::Item::Text(note) => {
-                        let [width, height] = moth_scene::note_size(&note.text);
-                        emit(moth_import::pur::Item {
-                            id: note.id,
-                            z: note.z as f64,
+        let imported = (|| -> io::Result<usize> {
+            let file = File::open(&path)?;
+            let skipped = if path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("pur"))
+            {
+                moth_import::pur::read(file, &mut |item| {
+                    emit(item)?;
+                    Ok(())
+                })
+                .map_err(error)?
+                .skipped()
+            } else {
+                moth_import::bee::read(file, &mut |item| {
+                    match item {
+                        moth_import::bee::Item::Image(image) => emit(moth_import::pur::Item {
+                            id: image.id,
+                            z: image.z as f64,
                             rect: Rect {
-                                x: note.x,
-                                y: note.y,
-                                width: width * note.scale,
-                                height: height * note.scale,
+                                x: image.x,
+                                y: image.y,
+                                width: image.width,
+                                height: image.height,
                             },
                             transform: moth_scene::Transform {
-                                rotation: note.rotation,
-                                flip: [note.flip, false],
+                                rotation: image.rotation,
+                                flip: [image.flip, false],
                                 ..Default::default()
                             },
-                            bytes: None,
-                            text: Some(&note.text),
-                        })?;
+                            bytes: Some(image.bytes),
+                            text: None,
+                        })?,
+                        moth_import::bee::Item::Text(note) => {
+                            let [width, height] = moth_scene::note_size(&note.text);
+                            emit(moth_import::pur::Item {
+                                id: note.id,
+                                z: note.z as f64,
+                                rect: Rect {
+                                    x: note.x,
+                                    y: note.y,
+                                    width: width * note.scale,
+                                    height: height * note.scale,
+                                },
+                                transform: moth_scene::Transform {
+                                    rotation: note.rotation,
+                                    flip: [note.flip, false],
+                                    ..Default::default()
+                                },
+                                bytes: None,
+                                text: Some(&note.text),
+                            })?;
+                        }
                     }
-                }
-                Ok(())
-            })
-            .map_err(error)?
-            .skipped()
-        };
-        // Sort foreign stacking keys before assigning fractional scene indices.
+                    Ok(())
+                })
+                .map_err(error)?
+                .skipped()
+            };
+            Ok(skipped)
+        })();
+        if !self.poisoned {
+            self.publish_loading(&mut batch, true)?;
+        }
+        let skipped = imported?;
+        // Loading uses stable ids in stream order; finish with the foreign stacking order.
         pending.sort_by(|a, b| {
-            let (az, aid) = match a {
-                Pending::Image { z, id, .. } | Pending::Text { z, id, .. } => (*z, *id),
-            };
-            let (bz, bid) = match b {
-                Pending::Image { z, id, .. } | Pending::Text { z, id, .. } => (*z, *id),
-            };
-            az.partial_cmp(&bz)
+            a.z.partial_cmp(&b.z)
                 .unwrap_or(std::cmp::Ordering::Equal)
-                .then(aid.cmp(&bid))
+                .then(a.id.cmp(&b.id))
         });
-        self.sources.extend(staged_sources);
         let mut commands = Vec::with_capacity(pending.len());
-        let mut sources = HashMap::new();
-        let mut inverses = Vec::with_capacity(pending.len());
-        for item in pending {
-            let (insert, source) = match item {
-                Pending::Image {
-                    hash,
-                    rect,
-                    transform,
-                    handle,
-                    ..
-                } => {
-                    let mut item = Item::image(hash, rect, self.scene.top());
-                    item.transform = transform;
-                    (item, Some(handle))
-                }
-                Pending::Text {
-                    text,
-                    rect,
-                    transform,
-                    ..
-                } => {
-                    let mut item = Item::text(text, rect, self.scene.top());
-                    item.transform = transform;
-                    (item, None)
+        let mut above = None;
+        for entry in pending {
+            let item = entry.item;
+            let mut ordered = match &item.content {
+                moth_scene::Content::Image(hash) => Item::image(*hash, item.rect, above.as_ref()),
+                moth_scene::Content::Text(text) => {
+                    Item::text(text.clone(), item.rect, above.as_ref())
                 }
             };
-            // The final snapshot syncs this entire import before its single completion.
-            let (inverse, completion) =
-                self.apply_command(Command::Insert(insert), source, false)?;
-            if let Completion::Applied(command, source) = completion {
-                commands.push(command);
-                if let Some((hash, handle)) = source {
-                    sources.insert(hash, handle);
-                }
+            ordered.id = item.id;
+            ordered.transform = item.transform;
+            ordered.name = item.name;
+            above = Some(ordered.z.clone());
+            if ordered.z != item.z {
+                self.apply_command(Command::Remove(item.id), None, false)?;
+                self.apply_command(Command::Insert(ordered.clone()), None, false)?;
             }
-            inverses.push(inverse);
+            commands.push(Command::Insert(ordered));
         }
         self.commit(3, &board::snapshot(&self.scene).map_err(error)?)?;
-        // Import replaces the board, so prior steps are stale; one undo removes it all.
-        self.undo.clear();
-        if !inverses.is_empty() {
-            self.push_undo(Step::Group(inverses));
+        if commands.is_empty() {
+            self.undo.clear();
         }
-        Ok(Completion::Imported(commands, sources, skipped))
+        Ok(Completion::Imported(
+            commands,
+            self.sources.clone(),
+            skipped,
+        ))
     }
     fn request(&mut self, request: Request) -> io::Result<Option<Completion>> {
         if self.poisoned {
@@ -900,6 +945,10 @@ impl Worker {
                     wake();
                 }
                 let mut state = State {
+                    progress: Some(Progress {
+                        results: tx.clone(),
+                        wake: wake.clone(),
+                    }),
                     destination: None,
                     storage,
                     scene: Scene::default(),
@@ -975,6 +1024,7 @@ mod tests {
     }
     fn state() -> State {
         State {
+            progress: None,
             destination: None,
             storage: Arc::new(DesktopStorage::in_directory(
                 std::env::temp_dir().join(format!("mothref-board-test-{}", uuid::Uuid::now_v7())),
@@ -1154,7 +1204,7 @@ mod tests {
     }
 
     #[test]
-    fn foreign_import_stages_each_original_once() {
+    fn foreign_import_keeps_originals_only_in_journal() {
         for fixture in ["bee/tiny.bee", "pur/v2.1-redbar.pur"] {
             let mut state = state();
             let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1173,21 +1223,15 @@ mod tests {
                 .filter(|entry| entry.path().extension().is_some_and(|e| e == "source"))
                 .count();
             assert_eq!(
-                originals,
-                state.sources.len(),
-                "staged originals were copied twice"
+                originals, 0,
+                "originals must be read directly from the journal"
             );
             let recovered =
                 board::read(&mut File::open(directory.join("board.moth")).unwrap()).unwrap();
             assert_eq!(recovered.scene.len(), state.scene.len());
             assert_eq!(recovered.blobs.len(), state.sources.len());
             state.journal = None;
-            // Power loss may discard working copies; the synced journal owns every original.
-            for entry in std::fs::read_dir(&directory).unwrap().map(Result::unwrap) {
-                if entry.path().extension().is_some_and(|e| e == "source") {
-                    std::fs::remove_file(entry.path()).unwrap();
-                }
-            }
+            // The journal alone must suffice to reopen every original.
             let mut restored = self::state();
             restored
                 .request(Request::Open(directory.join("board.moth")))
@@ -1203,6 +1247,80 @@ mod tests {
             state.storage.discard().unwrap();
             std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
         }
+    }
+
+    #[test]
+    fn opening_reads_originals_from_its_own_journal() {
+        let mut state = state();
+        let directory = state.storage.base_directory().unwrap();
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("input.moth");
+        std::fs::write(&path, include_bytes!("../../../corpus/moth/v4.moth")).unwrap();
+        let (results, progress) = crossbeam_channel::bounded(32);
+        state.progress = Some(Progress {
+            results,
+            wake: Arc::new(|| {}),
+        });
+        state.open(path.clone()).unwrap();
+        assert!(
+            matches!(progress.try_recv().unwrap(), Completion::Loading { commands, sources, bounds: Some(_) }
+            if commands.len() == 1 && sources.len() == 1)
+        );
+        let items: Vec<_> = state.scene.items().cloned().collect();
+        let assert_scene = |scene: &Scene| {
+            assert_eq!(scene.len(), items.len());
+            for item in &items {
+                assert_eq!(scene.get(item.id), Some(item));
+            }
+        };
+        let recovery = state.storage.recovery_directory().unwrap();
+        assert_eq!(
+            std::fs::read_dir(&recovery).unwrap().count(),
+            1,
+            "opening must only write the recovery journal, not duplicate originals"
+        );
+        // Reads must survive replacement/compaction of the opened board.
+        let handle = state.storage.register(path.clone()).unwrap();
+        board::compact(state.storage.as_ref(), handle).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        for (hash, handle) in &state.sources {
+            assert_eq!(
+                blake3::hash(&state.original(*hash, *handle).unwrap()),
+                *hash
+            );
+        }
+        let image = items.iter().find(|item| item.blob().is_some()).unwrap();
+        let exported = directory.join("original.png");
+        state
+            .request(Request::Export(super::super::export::Target::Original {
+                path: exported.clone(),
+                id: image.id,
+            }))
+            .unwrap();
+        assert_eq!(
+            blake3::hash(&std::fs::read(exported).unwrap()),
+            image.blob().unwrap()
+        );
+        let output = directory.join("saved.moth");
+        state.save(output.clone()).unwrap();
+        let saved = board::read(&mut File::open(output).unwrap()).unwrap();
+        assert_scene(&saved.scene);
+        // Recovery itself must also open without any loose original files.
+        state.journal = None;
+        let mut restored = self::state();
+        restored.open(recovery.join("board.moth")).unwrap();
+        assert_scene(&restored.scene);
+        for (hash, handle) in &restored.sources {
+            assert_eq!(
+                blake3::hash(&restored.original(*hash, *handle).unwrap()),
+                *hash
+            );
+        }
+        restored.journal = None;
+        restored.storage.discard().unwrap();
+        std::fs::remove_dir_all(restored.storage.base_directory().unwrap()).unwrap();
+        state.storage.discard().unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

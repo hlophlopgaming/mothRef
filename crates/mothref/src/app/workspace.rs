@@ -144,6 +144,16 @@ impl Workspace {
     }
     pub(super) fn persist(&mut self, request: moth_platform::boards::Request) {
         use moth_platform::boards::Request;
+        if self.board.loading
+            && !matches!(&request, Request::Preferences(_) | Request::SaveSettings(_))
+        {
+            self.board.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
+            return;
+        }
+        let loading = matches!(
+            &request,
+            Request::Open(_) | Request::ImportBee(_) | Request::ImportPur(_)
+        );
         if self.board.locked
             && matches!(
                 &request,
@@ -159,7 +169,10 @@ impl Workspace {
             return;
         }
         match self.board.boards().requests.try_send(request) {
-            Ok(()) => self.board.in_flight += 1,
+            Ok(()) => {
+                self.board.in_flight += 1;
+                self.board.loading |= loading;
+            }
             Err(_) => self.board.message = moth_ui::text(moth_ui::Text::StorageBusy).into(),
         }
     }
@@ -167,6 +180,9 @@ impl Workspace {
         self.persist(moth_platform::boards::Request::ApplyBatch(commands));
     }
     pub(super) fn begin_batch(&mut self) {
+        if self.board.loading {
+            return;
+        }
         if !self.board.batching
             && self
                 .board
@@ -238,7 +254,7 @@ impl Workspace {
         path: std::path::PathBuf,
         format: moth_io::ImageFormat,
     ) -> TabChange {
-        if self.board.locked {
+        if self.board.locked || self.board.loading {
             return TabChange::None;
         }
         if self.board.discarding {
@@ -378,6 +394,36 @@ impl Workspace {
         while let Ok(done) = self.board.boards().results.try_recv() {
             use moth_platform::boards::Completion;
             match done {
+                Completion::Loading {
+                    commands,
+                    sources,
+                    bounds,
+                } => {
+                    let first = self.board.scene.is_empty();
+                    if first {
+                        self.board.motion.clear();
+                    }
+                    for command in commands {
+                        if let Err(error) = self.board.apply_visual(command) {
+                            self.board.message = error.to_string();
+                        }
+                    }
+                    self.board.sources.extend(sources);
+                    if bounds.is_some() {
+                        self.board.loading_bounds = bounds;
+                    }
+                    if first {
+                        self.board.loading_bounds = self
+                            .board
+                            .loading_bounds
+                            .or_else(|| self.board.scene.bounds());
+                        self.board.fit();
+                        if active {
+                            pump.events.push(Event::Opened);
+                        }
+                    }
+                    self.board.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
+                }
                 Completion::Recovery(paths) => self.recovery_paths = paths,
                 Completion::Recent(paths) => {
                     if self.recent_paths.is_empty() {
@@ -451,6 +497,8 @@ impl Workspace {
                                 .retain(|id| self.board.scene.get(*id).is_some());
                         }
                         Completion::Opened(scene, sources, recovered) => {
+                            let progressed = self.board.loading_bounds.take().is_some();
+                            self.board.loading = false;
                             self.board.motion.clear();
                             self.board.replace_scene(scene);
                             self.board.sources = sources;
@@ -465,9 +513,13 @@ impl Workspace {
                                 moth_ui::Text::Opened
                             })
                             .into();
-                            self.board.fit();
+                            if !progressed {
+                                self.board.fit();
+                            }
                         }
                         Completion::Imported(commands, sources, skipped) => {
+                            self.board.loading = false;
+                            self.board.loading_bounds = None;
                             self.board.motion.clear();
                             self.board.replace_scene(Scene::default());
                             if active {
@@ -510,6 +562,12 @@ impl Workspace {
                             }
                         }
                         Completion::Failed(e) => {
+                            if self.board.loading {
+                                self.board.loading = false;
+                                self.board.loading_bounds = None;
+                                self.board.path.clear();
+                                self.board.dirty = !self.board.scene.is_empty();
+                            }
                             self.board.message = e;
                             self.board.close_after_save = false;
                         }

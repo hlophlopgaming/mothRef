@@ -23,6 +23,9 @@ pub(super) struct Tools {
     pub ui_scale: f32,
     pub threshold: usize,
     pub undo_limit: usize,
+    pub cache_ram_percent: f32,
+    /// Zero selects the adapter's automatic ceiling.
+    pub cache_limit_mib: u32,
     pub wheel: u8,
     pub scale_with_window: bool,
     pub auto_arrange: bool,
@@ -57,6 +60,8 @@ impl Default for Tools {
             ui_scale: 1.,
             threshold: 5,
             undo_limit: 256,
+            cache_ram_percent: 12.5,
+            cache_limit_mib: 0,
             wheel: 0,
             scale_with_window: false,
             auto_arrange: false,
@@ -139,6 +144,8 @@ impl Tools {
             ("wheel", self.wheel.to_string()),
             ("scale_with_window", self.scale_with_window.to_string()),
             ("undo_limit", self.undo_limit.to_string()),
+            ("cache_ram_percent", self.cache_ram_percent.to_string()),
+            ("cache_limit_mib", self.cache_limit_mib.to_string()),
             ("dark", self.dark.to_string()),
             ("ui_scale", self.ui_scale.to_string()),
             ("arrange_gap", self.gap.to_string()),
@@ -148,6 +155,16 @@ impl Tools {
         ]
     }
     pub fn load(&mut self, values: &std::collections::BTreeMap<String, String>) {
+        self.cache_ram_percent = values
+            .get("cache_ram_percent")
+            .and_then(|v| v.parse::<f32>().ok())
+            .filter(|v| v.is_finite() && (1.0..=50.0).contains(v))
+            .unwrap_or(12.5);
+        self.cache_limit_mib = values
+            .get("cache_limit_mib")
+            .and_then(|v| v.parse().ok())
+            .filter(|v| *v == 0 || (32..=512).contains(v))
+            .unwrap_or(0);
         self.reduced_motion = values
             .get(moth_platform::settings::REDUCED_MOTION)
             .and_then(|v| v.parse().ok())
@@ -232,6 +249,32 @@ impl Tools {
                 ui.collapsing(text(Text::Settings), |ui| {
                     let before = self.preferences();
                     let defaults = Self::default();
+                    ui.collapsing(text(Text::ImageCache), |ui| {
+                        let label = preference(
+                            Text::CacheRamPercent,
+                            self.cache_ram_percent != defaults.cache_ram_percent,
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut self.cache_ram_percent, 1.0..=50.0)
+                                .suffix(" %")
+                                .text(label),
+                        );
+                        let mut automatic = self.cache_limit_mib == 0;
+                        if ui
+                            .checkbox(&mut automatic, text(Text::CacheAutomatic))
+                            .changed()
+                        {
+                            self.cache_limit_mib = if automatic { 0 } else { 96 };
+                        }
+                        if !automatic {
+                            ui.add(
+                                egui::Slider::new(&mut self.cache_limit_mib, 32..=512)
+                                    .suffix(" MiB")
+                                    .text(text(Text::CacheLimit)),
+                            );
+                        }
+                        ui.label(text(Text::CacheHint));
+                    });
                     ui.checkbox(&mut self.reduced_motion, text(Text::ReducedMotion));
                     ui.checkbox(&mut self.show_outlines, text(Text::ShowOutlines));
                     ui.checkbox(&mut self.drag_animation, text(Text::DragAnimation));
@@ -324,6 +367,8 @@ impl Tools {
                         self.wheel = defaults.wheel;
                         self.scale_with_window = defaults.scale_with_window;
                         self.undo_limit = defaults.undo_limit;
+                        self.cache_ram_percent = defaults.cache_ram_percent;
+                        self.cache_limit_mib = defaults.cache_limit_mib;
                         self.dark = defaults.dark;
                         self.ui_scale = defaults.ui_scale;
                         self.gap = defaults.gap;
@@ -882,6 +927,8 @@ mod tests {
             auto_arrange: true,
             default_arrange: 3,
             undo_limit: 42,
+            cache_ram_percent: 25.,
+            cache_limit_mib: 256,
             show_outlines: false,
             drag_animation: false,
             drag_opacity: 0.42,
@@ -903,6 +950,8 @@ mod tests {
                 ("show_outlines".into(), "invalid".into()),
                 ("arrange_gap".into(), "inf".into()),
                 ("undo_limit".into(), "99999".into()),
+                ("cache_ram_percent".into(), "NaN".into()),
+                ("cache_limit_mib".into(), "99999".into()),
             ]
             .into_iter()
             .collect(),
@@ -916,6 +965,8 @@ mod tests {
         assert_eq!(loaded.ui_scale, 1.);
         assert_eq!(loaded.gap, 24.);
         assert_eq!(loaded.undo_limit, 256);
+        assert_eq!(loaded.cache_ram_percent, 12.5);
+        assert_eq!(loaded.cache_limit_mib, 0);
     }
     #[test]
     fn scaling_rejects_overflow_and_keeps_relative_positions() {

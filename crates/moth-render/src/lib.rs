@@ -164,6 +164,7 @@ pub struct Registry {
     clock: u64,
     allocated: u64,
     budget: u64,
+    ceiling: u64,
     /// Texture format for image mips, chosen at runtime from adapter capabilities.
     image_format: ImageFormat,
 }
@@ -265,6 +266,7 @@ impl Registry {
             clock: 0,
             allocated: 0,
             budget: TEXTURE_BUDGET,
+            ceiling: TEXTURE_BUDGET,
             image_format,
         }
     }
@@ -277,9 +279,19 @@ impl Registry {
         self.budget
     }
 
-    /// Adapts to image count and immediately evicts pages when the ceiling falls.
-    pub fn adapt_budget(&mut self, images: usize, ceiling: u64) {
-        let budget = budget_for(images, ceiling);
+    /// Reclaimable image pages exclude independent overlay and UI allocations.
+    pub fn image_bytes(&self) -> u64 {
+        self.allocated
+    }
+
+    /// Grows with page demand and immediately evicts pages when available RAM falls.
+    pub fn adapt_budget(&mut self, active: bool, ceiling: u64) {
+        self.ceiling = if active {
+            ceiling.min(MAX_TEXTURE_BUDGET)
+        } else {
+            0
+        };
+        let budget = budget_for(self.allocated, self.ceiling);
         if self.budget == budget {
             return;
         }
@@ -394,6 +406,7 @@ impl Registry {
             i
         } else {
             let bytes = array_bytes(size, layers, self.image_format);
+            self.budget = budget_for(self.allocated.saturating_add(bytes), self.ceiling);
             while self.allocated + bytes > self.budget {
                 if !self.evict_oldest() {
                     return;
@@ -738,14 +751,10 @@ impl Drop for Registry {
         self.clear();
     }
 }
-fn budget_for(images: usize, ceiling: u64) -> u64 {
-    if images == 0 {
-        return 0;
-    }
-    (images as u64).saturating_mul(1024 * 1024).clamp(
-        MIN_TEXTURE_BUDGET,
-        ceiling.clamp(MIN_TEXTURE_BUDGET, MAX_TEXTURE_BUDGET),
-    )
+fn budget_for(bytes: u64, ceiling: u64) -> u64 {
+    bytes
+        .max(MIN_TEXTURE_BUDGET)
+        .min(ceiling.min(MAX_TEXTURE_BUDGET))
 }
 
 fn array_bytes(size: u32, layers: u32, format: ImageFormat) -> u64 {
@@ -862,14 +871,18 @@ mod tests {
     use super::*;
     #[test]
     fn adaptive_budget_grows_shrinks_and_has_a_hard_ceiling() {
-        assert_eq!(budget_for(0, MAX_TEXTURE_BUDGET), 0);
+        assert_eq!(budget_for(0, 0), 0);
         assert_eq!(budget_for(1, MAX_TEXTURE_BUDGET), MIN_TEXTURE_BUDGET);
-        assert_eq!(budget_for(100, MAX_TEXTURE_BUDGET), 100 * 1024 * 1024);
-        assert_eq!(budget_for(1000, TEXTURE_BUDGET), TEXTURE_BUDGET);
         assert_eq!(
-            budget_for(usize::MAX, MAX_TEXTURE_BUDGET),
-            MAX_TEXTURE_BUDGET
+            budget_for(100 * 1024 * 1024, MAX_TEXTURE_BUDGET),
+            100 * 1024 * 1024
         );
+        assert_eq!(
+            budget_for(1024 * 1024 * 1024, TEXTURE_BUDGET),
+            TEXTURE_BUDGET
+        );
+        assert_eq!(budget_for(100 * 1024 * 1024, 1024), 1024);
+        assert_eq!(budget_for(u64::MAX, MAX_TEXTURE_BUDGET), MAX_TEXTURE_BUDGET);
     }
     #[test]
     fn texture_budget_covers_all_classes() {

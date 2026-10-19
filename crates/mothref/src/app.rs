@@ -62,6 +62,7 @@ use document::Document;
 use intent::Intent;
 
 pub struct App {
+    memory: moth_platform::memory::Monitor,
     workspace: workspace::Workspace,
     tools: tools::Tools,
     shortcuts: shortcuts::Shortcuts,
@@ -98,12 +99,14 @@ impl App {
             let _ = ready.send_event(Wake::Ready);
         });
         let board = Document::new(wake.clone(), true)?;
+        let memory = moth_platform::memory::Monitor::new(wake.clone())?;
         let library_worker = moth_platform::library::Worker::new(
             Arc::new(moth_platform::DesktopStorage::default()),
             wake.clone(),
         )?;
         let shell = shell::Shell::new(proxy, wake, std::env::args().any(|a| a == "--software"));
         Ok(Self {
+            memory,
             workspace: workspace::Workspace::new(board, shell.wake()),
             tools: tools::Tools::default(),
             shortcuts: shortcuts::Shortcuts::default(),
@@ -248,7 +251,7 @@ impl App {
         self.shell.recover()
     }
     fn paste(&mut self) {
-        if self.tools.locked {
+        if self.tools.locked || self.workspace.board.loading {
             return;
         }
         if self.workspace.board.discarding {
@@ -296,7 +299,7 @@ impl App {
 
     /// Creates an empty note at `world` and opens the inline editor for it.
     fn add_note(&mut self, world: [f32; 2]) {
-        if self.tools.locked {
+        if self.tools.locked || self.workspace.board.loading {
             return;
         }
         if self.workspace.board.discarding || !self.workspace.board.idle() {
@@ -329,7 +332,7 @@ impl App {
     }
     /// Opens the inline editor over an existing note.
     fn edit_note(&mut self, id: Uuid) {
-        if self.tools.locked {
+        if self.tools.locked || self.workspace.board.loading {
             return;
         }
         let Some(item) = self.workspace.board.scene.get(id) else {
@@ -389,12 +392,18 @@ impl App {
     fn adapt_gpu_budget(&mut self) {
         if let Some(gpu) = &mut self.shell.gpu {
             // Leave room for decoded imports awaiting their journal acknowledgement.
-            let images = self
-                .workspace
-                .board
-                .image_count
-                .max(usize::from(!self.workspace.board.idle()));
-            gpu.registry.adapt_budget(images, gpu.texture_budget_limit);
+            let active = self.workspace.board.image_count > 0 || !self.workspace.board.idle();
+            let ceiling = moth_platform::memory::texture_ceiling(
+                self.memory.available(),
+                gpu.registry.image_bytes(),
+                if self.tools.cache_limit_mib == 0 {
+                    gpu.texture_budget_limit
+                } else {
+                    u64::from(self.tools.cache_limit_mib) * 1024 * 1024
+                },
+                self.tools.cache_ram_percent,
+            );
+            gpu.registry.adapt_budget(active, ceiling);
         }
     }
     fn results(&mut self) {
@@ -534,6 +543,15 @@ impl App {
     /// Applies one user intent as a single side effect. Close-with-save ordering
     /// is expressed by `SaveAndClose` itself, never by the order intents arrive in.
     fn apply(&mut self, intent: Intent, event_loop: &ActiveEventLoop) {
+        if self.workspace.board.loading
+            && matches!(
+                &intent,
+                Intent::Save | Intent::SaveAs(_) | Intent::SaveAndClose
+            )
+        {
+            self.workspace.board.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
+            return;
+        }
         let before = self.workspace.board.view.camera;
         match intent {
             Intent::Action(action) => self.run_action(action, event_loop),
@@ -719,6 +737,7 @@ impl App {
                 }
             }
             Intent::PreferencesDirty => {
+                self.adapt_gpu_budget();
                 self.shell.context().set_theme(if self.tools.dark {
                     egui::Theme::Dark
                 } else {
@@ -1137,6 +1156,7 @@ impl App {
                                 let dy = (p.position[1] - start[1])
                                     / self.workspace.board.view.camera.zoom;
                                 if !self.tools.locked
+                                    && !self.workspace.board.loading
                                     && dx.abs() + dy.abs()
                                         > 0.5 / self.workspace.board.view.camera.zoom
                                 {
@@ -1420,21 +1440,24 @@ impl App {
             grayscale: self.tools.grayscale,
         };
         let camera = self.workspace.board.view.camera;
-        let mut previews: Vec<_> =
-            if self.moving.is_some() && !self.tools.locked && !self.workspace.library {
-                self.workspace
-                    .board
-                    .selection
-                    .iter()
-                    .filter_map(|id| self.workspace.board.scene.get(*id))
-                    .map(|item| {
-                        self.motion
-                            .preview(item, self.drag, camera.zoom, self.tools.reduced_motion)
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
+        let mut previews: Vec<_> = if self.moving.is_some()
+            && !self.tools.locked
+            && !self.workspace.board.loading
+            && !self.workspace.library
+        {
+            self.workspace
+                .board
+                .selection
+                .iter()
+                .filter_map(|id| self.workspace.board.scene.get(*id))
+                .map(|item| {
+                    self.motion
+                        .preview(item, self.drag, camera.zoom, self.tools.reduced_motion)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         previews.extend(
             self.motion
                 .returning(self.motion.now(), self.tools.reduced_motion),

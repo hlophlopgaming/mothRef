@@ -7,6 +7,7 @@ use moth_platform::{
 };
 use moth_scene::{Command, Item, Rect};
 use std::{
+    collections::HashSet,
     fs::File,
     path::Path,
     sync::Arc,
@@ -47,6 +48,8 @@ fn measure(
     let mut first = None;
     let mut count = 0;
     let mut handles = Vec::new();
+    let mut loaded = path.is_dir();
+    let mut storage_start = None;
     if path.is_dir() {
         let mut paths = std::fs::read_dir(path)?
             .take(1025)
@@ -76,28 +79,47 @@ fn measure(
             _ => anyhow::bail!("expected .moth, .bee, .pur or a directory of images"),
         }
         parse = phase.elapsed();
-        let phase = Instant::now();
+        storage_start = Some(Instant::now());
         worker.requests.send(match extension {
             "moth" => Request::Open(path.to_owned()),
             "bee" => Request::ImportBee(path.to_owned()),
             _ => Request::ImportPur(path.to_owned()),
         })?;
-        handles = match receive(worker)? {
-            Completion::Opened(_, sources, _) | Completion::Imported(_, sources, _) => {
-                sources.into_values().collect()
-            }
-            _ => anyhow::bail!("expected loaded board"),
-        };
-        durable = phase.elapsed();
     }
     // The parse-only probe warms the input; exclude it from end-to-end timings.
     let load_start = start + parse;
     handles.sort_by_key(|handle| handle.0);
     let pool = moth_io::DecodePool::new(storage.clone(), Arc::new(|| {}))?;
-    let total = handles.len();
+    let mut known: HashSet<_> = handles.iter().copied().collect();
     let mut sent = 0;
-    while count < total {
-        while sent < total {
+    while !loaded || count < handles.len() {
+        while let Ok(done) = worker.results.try_recv() {
+            let sources: Vec<_> = match done {
+                Completion::Loading { sources, .. } => {
+                    sources.into_iter().map(|(_, handle)| handle).collect()
+                }
+                Completion::Opened(_, sources, _) | Completion::Imported(_, sources, _) => {
+                    loaded = true;
+                    durable = storage_start.map_or(Duration::ZERO, |start| start.elapsed());
+                    sources.into_values().collect()
+                }
+                Completion::Failed(error) => anyhow::bail!(error),
+                _ => anyhow::bail!("unexpected load completion"),
+            };
+            for handle in sources {
+                if known.insert(handle) {
+                    handles.push(handle);
+                }
+            }
+        }
+        if loaded && count == handles.len() {
+            break;
+        }
+        anyhow::ensure!(
+            load_start.elapsed() < Duration::from_secs(300),
+            "load timed out"
+        );
+        while sent < handles.len() {
             let request = moth_io::Request {
                 handle: handles[sent],
                 side: 256,
@@ -109,10 +131,17 @@ fn measure(
             sent += 1;
         }
         let phase = Instant::now();
-        let completion = pool.results.recv_timeout(Duration::from_secs(300))?;
+        let result = pool.results.recv_timeout(Duration::from_millis(1));
+        if sent > count {
+            decode += phase.elapsed();
+        }
+        let completion = match result {
+            Ok(completion) => completion,
+            Err(error) if error.is_timeout() => continue,
+            Err(error) => return Err(error.into()),
+        };
         let handle = completion.request.handle;
         let image = completion.result?;
-        decode += phase.elapsed();
         if path.is_dir() {
             let phase = Instant::now();
             let item = Item::image(

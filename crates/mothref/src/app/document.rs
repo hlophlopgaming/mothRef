@@ -24,11 +24,14 @@ impl Default for View {
 }
 impl View {
     pub(super) fn fit(&mut self, scene: &Scene) {
+        self.fit_bounds(scene.bounds());
+    }
+    pub(super) fn fit_bounds(&mut self, bounds: Option<Rect>) {
         self.needs_fit = true;
         if !self.viewport.is_finite() || !self.viewport.is_positive() {
             return;
         }
-        if let Some(bounds) = scene.bounds() {
+        if let Some(bounds) = bounds {
             self.camera.zoom = ((self.viewport.width() - 48.) / bounds.width)
                 .min((self.viewport.height() - 48.) / bounds.height)
                 .clamp(0.01, 64.);
@@ -51,6 +54,8 @@ pub(super) struct Document {
     pub(super) image_count: usize,
     boards: moth_platform::boards::Worker,
     pub(super) in_flight: usize,
+    pub(super) loading: bool,
+    pub(super) loading_bounds: Option<Rect>,
     pub(super) pasting: usize,
     pub(super) path: String,
     pub(super) dirty: bool,
@@ -221,6 +226,8 @@ impl Document {
             image_count: 0,
             boards,
             in_flight: 0,
+            loading: false,
+            loading_bounds: None,
             pasting: 0,
             path: String::new(),
             dirty: false,
@@ -241,7 +248,11 @@ impl Document {
         })
     }
     pub(super) fn fit(&mut self) {
-        self.view.fit(&self.scene);
+        if self.loading_bounds.is_some() {
+            self.view.fit_bounds(self.loading_bounds);
+        } else {
+            self.view.fit(&self.scene);
+        }
     }
     pub(super) fn idle(&self) -> bool {
         self.pasting == 0
@@ -259,6 +270,10 @@ impl Document {
     }
     /// Enqueue a journaled save; the caller resolves the path first.
     pub(super) fn save(&mut self) {
+        if self.loading {
+            self.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
+            return;
+        }
         match self
             .boards
             .requests
