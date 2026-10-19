@@ -297,6 +297,89 @@ impl Document {
 mod tests {
     use super::*;
     #[test]
+    fn batch_edits_show_affected_items_and_undo_together() {
+        let root = std::env::temp_dir().join(format!("mothref-batch-{}", Uuid::now_v7()));
+        let board = Document::with_storage(
+            Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+            Arc::new(|| {}),
+            false,
+        )
+        .unwrap();
+        let mut workspace = workspace::Workspace::new(board, Arc::new(|| {}));
+        let items: Vec<_> = (0..3)
+            .map(|n| {
+                Item::text(
+                    "note",
+                    Rect {
+                        x: n as f32 * 30.,
+                        y: 0.,
+                        width: 20.,
+                        height: 10.,
+                    },
+                    None,
+                )
+            })
+            .collect();
+        let drain = |workspace: &mut workspace::Workspace| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while workspace.board.in_flight > 0 {
+                workspace.pump(workspace::Pump {
+                    format: moth_io::ImageFormat::default(),
+                    cursor: None,
+                    fallback: [0.; 2],
+                    auto_arrange: false,
+                    threshold: 10,
+                    upload: &mut |_| {},
+                    events: Vec::new(),
+                });
+                assert!(Instant::now() < deadline, "batch must be acknowledged");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        };
+        workspace.persist_batch(
+            items
+                .iter()
+                .cloned()
+                .map(|i| (Command::Insert(i), None))
+                .collect(),
+        );
+        drain(&mut workspace);
+        workspace.board.selection.clear();
+        workspace.persist_batch(
+            items
+                .iter()
+                .take(2)
+                .map(|i| {
+                    (
+                        Command::SetRect {
+                            id: i.id,
+                            rect: Rect { y: 50., ..i.rect },
+                        },
+                        None,
+                    )
+                })
+                .collect(),
+        );
+        drain(&mut workspace);
+        assert_eq!(
+            workspace.board.selection,
+            items.iter().take(2).map(|i| i.id).collect()
+        );
+        assert_eq!(workspace.board.scene.get(items[2].id), Some(&items[2]));
+        workspace.persist(moth_platform::boards::Request::Undo);
+        drain(&mut workspace);
+        for item in &items {
+            assert_eq!(workspace.board.scene.get(item.id), Some(item));
+        }
+        workspace.persist(moth_platform::boards::Request::Redo);
+        drain(&mut workspace);
+        for item in &items[..2] {
+            assert_eq!(workspace.board.scene.get(item.id).unwrap().rect.y, 50.);
+        }
+        workspace.board.boards.finish().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn image_count_tracks_successful_commands_undo_and_opened_scenes() {
         let root = std::env::temp_dir().join(format!("mothref-image-count-{}", Uuid::now_v7()));
         let mut board = Document::with_storage(

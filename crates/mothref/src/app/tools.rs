@@ -9,7 +9,7 @@ pub(super) struct Tools {
     draft: Option<(Uuid, Rect, Transform)>,
     observed: Option<(Uuid, Rect, Transform)>,
     pub gap: f32,
-    order: u8,
+    pub(super) order: u8,
     last_arrange: Option<(u8, u8, u64)>,
     reversed: bool,
     random_salt: u128,
@@ -317,7 +317,9 @@ impl Tools {
                         ui.label(text(Text::ChangedSetting));
                     }
                     if self.preferences() != defaults.preferences()
-                        && ui.button(text(Text::Defaults)).clicked()
+                        && ui
+                            .button(moth_ui::tooltip(ui.ctx(), Text::Defaults))
+                            .clicked()
                     {
                         self.wheel = defaults.wheel;
                         self.scale_with_window = defaults.scale_with_window;
@@ -341,16 +343,25 @@ impl Tools {
                     grayscale: self.grayscale,
                 });
                 ui.horizontal_wrapped(|ui| {
-                    if ui.button(text(Text::Fit)).clicked() {
+                    if ui.button(moth_ui::tooltip(ui.ctx(), Text::Fit)).clicked() {
                         intents.push(Intent::NeedsFit);
                     }
-                    if ui.button(text(Text::ResetCamera)).clicked() {
+                    if ui
+                        .button(moth_ui::tooltip(ui.ctx(), Text::ResetCamera))
+                        .clicked()
+                    {
                         intents.push(Intent::ResetCamera);
                     }
-                    if ui.button(text(Text::PreviousImage)).clicked() {
+                    if ui
+                        .button(moth_ui::tooltip(ui.ctx(), Text::PreviousImage))
+                        .clicked()
+                    {
                         intents.push(Intent::Focus(-1));
                     }
-                    if ui.button(text(Text::NextImage)).clicked() {
+                    if ui
+                        .button(moth_ui::tooltip(ui.ctx(), Text::NextImage))
+                        .clicked()
+                    {
                         intents.push(Intent::Focus(1));
                     }
                 });
@@ -364,7 +375,44 @@ impl Tools {
                         .collect();
                     items.sort_unstable_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
                     ui.add_enabled_ui(!self.locked, |ui| {
-                        note = ui.button(text(Text::AddNote)).clicked();
+                        note = ui
+                            .button(moth_ui::tooltip(ui.ctx(), Text::AddNote))
+                            .clicked();
+                        ui.label(format!(
+                            "{}: {}",
+                            text(Text::EditSelection),
+                            board.selection.len()
+                        ));
+                        ui.add_enabled_ui(!board.selection.is_empty(), |ui| {
+                            for (label, quarters) in [(Text::RotateCw, 1.), (Text::RotateCcw, -1.)]
+                            {
+                                if ui.button(moth_ui::tooltip(ui.ctx(), label)).clicked() {
+                                    commands.extend(super::transform_selection(
+                                        &board.scene,
+                                        &board.selection,
+                                        |t| super::rotated(t, quarters),
+                                    ));
+                                }
+                            }
+                            for (label, axis) in
+                                [(Text::FlipHorizontal, 0), (Text::FlipVertical, 1)]
+                            {
+                                if ui.button(moth_ui::tooltip(ui.ctx(), label)).clicked() {
+                                    commands.extend(super::transform_selection(
+                                        &board.scene,
+                                        &board.selection,
+                                        |t| super::mirrored(t, axis),
+                                    ));
+                                }
+                            }
+                            if ui
+                                .button(moth_ui::tooltip(ui.ctx(), Text::Delete))
+                                .clicked()
+                            {
+                                commands
+                                    .extend(board.selection.iter().copied().map(Command::Remove));
+                            }
+                        });
                         if items.len() == 1 {
                             let item = items[0];
                             if self.observed != Some((item.id, item.rect, item.transform)) {
@@ -429,7 +477,7 @@ impl Tools {
                                 if ui
                                     .add_enabled(
                                         frame.valid() && t.valid(),
-                                        egui::Button::new(text(Text::Apply)),
+                                        egui::Button::new(moth_ui::tooltip(ui.ctx(), Text::Apply)),
                                     )
                                     .clicked()
                                 {
@@ -446,7 +494,10 @@ impl Tools {
                                         });
                                     }
                                 }
-                                if ui.button(text(Text::Cancel)).clicked() {
+                                if ui
+                                    .button(moth_ui::tooltip(ui.ctx(), Text::Cancel))
+                                    .clicked()
+                                {
                                     *frame = item.rect;
                                     *t = item.transform;
                                 }
@@ -472,7 +523,10 @@ impl Tools {
                             for i in 0..4 {
                                 let (key, mode) = layout(i);
                                 if ui
-                                    .add_enabled(!items.is_empty(), egui::Button::new(text(key)))
+                                    .add_enabled(
+                                        !items.is_empty(),
+                                        egui::Button::new(moth_ui::tooltip(ui.ctx(), key)),
+                                    )
                                     .clicked()
                                 {
                                     commands.extend(self.arrange(
@@ -485,7 +539,10 @@ impl Tools {
                             if old_gap != self.gap {
                                 intents.push(Intent::PreferencesDirty);
                             }
-                            if ui.button(text(Text::PackFit)).clicked() {
+                            if ui
+                                .button(moth_ui::tooltip(ui.ctx(), Text::PackFit))
+                                .clicked()
+                            {
                                 let mut all: Vec<_> = board.scene.items().collect();
                                 all.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
                                 commands.extend(arrange::arrange(
@@ -502,7 +559,7 @@ impl Tools {
                                 (Text::NormalizeSize, arrange::Normalize::Size),
                                 (Text::NormalizeArea, arrange::Normalize::Area),
                             ] {
-                                if ui.button(text(label)).clicked() {
+                                if ui.button(moth_ui::tooltip(ui.ctx(), label)).clicked() {
                                     commands.extend(arrange::normalize(&items, mode));
                                 }
                             }
@@ -515,7 +572,7 @@ impl Tools {
                                 (Text::DistributeVertical, arrange::Align::Vertical),
                                 (Text::Stack, arrange::Align::Stack),
                             ] {
-                                if ui.button(text(label)).clicked() {
+                                if ui.button(moth_ui::tooltip(ui.ctx(), label)).clicked() {
                                     commands.extend(arrange::align(&items, mode));
                                 }
                             }
@@ -523,7 +580,7 @@ impl Tools {
                             if ui
                                 .add_enabled(
                                     !items.is_empty(),
-                                    egui::Button::new(text(Text::Apply)),
+                                    egui::Button::new(moth_ui::tooltip(ui.ctx(), Text::Apply)),
                                 )
                                 .clicked()
                             {
@@ -534,7 +591,7 @@ impl Tools {
                             (Text::ResetScale, Geometry::Scale),
                             (Text::NormalizeScale, Geometry::Normalize),
                         ] {
-                            if ui.button(text(key)).clicked() {
+                            if ui.button(moth_ui::tooltip(ui.ctx(), key)).clicked() {
                                 intents.push(Intent::OriginalGeometry(
                                     items
                                         .iter()
@@ -553,7 +610,13 @@ impl Tools {
                                 (Text::NudgeUp, [0., -1.], false),
                                 (Text::NudgeDown, [0., 1.], false),
                             ] {
-                                if ui.button(text(key)).clicked() {
+                                if ui
+                                    .add_enabled(
+                                        !board.selection.is_empty(),
+                                        egui::Button::new(moth_ui::tooltip(ui.ctx(), key)),
+                                    )
+                                    .clicked()
+                                {
                                     commands.extend(arrange::translate(
                                         &items,
                                         delta,
@@ -569,7 +632,7 @@ impl Tools {
                             (Text::BringForward, true, false),
                             (Text::SendBackward, false, false),
                         ] {
-                            if ui.button(text(key)).clicked() {
+                            if ui.button(moth_ui::tooltip(ui.ctx(), key)).clicked() {
                                 commands.extend(arrange::reorder(
                                     &board.scene,
                                     &items.iter().map(|i| i.id).collect(),
@@ -584,7 +647,7 @@ impl Tools {
                             (Text::ResetCrop, 2),
                             (Text::ResetTransform, 3),
                         ] {
-                            if ui.button(text(key)).clicked() {
+                            if ui.button(moth_ui::tooltip(ui.ctx(), key)).clicked() {
                                 if kind >= 2 {
                                     intents.push(Intent::OriginalGeometry(
                                         items.iter().map(|i| i.id).collect(),
@@ -640,7 +703,7 @@ impl Tools {
                         if ui
                             .add_enabled(
                                 valid && !board.scene.is_empty(),
-                                egui::Button::new(text(Text::ExportScene)),
+                                egui::Button::new(moth_ui::tooltip(ui.ctx(), Text::ExportScene)),
                             )
                             .clicked()
                         {
@@ -654,7 +717,10 @@ impl Tools {
                         if ui
                             .add_enabled(
                                 valid && !items.is_empty(),
-                                egui::Button::new(text(Text::ExportSelection)),
+                                egui::Button::new(moth_ui::tooltip(
+                                    ui.ctx(),
+                                    Text::ExportSelection,
+                                )),
                             )
                             .clicked()
                         {
@@ -669,7 +735,13 @@ impl Tools {
                             && item.blob().is_some()
                         {
                             if ui
-                                .add_enabled(valid, egui::Button::new(text(Text::ExportOriginal)))
+                                .add_enabled(
+                                    valid,
+                                    egui::Button::new(moth_ui::tooltip(
+                                        ui.ctx(),
+                                        Text::ExportOriginal,
+                                    )),
+                                )
                                 .clicked()
                             {
                                 export = Some(Target::Original {
@@ -677,14 +749,20 @@ impl Tools {
                                     id: item.id,
                                 });
                             }
-                            if ui.button(text(Text::CopyImage)).clicked() {
+                            if ui
+                                .button(moth_ui::tooltip(ui.ctx(), Text::CopyImage))
+                                .clicked()
+                            {
                                 export = Some(Target::Clipboard(item.id));
                             }
                         }
                         if ui
                             .add_enabled(
                                 valid && !board.scene.is_empty(),
-                                egui::Button::new(text(Text::ExportOriginals)),
+                                egui::Button::new(moth_ui::tooltip(
+                                    ui.ctx(),
+                                    Text::ExportOriginals,
+                                )),
                             )
                             .clicked()
                         {
@@ -693,7 +771,7 @@ impl Tools {
                         if ui
                             .add_enabled(
                                 valid && !board.scene.is_empty(),
-                                egui::Button::new(text(Text::ExportZip)),
+                                egui::Button::new(moth_ui::tooltip(ui.ctx(), Text::ExportZip)),
                             )
                             .clicked()
                         {

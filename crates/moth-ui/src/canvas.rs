@@ -68,22 +68,32 @@ pub fn tools(ctx: &Context, viewport: egui::Rect, pan: &mut bool) -> Actions {
                         egui::Layout::top_down(egui::Align::Min)
                     };
                     ui.with_layout(layout, |ui| {
-                        if icons::button(ui, Icon::Select, &tooltip(Text::Select), !*pan).clicked()
+                        if icons::button(ui, Icon::Select, &tooltip(ui.ctx(), Text::Select), !*pan)
+                            .clicked()
                         {
                             *pan = false;
                         }
-                        if icons::button(ui, Icon::Pan, &tooltip(Text::Pan), *pan).clicked() {
+                        if icons::button(ui, Icon::Pan, &tooltip(ui.ctx(), Text::Pan), *pan)
+                            .clicked()
+                        {
                             *pan = true;
                         }
                         a.paste =
-                            icons::button(ui, Icon::Paste, &tooltip(Text::Paste), false).clicked();
-                        a.open =
-                            icons::button(ui, Icon::Folder, &tooltip(Text::Open), false).clicked();
-                        ui.separator();
-                        a.fit = icons::button(ui, Icon::Fit, &tooltip(Text::Fit), false).clicked();
-                        a.overlay =
-                            icons::button(ui, Icon::Overlay, &tooltip(Text::Overlay), false)
+                            icons::button(ui, Icon::Paste, &tooltip(ui.ctx(), Text::Paste), false)
                                 .clicked();
+                        a.open =
+                            icons::button(ui, Icon::Folder, &tooltip(ui.ctx(), Text::Open), false)
+                                .clicked();
+                        ui.separator();
+                        a.fit = icons::button(ui, Icon::Fit, &tooltip(ui.ctx(), Text::Fit), false)
+                            .clicked();
+                        a.overlay = icons::button(
+                            ui,
+                            Icon::Overlay,
+                            &tooltip(ui.ctx(), Text::Overlay),
+                            false,
+                        )
+                        .clicked();
                     });
                 });
         });

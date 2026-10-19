@@ -155,6 +155,7 @@ impl Tool {
             },
             phase,
             pan: false,
+            button: 1,
         })
     }
 }

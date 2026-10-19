@@ -141,14 +141,14 @@ Short data-safety checks and existing automated CI remain in scope.
 discoverable shortcuts and navigation without a working middle mouse button come
 before the browser extension and advanced window integration.
 
-- [ ] Consistent multi-selection editing: move, scale, rotate, flip, duplicate, delete, reorder and arrange selected items together; show the affected selection and make each batch action one undo step
-- [ ] Configurable keyboard and mouse bindings: conflict detection, reset to defaults, and familiar BeeRef/PureRef-style navigation presets; show active bindings in tooltips and menus
+- [x] Consistent multi-selection editing: move, scale, rotate, flip, duplicate, delete, reorder and arrange selected items together; show the affected selection and make each batch action one undo step
+- [x] Configurable keyboard and mouse bindings: conflict detection, reset to defaults, and familiar BeeRef/PureRef-style navigation presets; show active bindings in tooltips and menus
   - Use the [screenshot shortcut comparison](docs/SHORTCUTS.md) as a command/gesture inventory; an existing Tools action does not imply that its PureRef binding is implemented
   - One action/binding registry for dispatch, tooltips, cheat sheet and palette; exact modifiers, text/modal focus isolation, and explicit conflict preview for optional presets
   - Resolve Space focus versus Space+drag pan, Alt-drag pan versus duplicate, and arrows for focus/layering versus nudging; keep visible pen/touch alternatives
 - [ ] Hotkey to jump between images (BeeRef #116)
 - [ ] In-app shortcut cheat sheet: all actions and their current bindings (including custom bindings), grouped by category and searchable; open with `/` or from Help
-- [ ] Command Palette (Omnibar / Quick Search): search and run application actions, show their current shortcuts; open with Ctrl/⌘+K or a visible menu button, navigate with arrows, Enter to run, Esc to close
+- [x] Command Palette (Omnibar / Quick Search): search and run application actions, show their current shortcuts; open with Ctrl/⌘+K or a visible menu button, navigate with arrows, Enter to run, Esc to close
 - [ ] Full navigation without pressing the middle mouse button: Space + left-drag to pan, a visible Hand tool with left-drag, and rebindable pan controls; middle-click remains optional
 - [ ] Navigation without a working wheel: visible and keyboard zoom controls, fit board / fit selection, keyboard panning, trackpad two-finger pan and pinch zoom; keep touch and pen paths available
 - [ ] Open `.bee` / `.pur` boards for editing in MothRef, keeping the source file untouched; `.moth` is the only working-board save format

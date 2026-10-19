@@ -17,6 +17,8 @@ pub(super) struct Canvas<'a> {
     pub duplicate: bool,
     pub gpu: &'a Gpu,
     pub overlay: bool,
+    pub secondary_gesture: bool,
+    pub activate: bool,
 }
 
 /// Draws the canvas panel and the tools window, emitting intents for board edits.
@@ -34,11 +36,16 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
         duplicate,
         gpu,
         overlay,
+        secondary_gesture,
+        activate,
     } = ctx;
     let mut view = board.view;
     if !overlay {
         egui::Panel::bottom("board_tools_button").show(ui, |ui| {
-            if ui.button(moth_ui::text(moth_ui::Text::Tools)).clicked() {
+            if ui
+                .button(moth_ui::tooltip(ui.ctx(), moth_ui::Text::Tools))
+                .clicked()
+            {
                 intents.push(Intent::ToggleTools);
             }
         });
@@ -289,135 +296,166 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     egui::Id::new("canvas_context"),
                     egui::Sense::click(),
                 );
-                response.context_menu(|ui| {
-                    if ui
-                        .add_enabled(
-                            board.idle() && editing.is_none(),
-                            egui::Button::new(moth_ui::text(moth_ui::Text::AddNote)),
-                        )
-                        .clicked()
-                    {
-                        if let Some(pos) = response.interact_pointer_pos() {
-                            let world = view.camera.world([pos.x, pos.y]);
-                            intents.push(Intent::AddNote(world));
-                        }
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button(moth_ui::text(moth_ui::Text::Fit)).clicked() {
-                        actions.fit = true;
-                        ui.close();
-                    }
-                    ui.add_enabled_ui(board.idle(), |ui| {
-                        if ui.button(moth_ui::text(moth_ui::Text::Undo)).clicked() {
-                            intents.push(Intent::Undo);
-                            ui.close();
-                        }
-                        if ui.button(moth_ui::text(moth_ui::Text::Redo)).clicked() {
-                            intents.push(Intent::Redo);
+                if !secondary_gesture {
+                    response.context_menu(|ui| {
+                        if ui
+                            .add_enabled(
+                                board.idle() && editing.is_none(),
+                                egui::Button::new(moth_ui::tooltip(
+                                    ui.ctx(),
+                                    moth_ui::Text::AddNote,
+                                )),
+                            )
+                            .clicked()
+                        {
+                            if let Some(pos) = response.interact_pointer_pos() {
+                                let world = view.camera.world([pos.x, pos.y]);
+                                intents.push(Intent::AddNote(world));
+                            }
                             ui.close();
                         }
                         ui.separator();
-                        let enabled = !board.scene.is_empty();
-                        ui.add_enabled_ui(enabled, |ui| {
-                            let mut items: Vec<_> = board
-                                .scene
-                                .items()
-                                .filter(|i| {
-                                    board.selection.is_empty() || board.selection.contains(&i.id)
-                                })
-                                .collect();
-                            items.sort_unstable_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
+                        if ui
+                            .button(moth_ui::tooltip(ui.ctx(), moth_ui::Text::Fit))
+                            .clicked()
+                        {
+                            actions.fit = true;
+                            ui.close();
+                        }
+                        ui.add_enabled_ui(board.idle(), |ui| {
                             if ui
-                                .button(moth_ui::text(moth_ui::Text::FitSelection))
+                                .button(moth_ui::tooltip(ui.ctx(), moth_ui::Text::Undo))
                                 .clicked()
                             {
-                                intents.push(Intent::FitSelection);
+                                intents.push(Intent::Undo);
                                 ui.close();
                             }
-                            let target_width = view.viewport.width() / view.camera.zoom;
-                            ui.menu_button(moth_ui::text(moth_ui::Text::Arrange), |ui| {
-                                for (label, mode) in [
-                                    (moth_ui::Text::Horizontal, arrange::Arrange::Horizontal),
-                                    (moth_ui::Text::Vertical, arrange::Arrange::Vertical),
-                                    (moth_ui::Text::Grid, arrange::Arrange::Grid),
-                                    (moth_ui::Text::Optimal, arrange::Arrange::Optimal),
+                            if ui
+                                .button(moth_ui::tooltip(ui.ctx(), moth_ui::Text::Redo))
+                                .clicked()
+                            {
+                                intents.push(Intent::Redo);
+                                ui.close();
+                            }
+                            ui.separator();
+                            let enabled = !board.scene.is_empty();
+                            ui.add_enabled_ui(enabled, |ui| {
+                                let mut items: Vec<_> = board
+                                    .scene
+                                    .items()
+                                    .filter(|i| {
+                                        board.selection.is_empty()
+                                            || board.selection.contains(&i.id)
+                                    })
+                                    .collect();
+                                items.sort_unstable_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
+                                if ui
+                                    .button(moth_ui::tooltip(ui.ctx(), moth_ui::Text::FitSelection))
+                                    .clicked()
+                                {
+                                    intents.push(Intent::FitSelection);
+                                    ui.close();
+                                }
+                                let target_width = view.viewport.width() / view.camera.zoom;
+                                ui.menu_button(moth_ui::text(moth_ui::Text::Arrange), |ui| {
+                                    for (label, mode) in [
+                                        (moth_ui::Text::Horizontal, arrange::Arrange::Horizontal),
+                                        (moth_ui::Text::Vertical, arrange::Arrange::Vertical),
+                                        (moth_ui::Text::Grid, arrange::Arrange::Grid),
+                                        (moth_ui::Text::Optimal, arrange::Arrange::Optimal),
+                                    ] {
+                                        if ui.button(moth_ui::tooltip(ui.ctx(), label)).clicked() {
+                                            intents.push(Intent::Commands(tools.arrange(
+                                                &mut items,
+                                                mode,
+                                                target_width,
+                                            )));
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                                ui.menu_button(moth_ui::text(moth_ui::Text::Normalize), |ui| {
+                                    for (label, mode) in [
+                                        (moth_ui::Text::NormalizeWidth, arrange::Normalize::Width),
+                                        (
+                                            moth_ui::Text::NormalizeHeight,
+                                            arrange::Normalize::Height,
+                                        ),
+                                        (moth_ui::Text::NormalizeSize, arrange::Normalize::Size),
+                                        (moth_ui::Text::NormalizeArea, arrange::Normalize::Area),
+                                    ] {
+                                        if ui.button(moth_ui::tooltip(ui.ctx(), label)).clicked() {
+                                            intents.push(Intent::Commands(arrange::normalize(
+                                                &items, mode,
+                                            )));
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                                for (label, quarters) in [
+                                    (moth_ui::Text::RotateCw, 1.),
+                                    (moth_ui::Text::RotateCcw, -1.),
                                 ] {
-                                    if ui.button(moth_ui::text(label)).clicked() {
-                                        intents.push(Intent::Commands(tools.arrange(
-                                            &mut items,
-                                            mode,
-                                            target_width,
+                                    if ui.button(moth_ui::tooltip(ui.ctx(), label)).clicked() {
+                                        intents.push(Intent::Commands(super::transform_selection(
+                                            &board.scene,
+                                            &board.selection,
+                                            |transform| super::rotated(transform, quarters),
                                         )));
                                         ui.close();
                                     }
                                 }
-                            });
-                            ui.menu_button(moth_ui::text(moth_ui::Text::Normalize), |ui| {
-                                for (label, mode) in [
-                                    (moth_ui::Text::NormalizeWidth, arrange::Normalize::Width),
-                                    (moth_ui::Text::NormalizeHeight, arrange::Normalize::Height),
-                                    (moth_ui::Text::NormalizeSize, arrange::Normalize::Size),
-                                    (moth_ui::Text::NormalizeArea, arrange::Normalize::Area),
+                                for (label, axis) in [
+                                    (moth_ui::Text::FlipHorizontal, 0),
+                                    (moth_ui::Text::FlipVertical, 1),
                                 ] {
-                                    if ui.button(moth_ui::text(label)).clicked() {
-                                        intents.push(Intent::Commands(arrange::normalize(
-                                            &items, mode,
+                                    if ui.button(moth_ui::tooltip(ui.ctx(), label)).clicked() {
+                                        intents.push(Intent::Commands(super::transform_selection(
+                                            &board.scene,
+                                            &board.selection,
+                                            |transform| super::mirrored(transform, axis),
                                         )));
                                         ui.close();
                                     }
                                 }
+                                if ui
+                                    .button(moth_ui::tooltip(
+                                        ui.ctx(),
+                                        moth_ui::Text::ResetTransform,
+                                    ))
+                                    .clicked()
+                                {
+                                    intents.push(Intent::OriginalGeometry(
+                                        items.iter().map(|i| i.id).collect(),
+                                        moth_platform::export::Geometry::All,
+                                    ));
+                                    ui.close();
+                                }
+                                if ui
+                                    .add_enabled(
+                                        !board.selection.is_empty(),
+                                        egui::Button::new(moth_ui::tooltip(
+                                            ui.ctx(),
+                                            moth_ui::Text::Delete,
+                                        )),
+                                    )
+                                    .clicked()
+                                {
+                                    intents.push(Intent::Commands(
+                                        items
+                                            .iter()
+                                            .map(|i| moth_scene::Command::Remove(i.id))
+                                            .collect(),
+                                    ));
+                                    ui.close();
+                                }
                             });
-                            for (label, quarters) in [
-                                (moth_ui::Text::RotateCw, 1.),
-                                (moth_ui::Text::RotateCcw, -1.),
-                            ] {
-                                if ui.button(moth_ui::text(label)).clicked() {
-                                    intents.push(Intent::Commands(super::transform_selection(
-                                        &board.scene,
-                                        &board.selection,
-                                        |transform| super::rotated(transform, quarters),
-                                    )));
-                                    ui.close();
-                                }
-                            }
-                            for (label, axis) in [
-                                (moth_ui::Text::FlipHorizontal, 0),
-                                (moth_ui::Text::FlipVertical, 1),
-                            ] {
-                                if ui.button(moth_ui::text(label)).clicked() {
-                                    intents.push(Intent::Commands(super::transform_selection(
-                                        &board.scene,
-                                        &board.selection,
-                                        |transform| super::mirrored(transform, axis),
-                                    )));
-                                    ui.close();
-                                }
-                            }
-                            if ui
-                                .button(moth_ui::text(moth_ui::Text::ResetTransform))
-                                .clicked()
-                            {
-                                intents.push(Intent::OriginalGeometry(
-                                    items.iter().map(|i| i.id).collect(),
-                                    moth_platform::export::Geometry::All,
-                                ));
-                                ui.close();
-                            }
-                            if ui.button(moth_ui::text(moth_ui::Text::Delete)).clicked() {
-                                intents.push(Intent::Commands(
-                                    items
-                                        .iter()
-                                        .map(|i| moth_scene::Command::Remove(i.id))
-                                        .collect(),
-                                ));
-                                ui.close();
-                            }
                         });
                     });
-                });
+                }
                 // Double-click edits a note in place, or creates one on empty canvas.
                 if response.double_clicked()
+                    && activate
                     && board.idle()
                     && let Some(pos) = response.interact_pointer_pos()
                 {

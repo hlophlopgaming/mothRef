@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add configurable exact keyboard and mouse chords, searchable binding settings, conflict previews, reset to defaults and optional BeeRef/PureRef-style navigation presets. Use Space to focus on tap or pan on drag; show current bindings in tooltips and menus.
+- Add the searchable command palette through Ctrl/Command+K or the Commands menu, with arrow-key navigation, Enter to run and Escape to close. Canvas actions stay isolated from text editors and modals.
+
+- Rotate and flip selected items around their shared center; expose group rotation, flip and deletion in Tools, show the selection count, and prevent empty-selection deletion or duplication. Batch edits retain one undo step.
+
 ## 0.1.0-alpha.4 — 2026-10-19
 
 - Run portable GPU tests on the available adapter instead of requiring a software adapter that Metal does not provide; retain an explicit software-rendering check on Linux.

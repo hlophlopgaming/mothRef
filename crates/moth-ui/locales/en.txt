@@ -169,3 +169,31 @@ DragAnimation = Animate dragging
 DragOpacity = Drag opacity without animation
 
 ShowOutlines = Show item outlines
+
+CommandPalette = Command palette
+Shortcuts = Keyboard and mouse bindings
+NextTab = Next tab
+ZoomReset = Zoom to 100%
+NudgeLeftFast = Nudge left (10)
+NudgeRightFast = Nudge right (10)
+NudgeUpFast = Nudge up (10)
+NudgeDownFast = Nudge down (10)
+ArrangeName = Arrange by name
+ArrangeTime = Arrange by addition
+MoveDrag = Move / select drag
+ExtendDrag = Extend selection drag
+DuplicateDrag = Duplicate drag
+PanDrag = Pan drag
+PanSpaceDrag = Pan drag (alternate 1)
+PanAltDrag = Pan drag (alternate 2)
+BindingHelp = Edit a chord, or leave it empty to unbind. Cmd means Ctrl on Windows/Linux and Command on macOS. Examples: Cmd+Shift+S, Alt+Mouse1, Space+Mouse1. Mouse1/2/3 = left/right/middle. Escape cancels.
+PresetHelp = Navigation presets only. Space taps focus; Space drags pan. PureRef-style uses Alt-drag to pan, Cmd+Alt-drag to duplicate, arrows for focus/layers, Alt+arrows to nudge. Review every change before Apply.
+SearchActions = Search actions
+NoActions = No matching actions
+InvalidBinding = Invalid chord or wrong input type. Use key names such as ArrowLeft, Space, F2.
+BindingConflict = Binding conflict
+BindingPreview = Changes to apply (current → proposed)
+Commands = Commands
+BindingAction = Action
+BindingProposed = Proposed binding
+BindingCurrent = Current binding

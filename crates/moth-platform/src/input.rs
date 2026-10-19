@@ -40,6 +40,8 @@ pub struct Pointer {
     pub phase: Phase,
     /// Carries pan intent independently of mouse button conventions.
     pub pan: bool,
+    /// Portable button identity: 1 primary/contact, 2 secondary, 3 middle.
+    pub button: u8,
 }
 /// Wheel zoom shares the same gesture layer as two-finger pinch.
 pub enum Input {
@@ -136,10 +138,18 @@ impl Adapter {
                     pressure: 1.,
                     phase: Phase::Move,
                     pan: self.pan,
+                    button: match self.button {
+                        Some(MouseButton::Middle) => 3,
+                        Some(MouseButton::Right) => 2,
+                        _ => 1,
+                    },
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                if !matches!(button, MouseButton::Left | MouseButton::Middle) {
+                if !matches!(
+                    button,
+                    MouseButton::Left | MouseButton::Middle | MouseButton::Right
+                ) {
                     return None;
                 }
                 match state {
@@ -159,6 +169,11 @@ impl Adapter {
                         Phase::Up
                     },
                     pan: self.pan,
+                    button: match button {
+                        MouseButton::Middle => 3,
+                        MouseButton::Right => 2,
+                        _ => 1,
+                    },
                 }
             }
             WindowEvent::MouseWheel { delta, phase, .. } => {
@@ -205,6 +220,7 @@ impl Adapter {
                     pressure: 0.,
                     phase: Phase::Cancel,
                     pan: false,
+                    button: 1,
                 }
             }
             WindowEvent::Touch(t) => Pointer {
@@ -227,6 +243,7 @@ impl Adapter {
                     TouchPhase::Cancelled => Phase::Cancel,
                 },
                 pan: false,
+                button: 1,
             },
             _ => return None,
         };
@@ -305,6 +322,37 @@ fn pair(t: &[(u64, [f32; 2])]) -> Option<([f32; 2], f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mouse_button_identity_survives_move_and_release_for_custom_bindings() {
+        for (button, expected) in [
+            (MouseButton::Left, 1),
+            (MouseButton::Right, 2),
+            (MouseButton::Middle, 3),
+        ] {
+            let mut adapter = Adapter::default();
+            for state in [ElementState::Pressed, ElementState::Released] {
+                let event = WindowEvent::MouseInput {
+                    device_id: winit::event::DeviceId::dummy(),
+                    state,
+                    button,
+                };
+                let Some(Input::Pointer(pointer)) = adapter.event(&event, 1.) else {
+                    panic!("button must normalize");
+                };
+                assert_eq!(pointer.button, expected);
+                if state == ElementState::Pressed {
+                    let event = WindowEvent::CursorMoved {
+                        device_id: winit::event::DeviceId::dummy(),
+                        position: winit::dpi::PhysicalPosition::new(20., 30.),
+                    };
+                    let Some(Input::Pointer(pointer)) = adapter.event(&event, 1.) else {
+                        panic!("move must normalize");
+                    };
+                    assert_eq!(pointer.button, expected);
+                }
+            }
+        }
+    }
     #[test]
     fn continuous_wheel_input_preserves_device_intent() {
         let mut adapter = Adapter::default();
@@ -471,6 +519,7 @@ mod tests {
             pressure: 1.,
             phase: Phase::Down,
             pan: false,
+            button: 1,
         };
         g.update(p);
         g.update(p);
@@ -497,6 +546,7 @@ mod tests {
             pressure: 1.,
             phase: Phase::Down,
             pan: false,
+            button: 1,
         };
         g.update(p);
         g.update(Pointer {

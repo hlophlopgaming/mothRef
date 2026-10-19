@@ -1,6 +1,7 @@
 # Canvas controls and PureRef shortcut comparison
 
-Reviewed against MothRef input code on 2026-10-19. The PureRef column transcribes
+Reviewed against MothRef input code on 2026-10-19. The configurable binding registry
+and navigation presets described below supersede the earlier hard-coded dispatch audit. The PureRef column transcribes
 the maintainer-supplied **Actions / Controls** screenshot; its version and custom
 binding state are unknown. It is a compatibility reference, not a claim about
 current PureRef defaults. No PureRef executable was inspected. The screenshot is
@@ -17,10 +18,10 @@ An action being present in Tools does not mean its PureRef binding is implemente
 | Task | Current control |
 | --- | --- |
 | Select / Hand tool | `V` / `H`; visible tool-rail buttons |
-| Pan | MMB-drag, or LMB-drag with Hand selected; two-contact touch pan |
+| Pan | MMB-drag, Space+LMB-drag, or LMB-drag with Hand selected; two-contact touch pan |
 | Zoom | Wheel at cursor, toolbar `+` / `−`; pinch / continuous trackpad zoom |
 | Fit entire board | `Home`, Fit board button |
-| Fit selected group | Select images, double-click any selected image: fit the combined rotated bounds in both viewport dimensions with padding; double-click the same image again to return |
+| Fit selected group | Tap Space over the selection, or select images, double-click any selected image: fit the combined rotated bounds in both viewport dimensions with padding; double-click the same image again to return |
 | Focus one image | Double-click an image outside the selection |
 | Move / duplicate selection | LMB-drag / Alt+LMB-drag; selected images move as a group |
 | Add to selection | Shift+click; drag empty canvas for a selection rectangle |
@@ -31,12 +32,53 @@ An action being present in Tools does not mean its PureRef binding is implemente
 | Create / edit note | Double-click empty canvas / an existing note; Add note in Tools |
 | New / open / save board | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` |
 | Paste / undo / redo | `Ctrl+V` / `Ctrl+Z` / `Ctrl+Y` |
+| Duplicate / delete selection | `Ctrl+D` / `Delete`; visible Tools controls |
+| Command palette | `Ctrl+K` or Commands → Command palette; arrows, Enter, Esc |
+| Bindings and searchable command inventory | `/` or Commands → Keyboard and mouse bindings |
+| Zoom / 100% | `=` / `−`; bind Zoom to 100% in the editor |
 | Library / close tab / overlay | `Ctrl+L` / `Ctrl+W` / `Ctrl+T` |
 
-Keyboard actions are subject to canvas focus, text-editor/modal focus and pending
-storage work. Window features depend on platform capabilities. The visible Hand,
-zoom, fit and Tools controls are important alternatives for pen/touch and mice
-without a working wheel or MMB.
+Keyboard actions match **exact modifiers** and are suppressed in text editors,
+modals and active drags. Single-shot actions do not repeat while held; nudges and
+zoom may repeat. A Space tap focuses the hovered item or the selected group;
+moving at least four logical screen points while Space is held commits to pan
+and suppresses focus on release. Escape and loss of window focus cancel the gesture.
+Visible Hand, zoom, fit, previous/next and Tools controls remain pen/touch alternatives.
+
+## Configure and preview bindings
+
+Open **Commands → Keyboard and mouse bindings** (or `/`). Search by localized
+name or stable action ID. Each row shows an editable proposed chord and the current
+binding. Leave a chord empty to unbind it. `Cmd` is the portable Ctrl/Command
+modifier; `Shift`, `Alt`, `Super` (Windows/Linux), physical key names (`R`, `ArrowLeft`, `F2`, `Space`)
+and `Mouse1/2/3` (left/right/middle) compose exact chords. Examples:
+`Cmd+Shift+S`, `Alt+Mouse1`, `Space+Mouse1`. Keyboard actions require keys;
+drag actions require a mouse button, optionally with one held key.
+The existing wheel zoom/pan/off preference remains in Tools; touch pinch and
+trackpad streams retain their normalized device behavior.
+
+The preview lists all changes and conflicts before **Apply**. Duplicate chords
+and held-key gestures that would also fire another immediate key action block
+Apply; the deferred focus-tap/pan pair is intentional. Nothing silently steals an
+existing binding. Resolve a conflict by editing or unbinding one of its rows.
+**Defaults** also previews before applying. Cancel/Escape discards the draft.
+Bindings persist through the background settings worker, separately from board data.
+Invalid or conflicting saved maps are rejected as a whole.
+
+The **BeeRef-style navigation** preset uses the familiar MothRef move/Alt-duplicate,
+arrows-to-nudge and Space-pan controls. The **PureRef-style navigation** preset
+uses Alt+LMB pan, Cmd+Alt+LMB duplicate, Left/Right for previous/next image,
+Up/Down for front/back, and Alt+arrows for nudging. Both keep Space tap-to-focus
+and Space-drag-to-pan, MMB pan, and the normal board/file shortcuts. They are
+navigation presets, **not full copies of either application's defaults**. Existing
+custom bindings can conflict with a preset; those conflicts must be resolved in
+the same preview. No unsupported screenshot feature is silently assigned.
+
+The palette searches the same action IDs, localized labels and current shortcuts.
+Unavailable actions remain visible but disabled; Enter cannot run them. Parameterized
+editing/export controls remain in Tools, which is also a palette action.
+The binding editor's searchable inventory shares this registry; the roadmap's
+separate categorized Help cheat sheet is still pending.
 
 ## Actions from the screenshot
 
@@ -47,7 +89,7 @@ without a working wheel or MMB.
 | Always on top | `Ctrl+Shift+A` | Pin button; platform-dependent, no matching binding |
 | Arrange by addition | `Ctrl+Alt+A` | Tools arrange order: time added; no matching binding |
 | Arrange by name | `Ctrl+Alt+N` | Tools arrange order: filename; no matching binding |
-| Clear canvas | `Ctrl+K` | No dedicated action/binding; future command palette also reserves Ctrl+K |
+| Clear canvas | `Ctrl+K` | No dedicated action/binding; command palette reserves Ctrl+K |
 | Close | `Ctrl+X` | Window close control / Ctrl+W closes a tab; do not assign over future Cut |
 | Grayscale | `Ctrl+Alt+G` | Tools canvas grayscale and per-image grayscale; no matching binding |
 | Decrease master opacity | `Ctrl+−` | Missing master-window action; per-image opacity is a different property |
@@ -91,12 +133,12 @@ without a working wheel or MMB.
 | Change opacity | LMB + Ctrl+Alt+Shift | Per-image slider in Tools; missing drag gesture |
 | Crop selection | LMB + C | Crop controls exist; missing held-key crop gesture |
 | Flip | LMB + Alt+Shift | Shift+H / Shift+V and Tools; missing drag gesture; Alt-drag currently duplicates |
-| Focus image | Space | Double-click focuses image or whole selected group; no Space focus binding |
+| Focus image | Space | Double-click focuses image or whole selected group; Space tap now focuses; Space+LMB drag pans |
 | Send to front | Up | Tools layer actions; **conflict:** Up nudges selected items |
 | Send to back | Down | Tools layer actions; **conflict:** Down nudges selected items |
 | Focus previous image | Left | Tools Previous image; **conflict:** Left nudges selected items |
 | Focus next image | Right | Tools Next image; **conflict:** Right nudges selected items |
-| Pan | LMB + Alt / MMB | MMB and Hand+LMB exist; **conflict:** Alt+LMB duplicates selection |
+| Pan | LMB + Alt / MMB | MMB and Hand+LMB exist; default Alt+LMB duplicates selection; optional PureRef-style preset explicitly reassigns it to pan |
 | Pan while locked | LMB | Use Hand+LMB or MMB; automatic locked-canvas LMB pan is not guaranteed |
 | Pan while maximized | RMB | Use Hand+LMB or MMB; RMB opens context menu |
 | Pan cropping | LMB + V | Missing gesture; V currently selects the Select tool |
@@ -123,9 +165,10 @@ as shipped or authorizing all missing features now.
    In particular resolve Space focus versus planned Space+LMB pan, Alt-drag pan
    versus duplicate, arrows versus nudge, and Ctrl+N/O/L/W/Y/K/X. Do not infer
    unmatched actions from partial modifier checks. Support reset to defaults.
-   Current native keyboard dispatch checks the command modifier without exact
-   Shift/Alt matching for several actions; screenshot chords such as Ctrl+Alt+N
-   can therefore fall through to New board today. They are not safe aliases to try.
+   Exact modifiers now prevent screenshot chords from falling through to unrelated
+   commands; unbound screenshot chords do nothing. The presets above implement
+   only verified existing navigation actions, not missing screenshot features.
+
 3. **M3: navigation and batch editing first.** Preserve the selected group on
    focus, expose previous/next and fit selection through visible controls, then
    add held-key pan/zoom/scale/rotate/crop/picker gestures through the pointer
@@ -144,6 +187,7 @@ as shipped or authorizing all missing features now.
 
 - [Pointer adapter](../crates/moth-platform/src/input.rs): pointer kinds, wheel,
   pan and normalized zoom.
+- [Action registry](../crates/mothref/src/app/bindings.rs), [binding editor and palette](../crates/mothref/src/app/shortcuts.rs), and [shared action runner](../crates/mothref/src/app/actions.rs).
 - [Application input and intents](../crates/mothref/src/app.rs): keyboard dispatch,
   focus selection, camera fitting and command routing.
 - [Canvas](../crates/mothref/src/app/canvas.rs): double-click and context menus.
@@ -151,3 +195,20 @@ as shipped or authorizing all missing features now.
 - [UI tooltips](../crates/moth-ui/src/lib.rs): advertised bindings.
 
 This is a code audit, not a manual qualification of every listed interaction.
+
+## Automated validation and platform limits
+
+Registry tests cover exact modifiers, defaults, preset and held-key conflicts,
+settings round trips and rejection of malformed maps. Input tests cover Space
+tap/drag/cancel, focus isolation and repeat handling. Synthetic egui tests exercise
+palette arrows, Enter, unavailable actions and Escape, and current/unbound tooltip
+labels. Adapter tests preserve left/right/middle identity through a full gesture.
+Manual native input qualification on Linux/Windows/macOS, hardware pen/touch and
+non-US keyboard layouts remains unverified; physical key positions are used,
+as in MothRef's previous command shortcuts. No PureRef binary was inspected.
+
+Validation for this change: workspace clippy and tests passed, followed by the
+final changed-crate tests after focus/gesture guards were tightened. The tier-2
+quick benchmark rendered 10,000 images at 4.816 ms p99; `cargo xtask soak 300 5`
+completed 2,828 frames, with RSS stable at 194,324 KiB from 45 seconds onward.
+Tier-3 checks were not run in the agent session.

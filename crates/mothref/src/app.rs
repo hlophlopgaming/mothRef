@@ -13,9 +13,9 @@ use std::{
 };
 use winit::{
     application::ApplicationHandler,
-    event::{ElementState, KeyEvent, WindowEvent},
+    event::{ElementState, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy},
-    keyboard::{Key, KeyCode, NamedKey, PhysicalKey},
+    keyboard::{Key, NamedKey},
     window::{Window, WindowId},
 };
 #[derive(Debug)]
@@ -40,7 +40,9 @@ struct Editing {
     anchor: [f32; 2],
     focus: bool,
 }
+mod actions;
 mod arrange;
+mod bindings;
 mod camera_motion;
 mod canvas;
 mod chrome;
@@ -53,6 +55,7 @@ mod modal;
 mod motion;
 mod overlay;
 mod shell;
+mod shortcuts;
 mod tools;
 mod workspace;
 use document::Document;
@@ -61,6 +64,7 @@ use intent::Intent;
 pub struct App {
     workspace: workspace::Workspace,
     tools: tools::Tools,
+    shortcuts: shortcuts::Shortcuts,
     overlay: Option<overlay::Overlay>,
     pinned: bool,
     library_screen: library::LibraryScreen,
@@ -102,6 +106,7 @@ impl App {
         Ok(Self {
             workspace: workspace::Workspace::new(board, shell.wake()),
             tools: tools::Tools::default(),
+            shortcuts: shortcuts::Shortcuts::default(),
             overlay: None,
             pinned: false,
             library_screen: library::LibraryScreen::new(library_worker),
@@ -183,6 +188,8 @@ impl App {
         self.drag = None;
         self.moving = None;
         self.drag_pointer = None;
+        self.input.pending_focus = None;
+        self.input.pointer_action = None;
         self.input.gestures.cancel();
         if let Some(gpu) = &mut self.shell.gpu {
             gpu.registry.clear();
@@ -419,6 +426,10 @@ impl App {
                 workspace::Event::Opened => self.editing = None,
                 workspace::Event::Preferences(values) => {
                     self.tools.load(&values);
+                    if !self.shortcuts.registry.load(&values) {
+                        self.workspace.board.message =
+                            moth_ui::text(moth_ui::Text::InvalidBinding).into();
+                    }
                     self.shell.context().set_theme(if self.tools.dark {
                         egui::Theme::Dark
                     } else {
@@ -525,6 +536,7 @@ impl App {
     fn apply(&mut self, intent: Intent, event_loop: &ActiveEventLoop) {
         let before = self.workspace.board.view.camera;
         match intent {
+            Intent::Action(action) => self.run_action(action, event_loop),
             Intent::View(view) => self.workspace.board.view = view,
             Intent::ToggleTools => self.tools.open = !self.tools.open,
             Intent::NoteFocused => {
@@ -735,6 +747,7 @@ impl App {
                             .preferences()
                             .into_iter()
                             .map(|(k, v)| (k.to_owned(), v))
+                            .chain(self.shortcuts.registry.preferences())
                             .collect(),
                     ));
             }
@@ -808,40 +821,6 @@ impl App {
         self.animate_camera(before);
         self.redraw();
     }
-    /// Rotation, mirroring and reset keys; they act on the selection and need an idle board.
-    fn transform_keys(&self, event: &KeyEvent) -> Option<Vec<Command>> {
-        if self.input.command
-            || self.shell.context().egui_wants_keyboard_input()
-            || self.workspace.board.selection.is_empty()
-            || !self.workspace.board.idle()
-        {
-            return None;
-        }
-        let shift = self.shell.context().input(|input| input.modifiers.shift);
-        let transform_selection = |change: fn(Transform) -> Transform| {
-            transform_selection(
-                &self.workspace.board.scene,
-                &self.workspace.board.selection,
-                change,
-            )
-        };
-        Some(match (event.physical_key, shift) {
-            (PhysicalKey::Code(KeyCode::KeyR), false) => {
-                transform_selection(|transform| rotated(transform, 1.))
-            }
-            (PhysicalKey::Code(KeyCode::KeyR), true) => {
-                transform_selection(|transform| rotated(transform, -1.))
-            }
-            (PhysicalKey::Code(KeyCode::KeyH), true) => {
-                transform_selection(|transform| mirrored(transform, 0))
-            }
-            (PhysicalKey::Code(KeyCode::KeyV), true) => {
-                transform_selection(|transform| mirrored(transform, 1))
-            }
-            (PhysicalKey::Code(KeyCode::Digit0), true) => Vec::new(),
-            _ => return None,
-        })
-    }
     fn native_input(&mut self) {
         let events: Vec<_> = self.input.adapter.native().collect();
         for event in events {
@@ -873,7 +852,13 @@ impl App {
             Input::Zoom { position, .. } | Input::Pan { position, .. } => *position,
             Input::Pointer(p) => p.position,
         });
-        if self.workspace.confirm_close || self.workspace.library || self.modal.dialog.is_some() {
+        if self.workspace.confirm_close
+            || self.workspace.library
+            || self.modal.dialog.is_some()
+            || self.workspace.board.arrange_prompt.is_some()
+            || self.shortcuts.blocked()
+            || self.editing.is_some()
+        {
             return;
         }
         match input {
@@ -930,7 +915,26 @@ impl App {
                     }
                 }
             }
-            Input::Pointer(p) => {
+            Input::Pointer(mut p) => {
+                if p.phase == Phase::Down {
+                    let action = self.shortcuts.registry.pointer(
+                        p.button,
+                        self.input.mods(),
+                        &self.input.held,
+                    );
+                    self.input.pointer_action = action;
+                    if action.is_none() && !self.workspace.board.view.pan {
+                        return;
+                    }
+                }
+                p.pan = matches!(
+                    self.input.pointer_action,
+                    Some(
+                        bindings::Action::PanDrag
+                            | bindings::Action::PanSpaceDrag
+                            | bindings::Action::PanAltDrag
+                    )
+                );
                 self.input.hover = p.kind == moth_platform::input::Kind::Mouse
                     || (p.kind == moth_platform::input::Kind::Pen && p.pressure == 0.);
                 if p.phase == Phase::Down
@@ -1057,10 +1061,12 @@ impl App {
                                 })
                             {
                                 self.moving = Some((item.id, item.rect));
-                                self.drag_duplicate =
-                                    self.shell.context().input(|i| i.modifiers.alt);
+                                self.drag_duplicate = self.input.pointer_action
+                                    == Some(bindings::Action::DuplicateDrag);
                                 if !self.workspace.board.selection.contains(&item.id) {
-                                    if !self.shell.context().input(|i| i.modifiers.shift) {
+                                    if self.input.pointer_action
+                                        != Some(bindings::Action::ExtendDrag)
+                                    {
                                         self.workspace.board.selection.clear();
                                     }
                                     self.workspace.board.selection.insert(item.id);
@@ -1096,6 +1102,11 @@ impl App {
                         self.drag_pointer = Some((p.kind, p.id));
                     }
                     Phase::Move => {
+                        if let Some((start, _, _)) = self.drag
+                            && !self.input.focus_drag(start, p.position)
+                        {
+                            return;
+                        }
                         if self.moving.is_some() {
                             self.motion.sample(p.position[0], Instant::now());
                         }
@@ -1207,6 +1218,8 @@ impl App {
         self.drag = None;
         self.moving = None;
         self.drag_pointer = None;
+        self.input.pending_focus = None;
+        self.input.pointer_action = None;
         self.camera_motion.stop();
         self.redraw();
     }
@@ -1275,6 +1288,11 @@ impl App {
         ctx.all_styles_mut(|style| {
             style.animation_time = if self.tools.reduced_motion { 0. } else { 0.1 }
         });
+        self.shortcuts.registry.publish(&ctx);
+        let enabled: Vec<_> = bindings::ACTIONS
+            .iter()
+            .map(|a| self.action_enabled(*a))
+            .collect();
         let output = {
             let state = self.shell.egui.as_mut();
             let gpu = self.shell.gpu.as_ref();
@@ -1284,6 +1302,27 @@ impl App {
             ctx.run_ui(state.take_egui_input(window), |ui| {
                 if self.motion.frames.active() || self.camera_active || self.items_active {
                     ui.ctx().request_repaint();
+                }
+                if self.overlay.is_none() {
+                    egui::Panel::top("commands_menu").show(ui, |ui| {
+                        ui.menu_button(moth_ui::text(moth_ui::Text::Commands), |ui| {
+                            for action in [bindings::Action::Palette, bindings::Action::Shortcuts] {
+                                if ui
+                                    .add_enabled(
+                                        enabled[action as usize],
+                                        egui::Button::new(moth_ui::tooltip(
+                                            ui.ctx(),
+                                            action.label(),
+                                        )),
+                                    )
+                                    .clicked()
+                                {
+                                    intents.push(Intent::Action(action));
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
                 }
                 let chrome = if self.overlay.is_none() {
                     chrome::chrome(
@@ -1316,10 +1355,31 @@ impl App {
                             duplicate: self.drag_duplicate,
                             gpu,
                             overlay: self.overlay.is_some(),
+                            activate: self.input.pointer_action == Some(bindings::Action::MoveDrag)
+                                && !self.workspace.board.view.pan,
+                            secondary_gesture: self
+                                .input
+                                .pointer_action
+                                .and_then(|a| self.shortcuts.registry.get(a))
+                                .is_some_and(|c| {
+                                    matches!(c.trigger, bindings::Trigger::Drag(2, _))
+                                }),
                         },
                     ));
                 }
                 intents.extend(chrome);
+                if self.modal.dialog.is_none()
+                    && !self.workspace.confirm_close
+                    && self.workspace.board.arrange_prompt.is_none()
+                {
+                    let (action, changed) = self.shortcuts.show(ui, &|a| enabled[a as usize]);
+                    if let Some(action) = action {
+                        intents.push(Intent::Action(action));
+                    }
+                    if changed {
+                        intents.push(Intent::PreferencesDirty);
+                    }
+                }
                 intents.extend(self.modal.show(
                     ui,
                     &self.workspace,
@@ -1468,7 +1528,10 @@ impl ApplicationHandler<Wake> for App {
         self.moving = None;
         self.drag_pointer = None;
         self.input.gestures.cancel();
-        self.input.command = false;
+        self.input.modifiers = egui::Modifiers::NONE;
+        self.input.super_key = false;
+        self.input.held.clear();
+        self.input.pending_focus = None;
         self.shell.gpu = None;
         self.shell.egui = None;
     }
@@ -1536,19 +1599,25 @@ impl ApplicationHandler<Wake> for App {
         let Some(window) = self.shell.window.clone() else {
             return;
         };
+        self.input.modifiers_event(&event);
+        let egui_events_before = self
+            .shell
+            .egui
+            .as_ref()
+            .map_or(0, |state| state.egui_input().events.len());
         if let Some(state) = &mut self.shell.egui {
             let response = state.on_window_event(&window, &event);
             if matches!(event, WindowEvent::ModifiersChanged(_)) {
-                self.input.command = state
+                self.input.modifiers = state
                     .egui_input()
                     .events
                     .iter()
                     .rev()
                     .find_map(|event| match event {
-                        egui::Event::ModifiersChanged(m) => Some(m.command),
+                        egui::Event::ModifiersChanged(m) => Some(*m),
                         _ => None,
                     })
-                    .unwrap_or(false);
+                    .unwrap_or_default();
             }
             if response.repaint && !matches!(event, WindowEvent::RedrawRequested) {
                 self.redraw();
@@ -1589,6 +1658,7 @@ impl ApplicationHandler<Wake> for App {
                             pressure: 0.,
                             phase: Phase::Cancel,
                             pan: false,
+                            button: 1,
                         },
                         egui::Modifiers::default(),
                         &mut self.input.native_pressed,
@@ -1597,145 +1667,48 @@ impl ApplicationHandler<Wake> for App {
                 self.input.native_pressed = None;
                 self.cancel_drag();
                 self.input.gestures.cancel();
-                self.input.command = false;
+                self.input.modifiers = egui::Modifiers::NONE;
+                self.input.super_key = false;
+                self.input.held.clear();
+                self.input.pending_focus = None;
             }
             WindowEvent::DroppedFile(path) => self.import(path),
-            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
-                if event.logical_key == Key::Named(NamedKey::Escape) && self.drag.is_some() {
+            WindowEvent::KeyboardInput { event, .. } => {
+                let Some(key) = input::key(&event) else {
+                    return;
+                };
+                let pressed = event.state == ElementState::Pressed;
+                let blocked = self.modal.dialog.is_some()
+                    || self.workspace.confirm_close
+                    || self.workspace.board.arrange_prompt.is_some()
+                    || self.shortcuts.blocked()
+                    || self.editing.is_some()
+                    || self.shell.context().text_edit_focused()
+                    || egui::Popup::is_any_open(self.shell.context());
+                let action = self.input.key_action(
+                    &self.shortcuts.registry,
+                    key,
+                    pressed,
+                    event.repeat,
+                    blocked,
+                    self.drag.is_some(),
+                );
+                if pressed && key == egui::Key::Escape && self.drag.is_some() {
                     self.cancel_drag();
                     return;
                 }
-                if self.modal.dialog.is_some()
-                    || self.workspace.confirm_close
-                    || self.workspace.board.arrange_prompt.is_some()
-                {
+                if pressed && !blocked && key == egui::Key::Escape && self.overlay.is_some() {
+                    self.toggle_overlay(event_loop);
                     return;
                 }
-                if self.input.command
-                    && !self.shell.context().egui_wants_keyboard_input()
-                    && event.physical_key == PhysicalKey::Code(KeyCode::KeyN)
-                {
-                    self.new_board();
-                } else if self.input.command
-                    && event.physical_key == PhysicalKey::Code(KeyCode::KeyO)
-                {
-                    self.open_files();
-                } else if self.input.command
-                    && event.physical_key == PhysicalKey::Code(KeyCode::KeyL)
-                {
-                    self.workspace.library = true;
-                    self.workspace.refresh_library = true;
+                if let Some(action) = action {
+                    if let Some(state) = &mut self.shell.egui {
+                        state.egui_input_mut().events.truncate(egui_events_before);
+                    }
+                    if !(pressed && action == bindings::Action::Focus) {
+                        self.run_action(action, event_loop);
+                    }
                     self.redraw();
-                } else if self.input.command
-                    && event.physical_key == PhysicalKey::Code(KeyCode::KeyW)
-                {
-                    self.request_close(false);
-                } else if self.input.command && event.logical_key == Key::Named(NamedKey::Tab) {
-                    if !self.workspace.tabs.is_empty() {
-                        self.activate(1);
-                    }
-                } else if (self.overlay.is_some()
-                    && event.logical_key == Key::Named(NamedKey::Escape))
-                    || (self.input.command
-                        && event.physical_key == PhysicalKey::Code(KeyCode::KeyT))
-                {
-                    self.toggle_overlay(event_loop);
-                } else if self.input.command
-                    && !self.shell.context().egui_wants_keyboard_input()
-                    && (event.physical_key == PhysicalKey::Code(KeyCode::KeyV)
-                        || matches!(event.logical_key,Key::Character(ref c) if c.eq_ignore_ascii_case("v")))
-                {
-                    if !self.workspace.board.discarding {
-                        self.paste();
-                    }
-                } else if self.input.command
-                    && event.physical_key == PhysicalKey::Code(KeyCode::KeyS)
-                    && self.workspace.board.idle()
-                {
-                    if self.workspace.board.path.is_empty() {
-                        self.modal.dialog = Some(());
-                        self.modal.dialog_focus = true;
-                        self.modal.dialog_path.clear();
-                        self.redraw();
-                    } else {
-                        self.workspace.persist(moth_platform::boards::Request::Save(
-                            std::path::PathBuf::from(&self.workspace.board.path),
-                        ));
-                    }
-                } else if self.input.command
-                    && !self.shell.context().egui_wants_keyboard_input()
-                    && event.physical_key == PhysicalKey::Code(KeyCode::KeyZ)
-                    && self.workspace.board.in_flight == 0
-                {
-                    self.workspace.persist(moth_platform::boards::Request::Undo);
-                } else if self.input.command
-                    && !self.shell.context().egui_wants_keyboard_input()
-                    && event.physical_key == PhysicalKey::Code(KeyCode::KeyY)
-                    && self.workspace.board.in_flight == 0
-                {
-                    self.workspace.persist(moth_platform::boards::Request::Redo);
-                } else if !self.shell.context().egui_wants_keyboard_input()
-                    && !self.input.command
-                    && self.workspace.board.idle()
-                    && matches!(
-                        event.logical_key,
-                        Key::Named(
-                            NamedKey::ArrowLeft
-                                | NamedKey::ArrowRight
-                                | NamedKey::ArrowUp
-                                | NamedKey::ArrowDown
-                        )
-                    )
-                {
-                    let distance = if self.shell.context().input(|i| i.modifiers.shift) {
-                        10.
-                    } else {
-                        1.
-                    };
-                    let delta = match event.logical_key {
-                        Key::Named(NamedKey::ArrowLeft) => [-distance, 0.],
-                        Key::Named(NamedKey::ArrowRight) => [distance, 0.],
-                        Key::Named(NamedKey::ArrowUp) => [0., -distance],
-                        _ => [0., distance],
-                    };
-                    let items: Vec<_> = self
-                        .workspace
-                        .board
-                        .selection
-                        .iter()
-                        .filter_map(|id| self.workspace.board.scene.get(*id))
-                        .collect();
-                    let commands =
-                        arrange::translate(&items, delta, false, self.workspace.board.scene.top());
-                    self.workspace
-                        .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
-                } else if let Some(commands) = self.transform_keys(&event) {
-                    if event.physical_key == PhysicalKey::Code(KeyCode::Digit0)
-                        && self.shell.context().input(|i| i.modifiers.shift)
-                    {
-                        self.workspace
-                            .persist(moth_platform::boards::Request::OriginalGeometry {
-                                ids: self.workspace.board.selection.iter().copied().collect(),
-                                mode: moth_platform::export::Geometry::All,
-                            });
-                    } else {
-                        self.workspace
-                            .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
-                    }
-                } else if !self.shell.context().egui_wants_keyboard_input()
-                    && event.logical_key == Key::Character("v".into())
-                {
-                    self.workspace.board.view.pan = false;
-                    self.redraw();
-                } else if !self.shell.context().egui_wants_keyboard_input()
-                    && event.logical_key == Key::Character("h".into())
-                {
-                    self.workspace.board.view.pan = true;
-                    self.redraw();
-                } else if !self.shell.context().egui_wants_keyboard_input()
-                    && event.logical_key == Key::Named(NamedKey::Home)
-                {
-                    self.fit();
                 }
             }
             _ => {}
@@ -1784,17 +1757,50 @@ fn transform_selection(
     selection: &HashSet<Uuid>,
     change: impl Fn(Transform) -> Transform,
 ) -> Vec<Command> {
-    selection
-        .iter()
-        .filter_map(|id| scene.get(*id))
-        .filter_map(|item| {
-            let transform = change(item.transform);
-            transform.valid().then_some(Command::SetTransform {
-                id: item.id,
-                transform,
-            })
-        })
-        .collect()
+    let items: Vec<_> = selection.iter().filter_map(|id| scene.get(*id)).collect();
+    let mut bounds = egui::Rect::NOTHING;
+    for item in &items {
+        let envelope = item.rect.rotated_envelope(item.transform.rotation);
+        bounds = bounds.union(egui::Rect::from_min_max(
+            egui::pos2(envelope.lower()[0], envelope.lower()[1]),
+            egui::pos2(envelope.upper()[0], envelope.upper()[1]),
+        ));
+    }
+    let center = bounds.center();
+    let mut commands = Vec::new();
+    for item in items {
+        let mut transform = change(item.transform);
+        let delta = transform.rotation - item.transform.rotation;
+        let mut offset = egui::vec2(
+            item.rect.x + item.rect.width / 2. - center.x,
+            item.rect.y + item.rect.height / 2. - center.y,
+        );
+        let (sin, cos) = delta.sin_cos();
+        offset = egui::vec2(
+            cos * offset.x - sin * offset.y,
+            sin * offset.x + cos * offset.y,
+        );
+        for axis in 0..2 {
+            if transform.flip[axis] != item.transform.flip[axis] {
+                offset[axis] = -offset[axis];
+                transform.rotation = -transform.rotation;
+            }
+        }
+        let rect = Rect {
+            x: center.x + offset.x - item.rect.width / 2.,
+            y: center.y + offset.y - item.rect.height / 2.,
+            ..item.rect
+        };
+        if !rect.valid() || !transform.valid() {
+            return Vec::new();
+        }
+        commands.push(Command::SetRect { id: item.id, rect });
+        commands.push(Command::SetTransform {
+            id: item.id,
+            transform,
+        });
+    }
+    commands
 }
 
 fn pen_ui(
@@ -1838,6 +1844,64 @@ fn pen_ui(
 
 #[cfg(test)]
 mod tests {
+    proptest::proptest! {
+        #[test]
+        fn group_transforms_roundtrip_and_undo(x in -1000f32..1000., y in -1000f32..1000.) {
+            let mut scene = Scene::default();
+            let a = Item::text("a", Rect { x, y, width: 20., height: 10. }, None);
+            let b = Item::text("b", Rect { x: x + 100., y, width: 20., height: 10. }, Some(&a.z));
+            for item in [&a, &b] { scene.apply(Command::Insert(item.clone())).unwrap(); }
+            let selected = HashSet::from([a.id, b.id]);
+            for change in [
+                (|t| rotated(t, 1.)) as fn(Transform) -> Transform,
+                |t| mirrored(t, 0),
+                |t| mirrored(t, 1),
+            ] {
+                let commands = transform_selection(&scene, &selected, change);
+                let mut inverse = Vec::new();
+                for command in commands { inverse.push(scene.apply(command).unwrap()); }
+                let payload = moth_format::board::snapshot(&scene).unwrap();
+                let mut bytes = Vec::new();
+                moth_format::board::initialize(&mut bytes).unwrap();
+                let offset = bytes.len() as u64;
+                moth_format::board::append(&mut bytes, offset, 3, &payload).unwrap();
+                let loaded = moth_format::board::read(&mut std::io::Cursor::new(bytes)).unwrap();
+                for item in scene.items() { proptest::prop_assert_eq!(loaded.scene.get(item.id), Some(item)); }
+                for command in inverse.into_iter().rev() { scene.apply(command).unwrap(); }
+                proptest::prop_assert_eq!(scene.get(a.id), Some(&a));
+                proptest::prop_assert_eq!(scene.get(b.id), Some(&b));
+            }
+        }
+    }
+    #[test]
+    fn rotation_and_flip_move_the_group_around_its_center() {
+        let mut scene = Scene::default();
+        let a = Item::text(
+            "a",
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 20.,
+                height: 10.,
+            },
+            None,
+        );
+        let b = Item::text("b", Rect { x: 100., ..a.rect }, Some(&a.z));
+        for item in [&a, &b] {
+            scene.apply(Command::Insert(item.clone())).unwrap();
+        }
+        let selected = HashSet::from([a.id, b.id]);
+        for command in transform_selection(&scene, &selected, |t| rotated(t, 1.)) {
+            scene.apply(command).unwrap();
+        }
+        let first = scene.get(a.id).unwrap();
+        assert!((first.rect.x - 50.).abs() < 0.001);
+        assert!((first.rect.y + 50.).abs() < 0.001);
+        for command in transform_selection(&scene, &selected, |t| mirrored(t, 1)) {
+            scene.apply(command).unwrap();
+        }
+        assert!((scene.get(a.id).unwrap().rect.y - 50.).abs() < 0.001);
+    }
     #[test]
     fn double_click_preserves_selected_group_but_focuses_an_unselected_image() {
         let ids = [
@@ -1881,6 +1945,7 @@ mod tests {
             pressure: 0.,
             phase: Phase::Cancel,
             pan: false,
+            button: 1,
         };
         let mut raw = egui::RawInput::default();
         pen_ui(&mut raw, p, egui::Modifiers::default(), &mut None);
@@ -1919,6 +1984,7 @@ mod tests {
                 pressure: 0.5,
                 phase: Phase::Down,
                 pan: false,
+                button: 1,
             };
             let mut pressed = None;
             let mut down = raw();

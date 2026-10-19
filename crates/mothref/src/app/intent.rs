@@ -14,6 +14,8 @@ use super::arrange::Arrange;
 
 /// One user action from chrome, canvas, tools or a modal.
 pub(super) enum Intent {
+    /// Execute the same registered action used by keyboard dispatch and command search.
+    Action(super::bindings::Action),
     /// Commit the locally laid-out canvas before applying its user actions.
     View(super::document::View),
     /// Toggle the board tools window.

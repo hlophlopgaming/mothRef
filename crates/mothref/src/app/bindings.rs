@@ -1,0 +1,470 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! One bounded action inventory for dispatch, persisted chords and every shortcut label.
+use egui::Key;
+use moth_ui::Text;
+use std::collections::{BTreeMap, HashSet};
+
+macro_rules! actions {
+    ($($id:ident, $label:ident, $default:literal;)+) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub(super) enum Action { $($id,)+ }
+        pub(super) const ACTIONS: &[Action] = &[$(Action::$id,)+];
+        impl Action {
+            pub fn id(self) -> &'static str { match self { $(Self::$id => stringify!($id),)+ } }
+            pub fn label(self) -> Text { match self { $(Self::$id => Text::$label,)+ } }
+            fn default(self) -> &'static str { match self { $(Self::$id => $default,)+ } }
+        }
+    }
+}
+actions! {
+    Palette, CommandPalette, "Cmd+K";
+    Shortcuts, Shortcuts, "Slash";
+    New, NewBoard, "Cmd+N";
+    Open, Open, "Cmd+O";
+    Save, Save, "Cmd+S";
+    Library, Library, "Cmd+L";
+    CloseTab, CloseTab, "Cmd+W";
+    NextTab, NextTab, "Cmd+Tab";
+    Paste, Paste, "Cmd+V";
+    Undo, Undo, "Cmd+Z";
+    Redo, Redo, "Cmd+Y";
+    Overlay, Overlay, "Cmd+T";
+    Pin, OnTop, "";
+    Minimize, Minimize, "";
+    Maximize, Maximize, "";
+    Tools, Tools, "";
+    Select, Select, "V";
+    Hand, Pan, "H";
+    Fit, Fit, "Home";
+    Focus, FitSelection, "Space";
+    Previous, PreviousImage, "";
+    Next, NextImage, "";
+    ZoomIn, ZoomIn, "Equal";
+    ZoomOut, ZoomOut, "Minus";
+    ZoomReset, ZoomReset, "";
+    ResetCamera, ResetCamera, "";
+    Note, AddNote, "";
+    Delete, Delete, "Delete";
+    Duplicate, Duplicate, "Cmd+D";
+    RotateCw, RotateCw, "R";
+    RotateCcw, RotateCcw, "Shift+R";
+    FlipHorizontal, FlipHorizontal, "Shift+H";
+    FlipVertical, FlipVertical, "Shift+V";
+    ResetTransform, ResetTransform, "Shift+0";
+    ResetCrop, ResetCrop, "";
+    NudgeLeft, NudgeLeft, "ArrowLeft";
+    NudgeRight, NudgeRight, "ArrowRight";
+    NudgeUp, NudgeUp, "ArrowUp";
+    NudgeDown, NudgeDown, "ArrowDown";
+    NudgeLeftFast, NudgeLeftFast, "Shift+ArrowLeft";
+    NudgeRightFast, NudgeRightFast, "Shift+ArrowRight";
+    NudgeUpFast, NudgeUpFast, "Shift+ArrowUp";
+    NudgeDownFast, NudgeDownFast, "Shift+ArrowDown";
+    BringFront, BringFront, "";
+    SendBack, SendBack, "";
+    BringForward, BringForward, "";
+    SendBackward, SendBackward, "";
+    Horizontal, Horizontal, "";
+    Vertical, Vertical, "";
+    Grid, Grid, "";
+    Optimal, Optimal, "";
+    ArrangeName, ArrangeName, "";
+    ArrangeTime, ArrangeTime, "";
+    PackFit, PackFit, "";
+    NormalizeWidth, NormalizeWidth, "";
+    NormalizeHeight, NormalizeHeight, "";
+    NormalizeSize, NormalizeSize, "";
+    NormalizeArea, NormalizeArea, "";
+    AlignLeft, AlignLeft, "";
+    AlignRight, AlignRight, "";
+    AlignTop, AlignTop, "";
+    AlignBottom, AlignBottom, "";
+    Stack, Stack, "";
+    Lock, LockCanvas, "";
+    Grayscale, CanvasGrayscale, "";
+    MoveDrag, MoveDrag, "Mouse1";
+    ExtendDrag, ExtendDrag, "Shift+Mouse1";
+    DuplicateDrag, DuplicateDrag, "Alt+Mouse1";
+    PanDrag, PanDrag, "Mouse3";
+    PanSpaceDrag, PanSpaceDrag, "Space+Mouse1";
+    PanAltDrag, PanAltDrag, "";
+}
+impl Action {
+    pub fn pointer(self) -> bool {
+        matches!(
+            self,
+            Self::MoveDrag
+                | Self::ExtendDrag
+                | Self::DuplicateDrag
+                | Self::PanDrag
+                | Self::PanSpaceDrag
+                | Self::PanAltDrag
+        )
+    }
+    pub fn repeat(self) -> bool {
+        matches!(
+            self,
+            Self::NudgeLeft
+                | Self::NudgeRight
+                | Self::NudgeUp
+                | Self::NudgeDown
+                | Self::NudgeLeftFast
+                | Self::NudgeRightFast
+                | Self::NudgeUpFast
+                | Self::NudgeDownFast
+                | Self::ZoomIn
+                | Self::ZoomOut
+        )
+    }
+}
+
+/// Portable primary command modifier, plus independently matched Shift and Alt.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Mods {
+    pub command: bool,
+    pub shift: bool,
+    pub alt: bool,
+    pub control: bool,
+    pub super_key: bool,
+}
+impl Mods {
+    pub fn from_egui(m: egui::Modifiers) -> Self {
+        Self {
+            command: m.command,
+            shift: m.shift,
+            alt: m.alt,
+            control: m.ctrl && (!m.command || m.mac_cmd),
+            super_key: false,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Trigger {
+    Key(Key),
+    Drag(u8, Option<Key>),
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Chord {
+    pub mods: Mods,
+    pub trigger: Trigger,
+}
+impl Chord {
+    pub fn parse(value: &str) -> Option<Self> {
+        let mut mods = Mods::default();
+        let mut key = None;
+        let mut button = None;
+        for part in value.split('+') {
+            match part {
+                "Cmd" if !mods.command => mods.command = true,
+                "Shift" if !mods.shift => mods.shift = true,
+                "Alt" if !mods.alt => mods.alt = true,
+                "Super" if !mods.super_key => {
+                    if egui::os::OperatingSystem::default() == egui::os::OperatingSystem::Mac {
+                        if mods.command {
+                            return None;
+                        }
+                        mods.command = true;
+                    } else {
+                        mods.super_key = true;
+                    }
+                }
+                "Ctrl" if !mods.control => {
+                    if egui::os::OperatingSystem::default() == egui::os::OperatingSystem::Mac {
+                        mods.control = true;
+                    } else if !mods.command {
+                        mods.command = true;
+                    } else {
+                        return None;
+                    }
+                }
+                "Mouse1" | "Mouse2" | "Mouse3" if button.is_none() => {
+                    button = part[5..].parse().ok()
+                }
+                _ if key.is_none() => key = Some(Key::from_name(part)?),
+                _ => return None,
+            }
+        }
+        let trigger = match (key, button) {
+            (key, Some(button)) if key != Some(Key::Escape) => Trigger::Drag(button, key),
+            (Some(key), None) if key != Key::Escape => Trigger::Key(key),
+            _ => return None,
+        };
+        Some(Self { mods, trigger })
+    }
+    pub fn encode(self) -> String {
+        let mut parts = Vec::new();
+        if self.mods.command {
+            parts.push("Cmd".to_owned());
+        }
+        if self.mods.control {
+            parts.push("Ctrl".to_owned());
+        }
+        if self.mods.super_key {
+            parts.push("Super".to_owned());
+        }
+        if self.mods.shift {
+            parts.push("Shift".to_owned());
+        }
+        if self.mods.alt {
+            parts.push("Alt".to_owned());
+        }
+        match self.trigger {
+            Trigger::Key(key) => parts.push(key.name().to_owned()),
+            Trigger::Drag(button, key) => {
+                if let Some(key) = key {
+                    parts.push(key.name().to_owned());
+                }
+                parts.push(format!("Mouse{button}"));
+            }
+        }
+        parts.join("+")
+    }
+    pub fn display(self) -> String {
+        self.encode().replace(
+            "Cmd",
+            if egui::os::OperatingSystem::default() == egui::os::OperatingSystem::Mac {
+                "⌘"
+            } else {
+                "Ctrl"
+            },
+        )
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Registry {
+    pub entries: Vec<Option<Chord>>,
+}
+impl Default for Registry {
+    fn default() -> Self {
+        Self {
+            entries: ACTIONS.iter().map(|a| Chord::parse(a.default())).collect(),
+        }
+    }
+}
+impl Registry {
+    pub fn get(&self, action: Action) -> Option<Chord> {
+        self.entries[action as usize]
+    }
+    pub fn set(&mut self, action: Action, value: &str) {
+        self.entries[action as usize] = Chord::parse(value);
+    }
+    pub fn label(&self, action: Action) -> String {
+        self.get(action).map_or_else(String::new, Chord::display)
+    }
+    pub fn conflicts(&self) -> Vec<(Action, Action)> {
+        let mut conflicts = Vec::new();
+        for (index, a) in ACTIONS.iter().enumerate() {
+            if let Some(chord) = self.get(*a) {
+                for b in &ACTIONS[index + 1..] {
+                    if let Some(other) = self.get(*b) {
+                        let overlap = chord.mods == other.mods
+                            && match (chord.trigger, other.trigger) {
+                                (Trigger::Key(key), Trigger::Drag(_, Some(held))) => {
+                                    key == held && *a != Action::Focus
+                                }
+                                (Trigger::Drag(_, Some(held)), Trigger::Key(key)) => {
+                                    key == held && *b != Action::Focus
+                                }
+                                _ => false,
+                            };
+                        if chord == other || overlap {
+                            conflicts.push((*a, *b));
+                        }
+                    }
+                }
+            }
+        }
+        conflicts
+    }
+    pub fn key(&self, key: Key, mods: Mods) -> Option<Action> {
+        ACTIONS.iter().copied().find(|a| {
+            self.get(*a)
+                == Some(Chord {
+                    mods,
+                    trigger: Trigger::Key(key),
+                })
+        })
+    }
+    pub fn pointer(&self, button: u8, mods: Mods, held: &HashSet<Key>) -> Option<Action> {
+        ACTIONS.iter().copied().find(|a| {
+            self.get(*a).is_some_and(|chord| {
+                chord.mods == mods
+                    && matches!(chord.trigger, Trigger::Drag(b, key) if b == button && match key {
+                        Some(key) => held.len() == 1 && held.contains(&key),
+                        None => held.is_empty(),
+                    })
+            })
+        })
+    }
+    pub fn preferences(&self) -> BTreeMap<String, String> {
+        ACTIONS
+            .iter()
+            .map(|a| {
+                (
+                    format!("binding_{}", a.id()),
+                    self.get(*a).map_or_else(String::new, Chord::encode),
+                )
+            })
+            .collect()
+    }
+    pub fn load(&mut self, values: &BTreeMap<String, String>) -> bool {
+        let mut candidate = Self::default();
+        for action in ACTIONS {
+            if let Some(value) = values.get(&format!("binding_{}", action.id())) {
+                let chord = if value.is_empty() {
+                    None
+                } else {
+                    let Some(chord) = Chord::parse(value) else {
+                        return false;
+                    };
+                    if action.pointer() != matches!(chord.trigger, Trigger::Drag(..)) {
+                        return false;
+                    }
+                    Some(chord)
+                };
+                candidate.entries[*action as usize] = chord;
+            }
+        }
+        if !candidate.conflicts().is_empty() {
+            return false;
+        }
+        *self = candidate;
+        true
+    }
+    /// Navigation-only compatibility presets never claim missing screenshot actions.
+    pub fn preset(&self, pure: bool) -> Self {
+        let mut next = self.clone();
+        for (a, chord) in [
+            (Action::PanSpaceDrag, "Space+Mouse1"),
+            (Action::Focus, "Space"),
+            (Action::PanDrag, "Mouse3"),
+        ] {
+            next.set(a, chord);
+        }
+        if pure {
+            for (a, chord) in [
+                (Action::PanAltDrag, "Alt+Mouse1"),
+                (Action::DuplicateDrag, "Cmd+Alt+Mouse1"),
+                (Action::Previous, "ArrowLeft"),
+                (Action::Next, "ArrowRight"),
+                (Action::BringFront, "ArrowUp"),
+                (Action::SendBack, "ArrowDown"),
+                (Action::NudgeLeft, "Alt+ArrowLeft"),
+                (Action::NudgeRight, "Alt+ArrowRight"),
+                (Action::NudgeUp, "Alt+ArrowUp"),
+                (Action::NudgeDown, "Alt+ArrowDown"),
+            ] {
+                next.set(a, chord);
+            }
+        } else {
+            for a in [
+                Action::PanAltDrag,
+                Action::DuplicateDrag,
+                Action::NudgeLeft,
+                Action::NudgeRight,
+                Action::NudgeUp,
+                Action::NudgeDown,
+                Action::Previous,
+                Action::Next,
+                Action::BringFront,
+                Action::SendBack,
+            ] {
+                next.set(a, a.default());
+            }
+        }
+        next
+    }
+    pub fn publish(&self, ctx: &egui::Context) {
+        moth_ui::set_shortcuts(
+            ctx,
+            ACTIONS
+                .iter()
+                .map(|a| (a.label(), self.label(*a)))
+                .collect(),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn exact_modifiers_do_not_turn_screenshot_chords_into_other_commands() {
+        let registry = Registry::default();
+        let cmd = Mods {
+            command: true,
+            ..Mods::default()
+        };
+        assert_eq!(registry.key(Key::N, cmd), Some(Action::New));
+        assert_eq!(registry.key(Key::N, Mods { alt: true, ..cmd }), None);
+        assert_eq!(registry.key(Key::N, Mods { shift: true, ..cmd }), None);
+        assert_eq!(registry.key(Key::K, cmd), Some(Action::Palette));
+        assert_eq!(
+            registry.key(Key::ArrowUp, Mods::default()),
+            Some(Action::NudgeUp)
+        );
+        assert_eq!(registry.key(Key::ArrowUp, cmd), None);
+    }
+    #[test]
+    fn presets_resolve_navigation_ambiguities_and_preview_remaining_conflicts() {
+        let mut registry = Registry::default();
+        assert!(registry.conflicts().is_empty());
+        for action in ACTIONS {
+            assert!(
+                action.default().is_empty() || registry.get(*action).is_some(),
+                "invalid default: {}",
+                action.id()
+            );
+        }
+        let pure = registry.preset(true);
+        assert!(pure.conflicts().is_empty());
+        assert_eq!(
+            pure.key(Key::ArrowUp, Mods::default()),
+            Some(Action::BringFront)
+        );
+        assert_eq!(
+            pure.pointer(
+                1,
+                Mods {
+                    alt: true,
+                    ..Mods::default()
+                },
+                &HashSet::new()
+            ),
+            Some(Action::PanAltDrag)
+        );
+        assert_eq!(pure.key(Key::Space, Mods::default()), Some(Action::Focus));
+        assert_eq!(
+            pure.pointer(1, Mods::default(), &HashSet::from([Key::Space])),
+            Some(Action::PanSpaceDrag)
+        );
+        let mut overlap = registry.clone();
+        overlap.set(Action::PanSpaceDrag, "R+Mouse1");
+        assert!(
+            overlap
+                .conflicts()
+                .contains(&(Action::RotateCw, Action::PanSpaceDrag))
+        );
+        registry.set(Action::Save, "Alt+Mouse1");
+        assert!(!registry.preset(true).conflicts().is_empty());
+    }
+    #[test]
+    fn settings_roundtrip_and_reject_corruption_without_partial_changes() {
+        let mut registry = Registry::default().preset(true);
+        let mut loaded = Registry::default();
+        assert!(loaded.load(&registry.preferences()));
+        assert_eq!(loaded, registry);
+        let original = registry.clone();
+        let mut values = registry.preferences();
+        values.insert("binding_Save".into(), "Cmd+N".into());
+        assert!(!registry.load(&values));
+        assert_eq!(registry, original);
+        values.insert("binding_Save".into(), "bogus".into());
+        assert!(!registry.load(&values));
+        for action in ACTIONS {
+            if let Some(chord) = original.get(*action) {
+                assert_eq!(Chord::parse(&chord.encode()), Some(chord));
+            }
+        }
+    }
+}

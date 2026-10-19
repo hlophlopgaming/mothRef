@@ -411,6 +411,16 @@ impl Workspace {
                                 .retain(|id| self.board.scene.get(*id).is_some());
                         }
                         Completion::AppliedBatch(commands, sources) => {
+                            let affected: HashSet<_> = commands
+                                .iter()
+                                .map(|command| match command {
+                                    Command::Insert(item) => item.id,
+                                    Command::Remove(id)
+                                    | Command::SetRect { id, .. }
+                                    | Command::SetTransform { id, .. }
+                                    | Command::SetText { id, .. } => *id,
+                                })
+                                .collect();
                             let inserted: HashSet<_> = commands
                                 .iter()
                                 .filter_map(|c| match c {
@@ -432,6 +442,8 @@ impl Workspace {
                             }
                             if !inserted.is_empty() {
                                 self.board.selection = inserted;
+                            } else if self.board.selection.is_empty() {
+                                self.board.selection = affected;
                             }
                             self.board.dirty = true;
                             self.board

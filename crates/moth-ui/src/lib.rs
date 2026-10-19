@@ -3,8 +3,63 @@
 //! Shared theme and localized M0 controls.
 use egui::{Color32, Context};
 /// Centralized strings keep widgets independent of the selected locale.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Shortcut editor column.
+    BindingAction,
+    /// Shortcut editor column.
+    BindingProposed,
+    /// Shortcut editor column.
+    BindingCurrent,
+    /// Localized shortcut control.
+    CommandPalette,
+    /// Localized shortcut control.
+    Shortcuts,
+    /// Localized shortcut control.
+    NextTab,
+    /// Localized shortcut control.
+    ZoomReset,
+    /// Localized shortcut control.
+    NudgeLeftFast,
+    /// Localized shortcut control.
+    NudgeRightFast,
+    /// Localized shortcut control.
+    NudgeUpFast,
+    /// Localized shortcut control.
+    NudgeDownFast,
+    /// Localized shortcut control.
+    ArrangeName,
+    /// Localized shortcut control.
+    ArrangeTime,
+    /// Localized shortcut control.
+    MoveDrag,
+    /// Localized shortcut control.
+    ExtendDrag,
+    /// Localized shortcut control.
+    DuplicateDrag,
+    /// Localized shortcut control.
+    PanDrag,
+    /// Localized shortcut control.
+    PanSpaceDrag,
+    /// Localized shortcut control.
+    PanAltDrag,
+    /// Localized shortcut control.
+    BindingHelp,
+    /// Localized shortcut control.
+    PresetHelp,
+    /// Localized shortcut control.
+    SearchActions,
+    /// Localized shortcut control.
+    NoActions,
+    /// Localized shortcut control.
+    InvalidBinding,
+    /// Localized shortcut control.
+    BindingConflict,
+    /// Localized shortcut control.
+    BindingPreview,
+    /// Localized shortcut control.
+    Commands,
+
     /// Toggle selection handles and hover outlines on the canvas.
     ShowOutlines,
     /// Toggle sway and lift while dragging items.
@@ -470,31 +525,28 @@ pub fn empty_board(ui: &mut egui::Ui) -> Actions {
     actions
 }
 
-/// Uses the active platform modifier and only advertises implemented bindings.
-pub fn tooltip(key: Text) -> String {
-    let shortcut = match key {
-        Text::NewBoard => "Ctrl+N",
-        Text::Open => "Ctrl+O",
-        Text::Save => "Ctrl+S",
-        Text::Undo => "Ctrl+Z",
-        Text::Redo => "Ctrl+Y",
-        Text::Paste | Text::PasteImage => "Ctrl+V",
-        Text::Library => "Ctrl+L",
-        Text::CloseTab => "Ctrl+W",
-        Text::Overlay => "Ctrl+T",
-        Text::Select => "V",
-        Text::Pan => "H",
-        Text::Fit => "Home",
-        _ => "",
+/// Publishes labels derived from the application's single action registry.
+pub fn set_shortcuts(ctx: &Context, labels: Vec<(Text, String)>) {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("active_shortcuts"), labels));
+}
+/// Uses current bindings, including an explicitly unbound action.
+pub fn tooltip(ctx: &Context, key: Text) -> String {
+    let lookup = match key {
+        Text::PasteImage => Text::Paste,
+        _ => key,
     };
+    let shortcut = ctx
+        .data(|data| data.get_temp::<Vec<(Text, String)>>(egui::Id::new("active_shortcuts")))
+        .and_then(|labels| {
+            labels
+                .into_iter()
+                .find(|(label, _)| *label == lookup)
+                .map(|(_, value)| value)
+        })
+        .unwrap_or_default();
     if shortcut.is_empty() {
         text(key).into()
     } else {
-        let shortcut = if egui::os::OperatingSystem::default() == egui::os::OperatingSystem::Mac {
-            shortcut.replace("Ctrl", "⌘")
-        } else {
-            shortcut.into()
-        };
         format!("{} ({shortcut})", text(key))
     }
 }
@@ -502,6 +554,14 @@ pub fn tooltip(key: Text) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shortcut_labels_follow_rebinding_and_unbinding() {
+        let ctx = Context::default();
+        set_shortcuts(&ctx, vec![(Text::Save, "Alt+F2".into())]);
+        assert!(tooltip(&ctx, Text::Save).ends_with("(Alt+F2)"));
+        set_shortcuts(&ctx, vec![(Text::Save, String::new())]);
+        assert_eq!(tooltip(&ctx, Text::Save), text(Text::Save));
+    }
     #[test]
     fn every_text_key_has_a_non_empty_translation_and_switches_locale() {
         let keys = [
