@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.3 — 2026-10-19
+
 - Sharpen newly loaded previews and higher-detail zoom images gradually over 180 ms using existing mip levels, with bounded transitions and instant updates under reduced motion.
 
 - Double-click a selected image to fit the entire selection's width and height in the canvas; preserve the group instead of focusing only the clicked image. Restore the original wheel and toolbar zoom behavior.
