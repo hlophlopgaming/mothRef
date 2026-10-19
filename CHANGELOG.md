@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.4 — 2026-10-19
+
 - Run portable GPU tests on the available adapter instead of requiring a software adapter that Metal does not provide; retain an explicit software-rendering check on Linux.
 
 ## 0.1.0-alpha.3 — 2026-10-19
