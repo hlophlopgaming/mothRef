@@ -669,3 +669,4 @@ Known issues to plan for: macOS notarization needs a paid Apple Developer accoun
 | 2026-10-18 | [Local purcore import fork](docs/decisions/0007-local-purcore-import.md): maintainer authorizes vendoring and local fixes; bounded path-free import, 1.10/2.1 baseline corpus; coverage limited to verified files, with additional qualification driven by available samples |
 
 | 2026-10-19 | [Adaptive GPU cache budget](docs/decisions/0009-adaptive-gpu-budget.md): maintainer requests count-based growth/shrink; 32–512 MiB discrete, 32–96 MiB shared/software, immediate eviction on shrink and zero allocation for an empty board |
+| 2026-10-19 | [Parallel app responsibility split](docs/decisions/0010-app-responsibility-split.md): retain upstream history and historical design notes while integrating the later tested intent/Workspace/Shell refactor and motion implementation |

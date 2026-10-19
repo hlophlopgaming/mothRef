@@ -205,3 +205,84 @@ No format or feature change is intended. Native checks above remain unexecuted.
 See the technical-debt follow-up in [M0 validation](M0-VALIDATION.md) for current
 checks and measurements. The remaining release gates above stay open until
 executed on the final build and appropriate native platforms.
+
+## App responsibility split (2026-10-18)
+
+Historical notes from the parallel upstream refactor, retained during the
+2026-10-19 merge. These and the remaining-plan section below describe that branch.
+For the current implementation and completed steps use the plan at the top of
+this document and [integration status](decisions/0010-app-responsibility-split.md).
+Native scenario validation remains pending.
+
+- [x] Replace the independent drag/move/duplicate/pointer fields with one
+  `Gesture` state. Canvas pointer transitions live in `app/gesture.rs`;
+  cancellation on focus loss, suspension, tab activation and touch takeover
+  releases the same state. Moving captures the full selection in `(z, id)` order;
+  release uses the existing journaled batch path. The existing single-item
+  outline preview is preserved; live dragging belongs to tactility/motion work.
+- [x] Introduce `Intent` and one `apply` path for the existing post-render UI
+  actions and keyboard shortcuts. Preserve frame ordering and shortcut guards;
+  original-geometry reset uses the same request from either source.
+- [x] Replace the screen/dialog/confirm flags with `Screen` and `Modal`. The
+  path dialog keeps its draft and focus inside `Modal::PathDialog`; the canvas
+  guard is a single `Modal::accepts_canvas(screen)`.
+- [x] Split `Session` into `Document` (scene, persistence identity, bounded
+  loading work) and `View` (camera, selection, presentation). Tabs keep their
+  own journal/storage identity; the isolated-journal regression test still
+  passes.
+- [x] Extract `LibraryScreen` (`show`/`pump`), `Shell` (window/gpu/egui,
+  `recreate`/`redraw`/`image_format`) and `Workspace` (board/tabs/screen and the
+  close-flow state). `App` now holds these subsystems instead of a scatter of
+  fields.
+- [x] Move the document workers to where their data lives: `Document` owns
+  `begin_batch`/`end_batch`/`pump`, and `Session` owns
+  `persist`/`persist_batch`/`discard`/`paste`. The canvas-lock guard now reads
+  `view.locked`, which already mirrors `tools.locked`, so no behavior changes.
+- [x] Keep the tab lifecycle (`activate`/`new_board`/`open_in_tab`/
+  `request_close`/`finish_close`) and the worker drain (`results`/`drain_results`)
+  on `App` by design: they coordinate `Workspace` + `Modal` + `LibraryScreen` +
+  `Shell` + `Tools`, so moving them would turn a data-owning subsystem into a
+  coordinator rather than remove coordination.
+- [ ] Replace the remaining named action flags in `frame()` with a collected
+  `Vec<Intent>`. The ordered `apply` path already routes every UI and keyboard
+  action through one place; collapsing the flags is a cosmetic follow-up that
+  must not reorder the close-flow (save-before-discard) applies.
+- [ ] Complete native scenario validation from `UI-VALIDATION.md` and
+  `M2-EDITING-VALIDATION.md` for the final refactor, including physical pen/touch.
+
+## Remaining refactor plan
+
+Ordered, one PR each, each green in CI before the next.
+
+### A. `frame()` named flags → `Vec<Intent>`
+
+1. Enumerate every flag that can be set in one frame; the only order-sensitive
+   pair is the close flow's `save` (emit `Intent::Save`) before `close`
+   (`Intent::Discard`), because `discard()` refuses while `in_flight > 0` and the
+   save is what sets `in_flight`.
+2. Replace the `let mut close/save/open/undo/redo/commands/arranged/…` block with
+   `let mut intents: Vec<Intent> = Vec::new()` and push directly inside the
+   `run_ui` closure.
+3. Keep the close-flow tail ordered by construction: emit `Save` before `Discard`.
+4. Replace the ~33 ordered `if flag { self.apply(…) }` lines with
+   `for intent in intents { self.apply(intent, el)?; }`.
+5. Gate: `cargo test -p mothref`, `cargo clippy --workspace --all-targets -- -D warnings`,
+   and a manual `UI-VALIDATION.md` close-with-unsaved run.
+
+### B. Tab lifecycle / worker drain out of `App` (optional, decision first)
+
+Decision: these stay on `App` as coordinators unless the maintainer wants them in
+`Workspace`. If moved, each `Workspace` method must take `&mut Modal`, `&mut Tools`,
+`&mut LibraryScreen`, `&mut Gesture`, `&mut Gestures`, `&mut Shell`; first collapse
+`activate`'s "reset on tab switch" (tools reload, cards/catalog clear, modal editor
+drop, gesture/gestures cancel, gpu clear) into one helper so call sites stay short.
+`results`/`drain_results`/`complete` become `Workspace::pump_results(&mut Shell)`.
+The existing `parked_tabs_keep_separate_journals` test guards the tab identity
+invariant; add a close-flow ordering test if the split touches `request_close`.
+
+### C. Native scenario validation (manual, not automatable here)
+
+Run `UI-VALIDATION.md` and `M2-EDITING-VALIDATION.md` on real hardware: paste,
+import, multi-select move, duplicate-drag, marquee, notes, tabs, close-with-unsaved,
+library, overlay, physical pen/touch. Record OS/backend and observed recovery in
+the validation notes.
