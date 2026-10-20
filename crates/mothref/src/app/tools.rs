@@ -26,6 +26,8 @@ pub(super) struct Tools {
     pub cache_ram_percent: f32,
     /// Zero selects the adapter's automatic ceiling.
     pub cache_limit_mib: u32,
+    /// How decoded previews are kept between zoom steps.
+    pub performance_mode: moth_io::CacheMode,
     pub wheel: u8,
     pub scale_with_window: bool,
     pub auto_arrange: bool,
@@ -62,6 +64,7 @@ impl Default for Tools {
             undo_limit: 256,
             cache_ram_percent: 12.5,
             cache_limit_mib: 0,
+            performance_mode: moth_io::CacheMode::default(),
             wheel: 0,
             scale_with_window: false,
             auto_arrange: false,
@@ -81,6 +84,15 @@ impl Default for Tools {
             color_format: 0,
             open: false,
         }
+    }
+}
+/// Label and explanation of a performance mode.
+fn mode_text(mode: moth_io::CacheMode) -> (Text, Text) {
+    match mode {
+        moth_io::CacheMode::Memory => (Text::ModeMemory, Text::ModeMemoryHint),
+        moth_io::CacheMode::MemoryLowQuality => (Text::ModeMemoryLow, Text::ModeMemoryLowHint),
+        moth_io::CacheMode::Disk => (Text::ModeDisk, Text::ModeDiskHint),
+        moth_io::CacheMode::NoCache => (Text::ModeNoCache, Text::ModeNoCacheHint),
     }
 }
 fn preference(key: Text, changed: bool) -> String {
@@ -146,6 +158,7 @@ impl Tools {
             ("undo_limit", self.undo_limit.to_string()),
             ("cache_ram_percent", self.cache_ram_percent.to_string()),
             ("cache_limit_mib", self.cache_limit_mib.to_string()),
+            ("performance_mode", self.performance_mode.code().to_owned()),
             ("dark", self.dark.to_string()),
             ("ui_scale", self.ui_scale.to_string()),
             ("arrange_gap", self.gap.to_string()),
@@ -165,6 +178,10 @@ impl Tools {
             .and_then(|v| v.parse().ok())
             .filter(|v| *v == 0 || (32..=512).contains(v))
             .unwrap_or(0);
+        self.performance_mode = values
+            .get("performance_mode")
+            .and_then(|v| moth_io::CacheMode::from_code(v))
+            .unwrap_or_default();
         self.reduced_motion = values
             .get(moth_platform::settings::REDUCED_MOTION)
             .and_then(|v| v.parse().ok())
@@ -250,6 +267,24 @@ impl Tools {
                     let before = self.preferences();
                     let defaults = Self::default();
                     ui.collapsing(text(Text::ImageCache), |ui| {
+                        let (selected, hint) = mode_text(self.performance_mode);
+                        ui.label(preference(
+                            Text::PerformanceMode,
+                            self.performance_mode != defaults.performance_mode,
+                        ));
+                        egui::ComboBox::from_id_salt("performance_mode")
+                            .selected_text(text(selected))
+                            .show_ui(ui, |ui| {
+                                for mode in moth_io::CacheMode::ALL {
+                                    ui.selectable_value(
+                                        &mut self.performance_mode,
+                                        mode,
+                                        text(mode_text(mode).0),
+                                    );
+                                }
+                            });
+                        ui.label(text(hint));
+                        ui.separator();
                         let label = preference(
                             Text::CacheRamPercent,
                             self.cache_ram_percent != defaults.cache_ram_percent,
@@ -369,6 +404,7 @@ impl Tools {
                         self.undo_limit = defaults.undo_limit;
                         self.cache_ram_percent = defaults.cache_ram_percent;
                         self.cache_limit_mib = defaults.cache_limit_mib;
+                        self.performance_mode = defaults.performance_mode;
                         self.dark = defaults.dark;
                         self.ui_scale = defaults.ui_scale;
                         self.gap = defaults.gap;
@@ -929,6 +965,7 @@ mod tests {
             undo_limit: 42,
             cache_ram_percent: 25.,
             cache_limit_mib: 256,
+            performance_mode: moth_io::CacheMode::Disk,
             show_outlines: false,
             drag_animation: false,
             drag_opacity: 0.42,
@@ -952,6 +989,7 @@ mod tests {
                 ("undo_limit".into(), "99999".into()),
                 ("cache_ram_percent".into(), "NaN".into()),
                 ("cache_limit_mib".into(), "99999".into()),
+                ("performance_mode".into(), "bogus".into()),
             ]
             .into_iter()
             .collect(),
@@ -967,6 +1005,7 @@ mod tests {
         assert_eq!(loaded.undo_limit, 256);
         assert_eq!(loaded.cache_ram_percent, 12.5);
         assert_eq!(loaded.cache_limit_mib, 0);
+        assert_eq!(loaded.performance_mode, moth_io::CacheMode::Memory);
     }
     #[test]
     fn scaling_rejects_overflow_and_keeps_relative_positions() {

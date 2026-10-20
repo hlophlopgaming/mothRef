@@ -124,6 +124,7 @@ fn measure(
                 handle: handles[sent],
                 side: 256,
                 format: moth_io::ImageFormat::Rgba8,
+                blob: None,
             };
             if pool.requests.try_send(request).is_err() {
                 break;

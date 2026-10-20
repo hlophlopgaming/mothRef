@@ -93,6 +93,24 @@ pub enum Text {
     CacheLimit,
     /// Explains demand allocation and safe preview eviction.
     CacheHint,
+    /// Chooses how decoded previews are kept between zoom steps.
+    PerformanceMode,
+    /// Performance mode: decoded pyramids in RAM.
+    ModeMemory,
+    /// Performance mode: decoded pyramids in RAM, capped detail.
+    ModeMemoryLow,
+    /// Performance mode: decoded pyramids on disk.
+    ModeDisk,
+    /// Performance mode: decode again for every detail level.
+    ModeNoCache,
+    /// Explains the in-memory mode.
+    ModeMemoryHint,
+    /// Explains the low-quality in-memory mode.
+    ModeMemoryLowHint,
+    /// Explains the disk cache mode.
+    ModeDiskHint,
+    /// Explains the uncached mode.
+    ModeNoCacheHint,
     /// Localized Duplicate control.
     Duplicate,
     /// Localized NudgeLeft control.
@@ -597,6 +615,15 @@ mod tests {
             Text::CacheAutomatic,
             Text::CacheLimit,
             Text::CacheHint,
+            Text::PerformanceMode,
+            Text::ModeMemory,
+            Text::ModeMemoryLow,
+            Text::ModeDisk,
+            Text::ModeNoCache,
+            Text::ModeMemoryHint,
+            Text::ModeMemoryLowHint,
+            Text::ModeDiskHint,
+            Text::ModeNoCacheHint,
             Text::Duplicate,
             Text::NudgeLeft,
             Text::NudgeRight,

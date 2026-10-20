@@ -161,9 +161,11 @@ impl Document {
             let Some(blob) = item.blob() else {
                 continue;
             };
+            // The low-quality mode caps detail; asking for more would never become resident.
             let side = moth_render::preview_side(
                 item.rect.width.max(item.rect.height) * self.view.camera.zoom * pixels_per_point,
-            );
+            )
+            .min(self.decode.cache().max_side());
             if !registry.resident(blob, side)
                 && let Some(&handle) = self.sources.get(&blob)
                 && !self.pending.contains_key(&handle)
@@ -175,6 +177,7 @@ impl Document {
                         handle,
                         side,
                         format: registry.image_format(),
+                        blob: Some(blob),
                     })
                     .is_ok()
             {
@@ -208,7 +211,11 @@ impl Document {
         wake: Arc<dyn Fn() + Send + Sync>,
         discover: bool,
     ) -> anyhow::Result<Self> {
-        let decode = moth_io::DecodePool::new(storage.clone(), wake.clone())?;
+        let decode = moth_io::DecodePool::with_cache(
+            storage.clone(),
+            wake.clone(),
+            moth_io::LodCache::shared(),
+        )?;
         let clipboard = moth_platform::ClipboardWorker::new(storage.clone(), wake.clone())?;
         let boards = if discover {
             moth_platform::boards::Worker::new(storage.clone(), wake)?

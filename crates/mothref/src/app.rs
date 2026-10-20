@@ -98,6 +98,8 @@ impl App {
         let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
             let _ = ready.send_event(Wake::Ready);
         });
+        // Resolving the cache folder reads environment variables only; workers do the I/O.
+        moth_io::LodCache::shared().set_store(Arc::new(moth_platform::lod_store::DiskStore::new()));
         let board = Document::new(wake.clone(), true)?;
         let memory = moth_platform::memory::Monitor::new(wake.clone())?;
         let library_worker = moth_platform::library::Worker::new(
@@ -390,11 +392,22 @@ impl App {
     }
 
     fn adapt_gpu_budget(&mut self) {
+        let available = self.memory.available();
+        let cache = moth_io::LodCache::shared();
+        let mode = self.tools.performance_mode;
+        if cache.mode() != mode {
+            cache.set_mode(mode);
+        }
+        cache.set_memory_budget(moth_platform::memory::lod_cache_budget(
+            available,
+            cache.memory_bytes(),
+            mode.uses_memory(),
+        ));
         if let Some(gpu) = &mut self.shell.gpu {
             // Leave room for decoded imports awaiting their journal acknowledgement.
             let active = self.workspace.board.image_count > 0 || !self.workspace.board.idle();
             let ceiling = moth_platform::memory::texture_ceiling(
-                self.memory.available(),
+                available,
                 gpu.registry.image_bytes(),
                 if self.tools.cache_limit_mib == 0 {
                     gpu.texture_budget_limit

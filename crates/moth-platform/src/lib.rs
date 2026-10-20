@@ -11,6 +11,8 @@ pub mod input;
 pub mod library;
 /// Best-effort detection of the user's interface language.
 pub mod locale;
+/// Disk backend for the rebuildable LOD cache.
+pub mod lod_store;
 /// Background sampling of available physical RAM for bounded image residency.
 pub mod memory;
 /// Plain-text app preferences.

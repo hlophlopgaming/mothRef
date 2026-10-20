@@ -65,9 +65,42 @@ pub fn texture_ceiling(available: Option<u64>, allocated: u64, limit: u64, perce
         .min(limit)
 }
 
+/// Share of available RAM the in-memory performance modes may keep as decoded pyramids.
+pub const LOD_RAM_FRACTION: f64 = 0.25;
+/// Absolute ceiling for decoded pyramids kept in RAM.
+pub const LOD_RAM_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
+/// Allowance when available RAM is unknown.
+pub const LOD_RAM_FALLBACK: u64 = 512 * 1024 * 1024;
+
+/// RAM budget of the CPU-side LOD cache; zero unless an in-memory mode is selected.
+/// The cache's own bytes count as available, so its growth does not shrink its budget.
+pub fn lod_cache_budget(available: Option<u64>, own: u64, in_memory: bool) -> u64 {
+    if !in_memory {
+        return 0;
+    }
+    available
+        .map_or(LOD_RAM_FALLBACK, |bytes| {
+            (bytes.saturating_add(own) as f64 * LOD_RAM_FRACTION) as u64
+        })
+        .min(LOD_RAM_LIMIT)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn lod_budget_follows_mode_and_ram() {
+        let gib = 1024 * 1024 * 1024;
+        assert_eq!(lod_cache_budget(Some(8 * gib), 0, false), 0);
+        assert_eq!(lod_cache_budget(Some(8 * gib), 0, true), 2 * gib);
+        assert_eq!(lod_cache_budget(Some(7 * gib), gib, true), 2 * gib);
+        assert_eq!(lod_cache_budget(Some(64 * gib), 0, true), LOD_RAM_LIMIT);
+        assert_eq!(lod_cache_budget(None, 0, true), LOD_RAM_FALLBACK);
+        assert_eq!(
+            lod_cache_budget(Some(u64::MAX), u64::MAX, true),
+            LOD_RAM_LIMIT
+        );
+    }
     #[test]
     fn allowance_tracks_ram_without_oscillating_with_own_allocations() {
         let mib = 1024 * 1024;
