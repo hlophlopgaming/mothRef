@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![forbid(unsafe_code)]
 //! Bounded image workers. Pixels never enter the scene model.
+pub mod cache;
 mod preview;
+pub use cache::{CacheMode, LodCache, LodStore};
 use crossbeam_channel::{Receiver, Sender};
 use image::{DynamicImage, ImageReader, metadata::Orientation};
 use moth_format::{Handle, Storage};
@@ -23,7 +25,7 @@ pub const MAX_WEBP_FRAME_BYTES: u64 = 8 * 1024 * 1024;
 ///
 /// `Rgba8` is the portable baseline; `Bc7` (desktop) halves texture memory for
 /// the same residency. ASTC is the future mobile format and is added with M8.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum ImageFormat {
     /// Uncompressed RGBA8: universally supported, including software adapters.
     #[default]
@@ -60,6 +62,9 @@ pub struct Request {
     pub side: u32,
     /// Target GPU format; the worker re-encodes decoded mips to this on success.
     pub format: ImageFormat,
+    /// Content hash when already known (previews of board items). It lets the worker
+    /// answer from the [`LodCache`] without reading the original; imports pass `None`.
+    pub blob: Option<blake3::Hash>,
 }
 /// Failures become UI placeholders, including decoder panics.
 #[derive(Debug, thiserror::Error)]
@@ -249,7 +254,8 @@ fn pyramid(mut level: image::RgbaImage, hash: blake3::Hash, original: [u32; 2]) 
 /// Re-encodes decoded mips to the requested format; `Rgba8` is a no-op.
 ///
 /// BC7 encoding is compiled only on x86/x86_64 (the encoder's kernels are ISPC).
-/// Non-x86 adapters never report BC7 support, so the `Bc7` arm is unreachable there.
+/// `moth_render::pick_image_format` never requests BC7 on non-x86 builds, so the
+/// `Bc7` arm is unreachable there.
 fn apply_format(format: ImageFormat, image: Decoded) -> Decoded {
     match format {
         ImageFormat::Bc7 => {
@@ -608,12 +614,22 @@ pub struct DecodePool {
     pub requests: Sender<Request>,
     /// Backpressure caps memory while the UI is busy.
     pub results: Receiver<Completion>,
+    cache: Arc<LodCache>,
 }
 impl DecodePool {
-    /// Wakes the event loop only when new work is ready.
+    /// Wakes the event loop only when new work is ready. Uses a private cache that
+    /// stays in [`CacheMode::NoCache`] unless configured.
     pub fn new(
         storage: Arc<dyn Storage>,
         wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> Result<Self, std::io::Error> {
+        Self::with_cache(storage, wake, Arc::new(LodCache::new()))
+    }
+    /// Like [`DecodePool::new`], with a cache shared by other pools (board tabs).
+    pub fn with_cache(
+        storage: Arc<dyn Storage>,
+        wake: Arc<dyn Fn() + Send + Sync>,
+        cache: Arc<LodCache>,
     ) -> Result<Self, std::io::Error> {
         let threads = std::thread::available_parallelism()?
             .get()
@@ -627,6 +643,7 @@ impl DecodePool {
             .map_err(std::io::Error::other)?;
         let (requests, rx) = crossbeam_channel::bounded::<Request>(8);
         let (tx, results) = crossbeam_channel::bounded(2);
+        let shared = cache.clone();
         std::thread::Builder::new()
             .name("decode-dispatch".into())
             .spawn(move || {
@@ -636,10 +653,17 @@ impl DecodePool {
                         let tx = tx.clone();
                         let storage = storage.clone();
                         let wake = wake.clone();
+                        let cache = shared.clone();
                         scope.spawn(move |_| {
                             while let Ok(request) = rx.recv() {
                                 let mut failure_hash = None;
                                 let result = (|| {
+                                    if let Some(hash) = request.blob
+                                        && let Some(image) =
+                                            cache.lookup(hash, request.format, request.side)
+                                    {
+                                        return Ok(image);
+                                    }
                                     let mut reader = storage.open(request.handle)?;
                                     let len = reader.seek(std::io::SeekFrom::End(0))?;
                                     if len > MAX_INPUT_BYTES {
@@ -648,12 +672,17 @@ impl DecodePool {
                                     reader.seek(std::io::SeekFrom::Start(0))?;
                                     let mut bytes = Vec::with_capacity(len as usize);
                                     reader.take(MAX_INPUT_BYTES + 1).read_to_end(&mut bytes)?;
-                                    let result = decode(&bytes, request.side)
+                                    let side =
+                                        cache.decode_side(request.side, request.blob.is_some());
+                                    let result = decode(&bytes, side)
                                         .map(|image| apply_format(request.format, image));
-                                    if result.is_err() {
-                                        failure_hash = Some(blake3::hash(&bytes));
+                                    match result {
+                                        Ok(image) => Ok(cache.keep(image, request.side)),
+                                        Err(error) => {
+                                            failure_hash = Some(blake3::hash(&bytes));
+                                            Err(error)
+                                        }
                                     }
-                                    result
                                 })();
                                 if tx
                                     .send(Completion {
@@ -671,7 +700,15 @@ impl DecodePool {
                     }
                 });
             })?;
-        Ok(Self { requests, results })
+        Ok(Self {
+            requests,
+            results,
+            cache,
+        })
+    }
+    /// The cache this pool reads and fills.
+    pub fn cache(&self) -> &Arc<LodCache> {
+        &self.cache
     }
 }
 #[cfg(test)]

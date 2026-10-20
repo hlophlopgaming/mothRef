@@ -299,6 +299,7 @@ impl Workspace {
                 handle,
                 side: 256,
                 format,
+                blob: None,
             }) {
                 Ok(()) => {
                     self.board.waiting.pop();
@@ -600,6 +601,7 @@ impl Workspace {
                                     handle,
                                     side: 256,
                                     format: pump.format,
+                                    blob: None,
                                 },
                                 result: Ok(image),
                                 failure_hash: None,
