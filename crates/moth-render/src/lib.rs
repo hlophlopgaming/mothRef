@@ -791,11 +791,16 @@ pub fn preview_side(pixels: f32) -> u32 {
 }
 
 /// Chooses the runtime image format from adapter capabilities: BC7 when the
-/// adapter can bind it, otherwise the universally supported RGBA8 fallback.
+/// adapter can bind it and this build can encode it, otherwise RGBA8.
+///
+/// The BC7 encoder only exists on x86/x86_64. Apple silicon and Windows on Arm
+/// adapters can report BC support; requesting BC7 there would make every decoded
+/// RGBA8 preview mismatch the registry format and never upload.
 pub fn pick_image_format(adapter: &wgpu::Adapter) -> ImageFormat {
-    if adapter
-        .features()
-        .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+    if cfg!(any(target_arch = "x86", target_arch = "x86_64"))
+        && adapter
+            .features()
+            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
     {
         ImageFormat::Bc7
     } else {
