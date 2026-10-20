@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add a performance mode to the image-cache settings, as in PureRef: In memory
+  (default), In memory with low zoom quality, Cache on disk and No cache. In the
+  caching modes an image is decoded once per zoom range and later zoom steps reuse
+  the cached detail levels instead of decoding the original again.
+- Keep in-memory detail levels within 25% of available RAM (at most 4 GiB) and the
+  disk cache within 2 GiB of the OS cache folder, evicting least recently used entries.
+- Fix images that never appeared on Apple silicon and Windows on Arm adapters that
+  report BC texture support: BC7 is now chosen only where it can be encoded.
+
 ## 0.1.0-alpha.6 — 2026-10-20
 
 - Launch the Windows app without opening a console window.
