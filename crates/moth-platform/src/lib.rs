@@ -17,9 +17,11 @@ pub mod memory;
 pub mod settings;
 mod source;
 use moth_format::{Handle, ReadSeek, Storage};
+#[cfg(unix)]
+use std::fs::File;
 use std::{
     collections::HashMap,
-    fs::{File, OpenOptions},
+    fs::OpenOptions,
     io,
     path::PathBuf,
     sync::{Arc, Mutex},

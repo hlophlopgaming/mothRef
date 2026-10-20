@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![forbid(unsafe_code)]
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 //! MothRef native entry point.
 mod app;
 mod gpu;

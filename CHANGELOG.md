@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.6 — 2026-10-20
+
+- Launch the Windows app without opening a console window.
+- Fix the Windows CI unused-import error that blocked release binary publication.
+
 ## 0.1.0-alpha.5 — 2026-10-20
 
 - Add persistent image-cache settings: available-RAM allowance (1–50%), automatic
