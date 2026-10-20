@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.7 — 2026-10-20
+
 - Add a performance mode to the image-cache settings, as in PureRef: In memory
   (default), In memory with low zoom quality, Cache on disk and No cache. In the
   caching modes an image is decoded once per zoom range and later zoom steps reuse
@@ -10,6 +12,21 @@
   disk cache within 2 GiB of the OS cache folder, evicting least recently used entries.
 - Fix images that never appeared on Apple silicon and Windows on Arm adapters that
   report BC texture support: BC7 is now chosen only where it can be encoded.
+
+- Keep image residency when closing or reselecting the active board, avoiding a
+  preview reload before the save/discard confirmation.
+- Keep wheel and trackpad scrolling out of the canvas while board tools are open.
+
+- Replace percentage-based image-cache preferences with one persistent 32–512 MiB
+  maximum (96 MiB by default), retaining automatic eviction under memory pressure.
+
+- Add persistent smooth/immediate zoom and 1–100% zoom-step preferences,
+  shared with toolbar buttons and shortcuts; preserve pointer anchors and fractional
+  trackpad input across display scales.
+- Tap Space to fit the selection or, with no selection, the whole board. Space-drag
+  pans without fitting on release; typing does not arm either binding.
+- Pack mixed-size images into free space using their displayed rotated bounds,
+  preserving sizes and aspect ratios, supporting zero gap and one-step undo.
 
 ## 0.1.0-alpha.6 — 2026-10-20
 
