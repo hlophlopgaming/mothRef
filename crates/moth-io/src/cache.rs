@@ -464,7 +464,7 @@ fn read(
     let mut table = vec![0u8; ENTRY * count];
     reader.read_exact(&mut table)?;
     let mut mips = Vec::with_capacity(count);
-    let mut previous = None;
+    let mut previous: Option<(u32, u32)> = None;
     for index in 0..count {
         let at = index * ENTRY;
         let width = u32_at(&table, at);

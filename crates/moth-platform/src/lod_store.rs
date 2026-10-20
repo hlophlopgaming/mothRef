@@ -99,19 +99,19 @@ impl DiskStore {
             }
             let path = entry.path();
             let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-            match path.extension().and_then(|e| e.to_str()) {
-                Some("lod") => {
-                    total = total.saturating_add(metadata.len());
-                    entries.push((modified, metadata.len(), path));
-                }
-                Some("tmp")
-                    if now
-                        .duration_since(modified)
-                        .is_ok_and(|age| age > STALE_TEMPORARY) =>
-                {
-                    let _ = fs::remove_file(path);
-                }
-                _ => {}
+            let extension = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or_default();
+            if extension == "lod" {
+                total = total.saturating_add(metadata.len());
+                entries.push((modified, metadata.len(), path));
+            } else if extension == "tmp"
+                && now
+                    .duration_since(modified)
+                    .is_ok_and(|age| age > STALE_TEMPORARY)
+            {
+                let _ = fs::remove_file(&path);
             }
         }
         entries.sort_by_key(|(modified, _, _)| *modified);

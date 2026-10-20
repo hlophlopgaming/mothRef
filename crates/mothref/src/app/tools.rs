@@ -180,7 +180,7 @@ impl Tools {
             .unwrap_or(0);
         self.performance_mode = values
             .get("performance_mode")
-            .and_then(|v| moth_io::CacheMode::from_code(v))
+            .and_then(|v| moth_io::CacheMode::from_code(v.as_str()))
             .unwrap_or_default();
         self.reduced_motion = values
             .get(moth_platform::settings::REDUCED_MOTION)
