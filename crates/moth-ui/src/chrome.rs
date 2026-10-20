@@ -24,6 +24,8 @@ pub struct Actions {
     pub fit: bool,
     /// Zoom multiplier, zero when unchanged.
     pub zoom: f32,
+    /// Exact scale entered in the percentage field.
+    pub zoom_to: Option<f32>,
     /// Return to the catalog without closing a board.
     pub home: bool,
     /// Create a bounded new session.
@@ -67,6 +69,8 @@ pub struct Status<'a> {
     pub selected: usize,
     /// Camera scale.
     pub zoom: f32,
+    /// Percent zoom per toolbar step, shared with wheel preferences.
+    pub zoom_increment: f32,
     /// Allocated texture pages.
     pub texture_bytes: u64,
     /// Adaptive image-cache ceiling for the active board.
@@ -307,7 +311,7 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                     a.fit = icons::button(ui, Icon::Fit, &tooltip(ui.ctx(), Text::Fit), false)
                         .clicked();
                     if ui.button("+").on_hover_text(text(Text::ZoomIn)).clicked() {
-                        a.zoom = 1.25;
+                        a.zoom = 1. + status.zoom_increment / 100.;
                     }
                     let mut percent = status.zoom * 100.;
                     if ui
@@ -321,10 +325,10 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                         .changed()
                         && percent.is_finite()
                     {
-                        a.zoom = percent / (status.zoom * 100.);
+                        a.zoom_to = Some(percent / 100.);
                     }
                     if ui.button("−").on_hover_text(text(Text::ZoomOut)).clicked() {
-                        a.zoom = 0.8;
+                        a.zoom = 1. / (1. + status.zoom_increment / 100.);
                     }
                     if ui.available_width() > 100. {
                         ui.add(

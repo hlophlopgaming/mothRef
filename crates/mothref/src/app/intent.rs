@@ -33,8 +33,10 @@ pub(super) enum Intent {
     Fit,
     /// Defer a fit until the canvas lays out next frame.
     NeedsFit,
-    /// Relative zoom from the toolbar percentage control.
+    /// Relative zoom from buttons and shortcuts.
     Zoom(f32),
+    /// Exact scale replaces any pending animated zoom target.
+    ZoomTo(f32),
     /// Return to the catalog without closing the board.
     Home,
     /// Create a bounded new board.
@@ -120,6 +122,9 @@ pub(super) fn intents_from_actions(actions: Actions) -> Vec<Intent> {
     }
     if actions.zoom > 0. {
         intents.push(Intent::Zoom(actions.zoom));
+    }
+    if let Some(zoom) = actions.zoom_to {
+        intents.push(Intent::ZoomTo(zoom));
     }
     if actions.home {
         intents.push(Intent::Home);

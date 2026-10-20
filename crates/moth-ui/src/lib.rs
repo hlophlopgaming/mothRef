@@ -75,6 +75,8 @@ pub enum Text {
     /// Localized preference.
     ScaleWithWindow,
     /// Localized preference.
+    SmoothZoom,
+    ZoomIncrement,
     WheelZoom,
     /// Localized preference.
     WheelPan,
@@ -85,10 +87,6 @@ pub enum Text {
     UndoLimit,
     /// Cache settings keep memory limits visible and adjustable.
     ImageCache,
-    /// Fraction of available physical memory allowed for image textures.
-    CacheRamPercent,
-    /// Adapter-based cache ceiling.
-    CacheAutomatic,
     /// Explicit cache ceiling in MiB.
     CacheLimit,
     /// Explains demand allocation and safe preview eviction.
@@ -606,13 +604,13 @@ mod tests {
             Text::ScaleSelection,
             Text::Export,
             Text::ScaleWithWindow,
+            Text::SmoothZoom,
+            Text::ZoomIncrement,
             Text::WheelZoom,
             Text::WheelPan,
             Text::WheelOff,
             Text::UndoLimit,
             Text::ImageCache,
-            Text::CacheRamPercent,
-            Text::CacheAutomatic,
             Text::CacheLimit,
             Text::CacheHint,
             Text::PerformanceMode,
@@ -790,6 +788,7 @@ mod tests {
             count: 3,
             selected: 0,
             zoom: 1.,
+            zoom_increment: 10.,
             texture_bytes: 0,
             texture_budget: 0,
             message: "",

@@ -132,40 +132,12 @@ impl App {
                 return;
             }
             Fit => Intent::Fit,
-            Focus => {
-                let hovered = self
-                    .input
-                    .cursor
-                    .filter(|p| {
-                        self.workspace
-                            .board
-                            .view
-                            .viewport
-                            .contains(egui::pos2(p[0], p[1]))
-                    })
-                    .and_then(|p| {
-                        let world = self.workspace.board.view.camera.world(p);
-                        self.workspace
-                            .board
-                            .scene
-                            .query(Rect {
-                                x: world[0],
-                                y: world[1],
-                                width: 1. / self.workspace.board.view.camera.zoom,
-                                height: 1. / self.workspace.board.view.camera.zoom,
-                            })
-                            .into_iter()
-                            .rev()
-                            .find(|i| i.rect.contains_rotated(i.transform.rotation, world))
-                            .map(|i| i.id)
-                    });
-                hovered.map_or(Intent::FitSelection, Intent::FocusItem)
-            }
+            Focus => Intent::FitSelection,
             Previous => Intent::Focus(-1),
             Next => Intent::Focus(1),
-            ZoomIn => Intent::Zoom(1.2),
-            ZoomOut => Intent::Zoom(1. / 1.2),
-            ZoomReset => Intent::Zoom(1. / self.workspace.board.view.camera.zoom),
+            ZoomIn => Intent::Zoom(1. + self.tools.zoom_increment / 100.),
+            ZoomOut => Intent::Zoom(1. / (1. + self.tools.zoom_increment / 100.)),
+            ZoomReset => Intent::ZoomTo(1.),
             ResetCamera => Intent::ResetCamera,
             Note => Intent::AddNote(self.workspace.board.view.camera.world([
                 self.workspace.board.view.viewport.center().x,

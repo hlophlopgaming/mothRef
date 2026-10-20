@@ -27,7 +27,7 @@ pub enum Arrange {
     Vertical,
     /// Rows of roughly the square root of the item count.
     Grid,
-    /// Shelf packing that wraps to fit the viewport width.
+    /// Packs displayed bounds into free rectangles within the viewport width.
     Optimal,
 }
 
@@ -87,7 +87,7 @@ pub fn arrange(items: &[&Item], mode: Arrange, target_width: f32, gap: f32) -> V
         Arrange::Horizontal => flow(items, usize::MAX, start, gap, &mut commands),
         Arrange::Vertical => flow(items, 1, start, gap, &mut commands),
         Arrange::Grid => flow(items, grid_columns(items.len()), start, gap, &mut commands),
-        Arrange::Optimal => shelf(items, target_width, start, gap, &mut commands),
+        Arrange::Optimal => pack(items, target_width, start, gap, &mut commands),
     }
     commands
 }
@@ -108,26 +108,83 @@ fn flow(items: &[&Item], columns: usize, start: (f32, f32), gap: f32, commands: 
     }
 }
 
-/// Greedy shelf packing that wraps when a shelf would exceed `target_width`.
-fn shelf(
+/// Largest-first guillotine packing reuses holes instead of leaving whole shelves empty.
+fn pack(
     items: &[&Item],
     target_width: f32,
     start: (f32, f32),
     gap: f32,
     commands: &mut Vec<Command>,
 ) {
-    let width = target_width.max(gap);
-    let (mut x, mut y) = start;
-    let mut shelf_height = 0.0;
-    for item in items {
-        if x > start.0 && x + item.rect.width > start.0 + width {
-            x = start.0;
-            y += shelf_height + gap;
-            shelf_height = 0.0;
+    if !target_width.is_finite() || target_width <= 0. {
+        return;
+    }
+    let bounds: Vec<_> = items
+        .iter()
+        .map(|i| {
+            let e = i.rect.rotated_envelope(i.transform.rotation);
+            Rect {
+                x: e.lower()[0],
+                y: e.lower()[1],
+                width: e.upper()[0] - e.lower()[0],
+                height: e.upper()[1] - e.lower()[1],
+            }
+        })
+        .collect();
+    let width = bounds.iter().fold(target_width, |w, r| w.max(r.width)) + gap;
+    let mut free = vec![Rect {
+        x: start.0,
+        y: start.1,
+        width,
+        height: f32::INFINITY,
+    }];
+    let mut order: Vec<_> = (0..items.len()).collect();
+    order.sort_by(|&a, &b| {
+        (bounds[b].width * bounds[b].height)
+            .total_cmp(&(bounds[a].width * bounds[a].height))
+            .then(a.cmp(&b))
+    });
+    let mut placed = vec![None; items.len()];
+    for index in order {
+        let b = bounds[index];
+        let w = b.width + gap;
+        let h = b.height + gap;
+        let slot = free
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.width >= w && r.height >= h)
+            .min_by(|(_, a), (_, b)| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)))
+            .map(|(i, _)| i);
+        let Some(slot) = slot else {
+            return;
+        };
+        let r = free.swap_remove(slot);
+        placed[index] = Some(Rect {
+            x: items[index].rect.x + r.x - b.x,
+            y: items[index].rect.y + r.y - b.y,
+            ..items[index].rect
+        });
+        if r.width > w {
+            free.push(Rect {
+                x: r.x + w,
+                y: r.y,
+                width: r.width - w,
+                height: h,
+            });
         }
-        push(commands, item, Rect { x, y, ..item.rect });
-        x += item.rect.width + gap;
-        shelf_height = shelf_height.max(item.rect.height);
+        if r.height > h {
+            free.push(Rect {
+                x: r.x,
+                y: r.y + h,
+                width: r.width,
+                height: r.height - h,
+            });
+        }
+    }
+    if placed.iter().flatten().all(|r| r.valid()) {
+        for (item, rect) in items.iter().zip(placed.into_iter().flatten()) {
+            push(commands, item, rect);
+        }
     }
 }
 
@@ -338,6 +395,30 @@ mod tests {
 
     proptest::proptest! {
         #[test]
+        fn packing_keeps_displayed_bounds_disjoint(
+            sizes in proptest::collection::vec((1f32..300., 1f32..300., -std::f32::consts::PI..std::f32::consts::PI), 1..40),
+            gap in 0f32..30., width in 10f32..1000.
+        ) {
+            let items: Vec<_> = sizes.into_iter().enumerate().map(|(n,(w,h,rotation))| {
+                let mut i=item(n as u8,w,h); i.transform.rotation=rotation; i
+            }).collect();
+            let refs: Vec<_> = items.iter().collect();
+            let commands=arrange(&refs,Arrange::Optimal,width,gap);
+            proptest::prop_assert_eq!(commands.len(),items.len());
+            let rects=rects(&commands);
+            let envelopes: Vec<_> = rects.iter().zip(&items).map(|(r,i)| {
+                let e=r.rotated_envelope(i.transform.rotation);
+                [e.lower()[0],e.lower()[1],e.upper()[0],e.upper()[1]]
+            }).collect();
+            for (n,r) in rects.iter().enumerate() {
+                proptest::prop_assert_eq!((r.width,r.height),(items[n].rect.width,items[n].rect.height));
+                for b in &envelopes[n+1..] {
+                    let a=envelopes[n];
+                    proptest::prop_assert!(a[2]+gap <= b[0]+0.001 || b[2]+gap <= a[0]+0.001 || a[3]+gap <= b[1]+0.001 || b[3]+gap <= a[1]+0.001);
+                }
+            }
+        }
+        #[test]
         fn editing_commands_undo_and_checkpoint_roundtrip(dx in -1000f32..1000.,dy in -1000f32..1000.,n in 2usize..20) {
             let mut scene=Scene::default();
             for i in 0..n {let item=Item::text(format!("note {i}"),Rect{x:i as f32*15.,y:i as f32*13.,width:10.+i as f32,height:20.},scene.top());scene.apply(Command::Insert(item)).unwrap();}
@@ -345,6 +426,7 @@ mod tests {
             for duplicate in [false,true] {
                 let mut items:Vec<_>=scene.items().collect();items.sort_by(|a,b|a.z.cmp(&b.z));
                 let mut commands=translate(&items,[dx,dy],duplicate,scene.top());
+                commands.extend(arrange(&items,Arrange::Optimal,150.,0.));
                 for mode in [Align::Left,Align::Right,Align::Top,Align::Bottom,Align::Horizontal,Align::Vertical,Align::Stack] {commands.extend(align(&items,mode));}
                 let selected=items.iter().take(2).map(|i|i.id).collect();
                 commands.extend(reorder(&scene,&selected,true,false));
@@ -423,6 +505,14 @@ mod tests {
         assert_eq!(out[0], a.rect);
         assert_eq!(out[1], b.rect);
     }
+    #[test]
+    fn optimal_fills_space_beside_tall_images() {
+        let items = [item(1, 50., 100.), item(2, 50., 50.), item(3, 50., 50.)];
+        let refs: Vec<_> = items.iter().collect();
+        let out = rects(&arrange(&refs, Arrange::Optimal, 100., 0.));
+        assert_eq!(out.iter().map(|r| r.y + r.height).fold(0., f32::max), 100.);
+    }
+
     #[test]
     fn normalize_width_equalizes_width_and_keeps_aspect() {
         let a = item(1, 100., 50.);

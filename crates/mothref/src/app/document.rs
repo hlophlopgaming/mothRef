@@ -26,6 +26,28 @@ impl View {
     pub(super) fn fit(&mut self, scene: &Scene) {
         self.fit_bounds(scene.bounds());
     }
+    pub(super) fn fit_selection(&mut self, scene: &Scene, selection: &HashSet<Uuid>) {
+        let bounds = selection.iter().filter_map(|id| scene.get(*id)).fold(
+            egui::Rect::NOTHING,
+            |bounds, item| {
+                let e = item.rect.rotated_envelope(item.transform.rotation);
+                bounds.union(egui::Rect::from_min_max(
+                    egui::pos2(e.lower()[0], e.lower()[1]),
+                    egui::pos2(e.upper()[0], e.upper()[1]),
+                ))
+            },
+        );
+        self.fit_bounds(if bounds.is_positive() {
+            Some(Rect {
+                x: bounds.min.x,
+                y: bounds.min.y,
+                width: bounds.width(),
+                height: bounds.height(),
+            })
+        } else {
+            scene.bounds()
+        });
+    }
     pub(super) fn fit_bounds(&mut self, bounds: Option<Rect>) {
         self.needs_fit = true;
         if !self.viewport.is_finite() || !self.viewport.is_positive() {
@@ -317,6 +339,48 @@ impl Document {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn selection_fit_uses_rotated_bounds_and_empty_selection_fits_board() {
+        let mut scene = super::Scene::default();
+        let mut selected = moth_scene::Item::text(
+            "selected",
+            super::Rect {
+                x: 0.,
+                y: 0.,
+                width: 100.,
+                height: 50.,
+            },
+            None,
+        );
+        selected.transform.rotation = std::f32::consts::FRAC_PI_2;
+        let id = selected.id;
+        scene.apply(super::Command::Insert(selected)).unwrap();
+        scene
+            .apply(super::Command::Insert(moth_scene::Item::text(
+                "other",
+                super::Rect {
+                    x: 500.,
+                    y: 500.,
+                    width: 200.,
+                    height: 200.,
+                },
+                None,
+            )))
+            .unwrap();
+        let mut view = super::View {
+            viewport: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.)),
+            ..super::View::default()
+        };
+        view.fit_selection(&scene, &std::collections::HashSet::from([id]));
+        let center = view.camera.screen([50., 25.]);
+        assert!((center[0] - 400.).abs() < 0.001 && (center[1] - 300.).abs() < 0.001);
+        assert!((view.camera.zoom - 5.52).abs() < 0.001);
+        view.fit_selection(&scene, &std::collections::HashSet::new());
+        let camera = view.camera;
+        view.fit(&scene);
+        assert_eq!(view.camera.origin, camera.origin);
+        assert_eq!(view.camera.zoom, camera.zoom);
+    }
     use super::*;
     #[test]
     fn batch_edits_show_affected_items_and_undo_together() {
@@ -562,6 +626,11 @@ mod tests {
         board.dirty = true;
         let mut workspace = workspace::Workspace::new(board, Arc::new(|| {}));
         let identity = workspace.board.ui_id;
+        workspace.library = false;
+        assert!(
+            matches!(workspace.activate(0), workspace::TabChange::None),
+            "closing the active tab must not reset its image residency before confirmation"
+        );
         assert!(matches!(
             workspace.request_close(true),
             workspace::TabChange::None

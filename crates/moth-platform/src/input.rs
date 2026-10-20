@@ -86,6 +86,8 @@ pub struct Adapter {
     button: Option<MouseButton>,
     /// Wheel preference: 0 zoom, 1 pan, 2 disabled. Pinch remains available.
     pub wheel: u8,
+    /// Percent zoom per wheel notch (40 logical points); zero uses the legacy default.
+    pub zoom_increment: f32,
     shift: bool,
     control: bool,
     #[cfg(target_os = "linux")]
@@ -197,10 +199,17 @@ impl Adapter {
                 if self.wheel == 2 {
                     return None;
                 }
+                let sensitivity = if self.zoom_increment.is_finite()
+                    && (1.0..=100.0).contains(&self.zoom_increment)
+                {
+                    (self.zoom_increment / 100.).ln_1p() / 40.
+                } else {
+                    0.002
+                };
                 let y = delta[1];
                 return Some(Input::Zoom {
                     position: self.position,
-                    factor: (y * 0.002).exp(),
+                    factor: (y * sensitivity).exp(),
                     continuous: matches!(
                         event,
                         WindowEvent::MouseWheel {
@@ -351,6 +360,37 @@ mod tests {
                     assert_eq!(pointer.button, expected);
                 }
             }
+        }
+    }
+    #[test]
+    fn wheel_and_trackpad_share_increment_and_reversible_zoom() {
+        let mut adapter = Adapter {
+            zoom_increment: 25.,
+            ..Adapter::default()
+        };
+        for (delta, scale, expected) in [
+            (MouseScrollDelta::LineDelta(0., 1.), 1., 1.25f32),
+            (MouseScrollDelta::LineDelta(0., -1.), 1., 0.8),
+            (
+                MouseScrollDelta::PixelDelta(winit::dpi::PhysicalPosition::new(0., 80.)),
+                2.,
+                1.25,
+            ),
+            (
+                MouseScrollDelta::PixelDelta(winit::dpi::PhysicalPosition::new(0., 20.)),
+                1.,
+                1.25f32.sqrt(),
+            ),
+        ] {
+            let event = WindowEvent::MouseWheel {
+                device_id: winit::event::DeviceId::dummy(),
+                delta,
+                phase: TouchPhase::Moved,
+            };
+            let Some(Input::Zoom { factor, .. }) = adapter.event(&event, scale) else {
+                panic!("expected zoom")
+            };
+            assert!((factor - expected).abs() < 0.00001);
         }
     }
     #[test]

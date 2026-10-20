@@ -59,7 +59,7 @@ impl Workspace {
         }
     }
     pub(super) fn activate(&mut self, index: usize) -> TabChange {
-        if self.confirm_close || index > self.tabs.len() {
+        if self.confirm_close || index > self.tabs.len() || (index == 0 && !self.library) {
             return TabChange::None;
         }
         if index > 0 {
@@ -111,7 +111,8 @@ impl Workspace {
             Ok(board) => {
                 let previous = std::mem::replace(&mut self.board, board);
                 self.tabs.push(previous);
-                return self.activate(0);
+                self.library = false;
+                return TabChange::Switched;
             }
             Err(error) => self.board.message = error.to_string(),
         }

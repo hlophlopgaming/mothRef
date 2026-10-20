@@ -149,6 +149,37 @@ fn interpolate(from: Camera, to: Camera, anchor: Option<[f32; 2]>, t: f32) -> Ca
 mod tests {
     use super::*;
     #[test]
+    fn repeated_steps_accumulate_and_keep_the_latest_pointer_anchor() {
+        for immediate in [false, true] {
+            let mut motion = CameraMotion::default();
+            let mut camera = Camera {
+                origin: [15., -25.],
+                zoom: 1.,
+            };
+            motion.zoom(&mut camera, [100., 200.], 1.25, immediate);
+            let anchor = [321., 153.];
+            let world = camera.world(anchor);
+            motion.zoom(&mut camera, anchor, 1.25, immediate);
+            let now = Instant::now();
+            for frame in 0..=60 {
+                let active = motion.step(
+                    &mut camera,
+                    now + Duration::from_millis(frame * 5),
+                    immediate,
+                );
+                let screen = camera.screen(world);
+                assert!(
+                    (screen[0] - anchor[0]).abs() < 0.001 && (screen[1] - anchor[1]).abs() < 0.001
+                );
+                if immediate {
+                    assert!(!active);
+                }
+            }
+            assert!((camera.zoom - 1.25 * 1.25).abs() < 0.00001);
+            assert!(!motion.step(&mut camera, now + Duration::from_secs(1), immediate));
+        }
+    }
+    #[test]
     fn inertia_expires_and_stationary_release_does_not_glide() {
         let now = Instant::now();
         let mut motion = CameraMotion::default();

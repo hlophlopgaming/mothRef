@@ -409,12 +409,8 @@ impl App {
             let ceiling = moth_platform::memory::texture_ceiling(
                 available,
                 gpu.registry.image_bytes(),
-                if self.tools.cache_limit_mib == 0 {
-                    gpu.texture_budget_limit
-                } else {
-                    u64::from(self.tools.cache_limit_mib) * 1024 * 1024
-                },
-                self.tools.cache_ram_percent,
+                u64::from(self.tools.cache_limit_mib) * 1024 * 1024,
+                12.5,
             );
             gpu.registry.adapt_budget(active, ceiling);
         }
@@ -597,13 +593,19 @@ impl App {
                 self.fit();
                 self.redraw();
             }
-            Intent::Zoom(factor) => {
-                self.workspace.board.view.camera.zoom_at(
+            Intent::Zoom(mut factor) | Intent::ZoomTo(mut factor) => {
+                if matches!(intent, Intent::ZoomTo(_)) {
+                    self.camera_motion.stop();
+                    factor /= self.workspace.board.view.camera.zoom;
+                }
+                self.camera_motion.zoom(
+                    &mut self.workspace.board.view.camera,
                     [
                         self.workspace.board.view.viewport.center().x,
                         self.workspace.board.view.viewport.center().y,
                     ],
                     factor,
+                    self.tools.reduced_motion || !self.tools.smooth_zoom,
                 );
                 self.redraw();
             }
@@ -818,38 +820,10 @@ impl App {
     /// Fits the camera to the current selection, if any.
     fn fit_selection(&mut self) {
         let before = self.workspace.board.view.camera;
-        let selected: Vec<_> = self
-            .workspace
+        self.workspace
             .board
-            .selection
-            .iter()
-            .filter_map(|id| self.workspace.board.scene.get(*id))
-            .collect();
-        if selected.is_empty() {
-            return;
-        }
-        let min = selected.iter().fold([f32::INFINITY; 2], |a, i| {
-            let e = i.rect.rotated_envelope(i.transform.rotation);
-            [a[0].min(e.lower()[0]), a[1].min(e.lower()[1])]
-        });
-        let max = selected.iter().fold([f32::NEG_INFINITY; 2], |a, i| {
-            [
-                a[0].max(i.rect.rotated_envelope(i.transform.rotation).upper()[0]),
-                a[1].max(i.rect.rotated_envelope(i.transform.rotation).upper()[1]),
-            ]
-        });
-        self.workspace.board.view.camera.zoom =
-            ((self.workspace.board.view.viewport.width() - 48.) / (max[0] - min[0]))
-                .min((self.workspace.board.view.viewport.height() - 48.) / (max[1] - min[1]))
-                .clamp(0.01, 64.);
-        self.workspace.board.view.camera.origin = [
-            (min[0] + max[0]) / 2.
-                - self.workspace.board.view.viewport.center().x
-                    / self.workspace.board.view.camera.zoom,
-            (min[1] + max[1]) / 2.
-                - self.workspace.board.view.viewport.center().y
-                    / self.workspace.board.view.camera.zoom,
-        ];
+            .view
+            .fit_selection(&self.workspace.board.scene, &self.workspace.board.selection);
         self.animate_camera(before);
         self.redraw();
     }
@@ -900,14 +874,12 @@ impl App {
                 continuous,
                 finished,
             } => {
-                self.camera_motion.stop();
-                if self
-                    .workspace
-                    .board
-                    .view
-                    .viewport
-                    .contains(egui::pos2(position[0], position[1]))
-                {
+                if input::canvas_navigation(
+                    self.workspace.board.view.viewport,
+                    self.tools.open,
+                    position,
+                ) {
+                    self.camera_motion.stop();
                     if continuous {
                         if finished {
                             self.camera_motion
@@ -927,13 +899,11 @@ impl App {
                 factor,
                 continuous,
             } => {
-                if self
-                    .workspace
-                    .board
-                    .view
-                    .viewport
-                    .contains(egui::pos2(position[0], position[1]))
-                {
+                if input::canvas_navigation(
+                    self.workspace.board.view.viewport,
+                    self.tools.open,
+                    position,
+                ) {
                     if continuous {
                         self.camera_motion.stop();
                         self.workspace.board.view.camera.zoom_at(position, factor);
@@ -942,7 +912,7 @@ impl App {
                             &mut self.workspace.board.view.camera,
                             position,
                             factor,
-                            self.tools.reduced_motion,
+                            self.tools.reduced_motion || !self.tools.smooth_zoom,
                         );
                     }
                 }
@@ -1361,6 +1331,7 @@ impl App {
                     chrome::chrome(
                         ui,
                         chrome::Chrome {
+                            zoom_increment: self.tools.zoom_increment,
                             board: &mut self.workspace.board,
                             tabs: &self.workspace.tabs,
                             gpu,
@@ -1660,6 +1631,7 @@ impl ApplicationHandler<Wake> for App {
             }
         }
         self.input.adapter.wheel = self.tools.wheel;
+        self.input.adapter.zoom_increment = self.tools.zoom_increment;
         if let Some(input) = self.input.adapter.event(&event, window.scale_factor()) {
             self.pointer(input);
             self.redraw();

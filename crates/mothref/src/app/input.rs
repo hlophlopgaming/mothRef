@@ -29,6 +29,15 @@ pub(super) fn key(event: &winit::event::KeyEvent) -> Option<egui::Key> {
     )
 }
 
+/// Wheel and trackpad navigation share the same canvas ownership check.
+pub(super) fn canvas_navigation(
+    viewport: egui::Rect,
+    tools_open: bool,
+    position: [f32; 2],
+) -> bool {
+    !tools_open && viewport.contains(egui::pos2(position[0], position[1]))
+}
+
 impl InputState {
     /// egui intentionally omits Super outside macOS; exact matching still needs it.
     pub fn modifiers_event(&mut self, event: &winit::event::WindowEvent) {
@@ -55,7 +64,7 @@ impl InputState {
         dragging: bool,
     ) -> Option<super::bindings::Action> {
         use super::bindings::Action;
-        if pressed {
+        if pressed && !blocked {
             self.held.insert(key);
         } else {
             self.held.remove(&key);
@@ -99,6 +108,36 @@ mod tests {
     use super::*;
     use egui::Key;
     #[test]
+    fn open_tools_keep_wheel_and_trackpad_navigation_off_the_board() {
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.));
+        for event in [
+            moth_platform::input::Input::Zoom {
+                position: [300., 200.],
+                factor: 1.25,
+                continuous: false,
+            },
+            moth_platform::input::Input::Zoom {
+                position: [300., 200.],
+                factor: 1.01,
+                continuous: true,
+            },
+            moth_platform::input::Input::Pan {
+                position: [300., 200.],
+                delta: [0., 20.],
+                continuous: true,
+                finished: false,
+            },
+        ] {
+            let position = match event {
+                moth_platform::input::Input::Zoom { position, .. }
+                | moth_platform::input::Input::Pan { position, .. } => position,
+                _ => unreachable!(),
+            };
+            assert!(canvas_navigation(viewport, false, position));
+            assert!(!canvas_navigation(viewport, true, position));
+        }
+    }
+    #[test]
     fn space_tap_focuses_but_a_drag_or_cancel_does_not() {
         let registry = Registry::default();
         let mut input = InputState::default();
@@ -114,11 +153,25 @@ mod tests {
         input.key_action(&registry, Key::Space, true, false, false, false);
         assert!(input.focus_drag([0.; 2], [5., 0.]));
         assert_eq!(
-            input.key_action(&registry, Key::Space, false, false, false, true),
+            input.key_action(&registry, Key::Space, false, false, false, false),
             None
         );
         input.key_action(&registry, Key::Space, true, false, false, false);
         input.key_action(&registry, Key::Escape, true, false, false, true);
+        assert_eq!(
+            input.key_action(&registry, Key::Space, false, false, false, false),
+            None
+        );
+    }
+    #[test]
+    fn space_while_typing_cannot_arm_pan_or_fit() {
+        let registry = Registry::default();
+        let mut input = InputState::default();
+        assert_eq!(
+            input.key_action(&registry, Key::Space, true, false, true, false),
+            None
+        );
+        assert!(!input.held.contains(&Key::Space));
         assert_eq!(
             input.key_action(&registry, Key::Space, false, false, false, false),
             None

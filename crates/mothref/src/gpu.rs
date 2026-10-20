@@ -7,7 +7,6 @@ pub struct Gpu {
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
     pub registry: moth_render::Registry,
-    pub texture_budget_limit: u64,
     /// Makes hardware and software rendering distinguishable.
     pub adapter: String,
     pub transparent: bool,
@@ -28,11 +27,6 @@ impl Gpu {
                 .await
                 .map_err(anyhow::Error::msg)?;
         let info = adapter.get_info();
-        let texture_budget_limit = if info.device_type == wgpu::DeviceType::DiscreteGpu {
-            moth_render::MAX_TEXTURE_BUDGET
-        } else {
-            moth_render::TEXTURE_BUDGET
-        };
         let label = format!(
             "{} · {:?} · {:?}",
             info.name, info.device_type, info.backend
@@ -69,7 +63,6 @@ impl Gpu {
             queue,
             config,
             registry,
-            texture_budget_limit,
             adapter: label,
             lost,
             transparent,

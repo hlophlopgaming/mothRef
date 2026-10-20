@@ -166,6 +166,11 @@ before the browser extension and advanced window integration.
   - Use the [screenshot shortcut comparison](docs/SHORTCUTS.md) as a command/gesture inventory; an existing Tools action does not imply that its PureRef binding is implemented
   - One action/binding registry for dispatch, tooltips, cheat sheet and palette; exact modifiers, text/modal focus isolation, and explicit conflict preview for optional presets
   - Resolve Space focus versus Space+drag pan, Alt-drag pan versus duplicate, and arrows for focus/layering versus nudging; keep visible pen/touch alternatives
+- [x] Zoom preferences: choose smooth or immediate stepped zoom and configure the zoom increment/sensitivity; persist the settings, keep the point under the pointer stable, and validate mouse-wheel and trackpad behavior
+- [x] Tap Space to fit the selection, or the whole board when nothing is selected; Space + drag pans without triggering fit on release; ignore these bindings while typing
+- [x] Tighter optimal packing for mixed-size images: minimize empty space using each item's displayed bounds, preserve relative sizes/aspect ratios, and allow zero gap; one undoable action (refinement of the completed M2 packer)
+- [ ] Arrangement controls: choose row/column count for vertical, horizontal and grid layouts through a slider with an exact numeric value; define orientation semantics in the UI, clamp the count to the selection size, preserve relative image sizes, and apply the arrangement as one undoable action. Proposed semantics to validate: vertical fills columns top-to-bottom; horizontal fills rows left-to-right; grid uses a chosen column count
+- [ ] Hotkey feedback: a small non-blocking toast with the executed action and its current binding, remain visible for 3–4 seconds, then dissolve; hovering keeps the toast visible, and pointer leave dismisses it immediately. Provide an equivalent hold/dismiss path for keyboard and touch; repeated presses of the same action update one toast and restart its fade timer instead of stacking notifications; allow disabling, and stop redraws after fading
 - [ ] Hotkey to jump between images (BeeRef #116)
 - [ ] In-app shortcut cheat sheet: all actions and their current bindings (including custom bindings), grouped by category and searchable; open with `/` or from Help
 - [x] Command Palette (Omnibar / Quick Search): search and run application actions, show their current shortcuts; open with Ctrl/⌘+K or a visible menu button, navigate with arrows, Enter to run, Esc to close
@@ -175,6 +180,9 @@ before the browser extension and advanced window integration.
 - [ ] Open `.bee` / `.pur` boards for editing in MothRef, keeping the source file untouched; `.moth` is the only working-board save format
 - [ ] After opening a foreign board, offer “Save as .moth to continue working in MothRef” with Save As and Continue without saving; the first Save opens the `.moth` destination chooser, and closing an unsaved conversion prompts to save or discard
 - [ ] Explain conversion before saving: retain original image bytes and supported layout/edits, list unsupported content, and keep the original `.bee` / `.pur` available; test import → `.moth` save → reopen and crash recovery
+- [ ] Separate board-file admission from individual-image limits: `.pur`, `.moth` and `.bee` must not inherit the image-import byte cap; use bounded streaming and explicit board-specific limits, retaining checksum, dimension, decoded-memory and corrupt-file protections
+- [ ] Opening a board keeps images and other supported entities individually editable; never introduce an uneditable wrapper group or flatten the board. Preserve supported source groups with a clear enter/ungroup path (M4); report unsupported hierarchy
+- [ ] Zoom-out memory qualification: measure RAM and VRAM separately while zooming out/in on a large board; promptly evict unnecessary high-resolution decoded data/textures, retain useful low mips within budgets, and avoid decode thrashing on zoom-in. Reuse cached mip levels before decoding again; evaluate a short bounded retention of recently used detail to avoid oscillation when zooming back and forth, with immediate eviction under budget pressure. Keep original image bytes unchanged and decoding/compression off the UI thread. Record time to reclaim memory and frame latency before setting numeric acceptance targets
 - [ ] Explain `.moth` storage benefits with measured evidence (original-byte retention, deduplication and incremental saves); show “more compact” only where measurements support it, without promising a smaller file for every board
 
 **Foreign-format policy:** `.pur` writing/export and save-back are out of scope.
@@ -185,6 +193,10 @@ has no guaranteed round-trip compatibility. It must report unsupported content
 before writing and preserve the original file.
 
 - [ ] Always-on-top, frameless window, move window by hotkey
+- [ ] Auto-reveal window bar: minimize, maximize/restore, close and pin controls appear on pointer approach; also reveal through keyboard focus and an explicit touch action
+- [ ] Pin button and rebindable shortcut: choose above all windows or above a chosen window; for the latter, let the user click the target, with cancel and visible active mode. A shortcut toggles the mode off/on using the last choice; respect platform capability flags
+- [ ] Desktop GUI launch without a terminal: investigate the reported extra cmd window on Windows and ensure packaged GUI launches do not open a console; check normal Finder launch on macOS for the same symptom. Preserve diagnostic logging and intentional CLI output; qualify both launch paths
+- [ ] Windows maximize/restore/fullscreen reliability: exercise repeated transitions, resize and surface recreation without losing the scene. Field report: PureRef crashed on Windows when expanded to fill the screen; maximize versus fullscreen is unconfirmed, and this is not yet a reproduced MothRef bug
 - [ ] Transparent overlay with adjustable opacity and click-through (BeeRef #100)
   - [x] Native overlay controls and composited master opacity; X11 qualification (Windows/macOS pending)
 - [ ] Board tabs in one window; drag a tab out into its own window and back
@@ -210,7 +222,7 @@ before writing and preserve the original file.
 - [ ] Emoji stamp: drop emoji reactions (like, not done, …) from a base set, with a custom emoji picker
 - [ ] Rich text notes with links and checklists; configurable heading font size (BeeRef #130)
 - [ ] Animated GIFs with frame stepping
-- [ ] Line/dot grid with snapping; automatic alignment guides and edge/center snapping (BeeRef #129)
+- [ ] Line/dot grid with snapping; automatic alignment guides and edge/center snapping (BeeRef #129). Images snap by their displayed bounds; make grid visibility and snapping independently toggleable, with a temporary bypass while dragging
 - [ ] Slideshow (incl. random order), embedded ICC profiles
 - [ ] Timed drawing sessions on top of the slideshow: images from the board, a group or a selection; fixed intervals (30 s, 1, 2, 5, 10 min) or a session plan (for example 10 × 30 s, 5 × 2 min); pause, skip, countdown and a sound cue; list of the shown images at the end
 - [ ] Minimap / navigator: board overview with the viewport rectangle; click or drag to move the camera; toggle with a shortcut
@@ -608,6 +620,17 @@ Inventory of [Milanote](https://milanote.com) features from its [help center](ht
 
 Deferred by the maintainer on 2026-10-18; these checks do not block earlier releases.
 Automated cross-platform CI and short change-specific safety checks remain required.
+
+---
+
+## Field observations — 2026-10-20
+
+The M3 navigation, packing, feedback, window and memory follow-ups above come from
+maintainer use of PureRef; they describe desired MothRef behavior, not verified
+claims about PureRef internals. The unwanted grouping after opening a file is a
+reported pain point; its cause and source-file hierarchy remain unknown.
+
+- [ ] **2.0.0 candidate only:** 3D model reference items; scope, formats, interaction and resource budgets remain open. Do not start before 1.0 or treat this as an M3 import requirement.
 
 ---
 

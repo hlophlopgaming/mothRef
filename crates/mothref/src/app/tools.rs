@@ -23,12 +23,12 @@ pub(super) struct Tools {
     pub ui_scale: f32,
     pub threshold: usize,
     pub undo_limit: usize,
-    pub cache_ram_percent: f32,
-    /// Zero selects the adapter's automatic ceiling.
     pub cache_limit_mib: u32,
     /// How decoded previews are kept between zoom steps.
     pub performance_mode: moth_io::CacheMode,
     pub wheel: u8,
+    pub smooth_zoom: bool,
+    pub zoom_increment: f32,
     pub scale_with_window: bool,
     pub auto_arrange: bool,
     pub default_arrange: u8,
@@ -62,10 +62,11 @@ impl Default for Tools {
             ui_scale: 1.,
             threshold: 5,
             undo_limit: 256,
-            cache_ram_percent: 12.5,
-            cache_limit_mib: 0,
+            cache_limit_mib: 96,
             performance_mode: moth_io::CacheMode::default(),
             wheel: 0,
+            smooth_zoom: true,
+            zoom_increment: 10.,
             scale_with_window: false,
             auto_arrange: false,
             default_arrange: 0,
@@ -154,9 +155,10 @@ impl Tools {
             ("drag_animation", self.drag_animation.to_string()),
             ("drag_opacity", self.drag_opacity.to_string()),
             ("wheel", self.wheel.to_string()),
+            ("smooth_zoom", self.smooth_zoom.to_string()),
+            ("zoom_increment", self.zoom_increment.to_string()),
             ("scale_with_window", self.scale_with_window.to_string()),
             ("undo_limit", self.undo_limit.to_string()),
-            ("cache_ram_percent", self.cache_ram_percent.to_string()),
             ("cache_limit_mib", self.cache_limit_mib.to_string()),
             ("performance_mode", self.performance_mode.code().to_owned()),
             ("dark", self.dark.to_string()),
@@ -168,16 +170,11 @@ impl Tools {
         ]
     }
     pub fn load(&mut self, values: &std::collections::BTreeMap<String, String>) {
-        self.cache_ram_percent = values
-            .get("cache_ram_percent")
-            .and_then(|v| v.parse::<f32>().ok())
-            .filter(|v| v.is_finite() && (1.0..=50.0).contains(v))
-            .unwrap_or(12.5);
         self.cache_limit_mib = values
             .get("cache_limit_mib")
             .and_then(|v| v.parse().ok())
-            .filter(|v| *v == 0 || (32..=512).contains(v))
-            .unwrap_or(0);
+            .filter(|v| (32..=512).contains(v))
+            .unwrap_or(96);
         self.performance_mode = values
             .get("performance_mode")
             .and_then(|v| moth_io::CacheMode::from_code(v.as_str()))
@@ -204,6 +201,15 @@ impl Tools {
             .and_then(|v| v.parse().ok())
             .filter(|v| *v < 3)
             .unwrap_or(0);
+        self.smooth_zoom = values
+            .get("smooth_zoom")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(true);
+        self.zoom_increment = values
+            .get("zoom_increment")
+            .and_then(|v| v.parse::<f32>().ok())
+            .filter(|v| v.is_finite() && (1.0..=100.0).contains(v))
+            .unwrap_or(10.);
         self.scale_with_window = values
             .get("scale_with_window")
             .and_then(|v| v.parse().ok())
@@ -286,28 +292,14 @@ impl Tools {
                         ui.label(text(hint));
                         ui.separator();
                         let label = preference(
-                            Text::CacheRamPercent,
-                            self.cache_ram_percent != defaults.cache_ram_percent,
+                            Text::CacheLimit,
+                            self.cache_limit_mib != defaults.cache_limit_mib,
                         );
                         ui.add(
-                            egui::Slider::new(&mut self.cache_ram_percent, 1.0..=50.0)
-                                .suffix(" %")
+                            egui::Slider::new(&mut self.cache_limit_mib, 32..=512)
+                                .suffix(" MiB")
                                 .text(label),
                         );
-                        let mut automatic = self.cache_limit_mib == 0;
-                        if ui
-                            .checkbox(&mut automatic, text(Text::CacheAutomatic))
-                            .changed()
-                        {
-                            self.cache_limit_mib = if automatic { 0 } else { 96 };
-                        }
-                        if !automatic {
-                            ui.add(
-                                egui::Slider::new(&mut self.cache_limit_mib, 32..=512)
-                                    .suffix(" MiB")
-                                    .text(text(Text::CacheLimit)),
-                            );
-                        }
                         ui.label(text(Text::CacheHint));
                     });
                     ui.checkbox(&mut self.reduced_motion, text(Text::ReducedMotion));
@@ -337,6 +329,11 @@ impl Tools {
                                 ui.selectable_value(&mut self.wheel, i as u8, text(key));
                             }
                         });
+                    ui.checkbox(&mut self.smooth_zoom, text(Text::SmoothZoom));
+                    ui.add(
+                        egui::Slider::new(&mut self.zoom_increment, 1.0..=100.0)
+                            .text(text(Text::ZoomIncrement)),
+                    );
                     let label = preference(Text::UndoLimit, self.undo_limit != defaults.undo_limit);
                     ui.add(egui::Slider::new(&mut self.undo_limit, 0..=4096).text(label));
                     let bytes = board
@@ -400,9 +397,10 @@ impl Tools {
                             .clicked()
                     {
                         self.wheel = defaults.wheel;
+                        self.smooth_zoom = defaults.smooth_zoom;
+                        self.zoom_increment = defaults.zoom_increment;
                         self.scale_with_window = defaults.scale_with_window;
                         self.undo_limit = defaults.undo_limit;
-                        self.cache_ram_percent = defaults.cache_ram_percent;
                         self.cache_limit_mib = defaults.cache_limit_mib;
                         self.performance_mode = defaults.performance_mode;
                         self.dark = defaults.dark;
@@ -954,16 +952,38 @@ mod tests {
         }
     }
     #[test]
+    fn legacy_cache_preferences_become_a_persisted_mib_limit() {
+        let mut tools = Tools::default();
+        for (saved, expected) in [("0", 96), ("32", 32), ("512", 512), ("31", 96), ("513", 96)] {
+            tools.load(
+                &[
+                    ("cache_limit_mib".into(), saved.into()),
+                    ("cache_ram_percent".into(), "50".into()),
+                ]
+                .into_iter()
+                .collect(),
+            );
+            assert_eq!(tools.cache_limit_mib, expected);
+            assert!(
+                !tools
+                    .preferences()
+                    .iter()
+                    .any(|(key, _)| *key == "cache_ram_percent")
+            );
+        }
+    }
+    #[test]
     fn preferences_roundtrip_and_reject_nonfinite_values() {
         let source = Tools {
             dark: false,
             ui_scale: 1.5,
             gap: 17.,
+            smooth_zoom: false,
+            zoom_increment: 25.,
             threshold: 9,
             auto_arrange: true,
             default_arrange: 3,
             undo_limit: 42,
-            cache_ram_percent: 25.,
             cache_limit_mib: 256,
             performance_mode: moth_io::CacheMode::Disk,
             show_outlines: false,
@@ -982,12 +1002,12 @@ mod tests {
         loaded.load(
             &[
                 ("ui_scale".into(), "NaN".into()),
+                ("zoom_increment".into(), "NaN".into()),
                 ("drag_opacity".into(), "NaN".into()),
                 ("drag_animation".into(), "invalid".into()),
                 ("show_outlines".into(), "invalid".into()),
                 ("arrange_gap".into(), "inf".into()),
                 ("undo_limit".into(), "99999".into()),
-                ("cache_ram_percent".into(), "NaN".into()),
                 ("cache_limit_mib".into(), "99999".into()),
                 ("performance_mode".into(), "bogus".into()),
             ]
@@ -1000,11 +1020,11 @@ mod tests {
             loaded.drag_opacity,
             super::super::motion::DEFAULT_DRAG_OPACITY
         );
+        assert_eq!(loaded.zoom_increment, 10.);
         assert_eq!(loaded.ui_scale, 1.);
         assert_eq!(loaded.gap, 24.);
         assert_eq!(loaded.undo_limit, 256);
-        assert_eq!(loaded.cache_ram_percent, 12.5);
-        assert_eq!(loaded.cache_limit_mib, 0);
+        assert_eq!(loaded.cache_limit_mib, 96);
         assert_eq!(loaded.performance_mode, moth_io::CacheMode::Memory);
     }
     #[test]
