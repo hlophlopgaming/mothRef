@@ -62,7 +62,18 @@ still pending.
 The decode concurrency cap bounds temporary pixels independently of CPU count.
 Texture lookup entries exist only for resident slots. Texture pages and lookup
 entries are evicted together; debug teardown checks allocation accounting returns
-to zero. There is no retained CPU pixel cache.
+to zero. Decoded pyramids are retained only by the LOD cache.
+
+LOD cache and performance modes: `moth_io::LodCache` is shared by all tab decode pools. Preview requests carry the
+item's blob hash; the worker answers from the cache before opening the original.
+On a miss, caching modes decode at `max(4 × requested side, 256)` and slice later
+requests from that pyramid; slices always satisfy the renderer's residency rule.
+"In memory" (default) and "In memory, low zoom quality" (1024 px cap) keep
+pyramids in RAM within 25% of available RAM (≤ 4 GiB, LRU). "Cache on disk" writes
+checksummed pyramids through `moth-platform::lod_store` into the OS cache folder
+(2 GiB, LRU pruning on decode workers). "No cache" decodes every level from the
+original. Imports keep their 256-pixel decode in every mode. Cache entries are
+rebuildable and never stored in `.moth`. See [decision 0014](decisions/0014-performance-modes-lod-cache.md).
 
 The clipboard worker stages original pixels as lossless PNG (RGB for wholly
 opaque images, RGBA otherwise) with a bounded 256 KiB output buffer before reporting

@@ -11,7 +11,7 @@ Board files use the `.moth` extension.
 Every milestone and every pull request is judged against these, in this order:
 
 1. **Never lose the user's work.** Every action reaches disk within 1 second. A crash costs at most the last second. This beats any feature.
-2. **Memory follows a budget, not the board size.** RAM and VRAM stay flat as boards grow; only what is visible is resident, at the resolution it is shown.
+2. **Memory follows a budget, not the board size.** RAM and VRAM stay flat as boards grow. The user chooses the trade-off between zoom speed and memory (performance mode, default "In memory"); every mode stays within an explicit budget.
 3. **The UI thread never waits.** Decoding, compression, disk and network run off the main thread. Frame time target: ≤ 4 ms of main-thread work.
 4. **Small files.** Original image bytes are stored as-is (no re-encoding to PNG), deduplicated by content hash. Caches can be dropped and rebuilt.
 5. **Open.** GPL-3.0-or-later, a documented file format, import of `.bee` and `.pur`.
@@ -23,7 +23,7 @@ Every milestone and every pull request is judged against these, in this order:
 | Release | After milestone | Promise |
 | --- | --- | --- |
 | 0.1 pre-alpha | M1 | Does not lose data |
-| 0.3 public alpha | M2 | Replaces BeeRef, opens `.bee` and `.pur` |
+| 0.3 public alpha | M2, M2.5 | Replaces BeeRef, opens `.bee` and `.pur`, zooms faster than PureRef |
 | 0.7 beta | M4 | Feature parity with PureRef 2 |
 | 1.0 | M7 | All P0 and P1 features done, all performance targets met |
 | 2.0 | M9 | Web build and real-time collaboration |
@@ -134,6 +134,26 @@ Short data-safety checks and existing automated CI remain in scope.
 - [ ] All parity- and Milanote-checklist items tagged M2 (see checked entries below and [validation / remaining gaps](docs/M2-EDITING-VALIDATION.md#m2-parity-follow-up))
 
 **Exit criteria:** every BeeRef board opens losslessly; every feature in BeeRef's README and CHANGELOG is present; all M2 parity items are ticked. → **Release 0.3 (public alpha)**
+
+### M2.5 — Zoom performance and memory modes
+
+**Priority (maintainer, 2026-10-20):** zoom speed and memory use come before M3.
+Users choose how decoded previews are kept, as in PureRef's performance modes; the
+default is "In memory". See [decision 0014](docs/decisions/0014-performance-modes-lod-cache.md).
+
+- [x] Performance mode setting: In memory (default), In memory with low zoom quality, Cache on disk, No cache; persisted, explained in English and Russian
+- [x] Decode once per zoom range: caching modes decode with 4× headroom and serve later zoom steps from the cache instead of re-reading, decoding and BC7-encoding the original
+- [x] RAM cache with an explicit budget and LRU eviction (25% of available RAM, at most 4 GiB), released when leaving an in-memory mode
+- [x] Disk cache: GPU-ready pyramids in the OS cache folder, per-mip checksums, 2 GiB budget, LRU pruning off the UI thread
+- [x] Select BC7 only on builds that can encode it (Apple silicon / Windows on Arm previews never uploaded)
+- [ ] Release VRAM on zoom-out: replace oversized resident textures with a lower mip copied on the GPU, without decoding
+- [ ] Request scheduler: order requests by visible area and distance to the viewport center, cancel superseded requests, request the final level during an active zoom gesture
+- [ ] Tiled pyramids for large images: fixed-size tile atlas instead of square power-of-two size classes, full-resolution inspection beyond 2048 px, memory proportional to screen pixels
+- [ ] Settings: show RAM/disk cache usage and a "Clear disk cache" action
+- [ ] Evaluate a global allocator (mimalloc) against glibc arenas with a heap profiler; keep it only with a measured RSS win
+- [ ] Measure per mode on reference hardware: warm-cache zoom latency to 2048 px, RSS after zooming in and back out, board open time; record results in [load performance](docs/LOAD-PERFORMANCE.md)
+
+**Exit criteria:** in the default mode, zooming to full detail on an image already shown completes in ≤ 100 ms with a warm cache; every mode stays within its documented memory budget; "No cache" releases texture memory when zoomed out to fit the board.
 
 ### M3 — Everyday usability, board conversion, window, overlay, browser
 
@@ -643,6 +663,7 @@ Known issues to plan for: macOS notarization needs a paid Apple Developer accoun
 
 | Date | Decision |
 | --- | --- |
+| 2026-10-20 | [Performance modes and LOD cache](docs/decisions/0014-performance-modes-lod-cache.md): PureRef-style In memory (default) / low zoom quality / Cache on disk / No cache; decode once per zoom range from a budgeted RAM or disk cache; BC7 only where it can be encoded |
 | 2026-10-19 | [RAM-aware texture budget](docs/decisions/0013-ram-aware-texture-budget.md): replace per-image growth with actual texture bytes and available RAM; configurable RAM allowance/cache limits, adapter defaults and LRU eviction |
 | 2026-10-19 | [Progressive durable loading](docs/decisions/0012-progressive-board-loading.md): journaled loading batches overlap previews with storage; bounded footer-chain indexing accelerates healthy `.moth` reads while retaining scanner recovery |
 | 2026-10-19 | [Journal original ranges](docs/decisions/0011-journal-original-ranges.md): read originals through bounded read-only storage handles into the session journal; remove duplicate `.source` files without changing durable completion boundaries |
