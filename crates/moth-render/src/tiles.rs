@@ -164,7 +164,10 @@ mod tests {
                 [256.; 2],
                 [0., 0., 256., 256.],
                 scale,
-                0,
+                Detail {
+                    bias: 0,
+                    threshold: moth_io::MAX_SIDE,
+                },
             );
             assert!(!tiles.is_empty());
             assert!(tiles.iter().all(|tile| tile.level == level));
@@ -181,10 +184,41 @@ mod tests {
                 [256.; 2],
                 [0., 0., 256., 256.],
                 1.,
-                0,
+                Detail {
+                    bias: 0,
+                    threshold: moth_io::MAX_SIDE,
+                },
             )
             .is_empty(),
             "the small whole-image fallback needs no detail tiles"
+        );
+        let small = Detail {
+            bias: 0,
+            threshold: moth_io::tiles::SIDE,
+        };
+        let camera = Camera {
+            origin: [0.; 2],
+            zoom: 1.,
+        };
+        let view = ([256.; 2], [0., 0., 256., 256.]);
+        assert!(
+            !visible(&item, [1024; 2], camera, view.0, view.1, 0.25, small).is_empty(),
+            "full-resolution mode tiles images below the 2048-pixel preview ceiling"
+        );
+        assert!(
+            visible(
+                &item,
+                [1024; 2],
+                camera,
+                view.0,
+                view.1,
+                0.25,
+                Detail {
+                    bias: 0,
+                    threshold: moth_io::MAX_SIDE,
+                },
+            )
+            .is_empty()
         );
     }
 }
