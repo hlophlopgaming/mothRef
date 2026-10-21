@@ -333,8 +333,6 @@ fn decode_inner(
 
 /// Most tiles a single bake may produce; bounds its index and its pack file.
 pub(crate) const MAX_BAKED_TILES: u64 = 1 << 16;
-/// Transient accumulator memory a single bake may hold at once.
-const BAKE_MEMORY: u64 = 192 * 1024 * 1024;
 
 /// Pyramid levels the renderer draws from tiles: none for images whose longer side is
 /// at most `threshold` (they use a whole preview), otherwise every level still larger
@@ -366,34 +364,25 @@ pub(crate) fn dimensions(bytes: &[u8]) -> Result<[u32; 2], DecodeError> {
     }))
     .map_err(|_| DecodeError::Panic)?
 }
-/// Source rows `[start, end)` that contribute to a tile, including its gutter.
-fn source_rows(tile: Tile, source: [u32; 2], orientation: Orientation) -> Option<[u32; 2]> {
-    let original = oriented_size(source, orientation);
-    let bounds = tile.bounds(original)?;
-    let axis = usize::from(!rotated(orientation));
-    let lo = (u64::from(bounds[axis].saturating_sub(1)) << tile.level).min(u64::from(source[1]));
-    let hi = (u64::from(bounds[axis] + CORE + 1) << tile.level).min(u64::from(source[1]));
-    let (lo, hi) = (lo as u32, hi as u32);
-    let first = oriented(0, 0, source, orientation)[axis];
-    let last = oriented(0, source[1] - 1, source, orientation)[axis];
-    Some(if first > last {
-        [source[1] - hi, source[1] - lo]
-    } else {
-        [lo, hi]
-    })
+/// Bytes of the full frame and pyramid a bake of `original` holds at its peak.
+pub(crate) fn bake_bytes(original: [u32; 2]) -> u64 {
+    // Level 0 plus the next level while it is built; later levels are smaller.
+    u64::from(original[0]) * u64::from(original[1]) * 4 * 5 / 4
 }
-/// Decodes the original once and emits every tile of every level in `levels`.
+/// Decodes the original once into a full frame, then builds each coarser level by
+/// alpha-weighted 2×2 averaging of the previous one and emits every tile of `levels`.
+/// Returns the whole-image preview: the first level that fits one tile, as an RGBA
+/// pyramid down to one pixel.
 ///
-/// Rows stream through accumulators that exist only while their tile is being read,
-/// so memory follows one band of tiles per level rather than the image area. Codecs
-/// that deliver rows out of order (interlaced images) are rejected; their tiles keep
-/// the on-demand path.
+/// One decode and about 1.33 passes over the pixels replace a pass per level; any
+/// codec works, including interlaced ones. Level 0 matches [`decode`] exactly; coarser
+/// levels differ from a direct area average by rounding only.
 pub(crate) fn bake(
     bytes: &[u8],
     levels: std::ops::Range<u32>,
     cancel: &AtomicBool,
     emit: &mut dyn FnMut(Decoded) -> Result<(), DecodeError>,
-) -> Result<(), DecodeError> {
+) -> Result<Decoded, DecodeError> {
     catch_unwind(AssertUnwindSafe(|| bake_inner(bytes, levels, cancel, emit)))
         .map_err(|_| DecodeError::Panic)?
 }
@@ -402,7 +391,7 @@ fn bake_inner(
     levels: std::ops::Range<u32>,
     cancel: &AtomicBool,
     emit: &mut dyn FnMut(Decoded) -> Result<(), DecodeError>,
-) -> Result<(), DecodeError> {
+) -> Result<Decoded, DecodeError> {
     let _span = tracing::info_span!("bake_tiles", bytes = bytes.len()).entered();
     if levels.end > 16 {
         return Err(DecodeError::Budget);
@@ -414,61 +403,160 @@ fn bake_inner(
         return Err(DecodeError::Budget);
     }
     let hash = blake3::hash(bytes);
-    let mut pending = Vec::new();
-    for level in levels {
-        let size = original.map(|v| v.div_ceil(1 << level));
-        for y in 0..size[1].div_ceil(CORE) {
-            for x in 0..size[0].div_ceil(CORE) {
-                let tile = Tile { level, x, y };
-                let rows =
-                    source_rows(tile, source, probe.orientation).ok_or(DecodeError::Budget)?;
-                pending.push((rows, tile));
-            }
-        }
-    }
-    // Popped from the end: earliest first row first.
-    pending.sort_by_key(|(rows, tile)| std::cmp::Reverse((rows[0], *tile)));
-    let mut active: Vec<([u32; 2], Accumulator<'_>)> = Vec::new();
-    let mut held = 0u64;
-    let mut next = 0u32;
-    let mut row_sink = |y: u32, start: u32, step: u32, row: &[u8], color: png::ColorType| {
+    let mut pixels = frame(bytes, &probe, cancel)?;
+    let mut size = original;
+    let mut level = 0;
+    loop {
         if cancel.load(Ordering::Relaxed) {
             return Err(DecodeError::Cancelled);
         }
-        if y != next || start != 0 || step != 1 {
-            return Err(DecodeError::Budget);
+        if levels.contains(&level) {
+            for y in 0..size[1].div_ceil(CORE) {
+                for x in 0..size[0].div_ceil(CORE) {
+                    let tile = Tile { level, x, y };
+                    let mut image = cut(&pixels, size, tile, original)?;
+                    image.hash = hash;
+                    emit(image)?;
+                }
+            }
         }
-        next += 1;
-        while pending.last().is_some_and(|(rows, _)| rows[0] <= y) {
-            let (rows, tile) = pending.pop().expect("pending tile was just checked");
-            let output = Accumulator::new(source, probe.orientation, tile, cancel)?;
-            held += output.bytes();
-            if held > BAKE_MEMORY {
+        if size[0].max(size[1]) <= SIDE {
+            let top =
+                image::RgbaImage::from_raw(size[0], size[1], pixels).ok_or(DecodeError::Budget)?;
+            return Ok(crate::pyramid(top, hash, original));
+        }
+        (pixels, size) = half(&pixels, size);
+        level += 1;
+    }
+}
+/// Decodes every source row into one oriented RGBA frame.
+fn frame(bytes: &[u8], probe: &Probe, cancel: &AtomicBool) -> Result<Vec<u8>, DecodeError> {
+    let source = probe.size;
+    let orientation = probe.orientation;
+    let original = oriented_size(source, orientation);
+    let len = usize::try_from(u64::from(original[0]) * u64::from(original[1]) * 4)
+        .map_err(|_| DecodeError::Budget)?;
+    let mut pixels = vec![0u8; len];
+    let width = original[0] as usize;
+    let upright = orientation == Orientation::NoTransforms;
+    scan(
+        bytes,
+        probe,
+        0,
+        source[1],
+        cancel,
+        &mut |y: u32, start: u32, step: u32, row: &[u8], color: png::ColorType| {
+            let channels = color.samples();
+            if color == png::ColorType::Indexed
+                || y >= source[1]
+                || row.len() != source[0].saturating_sub(start).div_ceil(step) as usize * channels
+            {
                 return Err(DecodeError::Budget);
             }
-            active.push((rows, output));
-        }
-        for (_, output) in &mut active {
-            output.row(y, start, step, row, color)?;
-        }
-        let mut index = 0;
-        while index < active.len() {
-            if active[index].0[1] <= y + 1 {
-                let (_, output) = active.swap_remove(index);
-                held -= output.bytes();
-                emit(output.finish(hash))?;
-            } else {
-                index += 1;
+            if upright && start == 0 && step == 1 && color == png::ColorType::Rgba {
+                let out = &mut pixels[y as usize * width * 4..][..width * 4];
+                out.copy_from_slice(row);
+                for pixel in out.as_chunks_mut::<4>().0 {
+                    if pixel[3] == 0 {
+                        *pixel = [0; 4];
+                    }
+                }
+                return Ok(());
             }
+            for (i, pixel) in row.chunks_exact(channels).enumerate() {
+                let rgba = match color {
+                    png::ColorType::Grayscale => [pixel[0], pixel[0], pixel[0], 255],
+                    png::ColorType::GrayscaleAlpha => [pixel[0], pixel[0], pixel[0], pixel[1]],
+                    png::ColorType::Rgb => [pixel[0], pixel[1], pixel[2], 255],
+                    png::ColorType::Rgba => [pixel[0], pixel[1], pixel[2], pixel[3]],
+                    _ => return Err(DecodeError::Budget),
+                };
+                let [x, y] = if upright {
+                    [start + i as u32 * step, y]
+                } else {
+                    oriented(start + i as u32 * step, y, source, orientation)
+                };
+                let at = (y as usize * width + x as usize) * 4;
+                pixels[at..at + 4].copy_from_slice(if rgba[3] == 0 { &[0; 4] } else { &rgba });
+            }
+            Ok(())
+        },
+    )?;
+    Ok(pixels)
+}
+/// Next pyramid level: each pixel is the alpha-weighted average of up to 2×2 pixels,
+/// with ceil sizes so tile coordinates match [`Tile::bounds`].
+fn half(pixels: &[u8], size: [u32; 2]) -> (Vec<u8>, [u32; 2]) {
+    let [w, h] = size.map(|v| v as usize);
+    let next = [w.div_ceil(2), h.div_ceil(2)];
+    let mut out = vec![0u8; next[0] * next[1] * 4];
+    for y in 0..next[1] {
+        let rows = [2 * y, (2 * y + 1).min(h - 1)];
+        for x in 0..next[0] {
+            let columns = [2 * x, (2 * x + 1).min(w - 1)];
+            let mut sum = [0u32; 4];
+            let mut count = 0;
+            for (ri, &row) in rows.iter().enumerate() {
+                if ri == 1 && row == rows[0] {
+                    continue;
+                }
+                for (ci, &column) in columns.iter().enumerate() {
+                    if ci == 1 && column == columns[0] {
+                        continue;
+                    }
+                    let p = &pixels[(row * w + column) * 4..][..4];
+                    let a = u32::from(p[3]);
+                    for c in 0..3 {
+                        sum[c] += u32::from(p[c]) * a;
+                    }
+                    sum[3] += a;
+                    count += 1;
+                }
+            }
+            let o = &mut out[(y * next[0] + x) * 4..][..4];
+            for c in 0..3 {
+                o[c] = (sum[c] + sum[3] / 2).checked_div(sum[3]).unwrap_or(0) as u8;
+            }
+            o[3] = (sum[3] / count) as u8;
         }
-        Ok(())
-    };
-    scan(bytes, &probe, 0, source[1], cancel, &mut row_sink)?;
-    drop(row_sink);
-    if !pending.is_empty() || !active.is_empty() || next != source[1] {
-        return Err(DecodeError::Budget);
     }
-    Ok(())
+    (out, next.map(|v| v as u32))
+}
+/// One atlas tile of a level, with the same edge-clamped gutter as [`decode`].
+fn cut(
+    pixels: &[u8],
+    size: [u32; 2],
+    tile: Tile,
+    original: [u32; 2],
+) -> Result<Decoded, DecodeError> {
+    let bounds = tile.bounds(original).ok_or(DecodeError::Budget)?;
+    let width = size[0] as usize;
+    let mut out = vec![0u8; (SIDE * SIDE * 4) as usize];
+    let columns: Vec<usize> = (0..SIDE)
+        .map(|x| {
+            (i64::from(bounds[0]) + i64::from(x) - 1).clamp(0, i64::from(size[0] - 1)) as usize
+        })
+        .collect();
+    for y in 0..SIDE {
+        let sy =
+            (i64::from(bounds[1]) + i64::from(y) - 1).clamp(0, i64::from(size[1] - 1)) as usize;
+        let row = &pixels[sy * width * 4..][..width * 4];
+        let dest = &mut out[(y * SIDE * 4) as usize..][..(SIDE * 4) as usize];
+        for (pixel, &sx) in dest.as_chunks_mut::<4>().0.iter_mut().zip(&columns) {
+            pixel.copy_from_slice(&row[sx * 4..sx * 4 + 4]);
+        }
+    }
+    Ok(Decoded {
+        tile: Some(tile),
+        hash: blake3::Hash::from_bytes([0; 32]),
+        original,
+        format: ImageFormat::Rgba8,
+        mips: vec![Mip {
+            width: SIDE,
+            height: SIDE,
+            bytes: out,
+        }],
+    })
 }
 fn oriented(x: u32, y: u32, size: [u32; 2], orientation: Orientation) -> [u32; 2] {
     let [w, h] = size;
@@ -540,13 +628,6 @@ impl<'a> Accumulator<'a> {
             },
             cancel,
         })
-    }
-    /// Bytes this accumulator holds while a tile is being read.
-    fn bytes(&self) -> u64 {
-        (self.sums.len() * 16
-            + self.wide_sums.len() * 32
-            + self.counts.len() * 4
-            + self.pixels.len()) as u64
     }
     fn source_rows_end(&self) -> u32 {
         let axis = usize::from(!matches!(

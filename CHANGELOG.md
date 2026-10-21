@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Load boards several times faster in the full-resolution mode: each image is decoded
+  once (preview and all tiles from the same decode), coarser levels are built from the
+  previous level instead of from the full image, opaque images use a faster BC7
+  preset, and reopening uploads larger batches without rescanning video memory.
+
 - New default performance mode "Everything at full resolution": when a board opens,
   every image is loaded into video memory at full resolution behind a progress bar,
   and zooming or panning never loads anything afterwards. If the board does not fit,

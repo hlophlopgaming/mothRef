@@ -21,8 +21,12 @@ use std::{
     time::Duration,
 };
 
-/// Prepared images waiting for upload; bounds pixels in flight between threads.
-const RESULTS: usize = 64;
+/// Prepared images waiting for upload; bounds pixels in flight between threads
+/// (256 BC7 tiles are 16 MiB) while letting the UI upload in large batches.
+const RESULTS: usize = 256;
+/// Decoded full frames all workers of one pool may hold at once. A frame larger than
+/// this still runs, alone.
+const FRAME_MEMORY: u64 = 1 << 30;
 /// Most images one preload pass queues.
 const QUEUE: usize = 1 << 16;
 
@@ -45,6 +49,8 @@ struct State {
 struct Shared {
     state: Mutex<State>,
     ready: Condvar,
+    frames: Mutex<u64>,
+    freed: Condvar,
     generation: AtomicU64,
     stop: AtomicBool,
 }
@@ -93,6 +99,8 @@ impl Preloader {
             shared: Arc::new(Shared {
                 state: Mutex::default(),
                 ready: Condvar::new(),
+                frames: Mutex::new(0),
+                freed: Condvar::new(),
                 generation: AtomicU64::new(0),
                 stop: AtomicBool::new(false),
             }),
@@ -142,7 +150,7 @@ impl Preloader {
         // idle while the board is hidden behind the progress bar.
         let threads = std::thread::available_parallelism()
             .map_or(1, |n| n.get().saturating_sub(1))
-            .clamp(1, 8);
+            .clamp(1, 32);
         for n in 0..threads {
             let shared = self.shared.clone();
             let storage = self.storage.clone();
@@ -206,6 +214,31 @@ impl Drop for Preloader {
         self.shared.ready.notify_all();
     }
 }
+/// Frame memory held by one bake; released on drop.
+struct Lease<'a>(&'a Shared, u64);
+impl Drop for Lease<'_> {
+    fn drop(&mut self) {
+        let mut used = self.0.frames.lock().unwrap_or_else(PoisonError::into_inner);
+        *used = used.saturating_sub(self.1);
+        self.0.freed.notify_all();
+    }
+}
+/// Waits until `bytes` of frame memory fit [`FRAME_MEMORY`] beside the other workers.
+fn lease<'a>(shared: &'a Shared, job: &Job, bytes: u64) -> Result<Lease<'a>, DecodeError> {
+    let mut used = shared.frames.lock().unwrap_or_else(PoisonError::into_inner);
+    while *used > 0 && used.saturating_add(bytes) > FRAME_MEMORY {
+        if !shared.live(job) {
+            return Err(DecodeError::Cancelled);
+        }
+        used = shared
+            .freed
+            .wait_timeout(used, Duration::from_millis(100))
+            .unwrap_or_else(PoisonError::into_inner)
+            .0;
+    }
+    *used += bytes;
+    Ok(Lease(shared, bytes))
+}
 fn next(shared: &Shared) -> Option<Job> {
     let mut state = shared.lock();
     loop {
@@ -259,57 +292,50 @@ fn run(
         return Ok(());
     }
     let side = tiles::SIDE;
-    let mut original_bytes = None;
-    let preview = match cache.lookup(job.hash, job.format, side) {
-        Some(mut image) => {
-            image.hash = job.hash;
-            image
+    let threshold = cache.mode().tile_threshold();
+    // Reopening: the preview comes from the disk cache and every tile from the pack,
+    // so the original is not decoded at all.
+    if let Some(mut preview) = cache.lookup(job.hash, job.format, side) {
+        preview.hash = job.hash;
+        let levels = tiles::tiled_levels(preview.original, threshold);
+        if levels.is_empty() {
+            return send(shared, job, tx, wake, preview);
         }
-        None => {
-            let bytes = read_original(storage, job.handle)?;
-            let image = crate::decode(&bytes, side)?;
-            if image.hash != job.hash {
-                // The handle no longer holds this content.
-                return Ok(());
+        if let Some(reader) = cache.pack_reader(job.hash, job.format) {
+            send(shared, job, tx, wake, preview)?;
+            let mut cancelled = false;
+            let read = pack::read_all(reader, job.hash, job.format, &mut |tile| {
+                send(shared, job, tx, wake, tile).map_err(|_| {
+                    cancelled = true;
+                    std::io::Error::other("preload cancelled")
+                })
+            });
+            match read {
+                Ok(()) => return Ok(()),
+                Err(_) if cancelled => return Err(DecodeError::Cancelled),
+                // A damaged pack is rebuilt below; tiles already sent stay valid.
+                Err(error) => tracing::debug!(%error, "tile pack rejected during preload"),
             }
-            let image = cache.keep(apply_format(job.format, image), side);
-            original_bytes = Some(bytes);
-            image
-        }
-    };
-    let original = preview.original;
-    send(shared, job, tx, wake, preview)?;
-    let levels = tiles::tiled_levels(original, cache.mode().tile_threshold());
-    if levels.is_empty() {
-        return Ok(());
-    }
-    if let Some(reader) = cache.pack_reader(job.hash, job.format) {
-        let mut cancelled = false;
-        let read = pack::read_all(reader, job.hash, job.format, &mut |tile| {
-            send(shared, job, tx, wake, tile).map_err(|_| {
-                cancelled = true;
-                std::io::Error::other("preload cancelled")
-            })
-        });
-        match read {
-            Ok(()) => return Ok(()),
-            Err(_) if cancelled => return Err(DecodeError::Cancelled),
-            // A damaged pack is rebuilt below; tiles already sent stay valid.
-            Err(error) => tracing::debug!(%error, "tile pack rejected during preload"),
         }
     }
-    let bytes = match original_bytes {
-        Some(bytes) => bytes,
-        None => read_original(storage, job.handle)?,
-    };
+    let bytes = read_original(storage, job.handle)?;
+    let original = tiles::dimensions(&bytes)?;
+    let _frame = lease(shared, job, tiles::bake_bytes(original))?;
     if blake3::hash(&bytes) != job.hash {
+        // The handle no longer holds this content.
         return Ok(());
     }
+    let levels = tiles::tiled_levels(original, threshold);
     let count = tiles::tile_count(original, levels.clone());
-    let mut writer = cache
-        .pack_writer(job.hash, job.format, pack::size(job.format, count))
-        .map(|out| pack::PackWriter::new(out, job.format));
-    tiles::bake(&bytes, levels, &shared.stop, &mut |tile| {
+    let mut writer = if count == 0 {
+        None
+    } else {
+        cache
+            .pack_writer(job.hash, job.format, pack::size(job.format, count))
+            .map(|out| pack::PackWriter::new(out, job.format))
+    };
+    // One decode yields every tile and the preview.
+    let preview = tiles::bake(&bytes, levels, &shared.stop, &mut |tile| {
         let tile = apply_format(job.format, tile);
         let failed = match writer.as_mut() {
             Some(pack) => pack.push(&tile).err(),
@@ -326,7 +352,9 @@ fn run(
     if let Some(pack) = writer {
         pack.finish(job.hash, original)?.commit()?;
     }
-    Ok(())
+    // Kept in the disk cache so the next opening skips this decode.
+    let preview = cache.keep(apply_format(job.format, preview), side);
+    send(shared, job, tx, wake, preview)
 }
 
 #[cfg(test)]
@@ -374,9 +402,11 @@ mod tests {
                     .unwrap(),
             );
         }
-        assert!(received[0].tile.is_none());
-        assert_eq!(received[0].original, [700, 300]);
-        let tiles: HashSet<_> = received[1..].iter().map(|i| i.tile.unwrap()).collect();
+        let previews: Vec<_> = received.iter().filter(|i| i.tile.is_none()).collect();
+        assert_eq!(previews.len(), 1);
+        assert_eq!(previews[0].original, [700, 300]);
+        assert!(previews[0].mips[0].width.max(previews[0].mips[0].height) <= tiles::SIDE);
+        let tiles: HashSet<_> = received.iter().filter_map(|i| i.tile).collect();
         assert_eq!(tiles.len(), expected - 1);
         for _ in 0..300 {
             if !preloader.progress().active() {
