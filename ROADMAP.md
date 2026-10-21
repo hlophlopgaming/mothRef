@@ -26,6 +26,7 @@ Every milestone and every pull request is judged against these, in this order:
 | 0.3 public alpha | M2, M2.5 | Replaces BeeRef, opens `.bee` and `.pur`, zooms faster than PureRef |
 | 0.7 beta | M4 | Feature parity with PureRef 2 |
 | 1.0 | M7 | All P0 and P1 features done, all performance targets met |
+| 1.1 | M17 | Gesture mode: timed gesture-drawing sessions from references collected in the app |
 | 1.5 | M10 (items tagged 1.5), M12, M14 | Reference analysis (composition overlays, ruler with calibration), Obsidian interop, capture integrations for third-party tools |
 | 2.0 | M9, M10 (items tagged 2.0), M16 | Web build and real-time collaboration; perspective and value tools; Excalidraw, draw.io and UML/XML interop, Blender plugin, video-frame capture |
 
@@ -33,7 +34,7 @@ Starting with **M1 / release 0.1**, every tagged release includes downloadable W
 
 Milestones run strictly in order. M8 and M9 come after 1.0, but the architecture decisions they depend on (stable UUIDs, fractional z-order, command-based mutations, content-addressed blobs) are made in M0–M1.
 
-M10–M16 (artist tools, review workflow, note-app interop, CLI and automation, capture integrations, PDF references, diagram-format and Blender interop) also come after 1.0. They do not depend on M8 or M9, so they may run in parallel with them and ship in 1.x minor releases as they land. Release targets set by the maintainer on 2026-10-21: items tagged **1.5** ship by release 1.5, items tagged **2.0** by release 2.0; untagged post-1.0 items have no target yet.
+M10–M17 (artist tools, review workflow, note-app interop, CLI and automation, capture integrations, PDF references, diagram-format and Blender interop, gesture mode) also come after 1.0. They do not depend on M8 or M9, so they may run in parallel with them and ship in 1.x minor releases as they land. Release targets set by the maintainer on 2026-10-21: M17 ships in release 1.1, items tagged **1.5** ship by release 1.5, items tagged **2.0** by release 2.0; untagged post-1.0 items have no target yet.
 
 ---
 
@@ -225,7 +226,7 @@ before writing and preserve the original file.
 - [ ] Animated GIFs with frame stepping
 - [ ] Line/dot grid with snapping; automatic alignment guides and edge/center snapping (BeeRef #129). Images snap by their displayed bounds; make grid visibility and snapping independently toggleable, with a temporary bypass while dragging
 - [ ] Slideshow (incl. random order), embedded ICC profiles
-- [ ] Timed drawing sessions on top of the slideshow: images from the board, a group or a selection; fixed intervals (30 s, 1, 2, 5, 10 min) or a session plan (for example 10 × 30 s, 5 × 2 min); pause, skip, countdown and a sound cue; list of the shown images at the end
+- [ ] Timed drawing sessions on top of the slideshow: images from the board, a group or a selection; fixed intervals (30 s, 1, 2, 5, 10 min) or a session plan (for example 10 × 30 s, 5 × 2 min); pause, skip, countdown and a sound cue; list of the shown images at the end. This is the engine; the full gesture-drawing workflow is M17 (release 1.1)
 - [ ] Minimap / navigator: board overview with the viewport rectangle; click or drag to move the camera; toggle with a shortcut
 - [ ] All parity- and Milanote-checklist items tagged M4 (presentation mode, note formatting and markdown shortcuts, sketch card, drawing shortcuts, GIF frame tools, drawing details, locked groups, hierarchy tools, note parenting and links)
 
@@ -391,6 +392,23 @@ PureRef handles images and GIFs only; a PDF (an artbook, a model sheet, a manual
 
 **Exit criteria:** an Excalidraw file and a draw.io file open as editable boards with a report of anything skipped; a reference sent to Blender arrives at its calibrated size; a captured video frame keeps a link back to the exact moment in the source video.
 
+### M17 — Gesture mode (after 1.0, target 1.1)
+
+Collect references on a board, then start a gesture-drawing session right there, without exporting images to a separate site or app. Builds on the M4 timed-session engine. A session is a view: it never changes the board.
+
+- [ ] Quick start: "Start gesture session" from the toolbar, the command palette and the context menu; sources are the whole board, a group, the selection, a label/tag (M6) or a dropped folder, so references can be thrown in and used immediately. Only images take part (notes, drawings and other elements are skipped)
+- [ ] Session presets: 30 s, 1, 2, 5, 10 min and untimed; ready-made plans (for example a class: 10 × 30 s, 5 × 1 min, 3 × 5 min, 1 × 10 min) and custom plans that are saved and reused; optional breaks between blocks
+- [ ] Session view: one image at a time, full window or full screen, minimal UI that fades away; countdown ring and a progress counter (7 / 20); the timer can be hidden
+- [ ] Controls: pause, next, previous, add 30 s, restart pose, end session; keyboard shortcuts (rebindable), on-screen buttons and touch/pen gestures; system-global shortcuts for pause and next where the platform allows, so the session can be driven while a drawing app has focus
+- [ ] Order: shuffle without repeats inside a session; option to avoid images shown in recent sessions; random horizontal flip; per-session grayscale toggle
+- [ ] Drawing next to the reference: small always-on-top window (M3) beside Krita, Photoshop or a paper sketchbook; pan and zoom inside the current image do not stop the timer
+- [ ] Sound cues: last-seconds warning and pose change, with volume and an off switch
+- [ ] End of session: grid of the shown images with the time each was on screen; mark favourites during or after the session; one action to send favourites to a new board or group
+- [ ] Session history in the app data folder (date, plan, number of poses, total time), never inside the board file; clearable from settings
+- [ ] Decoding stays ahead of the timer: the next images are prefetched within the active performance-mode budget, so a pose change shows the image immediately even on large boards
+
+**Exit criteria:** from a board of 200 references, a 10 × 30 s + 5 × 2 min session starts in two actions, each pose change shows the next image within 100 ms, global pause/next work while another app has focus on Windows, macOS and X11, and the board file is unchanged after the session.
+
 ---
 
 ## Feature matrix
@@ -472,6 +490,7 @@ Priorities: **P0** = no release without it, **P1** = required for 1.0, **P2** = 
 | Excalidraw, draw.io and UML/XML import (target 2.0) | MothRef | P2 | M16 |
 | Blender plugin (target 2.0) | MothRef | P2 | M16 |
 | Video-frame capture from the browser (target 2.0) | RefDrop, MothRef | P2 | M16 |
+| Gesture mode: gesture-drawing sessions from board references (target 1.1) | MothRef | P2 | M17 |
 
 `#NNN` refers to issues in the [BeeRef repository](https://github.com/rbreu/beeref/issues).
 
@@ -745,6 +764,7 @@ Known issues to plan for: macOS notarization needs a paid Apple Developer accoun
 
 | Date | Decision |
 | --- | --- |
+| 2026-10-21 | Gesture mode (M17) ships in release 1.1, on top of the M4 timed-session engine |
 | 2026-10-21 | Post-1.0 release targets: 1.5 = composition overlays and ruler (M10), Obsidian interop (M12), capture integrations (M14); 2.0 = perspective and value tools (M10), Excalidraw / draw.io / UML-XML interop, Blender plugin, video-frame capture (M16); PDF import with a page picker (M15), release to be confirmed |
 | 2026-10-20 | [Performance modes and LOD cache](docs/decisions/0014-performance-modes-lod-cache.md): PureRef-style In memory (default) / low zoom quality / Cache on disk / No cache; decode once per zoom range from a budgeted RAM or disk cache; BC7 only where it can be encoded |
 | 2026-10-19 | [RAM-aware texture budget](docs/decisions/0013-ram-aware-texture-budget.md): replace per-image growth with actual texture bytes and available RAM; configurable RAM allowance/cache limits, adapter defaults and LRU eviction |
