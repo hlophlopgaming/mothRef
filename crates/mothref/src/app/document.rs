@@ -282,6 +282,12 @@ impl Document {
                 for tile in registry.visible_tiles(item, camera, screen, clip, pixels_per_point) {
                     let key = tile.key(blob);
                     wanted_tiles.insert(key);
+                    // Coarser tiles stay resident to stand in while this one loads.
+                    for levels in 1..=moth_render::PARENT_LEVELS {
+                        if let Some(parent) = tile.parent(levels) {
+                            wanted_tiles.insert(parent.key(blob));
+                        }
+                    }
                     if camera.origin != target.origin
                         || camera.zoom != target.zoom
                         || registry.resident(key, moth_io::tiles::SIDE)

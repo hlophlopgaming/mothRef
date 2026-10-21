@@ -78,9 +78,10 @@ pub fn texture_ceiling(available: Option<u64>, allocated: u64, limit: u64, perce
 }
 
 /// Share of available RAM the in-memory performance modes may keep as decoded pyramids.
-pub const LOD_RAM_FRACTION: f64 = 0.25;
+/// Evicted entries come back from the disk copy, so RAM only holds the hot set.
+pub const LOD_RAM_FRACTION: f64 = 0.125;
 /// Absolute ceiling for decoded pyramids kept in RAM.
-pub const LOD_RAM_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
+pub const LOD_RAM_LIMIT: u64 = 1024 * 1024 * 1024;
 /// Allowance when available RAM is unknown.
 pub const LOD_RAM_FALLBACK: u64 = 512 * 1024 * 1024;
 
@@ -104,8 +105,9 @@ mod tests {
     fn lod_budget_follows_mode_and_ram() {
         let gib = 1024 * 1024 * 1024;
         assert_eq!(lod_cache_budget(Some(8 * gib), 0, false), 0);
-        assert_eq!(lod_cache_budget(Some(8 * gib), 0, true), 2 * gib);
-        assert_eq!(lod_cache_budget(Some(7 * gib), gib, true), 2 * gib);
+        assert_eq!(lod_cache_budget(Some(4 * gib), 0, true), gib / 2);
+        assert_eq!(lod_cache_budget(Some(3 * gib), gib, true), gib / 2);
+        assert_eq!(lod_cache_budget(Some(8 * gib), 0, true), LOD_RAM_LIMIT);
         assert_eq!(lod_cache_budget(Some(64 * gib), 0, true), LOD_RAM_LIMIT);
         assert_eq!(lod_cache_budget(None, 0, true), LOD_RAM_FALLBACK);
         assert_eq!(

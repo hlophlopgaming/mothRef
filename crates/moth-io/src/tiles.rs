@@ -32,6 +32,22 @@ impl Tile {
             .update(&self.y.to_le_bytes());
         key.finalize()
     }
+    /// The coarser tile `levels` steps up that fully contains this tile's content.
+    ///
+    /// Tile edges are multiples of [`CORE`] at every level, so a child never straddles
+    /// two parents; the renderer draws the parent's matching region while the child loads.
+    pub fn parent(self, levels: u32) -> Option<Tile> {
+        let level = self
+            .level
+            .checked_add(levels)
+            .filter(|level| *level <= 15)?;
+        let up = |v: u32| ((u64::from(v) * u64::from(CORE)) >> levels) / u64::from(CORE);
+        Some(Tile {
+            level,
+            x: up(self.x) as u32,
+            y: up(self.y) as u32,
+        })
+    }
     /// Every tile extent is clipped against the actual level, including odd dimensions.
     pub fn bounds(self, original: [u32; 2]) -> Option<[u32; 4]> {
         let step = 1u32.checked_shl(self.level)?;
@@ -58,16 +74,16 @@ pub(crate) fn decode_batch(
     catch_unwind(AssertUnwindSafe(|| decode_inner(bytes, tiles, cancel)))
         .map_err(|_| DecodeError::Panic)?
 }
-fn decode_inner(
-    bytes: &[u8],
-    tiles: &[Tile],
-    cancel: &AtomicBool,
-) -> Result<Vec<Decoded>, DecodeError> {
-    let _span = tracing::info_span!("decode_tiles", ?tiles, bytes = bytes.len()).entered();
-    if cancel.load(Ordering::Relaxed) {
-        return Err(DecodeError::Cancelled);
-    }
-    if bytes.len() as u64 > MAX_INPUT_BYTES || tiles.iter().any(|tile| tile.level > 15) {
+/// Header facts every tile pass needs before any pixel is decoded.
+struct Probe {
+    format: Option<image::ImageFormat>,
+    raw: bool,
+    size: [u32; 2],
+    orientation: Orientation,
+}
+/// Validates the input and its header before any pixel allocation.
+fn probe(bytes: &[u8]) -> Result<Probe, DecodeError> {
+    if bytes.len() as u64 > MAX_INPUT_BYTES {
         return Err(DecodeError::Budget);
     }
     let raw = bytes.starts_with(crate::RGBA_MAGIC);
@@ -122,52 +138,48 @@ fn decode_inner(
         }
         orientation = header.orientation()?;
     }
-    // Reduced JPEG tiles should not run a full-resolution IDCT and color conversion.
-    let jpeg_scale = if format == Some(image::ImageFormat::Jpeg) {
-        tiles
-            .iter()
-            .map(|tile| tile.level)
-            .min()
-            .unwrap_or(0)
-            .min(3)
+    Ok(Probe {
+        format,
+        raw,
+        size: [w, h],
+        orientation,
+    })
+}
+fn rotated(orientation: Orientation) -> bool {
+    matches!(
+        orientation,
+        Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Rotate90FlipH
+            | Orientation::Rotate270FlipH
+    )
+}
+/// Displayed size after EXIF orientation.
+fn oriented_size(size: [u32; 2], orientation: Orientation) -> [u32; 2] {
+    if rotated(orientation) {
+        [size[1], size[0]]
     } else {
-        0
-    };
+        size
+    }
+}
+/// Streams source rows `0..row_end` (at `1 / 2^jpeg_scale` for JPEG) into `row_sink`.
+fn scan<F>(
+    bytes: &[u8],
+    probe: &Probe,
+    jpeg_scale: u32,
+    row_end: u32,
+    cancel: &AtomicBool,
+    row_sink: &mut F,
+) -> Result<(), DecodeError>
+where
+    F: FnMut(u32, u32, u32, &[u8], png::ColorType) -> Result<(), DecodeError>,
+{
+    let [w, h] = probe.size;
     let source = [w.div_ceil(1 << jpeg_scale), h.div_ceil(1 << jpeg_scale)];
-    let mut outputs = tiles
-        .iter()
-        .map(|tile| {
-            Accumulator::new(
-                source,
-                orientation,
-                Tile {
-                    level: tile.level - jpeg_scale,
-                    ..*tile
-                },
-                cancel,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let row_end = outputs
-        .iter()
-        .map(Accumulator::source_rows_end)
-        .max()
-        .ok_or(DecodeError::Budget)?;
-    let mut row_sink = |y, start, step, bytes: &[u8], color| {
-        if cancel.load(Ordering::Relaxed) {
-            return Err(DecodeError::Cancelled);
-        }
-        for output in &mut outputs {
-            if y < output.source_rows_end() {
-                output.row(y, start, step, bytes, color)?;
-            }
-        }
-        Ok(())
-    };
-    match format {
-        Some(image::ImageFormat::Png) => crate::png_rows(bytes, w, h, &mut row_sink)?,
-        Some(image::ImageFormat::Gif) => crate::preview::gif_rows(bytes, w, h, &mut row_sink)?,
-        Some(image::ImageFormat::Bmp) => crate::preview::bmp_rows(bytes, w, h, &mut row_sink)?,
+    match probe.format {
+        Some(image::ImageFormat::Png) => crate::png_rows(bytes, w, h, row_sink)?,
+        Some(image::ImageFormat::Gif) => crate::preview::gif_rows(bytes, w, h, row_sink)?,
+        Some(image::ImageFormat::Bmp) => crate::preview::bmp_rows(bytes, w, h, row_sink)?,
         Some(image::ImageFormat::Jpeg) => {
             // shortcut: browser JPEG tiles need the Worker codec in M8; previews remain available.
             #[cfg(target_arch = "wasm32")]
@@ -223,7 +235,7 @@ fn decode_inner(
                 // Destroy an unfinished scanline decoder after the last required source row.
             }
         }
-        None if raw => {
+        None if probe.raw => {
             for (y, row) in bytes[48..].chunks_exact(w as usize * 4).enumerate() {
                 row_sink(y as u32, 0, 1, row, png::ColorType::Rgba)?;
             }
@@ -246,14 +258,67 @@ fn decode_inner(
         }
         _ => return Err(DecodeError::Budget),
     }
-    let hash = blake3::hash(bytes);
-    let original = match orientation {
-        Orientation::Rotate90
-        | Orientation::Rotate270
-        | Orientation::Rotate90FlipH
-        | Orientation::Rotate270FlipH => [h, w],
-        _ => [w, h],
+    Ok(())
+}
+fn decode_inner(
+    bytes: &[u8],
+    tiles: &[Tile],
+    cancel: &AtomicBool,
+) -> Result<Vec<Decoded>, DecodeError> {
+    let _span = tracing::info_span!("decode_tiles", ?tiles, bytes = bytes.len()).entered();
+    if cancel.load(Ordering::Relaxed) {
+        return Err(DecodeError::Cancelled);
+    }
+    if tiles.iter().any(|tile| tile.level > 15) {
+        return Err(DecodeError::Budget);
+    }
+    let probe = probe(bytes)?;
+    let [w, h] = probe.size;
+    // Reduced JPEG tiles should not run a full-resolution IDCT and color conversion.
+    let jpeg_scale = if probe.format == Some(image::ImageFormat::Jpeg) {
+        tiles
+            .iter()
+            .map(|tile| tile.level)
+            .min()
+            .unwrap_or(0)
+            .min(3)
+    } else {
+        0
     };
+    let source = [w.div_ceil(1 << jpeg_scale), h.div_ceil(1 << jpeg_scale)];
+    let mut outputs = tiles
+        .iter()
+        .map(|tile| {
+            Accumulator::new(
+                source,
+                probe.orientation,
+                Tile {
+                    level: tile.level - jpeg_scale,
+                    ..*tile
+                },
+                cancel,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let row_end = outputs
+        .iter()
+        .map(Accumulator::source_rows_end)
+        .max()
+        .ok_or(DecodeError::Budget)?;
+    let mut row_sink = |y, start, step, bytes: &[u8], color| {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(DecodeError::Cancelled);
+        }
+        for output in &mut outputs {
+            if y < output.source_rows_end() {
+                output.row(y, start, step, bytes, color)?;
+            }
+        }
+        Ok(())
+    };
+    scan(bytes, &probe, jpeg_scale, row_end, cancel, &mut row_sink)?;
+    let hash = blake3::hash(bytes);
+    let original = oriented_size(probe.size, probe.orientation);
     Ok(outputs
         .into_iter()
         .zip(tiles)
@@ -264,6 +329,145 @@ fn decode_inner(
             image
         })
         .collect())
+}
+
+/// Most tiles a single bake may produce; bounds its index and its pack file.
+pub(crate) const MAX_BAKED_TILES: u64 = 1 << 16;
+/// Transient accumulator memory a single bake may hold at once.
+const BAKE_MEMORY: u64 = 192 * 1024 * 1024;
+
+/// Pyramid levels the renderer draws from tiles: none for images that fit a whole
+/// preview, otherwise every level still larger than one tile.
+pub fn tiled_levels(original: [u32; 2]) -> std::ops::Range<u32> {
+    if original[0].max(original[1]) <= crate::MAX_SIDE {
+        return 0..0;
+    }
+    let mut end = 0;
+    while end <= 15 && original[0].max(original[1]).div_ceil(1 << end) > SIDE {
+        end += 1;
+    }
+    0..end
+}
+/// Number of tiles covering `levels` of an image.
+pub fn tile_count(original: [u32; 2], levels: std::ops::Range<u32>) -> u64 {
+    levels
+        .map(|level| {
+            let size = original.map(|v| v.div_ceil(1 << level));
+            u64::from(size[0].div_ceil(CORE)) * u64::from(size[1].div_ceil(CORE))
+        })
+        .sum()
+}
+/// Displayed size of an original, reading only its header.
+pub(crate) fn dimensions(bytes: &[u8]) -> Result<[u32; 2], DecodeError> {
+    catch_unwind(AssertUnwindSafe(|| {
+        let probe = probe(bytes)?;
+        Ok(oriented_size(probe.size, probe.orientation))
+    }))
+    .map_err(|_| DecodeError::Panic)?
+}
+/// Source rows `[start, end)` that contribute to a tile, including its gutter.
+fn source_rows(tile: Tile, source: [u32; 2], orientation: Orientation) -> Option<[u32; 2]> {
+    let original = oriented_size(source, orientation);
+    let bounds = tile.bounds(original)?;
+    let axis = usize::from(!rotated(orientation));
+    let lo = (u64::from(bounds[axis].saturating_sub(1)) << tile.level).min(u64::from(source[1]));
+    let hi = (u64::from(bounds[axis] + CORE + 1) << tile.level).min(u64::from(source[1]));
+    let (lo, hi) = (lo as u32, hi as u32);
+    let first = oriented(0, 0, source, orientation)[axis];
+    let last = oriented(0, source[1] - 1, source, orientation)[axis];
+    Some(if first > last {
+        [source[1] - hi, source[1] - lo]
+    } else {
+        [lo, hi]
+    })
+}
+/// Decodes the original once and emits every tile of every level in `levels`.
+///
+/// Rows stream through accumulators that exist only while their tile is being read,
+/// so memory follows one band of tiles per level rather than the image area. Codecs
+/// that deliver rows out of order (interlaced images) are rejected; their tiles keep
+/// the on-demand path.
+pub(crate) fn bake(
+    bytes: &[u8],
+    levels: std::ops::Range<u32>,
+    cancel: &AtomicBool,
+    emit: &mut dyn FnMut(Decoded) -> Result<(), DecodeError>,
+) -> Result<(), DecodeError> {
+    catch_unwind(AssertUnwindSafe(|| bake_inner(bytes, levels, cancel, emit)))
+        .map_err(|_| DecodeError::Panic)?
+}
+fn bake_inner(
+    bytes: &[u8],
+    levels: std::ops::Range<u32>,
+    cancel: &AtomicBool,
+    emit: &mut dyn FnMut(Decoded) -> Result<(), DecodeError>,
+) -> Result<(), DecodeError> {
+    let _span = tracing::info_span!("bake_tiles", bytes = bytes.len()).entered();
+    if levels.end > 16 {
+        return Err(DecodeError::Budget);
+    }
+    let probe = probe(bytes)?;
+    let source = probe.size;
+    let original = oriented_size(source, probe.orientation);
+    if tile_count(original, levels.clone()) > MAX_BAKED_TILES {
+        return Err(DecodeError::Budget);
+    }
+    let hash = blake3::hash(bytes);
+    let mut pending = Vec::new();
+    for level in levels {
+        let size = original.map(|v| v.div_ceil(1 << level));
+        for y in 0..size[1].div_ceil(CORE) {
+            for x in 0..size[0].div_ceil(CORE) {
+                let tile = Tile { level, x, y };
+                let rows =
+                    source_rows(tile, source, probe.orientation).ok_or(DecodeError::Budget)?;
+                pending.push((rows, tile));
+            }
+        }
+    }
+    // Popped from the end: earliest first row first.
+    pending.sort_by_key(|(rows, tile)| std::cmp::Reverse((rows[0], *tile)));
+    let mut active: Vec<([u32; 2], Accumulator<'_>)> = Vec::new();
+    let mut held = 0u64;
+    let mut next = 0u32;
+    let mut row_sink = |y: u32, start: u32, step: u32, row: &[u8], color: png::ColorType| {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(DecodeError::Cancelled);
+        }
+        if y != next || start != 0 || step != 1 {
+            return Err(DecodeError::Budget);
+        }
+        next += 1;
+        while pending.last().is_some_and(|(rows, _)| rows[0] <= y) {
+            let (rows, tile) = pending.pop().expect("pending tile was just checked");
+            let output = Accumulator::new(source, probe.orientation, tile, cancel)?;
+            held += output.bytes();
+            if held > BAKE_MEMORY {
+                return Err(DecodeError::Budget);
+            }
+            active.push((rows, output));
+        }
+        for (_, output) in &mut active {
+            output.row(y, start, step, row, color)?;
+        }
+        let mut index = 0;
+        while index < active.len() {
+            if active[index].0[1] <= y + 1 {
+                let (_, output) = active.swap_remove(index);
+                held -= output.bytes();
+                emit(output.finish(hash))?;
+            } else {
+                index += 1;
+            }
+        }
+        Ok(())
+    };
+    scan(bytes, &probe, 0, source[1], cancel, &mut row_sink)?;
+    drop(row_sink);
+    if !pending.is_empty() || !active.is_empty() || next != source[1] {
+        return Err(DecodeError::Budget);
+    }
+    Ok(())
 }
 fn oriented(x: u32, y: u32, size: [u32; 2], orientation: Orientation) -> [u32; 2] {
     let [w, h] = size;
@@ -335,6 +539,13 @@ impl<'a> Accumulator<'a> {
             },
             cancel,
         })
+    }
+    /// Bytes this accumulator holds while a tile is being read.
+    fn bytes(&self) -> u64 {
+        (self.sums.len() * 16
+            + self.wide_sums.len() * 32
+            + self.counts.len() * 4
+            + self.pixels.len()) as u64
     }
     fn source_rows_end(&self) -> u32 {
         let axis = usize::from(!matches!(
