@@ -409,6 +409,13 @@ impl App {
         if cache.mode() != mode {
             cache.set_mode(mode);
         }
+        cache.set_bake_mode(self.tools.bake_mode);
+        if let Some(gpu) = &self.shell.gpu {
+            self.workspace
+                .board
+                .offer_board_bakes(gpu.registry.image_format());
+        }
+        self.tools.bake_pending = self.workspace.board.bake_pending();
         cache.set_memory_budget(moth_platform::memory::lod_cache_budget(
             available,
             cache.memory_bytes(),

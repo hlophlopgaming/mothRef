@@ -96,6 +96,8 @@ pub(super) struct Document {
     pub(super) grayscale: bool,
     pub(super) selection: HashSet<Uuid>,
     pub(super) sources: HashMap<BlobId, Handle>,
+    /// Board state of the last whole-board bake offer, so unchanged boards offer nothing.
+    board_bake: Option<(usize, moth_io::BakeMode, bool)>,
     pub(super) pending: HashMap<Handle, Pending>,
     pub(super) failed: HashSet<Handle>,
     pub(super) waiting: Vec<Handle>,
@@ -184,6 +186,24 @@ impl Document {
             },
             height: self.view.viewport.height() / self.view.camera.zoom,
         })
+    }
+    /// Queues the board's originals for background tile baking when they or the bake
+    /// preference change; the pool ignores it unless whole-board baking is selected.
+    pub(super) fn offer_board_bakes(&mut self, format: moth_io::ImageFormat) {
+        let cache = self.decode.cache();
+        let state = (self.sources.len(), cache.bake_mode(), cache.bakes());
+        if self.board_bake == Some(state) {
+            return;
+        }
+        self.board_bake = Some(state);
+        self.decode.offer_board(
+            format,
+            self.sources.iter().map(|(&hash, &handle)| (handle, hash)),
+        );
+    }
+    /// Images of this board waiting for a background tile bake.
+    pub(super) fn bake_pending(&self) -> usize {
+        self.decode.bake_pending()
     }
     pub(super) fn request_images(
         &self,
@@ -379,6 +399,7 @@ impl Document {
             grayscale: false,
             selection: HashSet::new(),
             sources: HashMap::new(),
+            board_bake: None,
             pending: HashMap::new(),
             failed: HashSet::new(),
             waiting: Vec::new(),

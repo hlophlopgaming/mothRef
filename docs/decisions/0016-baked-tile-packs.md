@@ -45,6 +45,14 @@ without the app holding much more RAM.
   "Clear disk cache" cover them.
 - Packs are written only in the "In memory" and "Cache on disk" modes. "No cache"
   and "low zoom quality" keep their previous behavior.
+- **Bake preference** ("Prepare zoom tiles"): *For images on screen* (default) bakes
+  an image the first time it is visible; *For the whole board* also queues every
+  original of the open board behind on-screen work, so zoom is ready before the user
+  visits an image; *Off* writes no new packs but still reads existing ones. The
+  queue holds at most 4096 jobs, on-screen offers jump to the front (evicting board
+  work when full), and the set of remembered offers is trimmed at the same size.
+  Board passes skip images that fit a whole preview after reading their header.
+  Settings show how many images are still waiting.
 
 ## Consequences
 
@@ -52,7 +60,8 @@ without the app holding much more RAM.
   tiles; only the first zoom into an image that was never shown waits for decodes.
 - A bake costs one full decode and BC7 encoding on one background thread per board
   tab. It is cancelled when the tab's decode pool closes and never blocks viewport
-  work. One offer per image and format is queued per session.
+  work. "For the whole board" reads every original of the board once in the
+  background; that costs disk reads and space, so it is not the default.
 - Disk usage grows with large originals; the budget and LRU pruning bound it.
 - ARM builds bake RGBA8 tiles, four times larger than BC7, until ASTC/ETC2 (M8).
 - No `.moth` format change and no new dependency.

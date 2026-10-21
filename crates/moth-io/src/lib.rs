@@ -7,6 +7,7 @@ mod pack;
 mod preview;
 mod scheduler;
 pub mod tiles;
+pub use bake::BakeMode;
 pub use cache::{CacheMode, LodCache, LodStore, LodWriter};
 use crossbeam_channel::Receiver;
 use image::{DynamicImage, ImageReader, metadata::Orientation};
@@ -665,7 +666,7 @@ pub struct DecodePool {
     /// Backpressure caps memory while the UI is busy.
     pub results: Receiver<Completion>,
     cache: Arc<LodCache>,
-    _baker: Arc<bake::Baker>,
+    baker: Arc<bake::Baker>,
 }
 /// Reads a whole original within the input budget.
 fn read_original(storage: &dyn Storage, handle: Handle) -> Result<Vec<u8>, DecodeError> {
@@ -846,12 +847,25 @@ impl DecodePool {
             requests,
             results,
             cache,
-            _baker: baker,
+            baker,
         })
     }
     /// The cache this pool reads and fills.
     pub fn cache(&self) -> &Arc<LodCache> {
         &self.cache
+    }
+    /// Queues every image of the board for a background tile bake, behind images on
+    /// screen. Only [`BakeMode::Board`] does anything; repeated calls queue nothing new.
+    pub fn offer_board(
+        &self,
+        format: ImageFormat,
+        images: impl IntoIterator<Item = (Handle, blake3::Hash)>,
+    ) {
+        self.baker.offer_board(&self.cache, format, images);
+    }
+    /// Images waiting for or undergoing a background tile bake.
+    pub fn bake_pending(&self) -> usize {
+        self.baker.pending()
     }
 }
 #[cfg(test)]

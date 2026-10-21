@@ -1,59 +1,133 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Background tile baking.
 //!
-//! The first time a large image is shown, one low-priority pass decodes its original
-//! once and writes every detail tile of every level into a tile pack. Later zoom steps
-//! read GPU-ready tiles from the pack instead of decoding the original for each batch,
-//! which for sequential JPEG means re-reading every row above the tile.
+//! One low-priority pass decodes a large original once and writes every detail tile of
+//! every level into a tile pack. Later zoom steps read GPU-ready tiles from the pack
+//! instead of decoding the original for each batch, which for sequential JPEG means
+//! re-reading every row above the tile.
+//!
+//! Images on screen jump the queue; [`BakeMode::Board`] also queues every image of the
+//! board behind them.
 use crate::{DecodeError, ImageFormat, LodCache, apply_format, pack, read_original, tiles};
 use moth_format::{Handle, Storage};
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     sync::{
-        Arc, Mutex, PoisonError,
-        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex, MutexGuard, PoisonError,
+        atomic::{AtomicBool, AtomicU8, Ordering},
     },
 };
 
-/// Queued bakes; a full queue drops offers, which later requests make again.
-const QUEUE: usize = 64;
+/// Most queued bakes, and most remembered offers; both are trimmed, never unbounded.
+/// Dropped offers are made again by later requests or the next board pass.
+const QUEUE: usize = 4096;
 
+/// Which images get a tile pack, as a user preference.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum BakeMode {
+    /// Never bake; existing packs are still read.
+    Off,
+    /// Bake large images the first time they are on screen.
+    #[default]
+    Visible,
+    /// Also bake every large image of the open board in the background.
+    Board,
+}
+impl BakeMode {
+    /// Every mode, in the order the settings list shows them.
+    pub const ALL: [Self; 3] = [Self::Visible, Self::Board, Self::Off];
+    /// Stable preference value, independent of the enum layout.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Visible => "visible",
+            Self::Board => "board",
+        }
+    }
+    /// Parses a preference value written by [`BakeMode::code`].
+    pub fn from_code(code: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|mode| mode.code() == code.trim())
+    }
+    pub(crate) fn index(self) -> u8 {
+        match self {
+            Self::Off => 0,
+            Self::Visible => 1,
+            Self::Board => 2,
+        }
+    }
+    pub(crate) fn from_index(index: u8) -> Self {
+        match index {
+            0 => Self::Off,
+            2 => Self::Board,
+            _ => Self::Visible,
+        }
+    }
+}
+/// Shared preference cell, read by every pool's offers.
+pub(crate) struct BakeSetting(AtomicU8);
+impl Default for BakeSetting {
+    fn default() -> Self {
+        Self(AtomicU8::new(BakeMode::default().index()))
+    }
+}
+impl BakeSetting {
+    pub(crate) fn get(&self) -> BakeMode {
+        BakeMode::from_index(self.0.load(Ordering::Relaxed))
+    }
+    pub(crate) fn set(&self, mode: BakeMode) {
+        self.0.store(mode.index(), Ordering::Relaxed);
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct Job {
     handle: Handle,
     hash: blake3::Hash,
     format: ImageFormat,
 }
+#[derive(Default)]
+struct State {
+    queue: VecDeque<Job>,
+    offered: HashSet<(blake3::Hash, ImageFormat)>,
+    running: bool,
+    closed: bool,
+}
+#[derive(Default)]
+struct Shared {
+    state: Mutex<State>,
+    ready: Condvar,
+}
+impl Shared {
+    fn lock(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
 
-/// One bake thread per decode pool; work is queued once per image and format.
+/// One bake thread per decode pool; each image and format is queued once.
 pub(crate) struct Baker {
-    jobs: crossbeam_channel::Sender<Job>,
-    offered: Mutex<HashSet<(blake3::Hash, ImageFormat)>>,
+    shared: Arc<Shared>,
     stop: Arc<AtomicBool>,
 }
 impl Baker {
     pub(crate) fn new(storage: Arc<dyn Storage>, cache: Arc<LodCache>) -> std::io::Result<Self> {
-        let (jobs, rx) = crossbeam_channel::bounded::<Job>(QUEUE);
+        let shared = Arc::new(Shared::default());
         let stop = Arc::new(AtomicBool::new(false));
-        let flag = stop.clone();
+        let (queue, flag) = (shared.clone(), stop.clone());
         std::thread::Builder::new()
             .name("lod-bake".into())
             .spawn(move || {
-                while let Ok(job) = rx.recv() {
-                    if flag.load(Ordering::Relaxed) {
-                        break;
-                    }
+                while let Some(job) = next(&queue) {
                     if let Err(error) = run(storage.as_ref(), &cache, &job, &flag) {
                         tracing::debug!(%error, "tile bake skipped");
                     }
+                    queue.lock().running = false;
                 }
             })?;
-        Ok(Self {
-            jobs,
-            offered: Mutex::default(),
-            stop,
-        })
+        Ok(Self { shared, stop })
     }
-    /// Queues a bake for an image the renderer draws from tiles.
+    /// Queues an image on screen ahead of board work, if the renderer draws it from tiles.
     pub(crate) fn offer(
         &self,
         cache: &LodCache,
@@ -62,30 +136,104 @@ impl Baker {
         format: ImageFormat,
         original: [u32; 2],
     ) {
-        if tiles::tiled_levels(original).is_empty() || !cache.bakes() {
+        if tiles::tiled_levels(original).is_empty()
+            || !cache.bakes()
+            || cache.bake_mode() == BakeMode::Off
+        {
             return;
         }
-        let mut offered = self.offered.lock().unwrap_or_else(PoisonError::into_inner);
-        if offered.contains(&(hash, format)) {
+        let job = Job {
+            handle,
+            hash,
+            format,
+        };
+        let mut state = self.shared.lock();
+        if state.offered.contains(&(hash, format)) {
+            // Already queued behind board work: move it to the front.
+            if let Some(index) = state.queue.iter().position(|queued| *queued == job) {
+                state.queue.remove(index);
+                state.queue.push_front(job);
+            }
             return;
         }
-        if self
-            .jobs
-            .try_send(Job {
+        if state.queue.len() == QUEUE {
+            // Board work is the least urgent; make room for what is on screen.
+            state.queue.pop_back();
+        }
+        remember(&mut state, job);
+        state.queue.push_front(job);
+        self.shared.ready.notify_one();
+    }
+    /// Queues every image of a board behind on-screen work. Sizes are unknown here,
+    /// so the bake thread skips images that fit a whole preview after reading their header.
+    pub(crate) fn offer_board(
+        &self,
+        cache: &LodCache,
+        format: ImageFormat,
+        images: impl IntoIterator<Item = (Handle, blake3::Hash)>,
+    ) {
+        if !cache.bakes() || cache.bake_mode() != BakeMode::Board {
+            return;
+        }
+        let mut state = self.shared.lock();
+        for (handle, hash) in images {
+            if state.queue.len() == QUEUE {
+                break;
+            }
+            if state.offered.contains(&(hash, format)) {
+                continue;
+            }
+            let job = Job {
                 handle,
                 hash,
                 format,
-            })
-            .is_ok()
-        {
-            offered.insert((hash, format));
+            };
+            remember(&mut state, job);
+            state.queue.push_back(job);
         }
+        self.shared.ready.notify_one();
+    }
+    /// Images waiting for or undergoing a bake, for the settings panel.
+    pub(crate) fn pending(&self) -> usize {
+        let state = self.shared.lock();
+        state.queue.len() + usize::from(state.running)
+    }
+}
+/// Offers are remembered so each image is queued once; the memory is trimmed by
+/// forgetting everything, which only costs a pack check when an offer repeats.
+fn remember(state: &mut State, job: Job) {
+    if state.offered.len() >= QUEUE {
+        state.offered.clear();
+        state.offered.shrink_to(QUEUE);
+        let queued: Vec<_> = state.queue.iter().map(|j| (j.hash, j.format)).collect();
+        state.offered.extend(queued);
+    }
+    state.offered.insert((job.hash, job.format));
+}
+fn next(shared: &Shared) -> Option<Job> {
+    let mut state = shared.lock();
+    loop {
+        if state.closed {
+            return None;
+        }
+        if let Some(job) = state.queue.pop_front() {
+            state.running = true;
+            return Some(job);
+        }
+        state = shared
+            .ready
+            .wait(state)
+            .unwrap_or_else(PoisonError::into_inner);
     }
 }
 impl Drop for Baker {
     fn drop(&mut self) {
-        // The running bake checks this per row; the thread exits once the queue closes.
+        // The running bake checks the flag per row; the thread exits at its next wait.
         self.stop.store(true, Ordering::Relaxed);
+        let mut state = self.shared.lock();
+        state.closed = true;
+        state.queue.clear();
+        self.shared.ready.notify_all();
     }
 }
 
@@ -95,18 +243,23 @@ fn run(
     job: &Job,
     stop: &AtomicBool,
 ) -> Result<(), DecodeError> {
-    if !cache.bakes() || cache.has_pack(job.hash, job.format) {
+    if stop.load(Ordering::Relaxed)
+        || !cache.bakes()
+        || cache.bake_mode() == BakeMode::Off
+        || cache.has_pack(job.hash, job.format)
+    {
         return Ok(());
     }
     let bytes = read_original(storage, job.handle)?;
-    if blake3::hash(&bytes) != job.hash {
-        // The handle no longer holds this content; nothing to bake.
-        return Ok(());
-    }
+    // Board passes queue every image; most fit a whole preview and need no pack.
     let original = tiles::dimensions(&bytes)?;
     let levels = tiles::tiled_levels(original);
     let count = tiles::tile_count(original, levels.clone());
     if count == 0 || count > tiles::MAX_BAKED_TILES {
+        return Ok(());
+    }
+    if blake3::hash(&bytes) != job.hash {
+        // The handle no longer holds this content; nothing to bake.
         return Ok(());
     }
     let Some(out) = cache.pack_writer(job.hash, job.format, pack::size(job.format, count)) else {
@@ -246,6 +399,28 @@ mod tests {
                 )
                 .is_none()
         );
+    }
+
+    #[test]
+    fn bake_modes_round_trip_and_off_stops_new_bakes() {
+        for mode in BakeMode::ALL {
+            assert_eq!(BakeMode::from_code(mode.code()), Some(mode));
+            assert_eq!(BakeMode::from_index(mode.index()), mode);
+        }
+        assert_eq!(BakeMode::from_code("bogus"), None);
+        assert_eq!(BakeMode::default(), BakeMode::Visible);
+        let cache = LodCache::new();
+        cache.set_store(Arc::new(Shared(Arc::new(Store::default()))));
+        cache.set_mode(crate::CacheMode::Disk);
+        cache.set_bake_mode(BakeMode::Off);
+        let job = Job {
+            handle: Handle(1),
+            hash: blake3::hash(b"never read"),
+            format: ImageFormat::Rgba8,
+        };
+        // Off returns before opening the original, which this storage cannot provide.
+        run(&Source(Vec::new()), &cache, &job, &AtomicBool::new(false)).unwrap();
+        assert!(!cache.has_pack(job.hash, job.format));
     }
 
     #[test]
