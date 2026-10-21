@@ -13,7 +13,7 @@ A native reference board for artists: drop images onto an infinite canvas, arran
 Two properties matter more than any feature:
 
 1. **The user never loses work.** Users spend hours collecting references. A crash or a bad save that destroys a board is the worst bug this project can have.
-2. **It stays fast and lean on huge boards.** Memory is bounded by budgets, not by the number of images.
+2. **It stays fast and lean on huge boards.** Memory is bounded by budgets, not by the number of images. The one deliberate exception is the default **full-resolution mode** (decision 0017): the user chose to trade video memory for zero loading, so every image of the board is resident at full resolution, bounded by the video-memory limit detected from the graphics card instead of by the viewport. When a board does not fit, the app says so and the rest loads on demand.
 
 If a change trades either of these for a feature, stop and ask.
 
@@ -121,6 +121,8 @@ Breaking any of these needs an explicit decision in `docs/decisions/`, not a cod
 
 ### Memory
 - **Every cache has an explicit budget and LRU eviction.** A `HashMap` or `Vec` that grows with board size and is never trimmed is a bug.
+- **Video memory follows the hardware.** Texture limits come from the detected adapter (`moth-platform::gpu`): most of dedicated VRAM on discrete GPUs, half of RAM on shared-memory GPUs, and they are shown to the user. Do not reintroduce small fixed caps; the user can override the limit in Settings.
+- **Full-resolution mode** (default, decision 0017) keeps everything it preloaded resident (`Registry::keep_all`): no tile release on pan, no texture shrinking on zoom-out, no viewport requests while the board loads. It must stop preloading at the limit (`Registry::fits`) and warn instead of evicting what it loaded. RAM caches stay bounded in this mode; only GPU residency follows the board.
 - Back-references use `slotmap` keys or `Weak`. `Arc` cycles are not allowed.
 - GPU resources are created through the resource registry so counts can be checked. In debug builds, closing a board must bring the counts back to zero.
 - Free egui textures explicitly when panels close.
@@ -191,7 +193,7 @@ Bug fixes start with a failing test that reproduces the bug.
 Targets are in `ROADMAP.md`. Rules for agents:
 
 - Do not regress the benchmark suite by more than 10%. CI blocks it.
-- Never decode an image at full resolution unless it is shown at ≥ 1:1 zoom, and then only the visible tiles.
+- Never decode an image at full resolution unless it is shown at ≥ 1:1 zoom, and then only the visible tiles. Exception: the full-resolution mode decodes each original once when the board opens (decision 0017), streams it into tiles without holding the full frame, and keeps the GPU-ready result on disk so later openings do not decode at all.
 - Never hold a lock across I/O, decoding or a frame.
 - Prefer zero-copy (`rkyv`, `mmap`, `bytes::Bytes`) over cloning buffers.
 - If you add a dependency to a hot path, include benchmark numbers before and after in the PR.

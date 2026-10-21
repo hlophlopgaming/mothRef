@@ -336,10 +336,11 @@ pub(crate) const MAX_BAKED_TILES: u64 = 1 << 16;
 /// Transient accumulator memory a single bake may hold at once.
 const BAKE_MEMORY: u64 = 192 * 1024 * 1024;
 
-/// Pyramid levels the renderer draws from tiles: none for images that fit a whole
-/// preview, otherwise every level still larger than one tile.
-pub fn tiled_levels(original: [u32; 2]) -> std::ops::Range<u32> {
-    if original[0].max(original[1]) <= crate::MAX_SIDE {
+/// Pyramid levels the renderer draws from tiles: none for images whose longer side is
+/// at most `threshold` (they use a whole preview), otherwise every level still larger
+/// than one tile. See [`crate::CacheMode::tile_threshold`].
+pub fn tiled_levels(original: [u32; 2], threshold: u32) -> std::ops::Range<u32> {
+    if original[0].max(original[1]) <= threshold.max(SIDE) {
         return 0..0;
     }
     let mut end = 0;

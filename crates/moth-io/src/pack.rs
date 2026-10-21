@@ -218,6 +218,65 @@ pub(crate) fn read_tile(
     }))
 }
 
+/// Reads every tile of a pack in file order and hands each to `emit`.
+///
+/// The index is read first (bounded by the tile limit), then payloads are read
+/// sequentially, each checked against its digest before it is emitted.
+pub(crate) fn read_all(
+    mut reader: Box<dyn ReadSeek>,
+    hash: blake3::Hash,
+    format: ImageFormat,
+    emit: &mut dyn FnMut(Decoded) -> io::Result<()>,
+) -> io::Result<()> {
+    let info = trailer(reader.as_mut(), hash, format)?;
+    reader.seek(SeekFrom::Start(info.index))?;
+    let mut index = vec![0u8; (info.count * ENTRY) as usize];
+    reader.read_exact(&mut index)?;
+    let len = payload(format);
+    let mut entries = Vec::with_capacity(info.count as usize);
+    for entry in index.chunks_exact(ENTRY as usize) {
+        let offset = long(entry, 12);
+        if offset % len != 0 || offset + len > info.index {
+            return Err(invalid("pack entry points outside its payloads"));
+        }
+        let tile = Tile {
+            level: word(entry, 0),
+            x: word(entry, 4),
+            y: word(entry, 8),
+        };
+        let mut digest = [0u8; 32];
+        digest.copy_from_slice(&entry[20..52]);
+        entries.push((offset, tile, digest));
+    }
+    drop(index);
+    entries.sort_by_key(|entry| entry.0);
+    reader.seek(SeekFrom::Start(0))?;
+    let mut position = 0;
+    for (offset, tile, digest) in entries {
+        if offset != position {
+            reader.seek(SeekFrom::Start(offset))?;
+        }
+        let mut bytes = vec![0u8; len as usize];
+        reader.read_exact(&mut bytes)?;
+        position = offset + len;
+        if blake3::hash(&bytes).as_bytes() != &digest {
+            return Err(invalid("pack tile checksum mismatch"));
+        }
+        emit(Decoded {
+            tile: Some(tile),
+            hash,
+            original: info.original,
+            mips: vec![Mip {
+                width: SIDE,
+                height: SIDE,
+                bytes,
+            }],
+            format,
+        })?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,6 +340,20 @@ mod tests {
             y: 0,
         };
         assert!(read_tile(open(&damaged), hash, ImageFormat::Rgba8, first).is_err());
+        let mut seen = Vec::new();
+        read_all(open(&bytes), hash, ImageFormat::Rgba8, &mut |image| {
+            seen.push((image.tile.unwrap(), image.mips[0].bytes[0]));
+            Ok(())
+        })
+        .unwrap();
+        // File order is bake order.
+        let expected: Vec<_> = tiles
+            .iter()
+            .enumerate()
+            .map(|(fill, &(level, x, y))| (Tile { level, x, y }, fill as u8))
+            .collect();
+        assert_eq!(seen, expected);
+        assert!(read_all(open(&damaged), hash, ImageFormat::Rgba8, &mut |_| Ok(())).is_err());
         let truncated = bytes[..bytes.len() - 1].to_vec();
         assert!(check(open(&truncated), hash, ImageFormat::Rgba8).is_err());
     }

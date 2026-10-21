@@ -6,6 +6,8 @@ mod clipboard_web;
 /// Native shutdown and bounded local crash reports.
 pub mod crash;
 pub mod export;
+/// Video-memory detection for the texture limit.
+pub mod gpu;
 pub mod input;
 /// Bounded read-only desktop board catalog.
 pub mod library;

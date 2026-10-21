@@ -13,7 +13,8 @@ use std::sync::{
 pub const TEXTURE_BUDGET: u64 = 96 * 1024 * 1024;
 /// A nonempty board can retain a full-detail texture and its fallback page.
 pub const MIN_TEXTURE_BUDGET: u64 = 32 * 1024 * 1024;
-/// Adaptive growth stays bounded even on million-item boards.
+/// Default hard ceiling until the app sets one from the detected video memory
+/// ([`Registry::set_hard_limit`]); growth stays bounded even on million-item boards.
 pub const MAX_TEXTURE_BUDGET: u64 = 512 * 1024 * 1024;
 const FALLBACK_SIDE: u32 = 32;
 /// While a detail tile loads, a resident tile up to this many levels coarser draws its
@@ -160,6 +161,12 @@ pub struct Registry {
     pub grayscale: bool,
     /// Low-quality mode keeps its preview ceiling instead of requesting original tiles.
     pub tile_detail: bool,
+    /// Images whose longer side exceeds this are drawn from tiles
+    /// ([`moth_io::CacheMode::tile_threshold`]).
+    pub tile_threshold: u32,
+    /// Full-resolution mode: everything uploaded stays resident. Tiles leaving the
+    /// viewport and previews shown smaller are kept instead of released.
+    pub keep_all: bool,
     /// UI GPU resources share the renderer lifetime and are freed with the registry.
     pub ui: egui_wgpu::Renderer,
     arrays: Vec<Option<Array>>,
@@ -179,6 +186,7 @@ pub struct Registry {
     /// Texture format for image mips, chosen at runtime from adapter capabilities.
     image_format: ImageFormat,
     tile_lod_bias: u32,
+    hard_limit: u64,
 }
 impl Registry {
     /// RGBA8 is the universally supported fallback; BC7 halves residency on adapters that support it.
@@ -266,6 +274,8 @@ impl Registry {
         Self {
             grayscale: false,
             tile_detail: true,
+            tile_threshold: moth_io::MAX_SIDE,
+            keep_all: false,
             ui: egui_wgpu::Renderer::new(device, format, Default::default()),
             arrays: Vec::new(),
             locations: std::collections::HashMap::new(),
@@ -282,7 +292,36 @@ impl Registry {
             ceiling: TEXTURE_BUDGET,
             image_format,
             tile_lod_bias: 0,
+            hard_limit: MAX_TEXTURE_BUDGET,
         }
+    }
+    /// Highest texture ceiling [`Registry::adapt_budget`] accepts, from the detected
+    /// video memory or the user's setting.
+    pub fn set_hard_limit(&mut self, bytes: u64) {
+        self.hard_limit = bytes.max(MIN_TEXTURE_BUDGET);
+    }
+    /// Whether `image` can become resident without evicting anything or exceeding
+    /// the current ceiling: it already is, a page of its size class has a free layer,
+    /// or a new page still fits.
+    pub fn fits(&self, image: &Decoded) -> bool {
+        let hash = image.tile.map_or(image.hash, |tile| tile.key(image.hash));
+        let Some(first) = image.mips.first() else {
+            return true;
+        };
+        let side = first.width.max(first.height).next_power_of_two().max(16);
+        let Some(&(size, layers)) = CLASSES.iter().find(|c| c.0 >= side) else {
+            return true;
+        };
+        if self.resident(hash, side)
+            || self
+                .arrays
+                .iter()
+                .flatten()
+                .any(|a| a.size == size && a.slots.iter().any(Option::is_none))
+        {
+            return true;
+        }
+        self.allocated + array_bytes(size, layers, self.image_format) <= self.ceiling
     }
     /// Reports actual texture allocation, rather than the sum of resident source sizes.
     pub fn allocated_bytes(&self) -> u64 {
@@ -301,7 +340,7 @@ impl Registry {
     /// Grows with page demand and immediately evicts pages when available RAM falls.
     pub fn adapt_budget(&mut self, active: bool, ceiling: u64) {
         self.ceiling = if active {
-            ceiling.min(MAX_TEXTURE_BUDGET)
+            ceiling.min(self.hard_limit)
         } else {
             0
         };
@@ -367,8 +406,14 @@ impl Registry {
             screen,
             clip,
             scale,
-            self.tile_lod_bias,
+            self.detail(self.tile_lod_bias),
         )
+    }
+    fn detail(&self, bias: u32) -> tiles::Detail {
+        tiles::Detail {
+            bias,
+            threshold: self.tile_threshold,
+        }
     }
     /// Coarsens an oversized viewport working set instead of repeatedly evicting its own detail.
     pub fn fit_tile_budget(
@@ -420,7 +465,15 @@ impl Registry {
                     let Some(original) = self.original_dimensions(hash) else {
                         continue;
                     };
-                    for tile in tiles::visible(item, original, camera, screen, clip, scale, bias) {
+                    for tile in tiles::visible(
+                        item,
+                        original,
+                        camera,
+                        screen,
+                        clip,
+                        scale,
+                        self.detail(bias),
+                    ) {
                         wanted.insert(tile.key(hash));
                         if wanted.len() > limit {
                             continue 'levels;
@@ -464,6 +517,9 @@ impl Registry {
     }
     /// Unneeded tile layers are released on pan/zoom, including in No cache mode.
     pub fn retain_tiles(&mut self, wanted: &std::collections::HashSet<BlobId>) {
+        if self.keep_all {
+            return;
+        }
         for array in self.arrays.iter_mut().flatten() {
             for slot in &mut array.slots {
                 if slot.is_some_and(|s| s.tile && !wanted.contains(&s.hash)) {
@@ -928,8 +984,10 @@ impl Registry {
                     .or_insert(side);
             }
         }
-        for (hash, side) in demand {
-            self.shrink(device, queue, hash, side);
+        if !self.keep_all {
+            for (hash, side) in demand {
+                self.shrink(device, queue, hash, side);
+            }
         }
         let mut instances = Vec::with_capacity(MAX_INSTANCES);
         let mut classes = Vec::with_capacity(MAX_INSTANCES);
@@ -1002,7 +1060,7 @@ impl Registry {
                 target.screen,
                 clip,
                 scale,
-                self.tile_lod_bias,
+                self.detail(self.tile_lod_bias),
             )
         } else {
             Vec::new()
@@ -1192,10 +1250,9 @@ impl Drop for Registry {
         self.clear();
     }
 }
+/// `ceiling` is already capped by the registry's hard limit.
 fn budget_for(bytes: u64, ceiling: u64) -> u64 {
-    bytes
-        .max(MIN_TEXTURE_BUDGET)
-        .min(ceiling.min(MAX_TEXTURE_BUDGET))
+    bytes.max(MIN_TEXTURE_BUDGET).min(ceiling)
 }
 
 fn array_bytes(size: u32, layers: u32, format: ImageFormat) -> u64 {

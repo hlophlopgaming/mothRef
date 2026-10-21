@@ -694,6 +694,38 @@ pub(super) fn measure_note(ctx: &egui::Context, text: &str) -> [f32; 2] {
 }
 
 /// The canvas viewport as a clip rectangle in physical pixels.
+/// Covers the board while the full-resolution mode loads it into video memory, so the
+/// user first sees the finished board rather than images appearing one by one.
+pub(super) fn preload_cover(
+    ui: &mut egui::Ui,
+    viewport: egui::Rect,
+    progress: moth_io::PreloadProgress,
+) {
+    // Called with the root UI after the canvas panel: the canvas images are drawn below
+    // egui, so this opaque rect hides them while windows such as Settings stay above it.
+    ui.painter()
+        .rect_filled(viewport, 0., ui.visuals().panel_fill);
+    let width = viewport.width().clamp(1., 360.);
+    egui::Area::new(egui::Id::new("preload_progress"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(viewport.center() - egui::vec2(width / 2., 24.))
+        .interactable(false)
+        .show(ui.ctx(), |ui| {
+            ui.set_width(width);
+            ui.vertical_centered(|ui| {
+                ui.label(moth_ui::text(moth_ui::Text::PreloadProgress));
+                let fraction = if progress.total == 0 {
+                    0.
+                } else {
+                    progress.done as f32 / progress.total as f32
+                };
+                ui.add(
+                    egui::ProgressBar::new(fraction)
+                        .text(format!("{} / {}", progress.done, progress.total)),
+                );
+            });
+        });
+}
 pub(super) fn canvas_clip(viewport: egui::Rect, scale: f32, size: [u32; 2]) -> [u32; 4] {
     if !viewport.is_finite() || !viewport.is_positive() {
         return [0, 0, size[0], size[1]];

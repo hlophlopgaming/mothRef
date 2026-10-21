@@ -136,7 +136,7 @@ impl Baker {
         format: ImageFormat,
         original: [u32; 2],
     ) {
-        if tiles::tiled_levels(original).is_empty()
+        if tiles::tiled_levels(original, cache.mode().tile_threshold()).is_empty()
             || !cache.bakes()
             || cache.bake_mode() == BakeMode::Off
         {
@@ -172,7 +172,11 @@ impl Baker {
         format: ImageFormat,
         images: impl IntoIterator<Item = (Handle, blake3::Hash)>,
     ) {
-        if !cache.bakes() || cache.bake_mode() != BakeMode::Board {
+        // The full-resolution mode's preload already writes every pack of the board.
+        if !cache.bakes()
+            || cache.bake_mode() != BakeMode::Board
+            || cache.mode() == crate::CacheMode::Full
+        {
             return;
         }
         let mut state = self.shared.lock();
@@ -253,7 +257,7 @@ fn run(
     let bytes = read_original(storage, job.handle)?;
     // Board passes queue every image; most fit a whole preview and need no pack.
     let original = tiles::dimensions(&bytes)?;
-    let levels = tiles::tiled_levels(original);
+    let levels = tiles::tiled_levels(original, cache.mode().tile_threshold());
     let count = tiles::tile_count(original, levels.clone());
     if count == 0 || count > tiles::MAX_BAKED_TILES {
         return Ok(());
@@ -367,7 +371,10 @@ mod tests {
         .unwrap();
         assert!(cache.has_pack(hash, ImageFormat::Rgba8));
         let original = [2600, 300];
-        let levels = tiles::tiled_levels(original);
+        let levels = tiles::tiled_levels(original, crate::MAX_SIDE);
+        assert_eq!(tiles::tiled_levels(original, tiles::SIDE), 0..4);
+        assert_eq!(tiles::tiled_levels([2000, 900], crate::MAX_SIDE), 0..0);
+        assert_eq!(tiles::tiled_levels([2000, 900], tiles::SIDE), 0..3);
         assert_eq!(levels, 0..4);
         let cancel = AtomicBool::new(false);
         for level in levels {

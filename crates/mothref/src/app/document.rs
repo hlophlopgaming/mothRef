@@ -98,6 +98,12 @@ pub(super) struct Document {
     pub(super) sources: HashMap<BlobId, Handle>,
     /// Board state of the last whole-board bake offer, so unchanged boards offer nothing.
     board_bake: Option<(usize, moth_io::BakeMode, bool)>,
+    /// Originals offered to the full-resolution preload; `None` until the first offer.
+    preload_offered: Option<usize>,
+    /// The board exceeded the video memory limit: the rest loads on demand.
+    pub(super) preload_overflow: bool,
+    /// The initial preload finished; later additions load without covering the board.
+    pub(super) preload_ready: bool,
     pub(super) pending: HashMap<Handle, Pending>,
     pub(super) failed: HashSet<Handle>,
     pub(super) waiting: Vec<Handle>,
@@ -201,6 +207,57 @@ impl Document {
             self.sources.iter().map(|(&hash, &handle)| (handle, hash)),
         );
     }
+    /// Offers the board's originals to the full-resolution preload whenever new ones
+    /// arrive; already offered images are skipped by the pool.
+    pub(super) fn offer_preload(&mut self, format: moth_io::ImageFormat) {
+        if self.preload_overflow || self.preload_offered == Some(self.sources.len()) {
+            return;
+        }
+        self.preload_offered = Some(self.sources.len());
+        if let Err(error) = self.decode.preload(
+            format,
+            self.sources.iter().map(|(&hash, &handle)| (handle, hash)),
+        ) {
+            self.message = error.to_string();
+        }
+    }
+    /// Whether a full-resolution preload was offered since the last reset.
+    pub(super) fn preload_started(&self) -> bool {
+        self.preload_offered.is_some()
+    }
+    /// Starts preloading from scratch after video memory was cleared or the mode changed.
+    pub(super) fn reset_preload(&mut self) {
+        self.preload_offered = None;
+        self.preload_overflow = false;
+        self.preload_ready = false;
+        self.decode.restart_preload();
+    }
+    /// Marks the initial preload done once the board finished loading and every
+    /// offered image was prepared.
+    pub(super) fn settle_preload(&mut self) {
+        if !self.loading
+            && self.preload_offered.is_some()
+            && !self.preload_progress().active()
+            && self.decode.preloaded().is_empty()
+        {
+            self.preload_ready = true;
+        }
+    }
+    /// Stops preloading because the next image would exceed the video memory limit.
+    pub(super) fn overflow_preload(&mut self) {
+        self.preload_overflow = true;
+        self.preload_ready = true;
+        self.decode.cancel_preload();
+        self.message = moth_ui::text(moth_ui::Text::PreloadOverflow).into();
+    }
+    /// Images of the current preload pass prepared so far.
+    pub(super) fn preload_progress(&self) -> moth_io::PreloadProgress {
+        self.decode.preload_progress()
+    }
+    /// The next prepared image, if any.
+    pub(super) fn next_preloaded(&self) -> Option<moth_io::Decoded> {
+        self.decode.preloaded().try_recv().ok()
+    }
     /// Images of this board waiting for a background tile bake.
     pub(super) fn bake_pending(&self) -> usize {
         self.decode.bake_pending()
@@ -270,7 +327,7 @@ impl Document {
             let original = registry.original_dimensions(blob);
             if original.is_none()
                 || (registry.tile_detail
-                    && original.is_some_and(|dims| dims[0].max(dims[1]) > moth_io::MAX_SIDE))
+                    && original.is_some_and(|dims| dims[0].max(dims[1]) > registry.tile_threshold))
             {
                 side = side.min(moth_io::tiles::SIDE);
             }
@@ -400,6 +457,9 @@ impl Document {
             selection: HashSet::new(),
             sources: HashMap::new(),
             board_bake: None,
+            preload_offered: None,
+            preload_overflow: false,
+            preload_ready: false,
             pending: HashMap::new(),
             failed: HashSet::new(),
             waiting: Vec::new(),

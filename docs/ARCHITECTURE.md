@@ -314,6 +314,17 @@ resident. The "Prepare zoom tiles" preference (`moth_io::BakeMode`, shared throu
 the `LodCache`) chooses on-screen images only (default), the whole open board behind
 them, or no new packs. See [decision 0016](decisions/0016-baked-tile-packs.md).
 
+Full-resolution mode (`CacheMode::Full`, default): `DecodePool::preload` prepares each
+original's 256-pixel preview and all tiles (images above 256 px are tiled in this mode)
+on preload workers, from the disk cache and packs when present, otherwise by one
+streamed bake that also writes the pack. `App::upload_preloaded` uploads them within a
+per-frame time slice and checks `Registry::fits` first; the first misfit cancels the
+pass, warns, and clears `Registry::keep_all`, which otherwise keeps every upload
+resident. The board is covered by a progress bar and gets no viewport requests until
+the initial pass settles. Texture limits come from `moth-platform::gpu` detection on a
+worker thread (`Registry::set_hard_limit`); shared-memory adapters also follow free RAM
+(`memory::shared_ceiling`). See [decision 0017](decisions/0017-full-resolution-mode.md).
+
 Before scheduling, the registry fits the union of current/target tile coverage to
 whole-page capacity after reserving visible preview and fallback pages. It raises
 the mip floor under a small VRAM ceiling and restores detail when space returns.

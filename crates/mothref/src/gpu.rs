@@ -9,6 +9,9 @@ pub struct Gpu {
     pub registry: moth_render::Registry,
     /// Makes hardware and software rendering distinguishable.
     pub adapter: String,
+    /// Adapter name and memory model, for video-memory detection.
+    pub name: String,
+    pub kind: moth_platform::gpu::AdapterKind,
     pub transparent: bool,
     pub lost: Arc<AtomicBool>,
 }
@@ -64,6 +67,13 @@ impl Gpu {
             config,
             registry,
             adapter: label,
+            name: info.name.clone(),
+            kind: match info.device_type {
+                wgpu::DeviceType::DiscreteGpu => moth_platform::gpu::AdapterKind::Discrete,
+                wgpu::DeviceType::IntegratedGpu => moth_platform::gpu::AdapterKind::Integrated,
+                wgpu::DeviceType::Cpu => moth_platform::gpu::AdapterKind::Software,
+                _ => moth_platform::gpu::AdapterKind::Other,
+            },
             lost,
             transparent,
         })

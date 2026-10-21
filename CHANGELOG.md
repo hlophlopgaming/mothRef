@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- New default performance mode "Everything at full resolution": when a board opens,
+  every image is loaded into video memory at full resolution behind a progress bar,
+  and zooming or panning never loads anything afterwards. If the board does not fit,
+  MothRef says so and the rest loads while you zoom. Later openings read prepared data
+  from the cache folder instead of decoding again.
+- Detect the graphics card's memory and set the video-memory limit from it (80% of
+  dedicated VRAM, half of RAM for integrated graphics) instead of the old 32–512 MiB
+  cap; the detected card and limit are shown on start and in Settings, where the
+  limit can be overridden.
+
 - Bake large images into tile packs in the background the first time they are shown:
   one decode writes every detail tile, so later zooms read ready GPU tiles instead of
   re-decoding the original. While a tile loads, draw the nearest coarser tile instead

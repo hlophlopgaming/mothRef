@@ -23,7 +23,10 @@ pub(super) struct Tools {
     pub ui_scale: f32,
     pub threshold: usize,
     pub undo_limit: usize,
-    pub cache_limit_mib: u32,
+    /// Texture limit in MiB set by the user; 0 follows the detected video memory.
+    pub vram_limit_mib: u32,
+    /// Detected adapter memory, copied in by the app each frame (not persisted).
+    pub video: Option<moth_platform::gpu::VideoMemory>,
     pub disk_cache_usage: Option<Result<u64, String>>,
     pub disk_cache_busy: bool,
     pub clear_disk_cache: bool,
@@ -69,7 +72,8 @@ impl Default for Tools {
             ui_scale: 1.,
             threshold: 5,
             undo_limit: 256,
-            cache_limit_mib: 96,
+            vram_limit_mib: 0,
+            video: None,
             disk_cache_usage: None,
             disk_cache_busy: false,
             clear_disk_cache: false,
@@ -106,7 +110,38 @@ fn mode_text(mode: moth_io::CacheMode) -> (Text, Text) {
         moth_io::CacheMode::MemoryLowQuality => (Text::ModeMemoryLow, Text::ModeMemoryLowHint),
         moth_io::CacheMode::Disk => (Text::ModeDisk, Text::ModeDiskHint),
         moth_io::CacheMode::NoCache => (Text::ModeNoCache, Text::ModeNoCacheHint),
+        moth_io::CacheMode::Full => (Text::ModeFull, Text::ModeFullHint),
     }
+}
+/// Smallest manual texture limit.
+const MIN_VRAM_MIB: u32 = 256;
+/// Largest manual texture limit accepted from preferences (1 TiB).
+const MAX_VRAM_MIB: u32 = 1 << 20;
+const MIB: u64 = 1024 * 1024;
+fn gib(bytes: u64) -> String {
+    format!("{:.1} GiB", bytes as f64 / (1024. * MIB as f64))
+}
+/// Adapter, its memory and the limit derived from it, for settings and the status line.
+pub(super) fn video_summary(video: &moth_platform::gpu::VideoMemory) -> String {
+    let memory = match video.dedicated {
+        Some(bytes) => gib(bytes),
+        None => format!(
+            "{}{}",
+            text(Text::VideoShared),
+            video
+                .system
+                .map(|b| format!(" ({})", gib(b)))
+                .unwrap_or_default()
+        ),
+    };
+    format!(
+        "{}: {} · {} — {}: {}",
+        text(Text::VideoCard),
+        video.name,
+        memory,
+        text(Text::VideoLimitIs),
+        gib(video.limit)
+    )
 }
 fn bake_text(mode: moth_io::BakeMode) -> Text {
     match mode {
@@ -164,6 +199,15 @@ impl Tools {
         }
         arrange::arrange(items, mode, width, self.gap)
     }
+    /// Texture limit in bytes: the user's value, else the detected one (`None` until
+    /// detection finishes).
+    pub fn vram_limit(&self) -> Option<u64> {
+        if self.vram_limit_mib > 0 {
+            Some(u64::from(self.vram_limit_mib) * MIB)
+        } else {
+            self.video.as_ref().map(|video| video.limit)
+        }
+    }
     pub fn preferences(&self) -> Vec<(&'static str, String)> {
         vec![
             (
@@ -178,7 +222,7 @@ impl Tools {
             ("zoom_increment", self.zoom_increment.to_string()),
             ("scale_with_window", self.scale_with_window.to_string()),
             ("undo_limit", self.undo_limit.to_string()),
-            ("cache_limit_mib", self.cache_limit_mib.to_string()),
+            ("vram_limit_mib", self.vram_limit_mib.to_string()),
             ("performance_mode", self.performance_mode.code().to_owned()),
             ("bake_mode", self.bake_mode.code().to_owned()),
             ("dark", self.dark.to_string()),
@@ -190,11 +234,12 @@ impl Tools {
         ]
     }
     pub fn load(&mut self, values: &std::collections::BTreeMap<String, String>) {
-        self.cache_limit_mib = values
-            .get("cache_limit_mib")
+        // The old 32–512 MiB `cache_limit_mib` is ignored: limits now follow the adapter.
+        self.vram_limit_mib = values
+            .get("vram_limit_mib")
             .and_then(|v| v.parse().ok())
-            .filter(|v| (32..=512).contains(v))
-            .unwrap_or(96);
+            .filter(|v| *v == 0 || (MIN_VRAM_MIB..=MAX_VRAM_MIB).contains(v))
+            .unwrap_or(0);
         self.performance_mode = values
             .get("performance_mode")
             .and_then(|v| moth_io::CacheMode::from_code(v.as_str()))
@@ -339,15 +384,43 @@ impl Tools {
                             ));
                         }
                         ui.separator();
-                        let label = preference(
+                        ui.label(preference(
                             Text::CacheLimit,
-                            self.cache_limit_mib != defaults.cache_limit_mib,
-                        );
-                        ui.add(
-                            egui::Slider::new(&mut self.cache_limit_mib, 32..=512)
-                                .suffix(" MiB")
-                                .text(label),
-                        );
+                            self.vram_limit_mib != defaults.vram_limit_mib,
+                        ));
+                        let detected_mib = self
+                            .video
+                            .as_ref()
+                            .map(|v| (v.limit / MIB).clamp(1, u64::from(MAX_VRAM_MIB)) as u32);
+                        let max_mib = self
+                            .video
+                            .as_ref()
+                            .and_then(|v| v.dedicated.or(v.system))
+                            .map_or(64 * 1024, |bytes| (bytes / MIB) as u32)
+                            .clamp(1024, MAX_VRAM_MIB);
+                        let mut auto = self.vram_limit_mib == 0;
+                        if ui.checkbox(&mut auto, text(Text::VideoLimitAuto)).changed() {
+                            self.vram_limit_mib = if auto {
+                                0
+                            } else {
+                                detected_mib.unwrap_or(4096).clamp(MIN_VRAM_MIB, max_mib)
+                            };
+                        }
+                        if !auto {
+                            ui.add(
+                                egui::Slider::new(&mut self.vram_limit_mib, MIN_VRAM_MIB..=max_mib)
+                                    .logarithmic(true)
+                                    .suffix(" MiB"),
+                            );
+                        }
+                        match &self.video {
+                            Some(video) => {
+                                ui.label(video_summary(video));
+                            }
+                            None => {
+                                ui.label(text(Text::VideoDetecting));
+                            }
+                        }
                         ui.label(text(Text::CacheHint));
                         let cache = board.decode().cache();
                         ui.label(format!(
@@ -480,7 +553,7 @@ impl Tools {
                         self.zoom_increment = defaults.zoom_increment;
                         self.scale_with_window = defaults.scale_with_window;
                         self.undo_limit = defaults.undo_limit;
-                        self.cache_limit_mib = defaults.cache_limit_mib;
+                        self.vram_limit_mib = defaults.vram_limit_mib;
                         self.performance_mode = defaults.performance_mode;
                         self.bake_mode = defaults.bake_mode;
                         self.dark = defaults.dark;
@@ -1032,25 +1105,41 @@ mod tests {
         }
     }
     #[test]
-    fn legacy_cache_preferences_become_a_persisted_mib_limit() {
+    fn video_limits_default_to_the_adapter_and_ignore_legacy_caps() {
         let mut tools = Tools::default();
-        for (saved, expected) in [("0", 96), ("32", 32), ("512", 512), ("31", 96), ("513", 96)] {
+        for (saved, expected) in [
+            ("0", 0),
+            ("256", 256),
+            ("12288", 12288),
+            ("255", 0),
+            ("x", 0),
+        ] {
             tools.load(
                 &[
-                    ("cache_limit_mib".into(), saved.into()),
+                    ("vram_limit_mib".into(), saved.into()),
+                    ("cache_limit_mib".into(), "512".into()),
                     ("cache_ram_percent".into(), "50".into()),
                 ]
                 .into_iter()
                 .collect(),
             );
-            assert_eq!(tools.cache_limit_mib, expected);
+            assert_eq!(tools.vram_limit_mib, expected);
             assert!(
                 !tools
                     .preferences()
                     .iter()
-                    .any(|(key, _)| *key == "cache_ram_percent")
+                    .any(|(key, _)| *key == "cache_ram_percent" || *key == "cache_limit_mib")
             );
         }
+        let video = moth_platform::gpu::VideoMemory {
+            name: "Test GPU".into(),
+            kind: moth_platform::gpu::AdapterKind::Discrete,
+            dedicated: Some(8 << 30),
+            system: Some(16 << 30),
+            limit: 6 << 30,
+        };
+        assert!(video_summary(&video).contains("Test GPU"));
+        assert!(video_summary(&video).contains("6.0 GiB"));
     }
     #[test]
     fn preferences_roundtrip_and_reject_nonfinite_values() {
@@ -1064,7 +1153,7 @@ mod tests {
             auto_arrange: true,
             default_arrange: 3,
             undo_limit: 42,
-            cache_limit_mib: 256,
+            vram_limit_mib: 4096,
             performance_mode: moth_io::CacheMode::Disk,
             bake_mode: moth_io::BakeMode::Board,
             show_outlines: false,
@@ -1089,7 +1178,7 @@ mod tests {
                 ("show_outlines".into(), "invalid".into()),
                 ("arrange_gap".into(), "inf".into()),
                 ("undo_limit".into(), "99999".into()),
-                ("cache_limit_mib".into(), "99999".into()),
+                ("vram_limit_mib".into(), "99999999999".into()),
                 ("performance_mode".into(), "bogus".into()),
                 ("bake_mode".into(), "bogus".into()),
             ]
@@ -1106,8 +1195,8 @@ mod tests {
         assert_eq!(loaded.ui_scale, 1.);
         assert_eq!(loaded.gap, 24.);
         assert_eq!(loaded.undo_limit, 256);
-        assert_eq!(loaded.cache_limit_mib, 96);
-        assert_eq!(loaded.performance_mode, moth_io::CacheMode::Memory);
+        assert_eq!(loaded.vram_limit_mib, 0);
+        assert_eq!(loaded.performance_mode, moth_io::CacheMode::Full);
         assert_eq!(loaded.bake_mode, moth_io::BakeMode::Visible);
     }
     #[test]
