@@ -4,6 +4,14 @@ use super::{Content, LOCAL, content};
 use moth_io::tiles::{CORE, Tile};
 use moth_scene::{Camera, Item};
 
+/// Which images are tiled and how much coarser than the screen their tiles are drawn.
+#[derive(Clone, Copy)]
+pub(super) struct Detail {
+    /// Extra levels of coarsening when the tile working set exceeds video memory.
+    pub bias: u32,
+    /// Images whose longer side exceeds this are drawn from tiles.
+    pub threshold: u32,
+}
 pub(super) fn visible(
     item: &Item,
     original: [u32; 2],
@@ -11,9 +19,10 @@ pub(super) fn visible(
     screen: [f32; 2],
     clip: [f32; 4],
     scale: f32,
-    bias: u32,
+    detail: Detail,
 ) -> Vec<Tile> {
-    if original[0].max(original[1]) <= moth_io::MAX_SIDE {
+    let Detail { bias, threshold } = detail;
+    if original[0].max(original[1]) <= threshold.max(moth_io::tiles::SIDE) {
         return Vec::new();
     }
     let density = (item.rect.width / original[0] as f32).max(item.rect.height / original[1] as f32)

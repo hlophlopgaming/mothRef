@@ -77,6 +77,22 @@ pub fn texture_ceiling(available: Option<u64>, allocated: u64, limit: u64, perce
         .min(limit)
 }
 
+/// Texture ceiling for adapters that share system RAM: the limit, but never more than
+/// the RAM still free (counting the textures already held) minus a reserve for the
+/// rest of the system. Discrete adapters use their limit directly.
+pub fn shared_ceiling(available: Option<u64>, allocated: u64, limit: u64) -> u64 {
+    const RESERVE: u64 = 1024 * 1024 * 1024;
+    // Under heavy pressure keep one screen of detail rather than clearing everything.
+    const FLOOR: u64 = 256 * 1024 * 1024;
+    available.map_or(limit, |bytes| {
+        bytes
+            .saturating_add(allocated)
+            .saturating_sub(RESERVE)
+            .max(FLOOR)
+            .min(limit)
+    })
+}
+
 /// Share of available RAM the in-memory performance modes may keep as decoded pyramids.
 /// Evicted entries come back from the disk copy, so RAM only holds the hot set.
 pub const LOD_RAM_FRACTION: f64 = 0.125;
@@ -101,6 +117,14 @@ pub fn lod_cache_budget(available: Option<u64>, own: u64, in_memory: bool) -> u6
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shared_ceilings_keep_a_reserve_of_free_ram() {
+        let gib = 1024 * 1024 * 1024;
+        assert_eq!(shared_ceiling(None, 0, 8 * gib), 8 * gib);
+        assert_eq!(shared_ceiling(Some(16 * gib), 0, 8 * gib), 8 * gib);
+        assert_eq!(shared_ceiling(Some(3 * gib), 2 * gib, 8 * gib), 4 * gib);
+        assert_eq!(shared_ceiling(Some(gib / 2), 0, 8 * gib), gib / 4);
+    }
     #[test]
     fn lod_budget_follows_mode_and_ram() {
         let gib = 1024 * 1024 * 1024;

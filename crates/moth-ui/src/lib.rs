@@ -117,6 +117,26 @@ pub enum Text {
     ModeDiskHint,
     /// Explains the uncached mode.
     ModeNoCacheHint,
+    /// Performance mode: every image at full resolution in video memory.
+    ModeFull,
+    /// Explains the full-resolution mode.
+    ModeFullHint,
+    /// Label for the detected graphics adapter.
+    VideoCard,
+    /// Adapter memory shared with system RAM.
+    VideoShared,
+    /// Label for the texture limit derived from the adapter.
+    VideoLimitIs,
+    /// Follow the detected video memory instead of a manual limit.
+    VideoLimitAuto,
+    /// Shown until video memory detection finishes.
+    VideoDetecting,
+    /// Progress label while a board loads into video memory.
+    PreloadProgress,
+    /// Warns that the board exceeded the video memory limit.
+    PreloadOverflow,
+    /// Tells the user the limit was set from the adapter.
+    VideoDetected,
     /// Chooses which large images get zoom tiles prepared in the background.
     BakeTiles,
     /// Tile preparation: images when they first appear on screen.
@@ -646,6 +666,16 @@ mod tests {
             Text::ModeMemoryLowHint,
             Text::ModeDiskHint,
             Text::ModeNoCacheHint,
+            Text::ModeFull,
+            Text::ModeFullHint,
+            Text::VideoCard,
+            Text::VideoShared,
+            Text::VideoLimitIs,
+            Text::VideoLimitAuto,
+            Text::VideoDetecting,
+            Text::PreloadProgress,
+            Text::PreloadOverflow,
+            Text::VideoDetected,
             Text::BakeTiles,
             Text::BakeVisible,
             Text::BakeBoard,

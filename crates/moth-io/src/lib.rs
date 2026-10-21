@@ -4,6 +4,7 @@
 mod bake;
 pub mod cache;
 mod pack;
+mod preload;
 mod preview;
 mod scheduler;
 pub mod tiles;
@@ -12,6 +13,7 @@ pub use cache::{CacheMode, LodCache, LodStore, LodWriter};
 use crossbeam_channel::Receiver;
 use image::{DynamicImage, ImageReader, metadata::Orientation};
 use moth_format::{Handle, Storage};
+pub use preload::PreloadProgress;
 pub use scheduler::Requests;
 use std::{
     io::{Read, Write},
@@ -667,6 +669,7 @@ pub struct DecodePool {
     pub results: Receiver<Completion>,
     cache: Arc<LodCache>,
     baker: Arc<bake::Baker>,
+    preloader: preload::Preloader,
 }
 /// Reads a whole original within the input budget.
 fn read_original(storage: &dyn Storage, handle: Handle) -> Result<Vec<u8>, DecodeError> {
@@ -806,6 +809,7 @@ impl DecodePool {
         let (tx, results) = crossbeam_channel::bounded(8);
         let shared = cache.clone();
         let baker = Arc::new(bake::Baker::new(storage.clone(), cache.clone())?);
+        let preloader = preload::Preloader::new(storage.clone(), cache.clone(), wake.clone());
         let bakers = baker.clone();
         std::thread::Builder::new()
             .name("decode-dispatch".into())
@@ -848,6 +852,7 @@ impl DecodePool {
             results,
             cache,
             baker,
+            preloader,
         })
     }
     /// The cache this pool reads and fills.
@@ -866,6 +871,32 @@ impl DecodePool {
     /// Images waiting for or undergoing a background tile bake.
     pub fn bake_pending(&self) -> usize {
         self.baker.pending()
+    }
+    /// Queues board images for [`CacheMode::Full`]: each is prepared at full resolution
+    /// (preview plus every tile) and arrives on [`DecodePool::preloaded`]. Images already
+    /// offered in this pass are skipped, so the whole board can be offered repeatedly.
+    pub fn preload(
+        &self,
+        format: ImageFormat,
+        images: impl IntoIterator<Item = (Handle, blake3::Hash)>,
+    ) -> std::io::Result<()> {
+        self.preloader.offer(format, images)
+    }
+    /// Prepared images waiting for upload, previews before their tiles.
+    pub fn preloaded(&self) -> &Receiver<Decoded> {
+        &self.preloader.results
+    }
+    /// Stops the current preload pass; already offered images are not offered again.
+    pub fn cancel_preload(&self) {
+        self.preloader.cancel();
+    }
+    /// Starts preloading over, after uploaded images were lost (tab switch, device loss).
+    pub fn restart_preload(&self) {
+        self.preloader.restart();
+    }
+    /// Images prepared and queued in the current preload pass.
+    pub fn preload_progress(&self) -> PreloadProgress {
+        self.preloader.progress()
     }
 }
 #[cfg(test)]

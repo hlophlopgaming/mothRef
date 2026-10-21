@@ -62,6 +62,9 @@ use intent::Intent;
 
 pub struct App {
     memory: moth_platform::memory::Monitor,
+    /// Detected adapter memory; `None` until the detection worker reports.
+    video: Option<moth_platform::gpu::VideoMemory>,
+    video_detection: Option<crossbeam_channel::Receiver<moth_platform::gpu::VideoMemory>>,
     cache_maintenance: moth_platform::lod_store::Maintenance,
     workspace: workspace::Workspace,
     tools: tools::Tools,
@@ -111,6 +114,8 @@ impl App {
         let shell = shell::Shell::new(proxy, wake, std::env::args().any(|a| a == "--software"));
         Ok(Self {
             memory,
+            video: None,
+            video_detection: None,
             cache_maintenance,
             workspace: workspace::Workspace::new(board, shell.wake()),
             tools: tools::Tools::default(),
@@ -202,6 +207,8 @@ impl App {
         if let Some(gpu) = &mut self.shell.gpu {
             gpu.registry.clear();
         }
+        // Video memory was cleared: the board loads again.
+        self.workspace.board.reset_preload();
     }
     fn tab_change(&mut self, change: workspace::TabChange) {
         if matches!(
@@ -240,6 +247,12 @@ impl App {
         self.tab_change(change);
         Ok(())
     }
+    /// Whether the board is hidden behind the full-resolution preload progress.
+    fn covered_by_preload(&self) -> bool {
+        self.tools.performance_mode == moth_io::CacheMode::Full
+            && !self.workspace.library
+            && !self.workspace.board.preload_ready
+    }
     fn redraw(&self) {
         if let Some(w) = &self.shell.window {
             w.request_redraw();
@@ -247,6 +260,8 @@ impl App {
     }
     fn reset_renderer_ui(&mut self) {
         self.input.native_pressed = None;
+        // A recreated device starts with empty video memory.
+        self.workspace.board.reset_preload();
         self.library_screen.cards.clear();
         self.library_screen.catalog.dismiss_editor();
         self.workspace.refresh_library = self.workspace.library;
@@ -409,6 +424,11 @@ impl App {
         if cache.mode() != mode {
             cache.set_mode(mode);
         }
+        cache.set_memory_budget(moth_platform::memory::lod_cache_budget(
+            available,
+            cache.memory_bytes(),
+            mode.uses_memory(),
+        ));
         cache.set_bake_mode(self.tools.bake_mode);
         if let Some(gpu) = &self.shell.gpu {
             self.workspace
@@ -416,21 +436,96 @@ impl App {
                 .offer_board_bakes(gpu.registry.image_format());
         }
         self.tools.bake_pending = self.workspace.board.bake_pending();
-        cache.set_memory_budget(moth_platform::memory::lod_cache_budget(
-            available,
-            cache.memory_bytes(),
-            mode.uses_memory(),
-        ));
+        self.detect_video_memory();
+        let full = mode == moth_io::CacheMode::Full;
+        if !full && self.workspace.board.preload_started() {
+            self.workspace.board.reset_preload();
+        }
         if let Some(gpu) = &mut self.shell.gpu {
             // Leave room for decoded imports awaiting their journal acknowledgement.
             let active = self.workspace.board.image_count > 0 || !self.workspace.board.idle();
-            let ceiling = moth_platform::memory::texture_ceiling(
-                available,
-                gpu.registry.image_bytes(),
-                u64::from(self.tools.cache_limit_mib) * 1024 * 1024,
-                12.5,
-            );
+            let limit = self
+                .tools
+                .vram_limit()
+                .unwrap_or(moth_render::TEXTURE_BUDGET);
+            gpu.registry.set_hard_limit(limit);
+            let ceiling = if gpu.kind == moth_platform::gpu::AdapterKind::Discrete {
+                limit
+            } else {
+                // Shared-memory adapters take textures from RAM; stay below what is free.
+                moth_platform::memory::shared_ceiling(available, gpu.registry.image_bytes(), limit)
+            };
             gpu.registry.adapt_budget(active, ceiling);
+            gpu.registry.tile_threshold = mode.tile_threshold();
+            gpu.registry.keep_all = full && !self.workspace.board.preload_overflow;
+            // Preloading waits for the detected limit, so it never overflows a placeholder.
+            if full && self.video.is_some() && !self.workspace.library {
+                self.workspace
+                    .board
+                    .offer_preload(gpu.registry.image_format());
+            }
+        }
+        if full {
+            self.upload_preloaded();
+            self.workspace.board.settle_preload();
+        }
+    }
+    /// Starts video-memory detection once a GPU exists and applies its result.
+    fn detect_video_memory(&mut self) {
+        if self.video_detection.is_none()
+            && let Some(gpu) = &self.shell.gpu
+        {
+            self.video_detection = Some(moth_platform::gpu::spawn(
+                gpu.name.clone(),
+                gpu.kind,
+                self.shell.wake(),
+            ));
+        }
+        if self.video.is_none()
+            && let Some(video) = self
+                .video_detection
+                .as_ref()
+                .and_then(|rx| rx.try_recv().ok())
+        {
+            if self.tools.vram_limit_mib == 0 {
+                self.workspace.board.message = format!(
+                    "{}. {}",
+                    tools::video_summary(&video),
+                    moth_ui::text(moth_ui::Text::VideoDetected)
+                );
+            }
+            self.video = Some(video);
+        }
+        if self.tools.video != self.video {
+            self.tools.video = self.video.clone();
+        }
+    }
+    /// Uploads prepared images for the full-resolution mode, a few milliseconds per
+    /// frame so the progress bar stays responsive. Stops the pass, with a warning,
+    /// at the first image that would exceed the video memory limit.
+    fn upload_preloaded(&mut self) {
+        let Some(gpu) = &mut self.shell.gpu else {
+            return;
+        };
+        let board = &mut self.workspace.board;
+        let started = std::time::Instant::now();
+        let mut uploaded = false;
+        while started.elapsed() < std::time::Duration::from_millis(12) {
+            let Some(image) = board.next_preloaded() else {
+                break;
+            };
+            if board.preload_overflow {
+                continue;
+            }
+            if !gpu.registry.fits(&image) {
+                board.overflow_preload();
+                break;
+            }
+            gpu.registry.upload(&gpu.device, &gpu.queue, &image);
+            uploaded = true;
+        }
+        if uploaded {
+            self.redraw();
         }
     }
     fn results(&mut self) {
@@ -1363,6 +1458,12 @@ impl App {
                 } else {
                     Vec::new()
                 };
+                let cover = self.covered_by_preload().then(|| {
+                    (
+                        self.workspace.board.view.viewport,
+                        self.workspace.board.preload_progress(),
+                    )
+                });
                 if !self.workspace.library {
                     intents.extend(canvas::canvas(
                         ui,
@@ -1388,6 +1489,9 @@ impl App {
                                 }),
                         },
                     ));
+                }
+                if let Some((viewport, progress)) = cover {
+                    canvas::preload_cover(ui, viewport, progress);
                 }
                 intents.extend(chrome);
                 if self.modal.dialog.is_none()
@@ -1486,13 +1590,17 @@ impl App {
             visible.extend(previews.iter());
             visible.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
         }
-        self.workspace.board.request_images(
-            &mut gpu.registry,
-            &visible,
-            self.workspace.library,
-            output.pixels_per_point,
-            self.camera_motion.target(camera),
-        );
+        // While the full-resolution preload covers the board, viewport requests would
+        // only duplicate its work.
+        if !self.covered_by_preload() {
+            self.workspace.board.request_images(
+                &mut gpu.registry,
+                &visible,
+                self.workspace.library,
+                output.pixels_per_point,
+                self.camera_motion.target(camera),
+            );
+        }
         match self.shell.render(output, &visible, camera, frame)? {
             shell::Present::Presented => {}
             shell::Present::Recovered => {

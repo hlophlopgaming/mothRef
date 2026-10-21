@@ -35,15 +35,21 @@ pub enum CacheMode {
     /// Keep GPU-ready pyramids on disk: little RAM, disk reads instead of decodes.
     Disk,
     /// Keep GPU-ready pyramids in RAM within a budget, backed by the disk copy so an
-    /// evicted entry costs a file read rather than a decode: fastest zoom.
-    #[default]
+    /// evicted entry costs a file read rather than a decode.
     Memory,
     /// Like [`CacheMode::Memory`], but detail stops at [`LOW_QUALITY_SIDE`] pixels.
     MemoryLowQuality,
+    /// Load every image of the board at full resolution into video memory when the
+    /// board opens, and never load anything while zooming or panning. GPU-ready data
+    /// is kept on disk so the next opening reads it instead of decoding. Bounded by
+    /// the video-memory limit rather than the viewport (decision 0017).
+    #[default]
+    Full,
 }
 impl CacheMode {
     /// Every mode, in the order the settings list shows them.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
+        Self::Full,
         Self::Memory,
         Self::MemoryLowQuality,
         Self::Disk,
@@ -56,6 +62,7 @@ impl CacheMode {
             Self::Disk => "disk",
             Self::Memory => "memory",
             Self::MemoryLowQuality => "memory_low",
+            Self::Full => "full",
         }
     }
     /// Parses a preference value written by [`CacheMode::code`].
@@ -70,6 +77,7 @@ impl CacheMode {
             Self::Disk => 1,
             Self::Memory => 2,
             Self::MemoryLowQuality => 3,
+            Self::Full => 4,
         }
     }
     fn from_index(index: u8) -> Self {
@@ -77,6 +85,7 @@ impl CacheMode {
             1 => Self::Disk,
             2 => Self::Memory,
             3 => Self::MemoryLowQuality,
+            4 => Self::Full,
             _ => Self::NoCache,
         }
     }
@@ -88,6 +97,15 @@ impl CacheMode {
     pub fn max_side(self) -> u32 {
         match self {
             Self::MemoryLowQuality => LOW_QUALITY_SIDE,
+            _ => MAX_SIDE,
+        }
+    }
+    /// Images whose longer side exceeds this are drawn from tiles. The full-resolution
+    /// mode tiles everything above one tile, so no image wastes a square power-of-two
+    /// texture and every image is drawn the same way at every zoom.
+    pub fn tile_threshold(self) -> u32 {
+        match self {
+            Self::Full => crate::tiles::SIDE,
             _ => MAX_SIDE,
         }
     }
@@ -222,7 +240,7 @@ impl LodCache {
     pub fn decode_side(&self, target: u32, known: bool) -> u32 {
         let mode = self.mode();
         let target = target.clamp(1, mode.max_side());
-        if mode == CacheMode::NoCache || !known {
+        if matches!(mode, CacheMode::NoCache | CacheMode::Full) || !known {
             return target;
         }
         target
@@ -257,7 +275,7 @@ impl LodCache {
                 // Evicted or too coarse in RAM: the disk copy still avoids a decode.
                 self.disk_lookup(hash, format, target, quality)
             }
-            CacheMode::Disk => self.disk_lookup(hash, format, target, quality),
+            CacheMode::Disk | CacheMode::Full => self.disk_lookup(hash, format, target, quality),
         }
     }
     fn disk_lookup(
@@ -294,7 +312,10 @@ impl LodCache {
     }
     /// Whether this mode keeps a tile pack per large image, written by a background bake.
     pub fn bakes(&self) -> bool {
-        matches!(self.mode(), CacheMode::Memory | CacheMode::Disk) && self.store.get().is_some()
+        matches!(
+            self.mode(),
+            CacheMode::Memory | CacheMode::Disk | CacheMode::Full
+        ) && self.store.get().is_some()
     }
     /// Whether a complete pack for this image and format is already stored.
     pub(crate) fn has_pack(&self, hash: blake3::Hash, format: ImageFormat) -> bool {
@@ -333,6 +354,21 @@ impl LodCache {
             }
         }
     }
+    /// The image's pack, for reading every tile in one pass.
+    pub(crate) fn pack_reader(
+        &self,
+        hash: blake3::Hash,
+        format: ImageFormat,
+    ) -> Option<Box<dyn ReadSeek>> {
+        if !self.bakes() {
+            return None;
+        }
+        self.store
+            .get()?
+            .read(&crate::pack::key(hash, format))
+            .ok()
+            .flatten()
+    }
     /// A streamed writer for this image's pack of `size` bytes, if the store accepts it.
     pub(crate) fn pack_writer(
         &self,
@@ -363,7 +399,7 @@ impl LodCache {
         let quality = mode != CacheMode::MemoryLowQuality;
         match mode {
             CacheMode::NoCache => image,
-            CacheMode::Disk => {
+            CacheMode::Disk | CacheMode::Full => {
                 if let Some(store) = self.store.get()
                     && let Err(error) = write(store.as_ref(), &image)
                 {
@@ -681,7 +717,10 @@ mod tests {
             assert_eq!(CacheMode::from_index(mode.index()), mode);
         }
         assert_eq!(CacheMode::from_code("bogus"), None);
-        assert_eq!(CacheMode::default(), CacheMode::Memory);
+        assert_eq!(CacheMode::default(), CacheMode::Full);
+        assert_eq!(CacheMode::Full.tile_threshold(), crate::tiles::SIDE);
+        assert_eq!(CacheMode::Memory.tile_threshold(), MAX_SIDE);
+        assert!(!CacheMode::Full.uses_memory());
     }
 
     #[test]
