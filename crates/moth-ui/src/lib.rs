@@ -117,6 +117,18 @@ pub enum Text {
     ModeDiskHint,
     /// Explains the uncached mode.
     ModeNoCacheHint,
+    /// Chooses which large images get zoom tiles prepared in the background.
+    BakeTiles,
+    /// Tile preparation: images when they first appear on screen.
+    BakeVisible,
+    /// Tile preparation: every image of the open board.
+    BakeBoard,
+    /// Tile preparation disabled.
+    BakeOff,
+    /// Explains tile preparation and its disk cost.
+    BakeHint,
+    /// Count of images still waiting for tile preparation.
+    BakePending,
     /// Localized Duplicate control.
     Duplicate,
     /// Localized NudgeLeft control.
@@ -634,6 +646,12 @@ mod tests {
             Text::ModeMemoryLowHint,
             Text::ModeDiskHint,
             Text::ModeNoCacheHint,
+            Text::BakeTiles,
+            Text::BakeVisible,
+            Text::BakeBoard,
+            Text::BakeOff,
+            Text::BakeHint,
+            Text::BakePending,
             Text::Duplicate,
             Text::NudgeLeft,
             Text::NudgeRight,

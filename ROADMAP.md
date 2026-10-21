@@ -152,7 +152,7 @@ default is "In memory". See [decision 0014](docs/decisions/0014-performance-mode
 - [x] Tiled pyramids for large images: fixed-size tile atlas instead of square power-of-two size classes, full-resolution inspection beyond 2048 px, memory proportional to screen pixels
 - [x] Settings: show RAM/disk cache usage and a "Clear disk cache" action
 - [x] Evaluate a global allocator (mimalloc) against glibc arenas with a heap profiler; keep it only with a measured RSS win
-- [x] Baked tile packs: one background pass per large image writes every detail tile, so zoom reads ready tiles instead of decoding; parent tiles stand in while a tile loads (decision 0016)
+- [x] Baked tile packs: one background pass per large image writes every detail tile, so zoom reads ready tiles instead of decoding; parent tiles stand in while a tile loads; "Prepare zoom tiles" setting: on screen (default), whole board, off (decision 0016)
 - [ ] Measure per mode on reference hardware: warm-cache zoom latency to 2048 px, RSS after zooming in and back out, board open time; record results in [load performance](docs/LOAD-PERFORMANCE.md)
 
 **Exit criteria:** in the default mode, zooming to full detail on an image already shown completes in ≤ 100 ms with a warm cache; every mode stays within its documented memory budget; "No cache" releases texture memory when zoomed out to fit the board.
@@ -751,6 +751,7 @@ Known issues to plan for: macOS notarization needs a paid Apple Developer accoun
 
 | Date | Decision |
 | --- | --- |
+| 2026-10-21 | [Baked tile packs](docs/decisions/0016-baked-tile-packs.md): one background decode per large image writes every detail tile; parent tiles stand in while loading; "Prepare zoom tiles" setting (on screen / whole board / off); RAM cache 12.5% ≤ 1 GiB written through to an 8 GiB disk cache |
 | 2026-10-21 | [Viewport tiles and scheduling](docs/decisions/0015-viewport-tiles-and-scheduling.md): bounded replaceable viewport queue; fixed-size visible detail tiles; native JPEG scanlines and Android NDK toolchain |
 | 2026-10-21 | Post-1.0 release targets: 1.5 = composition overlays and ruler (M10), Obsidian interop (M12), capture integrations (M14); 2.0 = perspective and value tools (M10), Excalidraw / draw.io / UML-XML interop, Blender plugin, video-frame capture (M16); PDF import with a page picker (M15), release to be confirmed |
 | 2026-10-20 | [Performance modes and LOD cache](docs/decisions/0014-performance-modes-lod-cache.md): PureRef-style In memory (default) / low zoom quality / Cache on disk / No cache; decode once per zoom range from a budgeted RAM or disk cache; BC7 only where it can be encoded |
