@@ -310,7 +310,9 @@ checksummed pack per image and format through `LodStore::writer`. Tile requests 
 the pack first, through the OS file cache, before the RAM/disk caches or the original.
 While a tile loads, the renderer draws the matching region of the nearest resident
 tile up to `PARENT_LEVELS` levels coarser; the viewport keeps those ancestors
-resident. See [decision 0016](decisions/0016-baked-tile-packs.md).
+resident. The "Prepare zoom tiles" preference (`moth_io::BakeMode`, shared through
+the `LodCache`) chooses on-screen images only (default), the whole open board behind
+them, or no new packs. See [decision 0016](decisions/0016-baked-tile-packs.md).
 
 Before scheduling, the registry fits the union of current/target tile coverage to
 whole-page capacity after reserving visible preview and fallback pages. It raises

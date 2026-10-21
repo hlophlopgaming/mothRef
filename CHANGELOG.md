@@ -6,6 +6,9 @@
   one decode writes every detail tile, so later zooms read ready GPU tiles instead of
   re-decoding the original. While a tile loads, draw the nearest coarser tile instead
   of the blurry 256-pixel preview.
+- Add a "Prepare zoom tiles" setting (English/Russian): for images on screen
+  (default), for the whole board in the background, or off. Settings show how many
+  images are still waiting.
 - Use less RAM in the default "In memory" mode: 12.5% of available RAM (at most 1 GiB)
   instead of 25% (at most 4 GiB), 2× instead of 4× preview headroom, and a disk copy
   that serves evicted previews without decoding. The disk cache budget grows to 8 GiB.

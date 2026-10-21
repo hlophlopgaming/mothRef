@@ -29,6 +29,10 @@ pub(super) struct Tools {
     pub clear_disk_cache: bool,
     /// How decoded previews are kept between zoom steps.
     pub performance_mode: moth_io::CacheMode,
+    /// Which large images get their zoom tiles prepared in the background.
+    pub bake_mode: moth_io::BakeMode,
+    /// Images of the open board waiting for tile preparation (not persisted).
+    pub bake_pending: usize,
     pub wheel: u8,
     pub smooth_zoom: bool,
     pub zoom_increment: f32,
@@ -70,6 +74,8 @@ impl Default for Tools {
             disk_cache_busy: false,
             clear_disk_cache: false,
             performance_mode: moth_io::CacheMode::default(),
+            bake_mode: moth_io::BakeMode::default(),
+            bake_pending: 0,
             wheel: 0,
             smooth_zoom: true,
             zoom_increment: 10.,
@@ -100,6 +106,13 @@ fn mode_text(mode: moth_io::CacheMode) -> (Text, Text) {
         moth_io::CacheMode::MemoryLowQuality => (Text::ModeMemoryLow, Text::ModeMemoryLowHint),
         moth_io::CacheMode::Disk => (Text::ModeDisk, Text::ModeDiskHint),
         moth_io::CacheMode::NoCache => (Text::ModeNoCache, Text::ModeNoCacheHint),
+    }
+}
+fn bake_text(mode: moth_io::BakeMode) -> Text {
+    match mode {
+        moth_io::BakeMode::Visible => Text::BakeVisible,
+        moth_io::BakeMode::Board => Text::BakeBoard,
+        moth_io::BakeMode::Off => Text::BakeOff,
     }
 }
 fn preference(key: Text, changed: bool) -> String {
@@ -167,6 +180,7 @@ impl Tools {
             ("undo_limit", self.undo_limit.to_string()),
             ("cache_limit_mib", self.cache_limit_mib.to_string()),
             ("performance_mode", self.performance_mode.code().to_owned()),
+            ("bake_mode", self.bake_mode.code().to_owned()),
             ("dark", self.dark.to_string()),
             ("ui_scale", self.ui_scale.to_string()),
             ("arrange_gap", self.gap.to_string()),
@@ -184,6 +198,10 @@ impl Tools {
         self.performance_mode = values
             .get("performance_mode")
             .and_then(|v| moth_io::CacheMode::from_code(v.as_str()))
+            .unwrap_or_default();
+        self.bake_mode = values
+            .get("bake_mode")
+            .and_then(|v| moth_io::BakeMode::from_code(v.as_str()))
             .unwrap_or_default();
         self.reduced_motion = values
             .get(moth_platform::settings::REDUCED_MOTION)
@@ -296,6 +314,30 @@ impl Tools {
                                 }
                             });
                         ui.label(text(hint));
+                        ui.separator();
+                        ui.label(preference(
+                            Text::BakeTiles,
+                            self.bake_mode != defaults.bake_mode,
+                        ));
+                        egui::ComboBox::from_id_salt("bake_mode")
+                            .selected_text(text(bake_text(self.bake_mode)))
+                            .show_ui(ui, |ui| {
+                                for mode in moth_io::BakeMode::ALL {
+                                    ui.selectable_value(
+                                        &mut self.bake_mode,
+                                        mode,
+                                        text(bake_text(mode)),
+                                    );
+                                }
+                            });
+                        ui.label(text(Text::BakeHint));
+                        if self.bake_pending > 0 {
+                            ui.label(format!(
+                                "{}: {}",
+                                text(Text::BakePending),
+                                self.bake_pending
+                            ));
+                        }
                         ui.separator();
                         let label = preference(
                             Text::CacheLimit,
@@ -440,6 +482,7 @@ impl Tools {
                         self.undo_limit = defaults.undo_limit;
                         self.cache_limit_mib = defaults.cache_limit_mib;
                         self.performance_mode = defaults.performance_mode;
+                        self.bake_mode = defaults.bake_mode;
                         self.dark = defaults.dark;
                         self.ui_scale = defaults.ui_scale;
                         self.gap = defaults.gap;
@@ -1023,6 +1066,7 @@ mod tests {
             undo_limit: 42,
             cache_limit_mib: 256,
             performance_mode: moth_io::CacheMode::Disk,
+            bake_mode: moth_io::BakeMode::Board,
             show_outlines: false,
             drag_animation: false,
             drag_opacity: 0.42,
@@ -1047,6 +1091,7 @@ mod tests {
                 ("undo_limit".into(), "99999".into()),
                 ("cache_limit_mib".into(), "99999".into()),
                 ("performance_mode".into(), "bogus".into()),
+                ("bake_mode".into(), "bogus".into()),
             ]
             .into_iter()
             .collect(),
@@ -1063,6 +1108,7 @@ mod tests {
         assert_eq!(loaded.undo_limit, 256);
         assert_eq!(loaded.cache_limit_mib, 96);
         assert_eq!(loaded.performance_mode, moth_io::CacheMode::Memory);
+        assert_eq!(loaded.bake_mode, moth_io::BakeMode::Visible);
     }
     #[test]
     fn scaling_rejects_overflow_and_keeps_relative_positions() {

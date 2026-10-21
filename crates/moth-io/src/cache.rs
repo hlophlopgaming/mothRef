@@ -154,6 +154,7 @@ pub struct LodCache {
     budget: AtomicU64,
     memory: Mutex<Memory>,
     store: OnceLock<Arc<dyn LodStore>>,
+    bake: crate::bake::BakeSetting,
 }
 impl Default for LodCache {
     fn default() -> Self {
@@ -162,6 +163,7 @@ impl Default for LodCache {
             budget: AtomicU64::new(0),
             memory: Mutex::default(),
             store: OnceLock::new(),
+            bake: crate::bake::BakeSetting::default(),
         }
     }
 }
@@ -282,6 +284,14 @@ impl LodCache {
         }
     }
 
+    /// Which images get a tile pack; read by every pool's bake offers.
+    pub fn bake_mode(&self) -> crate::BakeMode {
+        self.bake.get()
+    }
+    /// Applies the user's bake preference to every pool sharing this cache.
+    pub fn set_bake_mode(&self, mode: crate::BakeMode) {
+        self.bake.set(mode);
+    }
     /// Whether this mode keeps a tile pack per large image, written by a background bake.
     pub fn bakes(&self) -> bool {
         matches!(self.mode(), CacheMode::Memory | CacheMode::Disk) && self.store.get().is_some()
