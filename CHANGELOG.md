@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Bake large images into tile packs in the background the first time they are shown:
+  one decode writes every detail tile, so later zooms read ready GPU tiles instead of
+  re-decoding the original. While a tile loads, draw the nearest coarser tile instead
+  of the blurry 256-pixel preview.
+- Use less RAM in the default "In memory" mode: 12.5% of available RAM (at most 1 GiB)
+  instead of 25% (at most 4 GiB), 2× instead of 4× preview headroom, and a disk copy
+  that serves evicted previews without decoding. The disk cache budget grows to 8 GiB.
+
 - Build image mip levels with integer pixel averaging instead of a full-frame
   floating-point resize, reducing zoom-detail latency and temporary RAM use.
   Keep the highest-detail pixels unchanged.

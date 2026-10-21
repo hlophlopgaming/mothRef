@@ -143,15 +143,16 @@ Users choose how decoded previews are kept, as in PureRef's performance modes; t
 default is "In memory". See [decision 0014](docs/decisions/0014-performance-modes-lod-cache.md).
 
 - [x] Performance mode setting: In memory (default), In memory with low zoom quality, Cache on disk, No cache; persisted, explained in English and Russian
-- [x] Decode once per zoom range: larger whole-image previews use 4× headroom; coarse fallbacks stay at their requested size, and cached previews/tiles avoid re-reading, decoding and BC7-encoding the original
-- [x] RAM cache with an explicit budget and LRU eviction (25% of available RAM, at most 4 GiB), released when leaving an in-memory mode
-- [x] Disk cache: GPU-ready pyramids in the OS cache folder, per-mip checksums, 2 GiB budget, LRU pruning off the UI thread
+- [x] Decode once per zoom range: larger whole-image previews use 2× headroom; coarse fallbacks stay at their requested size, and cached previews/tiles avoid re-reading, decoding and BC7-encoding the original
+- [x] RAM cache with an explicit budget and LRU eviction (12.5% of available RAM, at most 1 GiB, written through to disk), released when leaving an in-memory mode
+- [x] Disk cache: GPU-ready pyramids in the OS cache folder, per-mip checksums, 8 GiB budget, LRU pruning off the UI thread
 - [x] Select BC7 only on builds that can encode it (Apple silicon / Windows on Arm previews never uploaded)
 - [x] Release VRAM on zoom-out: replace oversized resident textures with a lower mip copied on the GPU, without decoding
 - [x] Request scheduler: order requests by visible area and distance to the viewport center, cancel superseded requests, request the final level during an active zoom gesture
 - [x] Tiled pyramids for large images: fixed-size tile atlas instead of square power-of-two size classes, full-resolution inspection beyond 2048 px, memory proportional to screen pixels
 - [x] Settings: show RAM/disk cache usage and a "Clear disk cache" action
 - [x] Evaluate a global allocator (mimalloc) against glibc arenas with a heap profiler; keep it only with a measured RSS win
+- [x] Baked tile packs: one background pass per large image writes every detail tile, so zoom reads ready tiles instead of decoding; parent tiles stand in while a tile loads (decision 0016)
 - [ ] Measure per mode on reference hardware: warm-cache zoom latency to 2048 px, RSS after zooming in and back out, board open time; record results in [load performance](docs/LOAD-PERFORMANCE.md)
 
 **Exit criteria:** in the default mode, zooming to full detail on an image already shown completes in ≤ 100 ms with a warm cache; every mode stays within its documented memory budget; "No cache" releases texture memory when zoomed out to fit the board.

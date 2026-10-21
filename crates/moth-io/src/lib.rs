@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![forbid(unsafe_code)]
 //! Bounded image workers. Pixels never enter the scene model.
+mod bake;
 pub mod cache;
+mod pack;
 mod preview;
 mod scheduler;
 pub mod tiles;
-pub use cache::{CacheMode, LodCache, LodStore};
+pub use cache::{CacheMode, LodCache, LodStore, LodWriter};
 use crossbeam_channel::Receiver;
 use image::{DynamicImage, ImageReader, metadata::Orientation};
 use moth_format::{Handle, Storage};
@@ -663,9 +665,23 @@ pub struct DecodePool {
     /// Backpressure caps memory while the UI is busy.
     pub results: Receiver<Completion>,
     cache: Arc<LodCache>,
+    _baker: Arc<bake::Baker>,
+}
+/// Reads a whole original within the input budget.
+fn read_original(storage: &dyn Storage, handle: Handle) -> Result<Vec<u8>, DecodeError> {
+    let mut reader = storage.open(handle)?;
+    let len = reader.seek(std::io::SeekFrom::End(0))?;
+    if len > MAX_INPUT_BYTES {
+        return Err(DecodeError::Budget);
+    }
+    reader.seek(std::io::SeekFrom::Start(0))?;
+    let mut bytes = Vec::with_capacity(len as usize);
+    reader.take(MAX_INPUT_BYTES + 1).read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 fn decode_request(
     storage: &dyn Storage,
+    baker: &bake::Baker,
     cache: &LodCache,
     request: Request,
     batch: &[Request],
@@ -677,6 +693,13 @@ fn decode_request(
         if cancelled.load(Ordering::Relaxed) {
             return Err(DecodeError::Cancelled);
         }
+        // A baked pack answers tiles without the original or this process's RAM.
+        if let Some(hash) = request.blob
+            && let Some(tile) = request.tile
+            && let Some(image) = cache.pack_tile(hash, request.format, tile)
+        {
+            return Ok(image);
+        }
         if let Some(hash) = request.blob
             && let Some(mut image) = cache.lookup(
                 request.tile.map_or(hash, |tile| tile.key(hash)),
@@ -686,6 +709,7 @@ fn decode_request(
         {
             image.hash = hash;
             image.tile = request.tile;
+            baker.offer(cache, request.handle, hash, request.format, image.original);
             return Ok(image);
         }
         let image = if let Some(index) = decoded_tiles
@@ -694,14 +718,7 @@ fn decode_request(
         {
             decoded_tiles.swap_remove(index)
         } else {
-            let mut reader = storage.open(request.handle)?;
-            let len = reader.seek(std::io::SeekFrom::End(0))?;
-            if len > MAX_INPUT_BYTES {
-                return Err(DecodeError::Budget);
-            }
-            reader.seek(std::io::SeekFrom::Start(0))?;
-            let mut bytes = Vec::with_capacity(len as usize);
-            reader.take(MAX_INPUT_BYTES + 1).read_to_end(&mut bytes)?;
+            let bytes = read_original(storage, request.handle)?;
             if cancelled.load(Ordering::Relaxed) {
                 return Err(DecodeError::Cancelled);
             }
@@ -741,6 +758,10 @@ fn decode_request(
         if let Some(tile) = image.tile {
             image.hash = tile.key(hash);
             image.tile = None;
+        }
+        if request.blob.is_some() {
+            // First sight of a large image: bake its tiles before the user zooms in.
+            baker.offer(cache, request.handle, hash, request.format, image.original);
         }
         let mut image = cache.keep(image, request.side);
         image.hash = hash;
@@ -783,6 +804,8 @@ impl DecodePool {
         // One complete tile batch can become ready between UI frames.
         let (tx, results) = crossbeam_channel::bounded(8);
         let shared = cache.clone();
+        let baker = Arc::new(bake::Baker::new(storage.clone(), cache.clone())?);
+        let bakers = baker.clone();
         std::thread::Builder::new()
             .name("decode-dispatch".into())
             .spawn(move || {
@@ -792,12 +815,14 @@ impl DecodePool {
                         let storage = storage.clone();
                         let wake = wake.clone();
                         let cache = shared.clone();
+                        let baker = bakers.clone();
                         scope.spawn(move |_| {
                             while let Some((batch, cancelled)) = rx.next_batch() {
                                 let mut decoded_tiles = Vec::new();
                                 for request in batch.iter().copied() {
                                     let completion = decode_request(
                                         storage.as_ref(),
+                                        &baker,
                                         &cache,
                                         request,
                                         &batch,
@@ -821,6 +846,7 @@ impl DecodePool {
             requests,
             results,
             cache,
+            _baker: baker,
         })
     }
     /// The cache this pool reads and fills.

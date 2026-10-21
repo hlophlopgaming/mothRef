@@ -16,6 +16,10 @@ pub const MIN_TEXTURE_BUDGET: u64 = 32 * 1024 * 1024;
 /// Adaptive growth stays bounded even on million-item boards.
 pub const MAX_TEXTURE_BUDGET: u64 = 512 * 1024 * 1024;
 const FALLBACK_SIDE: u32 = 32;
+/// While a detail tile loads, a resident tile up to this many levels coarser draws its
+/// region instead of the whole-image preview, so a fast zoom stays sharp-ish rather
+/// than dropping to the 256-pixel fallback. Callers keep these ancestors resident.
+pub const PARENT_LEVELS: u32 = 4;
 const CLASSES: [(u32, u32); 8] = [
     (16, 256),
     (32, 256),
@@ -1021,36 +1025,39 @@ impl Registry {
         for tile in tiles {
             let range = tiles::range(tile, slot.original);
             let shape = tiles::piece(&shape, range, item.transform.flip);
-            let (class, layer, region, continuous) =
-                if let Some(&(page, layer)) = self.locations.get(&tile.key(blob)) {
-                    if let Some(slot) = self.arrays[page]
-                        .as_mut()
-                        .and_then(|a| a.slots[layer].as_mut())
-                    {
-                        slot.used = self.clock;
-                    }
-                    let bounds = tile
-                        .bounds(slot.original)
-                        .expect("tile coverage was clipped");
-                    (
-                        page,
-                        layer,
-                        [0.5, 0.5, bounds[2] as f32 + 1., bounds[3] as f32 + 1.],
-                        0.,
-                    )
-                } else {
-                    (
-                        class,
-                        layer,
-                        [
-                            range[0] * slot.dimensions[0].saturating_sub(1) as f32,
-                            range[1] * slot.dimensions[1].saturating_sub(1) as f32,
-                            (range[2] - range[0]) * slot.dimensions[0].saturating_sub(1) as f32,
-                            (range[3] - range[1]) * slot.dimensions[1].saturating_sub(1) as f32,
-                        ],
-                        1.,
-                    )
-                };
+            let (class, layer, region, continuous) = if let Some(&(page, layer)) =
+                self.locations.get(&tile.key(blob))
+            {
+                if let Some(slot) = self.arrays[page]
+                    .as_mut()
+                    .and_then(|a| a.slots[layer].as_mut())
+                {
+                    slot.used = self.clock;
+                }
+                let bounds = tile
+                    .bounds(slot.original)
+                    .expect("tile coverage was clipped");
+                (
+                    page,
+                    layer,
+                    [0.5, 0.5, bounds[2] as f32 + 1., bounds[3] as f32 + 1.],
+                    0.,
+                )
+            } else if let Some((page, layer, region)) = self.ancestor(blob, tile, slot.original) {
+                (page, layer, region, 1.)
+            } else {
+                (
+                    class,
+                    layer,
+                    [
+                        range[0] * slot.dimensions[0].saturating_sub(1) as f32,
+                        range[1] * slot.dimensions[1].saturating_sub(1) as f32,
+                        (range[2] - range[0]) * slot.dimensions[0].saturating_sub(1) as f32,
+                        (range[3] - range[1]) * slot.dimensions[1].saturating_sub(1) as f32,
+                    ],
+                    1.,
+                )
+            };
             instances.push(Instance {
                 corners: shape.corners,
                 frame: shape.frame,
@@ -1061,6 +1068,44 @@ impl Registry {
             });
             classes.push(class);
         }
+    }
+    /// The closest resident coarser tile and the texel region covering `tile`.
+    ///
+    /// The region uses the continuous sampling path: `0.5 + xy` is the left/top edge of
+    /// the child's content inside the parent layer, whose texel 0 is the filter gutter.
+    fn ancestor(
+        &mut self,
+        blob: BlobId,
+        tile: moth_io::tiles::Tile,
+        original: [u32; 2],
+    ) -> Option<(usize, usize, [f32; 4])> {
+        let bounds = tile.bounds(original)?;
+        for levels in 1..=PARENT_LEVELS {
+            let parent = tile.parent(levels)?;
+            let Some(&(page, layer)) = self.locations.get(&parent.key(blob)) else {
+                continue;
+            };
+            let Some(slot) = self.arrays[page]
+                .as_mut()
+                .and_then(|a| a.slots[layer].as_mut())
+            else {
+                continue;
+            };
+            slot.used = self.clock;
+            let origin = parent.bounds(original)?;
+            let scale = (1u32 << levels) as f32;
+            return Some((
+                page,
+                layer,
+                [
+                    0.5 + bounds[0] as f32 / scale - origin[0] as f32,
+                    0.5 + bounds[1] as f32 / scale - origin[1] as f32,
+                    bounds[2] as f32 / scale,
+                    bounds[3] as f32 / scale,
+                ],
+            ));
+        }
+        None
     }
     fn submit_instances(
         &self,
