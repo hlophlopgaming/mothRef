@@ -10,7 +10,7 @@ use crate::{Decoded, ImageFormat, MAX_SIDE, Mip};
 use moth_format::ReadSeek;
 use std::{
     collections::HashMap,
-    io::{self, Read, Seek, SeekFrom},
+    io::{self, Read, Seek, SeekFrom, Write},
     sync::{
         Arc, Mutex, OnceLock, PoisonError,
         atomic::{AtomicU8, AtomicU64, Ordering},
@@ -20,9 +20,10 @@ use std::{
 /// Smallest side a caching mode decodes at; equal to the import preview side, so
 /// opening a zoomed-out board costs no more than importing it.
 const CACHED_MIN_SIDE: u32 = 256;
-/// Caching modes decode this many times the requested side, so a 4x zoom-in is served
-/// from the cache instead of a new decode.
-const CACHED_HEADROOM: u32 = 4;
+/// Caching modes decode this many times the requested side, so a 2x zoom-in is served
+/// from the cache instead of a new decode. Larger steps are served by the disk copy or
+/// by tiles, so RAM does not hold four times the detail on screen.
+const CACHED_HEADROOM: u32 = 2;
 /// Detail ceiling of [`CacheMode::MemoryLowQuality`].
 pub const LOW_QUALITY_SIDE: u32 = 1024;
 
@@ -33,7 +34,8 @@ pub enum CacheMode {
     NoCache,
     /// Keep GPU-ready pyramids on disk: little RAM, disk reads instead of decodes.
     Disk,
-    /// Keep GPU-ready pyramids in RAM within a budget: fastest zoom, more memory.
+    /// Keep GPU-ready pyramids in RAM within a budget, backed by the disk copy so an
+    /// evicted entry costs a file read rather than a decode: fastest zoom.
     #[default]
     Memory,
     /// Like [`CacheMode::Memory`], but detail stops at [`LOW_QUALITY_SIDE`] pixels.
@@ -98,6 +100,17 @@ pub trait LodStore: Send + Sync {
     /// Replaces a cached object with the concatenated parts. Readers never observe a
     /// partial object; a failed write leaves the previous object or none.
     fn write(&self, key: &str, parts: &[&[u8]]) -> io::Result<()>;
+    /// Streams a large object of exactly `size` bytes; it becomes visible only on
+    /// [`LodWriter::commit`]. `None` when the store will not hold that much.
+    fn writer(&self, key: &str, size: u64) -> io::Result<Option<Box<dyn LodWriter>>> {
+        let _ = (key, size);
+        Ok(None)
+    }
+}
+/// A streamed cache object; dropping it without committing discards it.
+pub trait LodWriter: Write + Send {
+    /// Publishes the object atomically under its key.
+    fn commit(self: Box<Self>) -> io::Result<()>;
 }
 
 struct Entry {
@@ -228,29 +241,107 @@ impl LodCache {
                     let mut memory = self.lock();
                     memory.clock += 1;
                     let clock = memory.clock;
-                    let entry = memory.entries.get_mut(&(hash, format))?;
-                    entry.used = clock;
-                    entry.image.clone()
+                    memory.entries.get_mut(&(hash, format)).map(|entry| {
+                        entry.used = clock;
+                        entry.image.clone()
+                    })
                 };
-                let first = pick(&longs(&image.mips), original_long(&image), target, quality)?;
-                Some(slice(&image, first))
-            }
-            CacheMode::Disk => {
-                let store = self.store.get()?;
-                let reader = match store.read(&key(hash, format)) {
-                    Ok(reader) => reader?,
-                    Err(error) => {
-                        tracing::debug!(%error, "LOD cache read failed");
-                        return None;
-                    }
-                };
-                match read(reader, hash, format, target, quality) {
-                    Ok(image) => image,
-                    Err(error) => {
-                        tracing::debug!(%error, "LOD cache entry rejected");
-                        None
-                    }
+                if let Some(image) = image
+                    && let Some(first) =
+                        pick(&longs(&image.mips), original_long(&image), target, quality)
+                {
+                    return Some(slice(&image, first));
                 }
+                // Evicted or too coarse in RAM: the disk copy still avoids a decode.
+                self.disk_lookup(hash, format, target, quality)
+            }
+            CacheMode::Disk => self.disk_lookup(hash, format, target, quality),
+        }
+    }
+    fn disk_lookup(
+        &self,
+        hash: blake3::Hash,
+        format: ImageFormat,
+        target: u32,
+        quality: bool,
+    ) -> Option<Decoded> {
+        let store = self.store.get()?;
+        let reader = match store.read(&key(hash, format)) {
+            Ok(reader) => reader?,
+            Err(error) => {
+                tracing::debug!(%error, "LOD cache read failed");
+                return None;
+            }
+        };
+        match read(reader, hash, format, target, quality) {
+            Ok(image) => image,
+            Err(error) => {
+                tracing::debug!(%error, "LOD cache entry rejected");
+                None
+            }
+        }
+    }
+
+    /// Whether this mode keeps a tile pack per large image, written by a background bake.
+    pub fn bakes(&self) -> bool {
+        matches!(self.mode(), CacheMode::Memory | CacheMode::Disk) && self.store.get().is_some()
+    }
+    /// Whether a complete pack for this image and format is already stored.
+    pub(crate) fn has_pack(&self, hash: blake3::Hash, format: ImageFormat) -> bool {
+        let Some(store) = self.store.get() else {
+            return false;
+        };
+        match store.read(&crate::pack::key(hash, format)) {
+            Ok(Some(reader)) => crate::pack::check(reader, hash, format).is_ok(),
+            _ => false,
+        }
+    }
+    /// A GPU-ready tile from the image's pack, read without touching the original.
+    /// Pack reads go through the OS file cache, so they do not grow this process's RAM.
+    pub fn pack_tile(
+        &self,
+        hash: blake3::Hash,
+        format: ImageFormat,
+        tile: crate::tiles::Tile,
+    ) -> Option<Decoded> {
+        if !self.bakes() {
+            return None;
+        }
+        let store = self.store.get()?;
+        let reader = match store.read(&crate::pack::key(hash, format)) {
+            Ok(reader) => reader?,
+            Err(error) => {
+                tracing::debug!(%error, "tile pack read failed");
+                return None;
+            }
+        };
+        match crate::pack::read_tile(reader, hash, format, tile) {
+            Ok(image) => image,
+            Err(error) => {
+                tracing::debug!(%error, "tile pack rejected");
+                None
+            }
+        }
+    }
+    /// A streamed writer for this image's pack of `size` bytes, if the store accepts it.
+    pub(crate) fn pack_writer(
+        &self,
+        hash: blake3::Hash,
+        format: ImageFormat,
+        size: u64,
+    ) -> Option<Box<dyn LodWriter>> {
+        if !self.bakes() {
+            return None;
+        }
+        match self
+            .store
+            .get()?
+            .writer(&crate::pack::key(hash, format), size)
+        {
+            Ok(writer) => writer,
+            Err(error) => {
+                tracing::debug!(%error, "tile pack write failed");
+                None
             }
         }
     }
@@ -271,6 +362,12 @@ impl LodCache {
                 trim(image, target, quality)
             }
             CacheMode::Memory | CacheMode::MemoryLowQuality => {
+                // Write-through: RAM is the fast copy, disk the one that survives eviction.
+                if let Some(store) = self.store.get()
+                    && let Err(error) = write(store.as_ref(), &image)
+                {
+                    tracing::debug!(%error, "LOD cache write failed");
+                }
                 let image = Arc::new(image);
                 self.insert(image.clone());
                 let first =
@@ -380,7 +477,7 @@ const HEADER: usize = 8 + 1 + 1 + 4 + 4 + 32;
 const ENTRY: usize = 4 + 4 + 8 + 32;
 const MAX_MIPS: usize = 16;
 
-fn format_code(format: ImageFormat) -> u8 {
+pub(crate) fn format_code(format: ImageFormat) -> u8 {
     match format {
         ImageFormat::Rgba8 => 0,
         ImageFormat::Bc7 => 1,
@@ -394,7 +491,7 @@ fn key(hash: blake3::Hash, format: ImageFormat) -> String {
     format!("{}-{suffix}", hash.to_hex())
 }
 /// Exact payload size of one mip, so a damaged table cannot request a large allocation.
-fn mip_bytes(format: ImageFormat, width: u32, height: u32) -> u64 {
+pub(crate) fn mip_bytes(format: ImageFormat, width: u32, height: u32) -> u64 {
     match format {
         ImageFormat::Rgba8 => u64::from(width) * u64::from(height) * 4,
         ImageFormat::Bc7 => u64::from(width.div_ceil(4)) * u64::from(height.div_ceil(4)) * 16,
@@ -583,8 +680,9 @@ mod tests {
         assert_eq!(cache.decode_side(64, true), 64);
         cache.set_mode(CacheMode::Memory);
         assert_eq!(cache.decode_side(64, true), 256);
-        assert_eq!(cache.decode_side(128, true), 512);
-        assert_eq!(cache.decode_side(256, true), 1024);
+        assert_eq!(cache.decode_side(128, true), 256);
+        assert_eq!(cache.decode_side(256, true), 512);
+        assert_eq!(cache.decode_side(512, true), 1024);
         assert_eq!(cache.decode_side(1024, true), MAX_SIDE);
         assert_eq!(cache.decode_side(256, false), 256);
         cache.set_mode(CacheMode::MemoryLowQuality);
@@ -631,6 +729,25 @@ mod tests {
         cache.set_mode(CacheMode::NoCache);
         assert_eq!(cache.memory_bytes(), 0);
         assert!(cache.lookup(hash, ImageFormat::Rgba8, 256).is_none());
+    }
+
+    #[test]
+    fn memory_mode_serves_evicted_pyramids_from_its_disk_copy() {
+        let cache = LodCache::new();
+        cache.set_store(Arc::new(Store::default()));
+        cache.set_mode(CacheMode::Memory);
+        // No RAM budget: every pyramid is evicted at once, yet zoom still avoids decodes.
+        cache.set_memory_budget(0);
+        let image = pyramid(1024, [1024, 512]);
+        let hash = image.hash;
+        cache.keep(image, 256);
+        assert_eq!(cache.memory_bytes(), 0);
+        let hit = cache.lookup(hash, ImageFormat::Rgba8, 512).unwrap();
+        assert_eq!(hit.mips[0].width, 512);
+        assert!(cache.bakes());
+        cache.set_mode(CacheMode::NoCache);
+        assert!(!cache.bakes());
+        assert!(cache.lookup(hash, ImageFormat::Rgba8, 512).is_none());
     }
 
     #[test]

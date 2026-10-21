@@ -33,17 +33,26 @@ jobs:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
   android-core:
-    runs-on: ubuntu-latest
+    # Pinned: the Android SDK installer broke when ubuntu-latest moved to Ubuntu 26.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
-      - uses: android-actions/setup-android@v3
-      - name: Install the C toolchain for the streaming JPEG decoder
+      # The NDK is downloaded directly; no SDK manager or Java is needed for cargo check.
+      - id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          add-to-path: false
+      - name: Use the NDK C toolchain for the streaming JPEG decoder
+        env:
+          NDK: ${{ steps.ndk.outputs.ndk-path }}
         run: |
-          sdkmanager 'ndk;27.2.12479018'
-          echo "CC_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
-          echo "AR_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
+          bin="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$bin/aarch64-linux-android24-clang"
+          echo "CC_aarch64_linux_android=$bin/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$bin/llvm-ar" >> "$GITHUB_ENV"
       - run: cargo check --target aarch64-linux-android -p moth-scene -p moth-format -p moth-io

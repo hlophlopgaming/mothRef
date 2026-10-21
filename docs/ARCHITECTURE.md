@@ -69,12 +69,13 @@ to zero. Decoded pyramids are retained only by the LOD cache.
 
 LOD cache and performance modes: `moth_io::LodCache` is shared by all tab decode pools. Preview requests carry the
 item's blob hash; the worker answers from the cache before opening the original.
-On a miss, caching modes decode at `max(4 × requested side, 256)` and slice later
+On a miss, caching modes decode at `max(2 × requested side, 256)` and slice later
 requests from that pyramid; slices always satisfy the renderer's residency rule.
 "In memory" (default) and "In memory, low zoom quality" (1024 px cap) keep
-pyramids in RAM within 25% of available RAM (≤ 4 GiB, LRU). "Cache on disk" writes
-checksummed pyramids through `moth-platform::lod_store` into the OS cache folder
-(2 GiB, LRU pruning on decode workers). "No cache" decodes every level from the
+pyramids in RAM within 12.5% of available RAM (≤ 1 GiB, LRU) and write them through
+to the disk cache, so a RAM miss reads the file instead of decoding. "Cache on disk"
+writes checksummed pyramids through `moth-platform::lod_store` into the OS cache
+folder (8 GiB, LRU pruning on decode workers). "No cache" decodes every level from the
 original. Imports keep their 256-pixel decode in every mode. Cache entries are
 rebuildable and never stored in `.moth`. See [decision 0014](decisions/0014-performance-modes-lod-cache.md).
 
@@ -300,6 +301,16 @@ Tile cache keys derive from the original hash plus pyramid level and coordinates
 original blob identity is unchanged. RAM/disk caching uses the existing budgets,
 LRU, checksums and rebuildable cache format. No board schema or journal changes.
 See [decision 0015](decisions/0015-viewport-tiles-and-scheduling.md).
+
+Tile packs: in the "In memory" and "Cache on disk" modes, the first viewport request
+for an image drawn from tiles offers it to the pool's `lod-bake` thread. One streamed
+pass over the original emits every tile of every tiled level (accumulators live only
+while their rows are read, ≤ 192 MiB), encodes them to the GPU format and writes one
+checksummed pack per image and format through `LodStore::writer`. Tile requests read
+the pack first, through the OS file cache, before the RAM/disk caches or the original.
+While a tile loads, the renderer draws the matching region of the nearest resident
+tile up to `PARENT_LEVELS` levels coarser; the viewport keeps those ancestors
+resident. See [decision 0016](decisions/0016-baked-tile-packs.md).
 
 Before scheduling, the registry fits the union of current/target tile coverage to
 whole-page capacity after reserving visible preview and fallback pages. It raises

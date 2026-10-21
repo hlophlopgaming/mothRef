@@ -7,14 +7,16 @@
 use moth_format::ReadSeek;
 use std::{
     fs,
-    io::{self, BufReader, Write},
-    path::PathBuf,
+    io::{self, BufReader, BufWriter, Write},
+    path::{Path, PathBuf},
     sync::atomic::{AtomicU32, Ordering},
     time::{Duration, SystemTime},
 };
 
-/// Default disk budget for cached pyramids.
-pub const DISK_BUDGET: u64 = 2 * 1024 * 1024 * 1024;
+/// Default disk budget for cached pyramids and tile packs. Packs hold every detail
+/// tile of a large image (about a third of its pixels in BC7), so the folder is larger
+/// than the RAM cache it backs; pruning keeps it bounded.
+pub const DISK_BUDGET: u64 = 8 * 1024 * 1024 * 1024;
 /// Pruning scans the folder, so it runs on the first write and then periodically.
 const PRUNE_EVERY: u32 = 32;
 /// Temporary files older than this belong to an interrupted write.
@@ -227,6 +229,66 @@ impl Maintenance {
         false
     }
 }
+impl DiskStore {
+    /// Creates the folder, prunes periodically and names a unique temporary file.
+    fn prepare(&self, key: &str, path: &Path) -> io::Result<PathBuf> {
+        let directory = path
+            .parent()
+            .ok_or_else(|| io::Error::other("cache entry has no folder"))?;
+        fs::create_dir_all(directory)?;
+        if self
+            .writes
+            .fetch_add(1, Ordering::Relaxed)
+            .is_multiple_of(PRUNE_EVERY)
+            && let Err(error) = self.prune()
+        {
+            tracing::debug!(%error, "LOD cache pruning failed");
+        }
+        Ok(directory.join(format!("{key}.{}.tmp", uuid::Uuid::now_v7())))
+    }
+}
+
+/// A streamed entry written to a temporary file and renamed into place on commit.
+struct DiskWriter {
+    file: Option<BufWriter<fs::File>>,
+    temporary: PathBuf,
+    path: PathBuf,
+}
+impl Write for DiskWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.file
+            .as_mut()
+            .ok_or_else(|| io::Error::other("cache entry already committed"))?
+            .write(bytes)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        match self.file.as_mut() {
+            Some(file) => file.flush(),
+            None => Ok(()),
+        }
+    }
+}
+impl moth_io::LodWriter for DiskWriter {
+    fn commit(mut self: Box<Self>) -> io::Result<()> {
+        let file = self
+            .file
+            .take()
+            .ok_or_else(|| io::Error::other("cache entry already committed"))?;
+        let mut file = file.into_inner().map_err(io::IntoInnerError::into_error)?;
+        file.flush()?;
+        drop(file);
+        // Entries are rebuildable, so no fsync: a torn file fails its checksums.
+        fs::rename(&self.temporary, &self.path)
+    }
+}
+impl Drop for DiskWriter {
+    fn drop(&mut self) {
+        // After a commit the temporary is already renamed and this removal is a no-op.
+        drop(self.file.take());
+        let _ = fs::remove_file(&self.temporary);
+    }
+}
+
 impl moth_io::LodStore for DiskStore {
     fn read(&self, key: &str) -> io::Result<Option<Box<dyn ReadSeek>>> {
         let path = self.path(key)?;
@@ -252,19 +314,7 @@ impl moth_io::LodStore for DiskStore {
         if size > self.budget / 4 {
             return Ok(());
         }
-        let directory = path
-            .parent()
-            .ok_or_else(|| io::Error::other("cache entry has no folder"))?;
-        fs::create_dir_all(directory)?;
-        if self
-            .writes
-            .fetch_add(1, Ordering::Relaxed)
-            .is_multiple_of(PRUNE_EVERY)
-            && let Err(error) = self.prune()
-        {
-            tracing::debug!(%error, "LOD cache pruning failed");
-        }
-        let temporary = directory.join(format!("{key}.{}.tmp", uuid::Uuid::now_v7()));
+        let temporary = self.prepare(key, &path)?;
         let written = (|| {
             let mut file = fs::File::create_new(&temporary)?;
             for part in parts {
@@ -279,6 +329,19 @@ impl moth_io::LodStore for DiskStore {
             let _ = fs::remove_file(&temporary);
         }
         written
+    }
+    fn writer(&self, key: &str, size: u64) -> io::Result<Option<Box<dyn moth_io::LodWriter>>> {
+        let path = self.path(key)?;
+        if size > self.budget / 4 {
+            return Ok(None);
+        }
+        let temporary = self.prepare(key, &path)?;
+        let file = fs::File::create_new(&temporary)?;
+        Ok(Some(Box::new(DiskWriter {
+            file: Some(BufWriter::with_capacity(256 * 1024, file)),
+            temporary,
+            path,
+        })))
     }
 }
 
@@ -326,6 +389,42 @@ mod tests {
         assert_eq!(text, "three");
         assert!(store.write("../escape", &[b"x".as_slice()]).is_err());
         assert!(store.read("A/B").is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn streamed_entries_appear_only_when_committed() {
+        let root = std::env::temp_dir().join(format!("mothref-lod-{}", uuid::Uuid::now_v7()));
+        let store = DiskStore::in_directory(root.clone(), 1024 * 1024);
+        let mut writer = store.writer("abc-tiles-rgba8", 6).unwrap().unwrap();
+        writer.write_all(b"tiles!").unwrap();
+        assert!(store.read("abc-tiles-rgba8").unwrap().is_none());
+        writer.commit().unwrap();
+        let mut text = String::new();
+        store
+            .read("abc-tiles-rgba8")
+            .unwrap()
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
+        assert_eq!(text, "tiles!");
+        let mut abandoned = store.writer("def-tiles-rgba8", 3).unwrap().unwrap();
+        abandoned.write_all(b"cut").unwrap();
+        drop(abandoned);
+        assert!(store.read("def-tiles-rgba8").unwrap().is_none());
+        assert!(
+            fs::read_dir(&root).unwrap().all(|e| e
+                .unwrap()
+                .path()
+                .extension()
+                .is_some_and(|e| e == "lod"))
+        );
+        assert!(
+            store
+                .writer("big-tiles-rgba8", 1024 * 1024)
+                .unwrap()
+                .is_none()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
