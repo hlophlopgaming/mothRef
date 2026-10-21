@@ -1409,6 +1409,13 @@ impl App {
             .iter()
             .map(|a| self.action_enabled(*a))
             .collect();
+        // Read before the UI closure borrows parts of `self` mutably.
+        let cover = self.covered_by_preload().then(|| {
+            (
+                self.workspace.board.view.viewport,
+                self.workspace.board.preload_progress(),
+            )
+        });
         let output = {
             let state = self.shell.egui.as_mut();
             let gpu = self.shell.gpu.as_ref();
@@ -1458,12 +1465,6 @@ impl App {
                 } else {
                     Vec::new()
                 };
-                let cover = self.covered_by_preload().then(|| {
-                    (
-                        self.workspace.board.view.viewport,
-                        self.workspace.board.preload_progress(),
-                    )
-                });
                 if !self.workspace.library {
                     intents.extend(canvas::canvas(
                         ui,
@@ -1517,6 +1518,7 @@ impl App {
         Some((output, intents))
     }
     fn render(&mut self, output: egui::FullOutput) -> anyhow::Result<()> {
+        let covered = self.covered_by_preload();
         let Some(gpu) = self.shell.gpu.as_mut() else {
             return Ok(());
         };
@@ -1592,7 +1594,7 @@ impl App {
         }
         // While the full-resolution preload covers the board, viewport requests would
         // only duplicate its work.
-        if !self.covered_by_preload() {
+        if !covered {
             self.workspace.board.request_images(
                 &mut gpu.registry,
                 &visible,
