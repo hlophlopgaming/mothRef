@@ -187,6 +187,10 @@ impl LodCache {
         self.budget.store(bytes, Ordering::Relaxed);
         self.lock().evict_to(bytes);
     }
+    /// Current retention ceiling, distinct from bytes actually used.
+    pub fn memory_budget(&self) -> u64 {
+        self.budget.load(Ordering::Relaxed)
+    }
     /// Bytes of decoded pyramids currently held in RAM.
     pub fn memory_bytes(&self) -> u64 {
         self.lock().bytes
@@ -349,6 +353,7 @@ fn pick(longs: &[u32], original: u32, target: u32, quality: bool) -> Option<usiz
 }
 fn slice(image: &Decoded, first: usize) -> Decoded {
     Decoded {
+        tile: None,
         hash: image.hash,
         original: image.original,
         mips: image.mips[first.min(image.mips.len().saturating_sub(1))..]
@@ -504,6 +509,7 @@ fn read(
         });
     }
     Ok(Some(Decoded {
+        tile: None,
         hash,
         original,
         mips: decoded,
@@ -532,6 +538,7 @@ mod tests {
             h = (h / 2).max(1);
         }
         Decoded {
+            tile: None,
             hash: blake3::hash(&side.to_le_bytes()),
             original,
             mips,

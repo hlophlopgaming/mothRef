@@ -71,12 +71,14 @@ Run these **one at a time, in the foreground, with no build, fuzzer or other ben
 ```sh
 cargo xtask killtest 50               # journal / autosave
 cargo xtask soak 300 5                # long-lived data: 5-minute smoke, RSS sampled every 5 s
-cargo +nightly fuzz run moth_reader  -- -max_total_time=30   # .moth reader changes
-cargo +nightly fuzz run image_reader -- -max_total_time=30   # decoder changes
-cargo +nightly fuzz run bee_reader   -- -max_total_time=30   # BeeRef import changes
-cargo +nightly fuzz run pur_reader   -- -max_total_time=30   # PureRef import changes
+cargo +nightly fuzz run moth_reader  -- -max_total_time=90   # .moth reader changes
+cargo +nightly fuzz run image_reader -- -max_total_time=90   # decoder changes
+cargo +nightly fuzz run bee_reader   -- -max_total_time=90   # BeeRef import changes
+cargo +nightly fuzz run pur_reader   -- -max_total_time=90   # PureRef import changes
 cargo xtask bench --quick             # render, io, scene
 ```
+
+For agent sessions, one 90-second fuzz run per affected target is sufficient; longer runs belong to the tier-3 release gate.
 
 `bee_reader` and `pur_reader` cover the M2 importers; seed them from the corresponding corpus directories.
 

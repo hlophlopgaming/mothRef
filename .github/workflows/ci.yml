@@ -40,4 +40,10 @@ jobs:
         with:
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
+      - uses: android-actions/setup-android@v3
+      - name: Install the C toolchain for the streaming JPEG decoder
+        run: |
+          sdkmanager 'ndk;27.2.12479018'
+          echo "CC_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
       - run: cargo check --target aarch64-linux-android -p moth-scene -p moth-format -p moth-io

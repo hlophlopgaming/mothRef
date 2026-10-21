@@ -18,6 +18,23 @@ fn four_k_preview_does_not_allocate_a_full_resolution_image() {
     let _profiler = dhat::Profiler::builder().testing().build();
     let image = moth_io::decode(encoded.get_ref(), 256).unwrap();
     assert_eq!(image.mips[0].width, 256);
+    let tile = moth_io::tiles::Tile {
+        level: 0,
+        x: 9,
+        y: 2,
+    };
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let detail = moth_io::tiles::decode(encoded.get_ref(), tile, &cancel).unwrap();
+    assert_eq!(detail.original, [3840, 2160]);
+    assert_eq!(detail.mips[0].bytes.len(), 256 * 256 * 4);
+    let jpeg_tile = moth_io::tiles::decode(
+        include_bytes!("../../../corpus/images/4k.jpg"),
+        tile,
+        &cancel,
+    )
+    .unwrap();
+    assert_eq!(jpeg_tile.original, [3840, 2160]);
+    drop((detail, jpeg_tile));
     let jpeg = moth_io::decode(include_bytes!("../../../corpus/images/4k.jpg"), 256).unwrap();
     assert_eq!(jpeg.original, [3840, 2160]);
     assert_eq!(jpeg.mips[0].width, 256);

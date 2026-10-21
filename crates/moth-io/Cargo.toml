@@ -27,6 +27,10 @@ bcdec_rs = "0.2"
 [target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dependencies]
 intel_tex_2 = "0.5"
 
-# The core check needs no Android NDK; desktop builds keep SIMD enabled.
+# Keep hashing portable; the native streaming JPEG dependency uses the Android NDK.
 [target.'cfg(target_os = "android")'.dependencies]
 blake3 = { workspace = true, features = ["pure"] }
+
+# Browser JPEG tiles use the Web Worker backend in M8; keep core WASM builds C-free.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mozjpeg = { version = "0.10.13", default-features = false }

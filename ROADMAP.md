@@ -142,15 +142,15 @@ Users choose how decoded previews are kept, as in PureRef's performance modes; t
 default is "In memory". See [decision 0014](docs/decisions/0014-performance-modes-lod-cache.md).
 
 - [x] Performance mode setting: In memory (default), In memory with low zoom quality, Cache on disk, No cache; persisted, explained in English and Russian
-- [x] Decode once per zoom range: caching modes decode with 4× headroom and serve later zoom steps from the cache instead of re-reading, decoding and BC7-encoding the original
+- [x] Decode once per zoom range: larger whole-image previews use 4× headroom; coarse fallbacks stay at their requested size, and cached previews/tiles avoid re-reading, decoding and BC7-encoding the original
 - [x] RAM cache with an explicit budget and LRU eviction (25% of available RAM, at most 4 GiB), released when leaving an in-memory mode
 - [x] Disk cache: GPU-ready pyramids in the OS cache folder, per-mip checksums, 2 GiB budget, LRU pruning off the UI thread
 - [x] Select BC7 only on builds that can encode it (Apple silicon / Windows on Arm previews never uploaded)
-- [ ] Release VRAM on zoom-out: replace oversized resident textures with a lower mip copied on the GPU, without decoding
-- [ ] Request scheduler: order requests by visible area and distance to the viewport center, cancel superseded requests, request the final level during an active zoom gesture
-- [ ] Tiled pyramids for large images: fixed-size tile atlas instead of square power-of-two size classes, full-resolution inspection beyond 2048 px, memory proportional to screen pixels
-- [ ] Settings: show RAM/disk cache usage and a "Clear disk cache" action
-- [ ] Evaluate a global allocator (mimalloc) against glibc arenas with a heap profiler; keep it only with a measured RSS win
+- [x] Release VRAM on zoom-out: replace oversized resident textures with a lower mip copied on the GPU, without decoding
+- [x] Request scheduler: order requests by visible area and distance to the viewport center, cancel superseded requests, request the final level during an active zoom gesture
+- [x] Tiled pyramids for large images: fixed-size tile atlas instead of square power-of-two size classes, full-resolution inspection beyond 2048 px, memory proportional to screen pixels
+- [x] Settings: show RAM/disk cache usage and a "Clear disk cache" action
+- [x] Evaluate a global allocator (mimalloc) against glibc arenas with a heap profiler; keep it only with a measured RSS win
 - [ ] Measure per mode on reference hardware: warm-cache zoom latency to 2048 px, RSS after zooming in and back out, board open time; record results in [load performance](docs/LOAD-PERFORMANCE.md)
 
 **Exit criteria:** in the default mode, zooming to full detail on an image already shown completes in ≤ 100 ms with a warm cache; every mode stays within its documented memory budget; "No cache" releases texture memory when zoomed out to fit the board.
@@ -263,15 +263,20 @@ before writing and preserve the original file.
 
 **Exit criteria:** all P0 and P1 features done, all performance targets met. → **Release 1.0**
 
-### M8 — Web build (after 1.0)
+### M8 — Web build and multilingual handbook (after 1.0)
 
 - [ ] `wasm32` build; WebGPU renderer with WebGL2 fallback
 - [ ] Web backend for `moth-io` using `createImageBitmap` and Web Workers
 - [ ] Storage in OPFS; open/save via File System Access API (download/upload fallback); installable offline PWA
 - [ ] Receive images from the browser extension directly into the tab
 - [ ] User comments on the board
+- [ ] Create a separate GitHub repository for the MothRef handbook and publish it as a documentation website on GitHub Pages; link it from the app and the main repository
+- [ ] Illustrated user guide: getting started, navigation, image and board editing, library, import/export, saving and recovery, settings and keyboard/touch controls; original MothRef screenshots, annotated examples and step-by-step workflows. Use the [PureRef handbook](https://www.pureref.com/handbook/) as a structural reference, without copying its text or assets
+- [ ] API reference for the interfaces available in the documented release, with usage examples, inputs/outputs, errors and compatibility notes; link to the `.moth` format specification. Document future CLI/automation interfaces when they ship in M13
+- [ ] Multilingual handbook: English and Russian at launch, language switcher, a shared page structure and a contribution workflow for further translations; translated captions and alt text for illustrations
+- [ ] Keep handbook versions aligned with app releases; provide navigation and search across user guides and API pages, and check links and documentation builds in the handbook repository's CI
 
-**Exit criteria:** a 1,000-image board opens in the browser and saves to a `.moth` file that the desktop app opens.
+**Exit criteria:** a 1,000-image board opens in the browser and saves to a `.moth` file that the desktop app opens; the separate handbook repository and public website provide illustrated English and Russian guides and an API reference matching the released app.
 
 ### M9 — Collaboration (after 1.0, no fixed timeline)
 
@@ -686,6 +691,7 @@ Known issues to plan for: macOS notarization needs a paid Apple Developer accoun
 
 | Date | Decision |
 | --- | --- |
+| 2026-10-21 | [Viewport tiles and scheduling](docs/decisions/0015-viewport-tiles-and-scheduling.md): bounded replaceable viewport queue; fixed-size visible detail tiles; native JPEG scanlines and Android NDK toolchain |
 | 2026-10-20 | [Performance modes and LOD cache](docs/decisions/0014-performance-modes-lod-cache.md): PureRef-style In memory (default) / low zoom quality / Cache on disk / No cache; decode once per zoom range from a budgeted RAM or disk cache; BC7 only where it can be encoded |
 | 2026-10-19 | [RAM-aware texture budget](docs/decisions/0013-ram-aware-texture-budget.md): replace per-image growth with actual texture bytes and available RAM; configurable RAM allowance/cache limits, adapter defaults and LRU eviction |
 | 2026-10-19 | [Progressive durable loading](docs/decisions/0012-progressive-board-loading.md): journaled loading batches overlap previews with storage; bounded footer-chain indexing accelerates healthy `.moth` reads while retaining scanner recovery |

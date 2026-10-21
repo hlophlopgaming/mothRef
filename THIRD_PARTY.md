@@ -35,3 +35,12 @@ and checked with `cargo deny check`.
   red-rectangle boards copied unchanged from LazyRef's MIT-licensed test corpus
   at the same revision (`legacy/S1_redbar.pur` and `S1_redbar-new.pur`).
   Attribution and license are retained in `third_party/purcore/LICENSE`.
+
+## Native JPEG tile decoding
+
+- `mozjpeg` 0.10.13 and `mozjpeg-sys` 2.2.3 provide bounded scanline output for
+  native JPEG detail tiles. Licenses: IJG (wrapper), IJG AND Zlib AND BSD-3-Clause
+  (native library); upstream notices are shipped with the Cargo packages.
+  This software is based in part on the work of the Independent JPEG Group.
+  Sources: https://github.com/ImageOptim/mozjpeg-rust and
+  https://github.com/kornelski/mozjpeg-sys. No upstream code is copied into this repo.

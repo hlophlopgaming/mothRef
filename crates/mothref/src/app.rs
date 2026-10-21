@@ -27,7 +27,6 @@ pub enum Wake {
 enum Pending {
     Import,
     Paste,
-    Preview(BlobId),
 }
 /// Inline note editor state; the draft is committed (or discarded) on focus loss.
 struct Editing {
@@ -63,6 +62,7 @@ use intent::Intent;
 
 pub struct App {
     memory: moth_platform::memory::Monitor,
+    cache_maintenance: moth_platform::lod_store::Maintenance,
     workspace: workspace::Workspace,
     tools: tools::Tools,
     shortcuts: shortcuts::Shortcuts,
@@ -99,7 +99,9 @@ impl App {
             let _ = ready.send_event(Wake::Ready);
         });
         // Resolving the cache folder reads environment variables only; workers do the I/O.
-        moth_io::LodCache::shared().set_store(Arc::new(moth_platform::lod_store::DiskStore::new()));
+        let disk = Arc::new(moth_platform::lod_store::DiskStore::new());
+        moth_io::LodCache::shared().set_store(disk.clone());
+        let cache_maintenance = moth_platform::lod_store::Maintenance::new(disk, wake.clone())?;
         let board = Document::new(wake.clone(), true)?;
         let memory = moth_platform::memory::Monitor::new(wake.clone())?;
         let library_worker = moth_platform::library::Worker::new(
@@ -109,6 +111,7 @@ impl App {
         let shell = shell::Shell::new(proxy, wake, std::env::args().any(|a| a == "--software"));
         Ok(Self {
             memory,
+            cache_maintenance,
             workspace: workspace::Workspace::new(board, shell.wake()),
             tools: tools::Tools::default(),
             shortcuts: shortcuts::Shortcuts::default(),
@@ -392,6 +395,14 @@ impl App {
     }
 
     fn adapt_gpu_budget(&mut self) {
+        if self
+            .cache_maintenance
+            .update(self.tools.open, self.tools.clear_disk_cache)
+        {
+            self.tools.clear_disk_cache = false;
+        }
+        self.tools.disk_cache_usage = self.cache_maintenance.usage.clone();
+        self.tools.disk_cache_busy = self.cache_maintenance.busy;
         let available = self.memory.available();
         let cache = moth_io::LodCache::shared();
         let mode = self.tools.performance_mode;
@@ -1395,7 +1406,7 @@ impl App {
         Some((output, intents))
     }
     fn render(&mut self, output: egui::FullOutput) -> anyhow::Result<()> {
-        let Some(gpu) = self.shell.gpu.as_ref() else {
+        let Some(gpu) = self.shell.gpu.as_mut() else {
             return Ok(());
         };
         let frame = shell::Frame {
@@ -1459,11 +1470,7 @@ impl App {
             previews.clear();
         }
         let preview_ids: HashSet<_> = previews.iter().map(|item| item.id).collect();
-        let mut visible = self.workspace.board.visible(
-            &gpu.registry,
-            self.workspace.library,
-            output.pixels_per_point,
-        );
+        let mut visible = self.workspace.board.visible(self.workspace.library);
         if !previews.is_empty() {
             visible.retain(|item| {
                 !preview_ids.contains(&item.id)
@@ -1472,6 +1479,13 @@ impl App {
             visible.extend(previews.iter());
             visible.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
         }
+        self.workspace.board.request_images(
+            &mut gpu.registry,
+            &visible,
+            self.workspace.library,
+            output.pixels_per_point,
+            self.camera_motion.target(camera),
+        );
         match self.shell.render(output, &visible, camera, frame)? {
             shell::Present::Presented => {}
             shell::Present::Recovered => {

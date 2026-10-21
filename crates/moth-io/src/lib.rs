@@ -3,21 +3,24 @@
 //! Bounded image workers. Pixels never enter the scene model.
 pub mod cache;
 mod preview;
+mod scheduler;
+pub mod tiles;
 pub use cache::{CacheMode, LodCache, LodStore};
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::Receiver;
 use image::{DynamicImage, ImageReader, metadata::Orientation};
 use moth_format::{Handle, Storage};
+pub use scheduler::Requests;
 use std::{
     io::{Read, Write},
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
 };
 
 /// Prevents compressed input from exhausting memory before header validation.
 pub const MAX_INPUT_BYTES: u64 = 64 * 1024 * 1024;
 /// Bounds transient decoding allocations, including malicious image headers.
 pub const MAX_PIXELS: u64 = 32 * 1024 * 1024;
-/// Largest preview; full-resolution visible tiles are a separate future path.
+/// Largest whole-image preview; visible tiles provide detail beyond this ceiling.
 pub const MAX_SIDE: u32 = 2048;
 /// WebP has no reduced-output API; bound the permitted full RGBA frame to 8 MiB.
 pub const MAX_WEBP_FRAME_BYTES: u64 = 8 * 1024 * 1024;
@@ -44,6 +47,8 @@ pub struct Mip {
 }
 /// Original identity survives changes in preview resolution or GPU encoding.
 pub struct Decoded {
+    /// A tile carries the original identity but occupies a fixed-size atlas layer.
+    pub tile: Option<tiles::Tile>,
     /// Deduplicates original content independently of preview resolution.
     pub hash: blake3::Hash,
     /// Preserves aspect ratio without retaining full-resolution pixels.
@@ -54,8 +59,10 @@ pub struct Decoded {
     pub format: ImageFormat,
 }
 /// Identifies a requested preview without giving core code a native path.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Request {
+    /// Missing detail is requested independently for each visible tile.
+    pub tile: Option<tiles::Tile>,
     /// Opaque identity keeps native paths out of core crates.
     pub handle: Handle,
     /// Bounds preview work independently of source dimensions.
@@ -90,6 +97,9 @@ pub enum DecodeError {
     #[error("decoder panicked")]
     /// Converts a decoder panic into a recoverable failure.
     Panic,
+    /// Superseded viewport work does not become a broken-image placeholder.
+    #[error("request cancelled")]
+    Cancelled,
     /// GIF failures remain inside the worker error boundary.
     #[error("GIF: {0}")]
     Gif(#[from] gif::DecodingError),
@@ -245,6 +255,7 @@ fn pyramid(mut level: image::RgbaImage, hash: blake3::Hash, original: [u32; 2]) 
         }
     }
     Decoded {
+        tile: None,
         hash,
         original,
         mips,
@@ -471,13 +482,23 @@ struct AreaPreview {
     source: [u32; 2],
     size: [u32; 2],
     sums: Vec<[u64; 4]>,
+    pixels: Vec<u8>,
 }
 impl AreaPreview {
     fn new(width: u32, height: u32, w: u32, h: u32) -> Self {
         Self {
             source: [width, height],
             size: [w, h],
-            sums: vec![[0; 4]; (w * h) as usize],
+            sums: if [width, height] == [w, h] {
+                Vec::new()
+            } else {
+                vec![[0; 4]; (w * h) as usize]
+            },
+            pixels: if [width, height] == [w, h] {
+                vec![0; (w * h * 4) as usize]
+            } else {
+                Vec::new()
+            },
         }
     }
     fn row(
@@ -516,6 +537,18 @@ impl AreaPreview {
             return Err(DecodeError::Budget);
         }
         let pixels = bytes.as_chunks::<N>().0;
+        if !self.pixels.is_empty() {
+            for (index, &pixel) in pixels.iter().enumerate() {
+                let rgba = rgba(pixel);
+                let x = start as usize + index * step as usize;
+                self.pixels[(offset + x) * 4..][..4].copy_from_slice(&if rgba[3] == 0 {
+                    [0; 4]
+                } else {
+                    rgba
+                });
+            }
+            return Ok(());
+        }
         let mut consumed = 0;
         for dx in 0..self.size[0] {
             let end = ((dx + 1) * self.source[0]).div_ceil(self.size[0]);
@@ -537,6 +570,10 @@ impl AreaPreview {
     fn finish(self) -> image::RgbaImage {
         let [w, h] = self.size;
         let [width, height] = self.source;
+        if !self.pixels.is_empty() {
+            return image::RgbaImage::from_raw(w, h, self.pixels)
+                .expect("direct preview allocates exactly one RGBA pixel per output coordinate");
+        }
         let mut output = image::RgbaImage::new(w, h);
         for (index, pixel) in output.pixels_mut().enumerate() {
             let x = index as u32 % w;
@@ -560,16 +597,27 @@ fn png_preview(
     height: u32,
     side: u32,
 ) -> Result<image::RgbaImage, DecodeError> {
+    let ratio = (side as f64 / f64::from(width.max(height))).min(1.);
+    let w = (f64::from(width) * ratio).round().max(1.) as u32;
+    let h = (f64::from(height) * ratio).round().max(1.) as u32;
+    let mut output = AreaPreview::new(width, height, w, h);
+    png_rows(bytes, width, height, &mut |y, start, step, bytes, color| {
+        output.row(y, start, step, bytes, color)
+    })?;
+    Ok(output.finish())
+}
+fn png_rows(
+    bytes: &[u8],
+    width: u32,
+    height: u32,
+    row_sink: &mut impl FnMut(u32, u32, u32, &[u8], png::ColorType) -> Result<(), DecodeError>,
+) -> Result<(), DecodeError> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     decoder.set_limits(png::Limits {
         bytes: 8 * 1024 * 1024,
     });
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info()?;
-    let ratio = (side as f64 / f64::from(width.max(height))).min(1.);
-    let w = (f64::from(width) * ratio).round().max(1.) as u32;
-    let h = (f64::from(height) * ratio).round().max(1.) as u32;
-    let mut output = AreaPreview::new(width, height, w, h);
     let (color, depth) = reader.output_color_type();
     if depth != png::BitDepth::Eight {
         return Err(DecodeError::Budget);
@@ -593,11 +641,11 @@ fn png_preview(
         }
         for y in (y_start..height).step_by(y_step as usize) {
             let row = reader.next_row()?.ok_or(DecodeError::Budget)?;
-            output.row(y, x_start, x_step, row.data(), color)?;
+            row_sink(y, x_start, x_step, row.data(), color)?;
         }
     }
     reader.finish()?;
-    Ok(output.finish())
+    Ok(())
 }
 /// Results are bounded too: a slow frame cannot accumulate decoded images.
 pub struct Completion {
@@ -611,10 +659,99 @@ pub struct Completion {
 /// Fixed concurrency and queue capacity bound both transient and waiting pixels.
 pub struct DecodePool {
     /// A bounded queue prevents callers accumulating work.
-    pub requests: Sender<Request>,
+    pub requests: Requests,
     /// Backpressure caps memory while the UI is busy.
     pub results: Receiver<Completion>,
     cache: Arc<LodCache>,
+}
+fn decode_request(
+    storage: &dyn Storage,
+    cache: &LodCache,
+    request: Request,
+    batch: &[Request],
+    decoded_tiles: &mut Vec<Decoded>,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Completion {
+    let mut failure_hash = None;
+    let result = (|| {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(DecodeError::Cancelled);
+        }
+        if let Some(hash) = request.blob
+            && let Some(mut image) = cache.lookup(
+                request.tile.map_or(hash, |tile| tile.key(hash)),
+                request.format,
+                request.side,
+            )
+        {
+            image.hash = hash;
+            image.tile = request.tile;
+            return Ok(image);
+        }
+        let image = if let Some(index) = decoded_tiles
+            .iter()
+            .position(|image| image.tile == request.tile)
+        {
+            decoded_tiles.swap_remove(index)
+        } else {
+            let mut reader = storage.open(request.handle)?;
+            let len = reader.seek(std::io::SeekFrom::End(0))?;
+            if len > MAX_INPUT_BYTES {
+                return Err(DecodeError::Budget);
+            }
+            reader.seek(std::io::SeekFrom::Start(0))?;
+            let mut bytes = Vec::with_capacity(len as usize);
+            reader.take(MAX_INPUT_BYTES + 1).read_to_end(&mut bytes)?;
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(DecodeError::Cancelled);
+            }
+            let result = if request.tile.is_some() {
+                let tiles: Vec<_> = batch.iter().filter_map(|r| r.tile).collect();
+                tiles::decode_batch(&bytes, &tiles, cancelled).map(|images| {
+                    *decoded_tiles = images;
+                    let index = decoded_tiles
+                        .iter()
+                        .position(|image| image.tile == request.tile)
+                        .expect("batch decoder preserves every requested tile");
+                    decoded_tiles.swap_remove(index)
+                })
+            } else {
+                // Coarse fallbacks must stay coarse; tiles supply later detail.
+                let side = if request.side <= tiles::SIDE {
+                    request.side
+                } else {
+                    cache.decode_side(request.side, request.blob.is_some())
+                };
+                // shortcut: whole-preview codecs finish the current call; add row tokens if cancellation latency becomes visible.
+                decode(&bytes, side)
+            };
+            if result.is_err() {
+                failure_hash = Some(blake3::hash(&bytes));
+            }
+            result?
+        };
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(DecodeError::Cancelled);
+        }
+        let mut image = apply_format(request.format, image);
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(DecodeError::Cancelled);
+        }
+        let hash = image.hash;
+        if let Some(tile) = image.tile {
+            image.hash = tile.key(hash);
+            image.tile = None;
+        }
+        let mut image = cache.keep(image, request.side);
+        image.hash = hash;
+        image.tile = request.tile;
+        Ok(image)
+    })();
+    Completion {
+        request,
+        result,
+        failure_hash,
+    }
 }
 impl DecodePool {
     /// Wakes the event loop only when new work is ready. Uses a private cache that
@@ -641,60 +778,40 @@ impl DecodePool {
             .thread_name(|n| format!("decode-{n}"))
             .build()
             .map_err(std::io::Error::other)?;
-        let (requests, rx) = crossbeam_channel::bounded::<Request>(8);
-        let (tx, results) = crossbeam_channel::bounded(2);
+        let requests = Requests::default();
+        let workers_rx: Vec<_> = (0..workers).map(|_| requests.worker()).collect();
+        // One complete tile batch can become ready between UI frames.
+        let (tx, results) = crossbeam_channel::bounded(8);
         let shared = cache.clone();
         std::thread::Builder::new()
             .name("decode-dispatch".into())
             .spawn(move || {
                 pool.scope(|scope| {
-                    for _ in 0..workers {
-                        let rx = rx.clone();
+                    for rx in workers_rx {
                         let tx = tx.clone();
                         let storage = storage.clone();
                         let wake = wake.clone();
                         let cache = shared.clone();
                         scope.spawn(move |_| {
-                            while let Ok(request) = rx.recv() {
-                                let mut failure_hash = None;
-                                let result = (|| {
-                                    if let Some(hash) = request.blob
-                                        && let Some(image) =
-                                            cache.lookup(hash, request.format, request.side)
-                                    {
-                                        return Ok(image);
-                                    }
-                                    let mut reader = storage.open(request.handle)?;
-                                    let len = reader.seek(std::io::SeekFrom::End(0))?;
-                                    if len > MAX_INPUT_BYTES {
-                                        return Err(DecodeError::Budget);
-                                    }
-                                    reader.seek(std::io::SeekFrom::Start(0))?;
-                                    let mut bytes = Vec::with_capacity(len as usize);
-                                    reader.take(MAX_INPUT_BYTES + 1).read_to_end(&mut bytes)?;
-                                    let side =
-                                        cache.decode_side(request.side, request.blob.is_some());
-                                    let result = decode(&bytes, side)
-                                        .map(|image| apply_format(request.format, image));
-                                    match result {
-                                        Ok(image) => Ok(cache.keep(image, request.side)),
-                                        Err(error) => {
-                                            failure_hash = Some(blake3::hash(&bytes));
-                                            Err(error)
-                                        }
-                                    }
-                                })();
-                                if tx
-                                    .send(Completion {
+                            while let Some((batch, cancelled)) = rx.next_batch() {
+                                let mut decoded_tiles = Vec::new();
+                                for request in batch.iter().copied() {
+                                    let completion = decode_request(
+                                        storage.as_ref(),
+                                        &cache,
                                         request,
-                                        result,
-                                        failure_hash,
-                                    })
-                                    .is_err()
-                                {
-                                    break;
+                                        &batch,
+                                        &mut decoded_tiles,
+                                        &cancelled,
+                                    );
+                                    if !rx.finish(request, &cancelled) {
+                                        continue;
+                                    }
+                                    if tx.send(completion).is_err() {
+                                        return;
+                                    }
+                                    wake();
                                 }
-                                wake();
                             }
                         });
                     }
@@ -714,6 +831,101 @@ impl DecodePool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn coarse_fallback_does_not_cache_a_megapixel_preview() {
+        struct Source;
+        impl Storage for Source {
+            fn open(&self, _: Handle) -> std::io::Result<Box<dyn moth_format::ReadSeek>> {
+                Ok(Box::new(std::io::Cursor::new(
+                    include_bytes!("../../../corpus/images/4k.jpg").as_slice(),
+                )))
+            }
+            fn append(&self, _: Handle) -> std::io::Result<Box<dyn Write + Send>> {
+                Err(std::io::ErrorKind::Unsupported.into())
+            }
+            fn sync(&self, _: Handle) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let cache = Arc::new(LodCache::new());
+        cache.set_mode(CacheMode::Memory);
+        cache.set_memory_budget(16 * 1024 * 1024);
+        let pool =
+            DecodePool::with_cache(Arc::new(Source), Arc::new(|| {}), cache.clone()).unwrap();
+        pool.requests.schedule([Request {
+            handle: Handle(0),
+            blob: Some(blake3::hash(include_bytes!(
+                "../../../corpus/images/4k.jpg"
+            ))),
+            tile: None,
+            side: tiles::SIDE,
+            format: ImageFormat::Rgba8,
+        }]);
+        pool.results
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap()
+            .result
+            .unwrap();
+        assert!(
+            cache.memory_bytes() <= 256 * 1024,
+            "coarse fallback retained {} bytes",
+            cache.memory_bytes()
+        );
+    }
+    #[test]
+    fn neighboring_tiles_share_one_source_read() {
+        struct Source(Arc<std::sync::atomic::AtomicUsize>);
+        impl Storage for Source {
+            fn open(&self, _: Handle) -> std::io::Result<Box<dyn moth_format::ReadSeek>> {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Ok(Box::new(std::io::Cursor::new(
+                    include_bytes!("../../../corpus/images/4k.jpg").as_slice(),
+                )))
+            }
+            fn append(&self, _: Handle) -> std::io::Result<Box<dyn Write + Send>> {
+                Err(std::io::ErrorKind::Unsupported.into())
+            }
+            fn sync(&self, _: Handle) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let opens = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (ready, notifications) = crossbeam_channel::bounded(8);
+        let pool = DecodePool::new(
+            Arc::new(Source(opens.clone())),
+            Arc::new(move || {
+                let _ = ready.try_send(());
+            }),
+        )
+        .unwrap();
+        pool.requests.schedule((0..8).map(|x| Request {
+            handle: Handle(0),
+            blob: Some(blake3::hash(include_bytes!(
+                "../../../corpus/images/4k.jpg"
+            ))),
+            tile: Some(tiles::Tile { level: 1, x, y: 1 }),
+            side: tiles::SIDE,
+            format: ImageFormat::Rgba8,
+        }));
+        // The UI may not drain results until the next frame. A complete batch must fit.
+        for _ in 0..8 {
+            notifications
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .expect("a whole tile batch must be ready before the UI drains results");
+        }
+        for _ in 0..8 {
+            let result = pool
+                .results
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            assert_eq!(result.result.unwrap().tile, result.request.tile);
+        }
+        assert_eq!(
+            opens.load(Ordering::Relaxed),
+            1,
+            "neighboring tiles repeatedly read and decode the same original"
+        );
+    }
     #[test]
     fn specialized_rows_match_scalar_area_sums() {
         for color in [
@@ -744,7 +956,19 @@ mod tests {
                         }
                         sum[3] += u64::from(rgba[3]);
                     }
-                    assert_eq!(preview.sums, expected);
+                    let actual = preview.finish();
+                    for (x, (pixel, sum)) in actual.pixels().zip(expected).enumerate() {
+                        let count = (((x + 1) as u64 * 31).div_ceil(u64::from(side))
+                            - (x as u64 * 31).div_ceil(u64::from(side)))
+                        .max(1);
+                        let expected = [
+                            (sum[0] + sum[3] / 2).checked_div(sum[3]).unwrap_or(0) as u8,
+                            (sum[1] + sum[3] / 2).checked_div(sum[3]).unwrap_or(0) as u8,
+                            (sum[2] + sum[3] / 2).checked_div(sum[3]).unwrap_or(0) as u8,
+                            ((sum[3] + count / 2) / count) as u8,
+                        ];
+                        assert_eq!(pixel.0, expected);
+                    }
                 }
             }
         }

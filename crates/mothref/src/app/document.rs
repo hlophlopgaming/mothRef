@@ -65,6 +65,16 @@ impl View {
         self.needs_fit = false;
     }
 }
+fn request_priority(
+    a: &(moth_io::Request, f32, f32),
+    b: &(moth_io::Request, f32, f32),
+) -> std::cmp::Ordering {
+    b.1.total_cmp(&a.1)
+        .then_with(|| a.2.total_cmp(&b.2))
+        .then(a.0.handle.0.cmp(&b.0.handle.0))
+        .then(a.0.tile.cmp(&b.0.tile))
+        .then(a.0.side.cmp(&b.0.side))
+}
 pub(super) struct Document {
     pub(super) view: View,
     pub(super) motion: super::item_motion::Items,
@@ -159,17 +169,12 @@ impl Document {
         self.ui_id
     }
 
-    pub(super) fn visible(
-        &mut self,
-        registry: &moth_render::Registry,
-        library: bool,
-        pixels_per_point: f32,
-    ) -> Vec<&Item> {
+    pub(super) fn visible(&self, library: bool) -> Vec<&Item> {
         let p = self
             .view
             .camera
             .world([self.view.viewport.min.x, self.view.viewport.min.y]);
-        let visible = self.scene.query(Rect {
+        self.scene.query(Rect {
             x: p[0],
             y: p[1],
             width: if library {
@@ -178,35 +183,138 @@ impl Document {
                 self.view.viewport.width() / self.view.camera.zoom
             },
             height: self.view.viewport.height() / self.view.camera.zoom,
-        });
-        for item in &visible {
-            let Some(blob) = item.blob() else {
+        })
+    }
+    pub(super) fn request_images(
+        &self,
+        registry: &mut moth_render::Registry,
+        visible: &[&Item],
+        library: bool,
+        pixels_per_point: f32,
+        target: Camera,
+    ) {
+        if library {
+            self.decode.requests.schedule([]);
+            registry.retain_tiles(&HashSet::new());
+            return;
+        }
+        let viewport = self.view.viewport;
+        registry.tile_detail = self.decode.cache().mode() != moth_io::CacheMode::MemoryLowQuality;
+        let screen = [viewport.max.x.max(1.), viewport.max.y.max(1.)];
+        let clip = [
+            viewport.min.x,
+            viewport.min.y,
+            viewport.max.x,
+            viewport.max.y,
+        ];
+        let mut wanted_tiles = HashSet::new();
+        let mut candidates =
+            HashMap::<(BlobId, Option<moth_io::tiles::Tile>), (moth_io::Request, f32, f32)>::new();
+        let mut scheduling = visible.to_vec();
+        if !library
+            && (target.zoom != self.view.camera.zoom || target.origin != self.view.camera.origin)
+        {
+            let ids: HashSet<_> = visible.iter().map(|item| item.id).collect();
+            let min = target.world([viewport.min.x, viewport.min.y]);
+            scheduling.extend(
+                self.scene
+                    .query(Rect {
+                        x: min[0],
+                        y: min[1],
+                        width: viewport.width() / target.zoom,
+                        height: viewport.height() / target.zoom,
+                    })
+                    .into_iter()
+                    .filter(|item| !ids.contains(&item.id)),
+            );
+        }
+        registry.fit_tile_budget(
+            &scheduling,
+            [self.view.camera, target],
+            screen,
+            clip,
+            pixels_per_point,
+        );
+        for item in &scheduling {
+            let Some(blob) = item.blob() else { continue };
+            let Some(&handle) = self.sources.get(&blob) else {
                 continue;
             };
-            // The low-quality mode caps detail; asking for more would never become resident.
-            let side = moth_render::preview_side(
-                item.rect.width.max(item.rect.height) * self.view.camera.zoom * pixels_per_point,
+            if self.failed.contains(&handle) {
+                continue;
+            }
+            let mut side = moth_render::preview_side(
+                item.rect.width.max(item.rect.height) * target.zoom * pixels_per_point,
             )
             .min(self.decode.cache().max_side());
-            if !registry.resident(blob, side)
-                && let Some(&handle) = self.sources.get(&blob)
-                && !self.pending.contains_key(&handle)
-                && !self.failed.contains(&handle)
-                && self
-                    .decode
-                    .requests
-                    .try_send(moth_io::Request {
-                        handle,
-                        side,
-                        format: registry.image_format(),
-                        blob: Some(blob),
-                    })
-                    .is_ok()
+            let original = registry.original_dimensions(blob);
+            if original.is_none()
+                || (registry.tile_detail
+                    && original.is_some_and(|dims| dims[0].max(dims[1]) > moth_io::MAX_SIDE))
             {
-                self.pending.insert(handle, Pending::Preview(blob));
+                side = side.min(moth_io::tiles::SIDE);
+            }
+            let envelope = item.rect.rotated_envelope(item.transform.rotation);
+            let min = target.screen(envelope.lower());
+            let max = target.screen(envelope.upper());
+            let rect =
+                egui::Rect::from_min_max(egui::pos2(min[0], min[1]), egui::pos2(max[0], max[1]));
+            let area = rect.intersect(viewport).area().max(0.);
+            let distance = rect.center().distance_sq(viewport.center());
+            let request = moth_io::Request {
+                tile: None,
+                handle,
+                side,
+                format: registry.image_format(),
+                blob: Some(blob),
+            };
+            if !registry.resident(blob, side) {
+                candidates
+                    .entry((blob, None))
+                    .and_modify(|entry| {
+                        entry.0.side = entry.0.side.max(side);
+                        entry.1 = entry.1.max(area);
+                        entry.2 = entry.2.min(distance);
+                    })
+                    .or_insert((request, area, distance));
+            }
+            for camera in [self.view.camera, target] {
+                for tile in registry.visible_tiles(item, camera, screen, clip, pixels_per_point) {
+                    let key = tile.key(blob);
+                    wanted_tiles.insert(key);
+                    if camera.origin != target.origin
+                        || camera.zoom != target.zoom
+                        || registry.resident(key, moth_io::tiles::SIDE)
+                    {
+                        continue;
+                    }
+                    let Some([x, y, right, bottom]) =
+                        registry.tile_screen_bounds(item, tile, target, screen)
+                    else {
+                        continue;
+                    };
+                    let rect =
+                        egui::Rect::from_min_max(egui::pos2(x, y), egui::pos2(right, bottom));
+                    let area = rect.intersect(viewport).area().max(0.);
+                    let distance = rect.center().distance_sq(viewport.center());
+                    candidates.entry((blob, Some(tile))).or_insert((
+                        moth_io::Request {
+                            tile: Some(tile),
+                            side: moth_io::tiles::SIDE,
+                            ..request
+                        },
+                        area,
+                        distance,
+                    ));
+                }
             }
         }
-        visible
+        registry.retain_tiles(&wanted_tiles);
+        let mut candidates: Vec<_> = candidates.into_values().collect();
+        candidates.sort_by(request_priority);
+        self.decode
+            .requests
+            .schedule(candidates.into_iter().map(|entry| entry.0));
     }
     pub(super) fn cursor_point(&self, cursor: Option<[f32; 2]>, fallback: [f32; 2]) -> [f32; 2] {
         let point = cursor
@@ -339,6 +447,24 @@ impl Document {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn request_priority_prefers_visible_area_then_center_with_stable_ties() {
+        let request = |handle| moth_io::Request {
+            tile: None,
+            handle: Handle(handle),
+            side: 2048,
+            format: moth_io::ImageFormat::Rgba8,
+            blob: Some(BlobId::from_bytes([1; 32])),
+        };
+        let mut candidates = [
+            (request(1), 10., 0.),
+            (request(2), 20., 100.),
+            (request(4), 20., 25.),
+            (request(3), 20., 25.),
+        ];
+        candidates.sort_by(request_priority);
+        assert_eq!(candidates.map(|entry| entry.0.handle.0), [3, 4, 2, 1]);
+    }
     #[test]
     fn selection_fit_uses_rotated_bounds_and_empty_selection_fits_board() {
         let mut scene = super::Scene::default();

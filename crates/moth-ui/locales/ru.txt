@@ -212,3 +212,8 @@ BindingCurrent = Текущее сочетание
 
 SmoothZoom = Плавный масштаб (выкл.: мгновенные шаги)
 ZoomIncrement = Шаг масштаба / чувствительность тачпада (%)
+
+RamCacheUsage = Кеш в RAM
+DiskCacheUsage = Кеш на диске
+ClearDiskCache = Очистить кеш на диске
+CachePending = Проверка кеша…

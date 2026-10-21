@@ -63,6 +63,7 @@ impl Workspace {
             return TabChange::None;
         }
         if index > 0 {
+            self.board.decode().requests.schedule([]);
             std::mem::swap(&mut self.board, &mut self.tabs[index - 1]);
         }
         self.library = false;
@@ -109,6 +110,7 @@ impl Workspace {
         }
         match Document::new(self.wake.clone(), false) {
             Ok(board) => {
+                self.board.decode().requests.schedule([]);
                 let previous = std::mem::replace(&mut self.board, board);
                 self.tabs.push(previous);
                 self.library = false;
@@ -297,6 +299,7 @@ impl Workspace {
     pub(super) fn queue_decodes(&mut self, format: moth_io::ImageFormat) {
         while let Some(&handle) = self.board.waiting.last() {
             match self.board.decode().requests.try_send(moth_io::Request {
+                tile: None,
                 handle,
                 side: 256,
                 format,
@@ -317,6 +320,24 @@ impl Workspace {
         active: bool,
         pump: &mut Pump<'_>,
     ) {
+        if let Some(hash) = done.request.blob {
+            self.board.decode().requests.acknowledge(done.request);
+            if !active || !self.board.decode().requests.current(done.request) {
+                return;
+            }
+            match done.result {
+                Ok(image) if image.hash == hash => (pump.upload)(&image),
+                Ok(_) => {
+                    self.board.failed.insert(done.request.handle);
+                    self.board.message = moth_ui::text(moth_ui::Text::SourceChanged).into();
+                }
+                Err(error) => {
+                    self.board.failed.insert(done.request.handle);
+                    self.board.message = error.to_string();
+                }
+            }
+            return;
+        }
         let Some(pending) = self.board.pending.remove(&done.request.handle) else {
             return;
         };
@@ -324,11 +345,6 @@ impl Workspace {
         let insert = paste || matches!(pending, Pending::Import);
         match done.result {
             Ok(image) => {
-                if matches!(pending,Pending::Preview(hash) if hash!=image.hash) {
-                    self.board.failed.insert(done.request.handle);
-                    self.board.message = moth_ui::text(moth_ui::Text::SourceChanged).into();
-                    return;
-                }
                 if insert {
                     self.begin_batch();
                     // Both pastes and drops land under the cursor; drops cascade to stay visible.
@@ -599,6 +615,7 @@ impl Workspace {
                         self.complete(
                             moth_io::Completion {
                                 request: moth_io::Request {
+                                    tile: None,
                                     handle,
                                     side: 256,
                                     format: pump.format,

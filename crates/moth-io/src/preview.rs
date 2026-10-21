@@ -20,6 +20,18 @@ pub(super) fn gif(
     h: u32,
     side: u32,
 ) -> Result<image::RgbaImage, DecodeError> {
+    let mut average = accumulator(w, h, side);
+    gif_rows(bytes, w, h, &mut |y, start, step, bytes, color| {
+        average.row(y, start, step, bytes, color)
+    })?;
+    Ok(average.finish())
+}
+pub(super) fn gif_rows(
+    bytes: &[u8],
+    w: u32,
+    h: u32,
+    row_sink: &mut impl FnMut(u32, u32, u32, &[u8], png::ColorType) -> Result<(), DecodeError>,
+) -> Result<(), DecodeError> {
     let mut options = gif::DecodeOptions::new();
     options.set_color_output(gif::ColorOutput::RGBA);
     options.set_memory_limit(gif::MemoryLimit::Bytes(
@@ -38,7 +50,6 @@ pub(super) fn gif(
     if width == 0 || height == 0 || left + width > w || top + height > h {
         return Err(DecodeError::Budget);
     }
-    let mut average = accumulator(w, h, side);
     let mut row = vec![0; w as usize * 4];
     let passes: &[(u32, u32)] = if interlaced {
         &[(0, 8), (4, 8), (2, 4), (1, 2)]
@@ -50,7 +61,7 @@ pub(super) fn gif(
             if !decoder.fill_buffer(&mut row[left as usize * 4..(left + width) as usize * 4])? {
                 return Err(DecodeError::Budget);
             }
-            average.row(top + y, 0, 1, &row, png::ColorType::Rgba)?;
+            row_sink(top + y, 0, 1, &row, png::ColorType::Rgba)?;
         }
     }
     // A static preview uses the first frame; animation playback belongs to M4.
@@ -58,7 +69,7 @@ pub(super) fn gif(
     if decoder.fill_buffer(&mut tail)? {
         return Err(DecodeError::Budget);
     }
-    Ok(average.finish())
+    Ok(())
 }
 
 pub(super) fn bmp(
@@ -67,6 +78,18 @@ pub(super) fn bmp(
     h: u32,
     side: u32,
 ) -> Result<image::RgbaImage, DecodeError> {
+    let mut average = accumulator(w, h, side);
+    bmp_rows(bytes, w, h, &mut |y, start, step, bytes, color| {
+        average.row(y, start, step, bytes, color)
+    })?;
+    Ok(average.finish())
+}
+pub(super) fn bmp_rows(
+    bytes: &[u8],
+    w: u32,
+    h: u32,
+    row_sink: &mut impl FnMut(u32, u32, u32, &[u8], png::ColorType) -> Result<(), DecodeError>,
+) -> Result<(), DecodeError> {
     let u32_at = |offset: usize| -> Result<u32, DecodeError> {
         Ok(u32::from_le_bytes(
             bytes
@@ -118,7 +141,6 @@ pub(super) fn bmp(
         input[height_offset..height_offset + 4].copy_from_slice(&1u32.to_le_bytes());
         input[34..38].copy_from_slice(&(stride as u32).to_le_bytes());
     }
-    let mut average = accumulator(w, h, side);
     let mut row = vec![0; w as usize * 4];
     for y in 0..h {
         let source_y = if top_down { y } else { h - 1 - y };
@@ -132,9 +154,9 @@ pub(super) fn bmp(
         };
         let len = w as usize * color.samples();
         decoder.read_image(&mut row[..len])?;
-        average.row(y, 0, 1, &row[..len], color)?;
+        row_sink(y, 0, 1, &row[..len], color)?;
     }
-    Ok(average.finish())
+    Ok(())
 }
 
 pub(super) fn rgba(

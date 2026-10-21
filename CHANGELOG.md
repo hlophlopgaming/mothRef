@@ -6,6 +6,27 @@
   floating-point resize, reducing zoom-detail latency and temporary RAM use.
   Keep the highest-detail pixels unchanged.
 
+- Show RAM cache usage and its budget, disk cache usage, and a background disk-cache
+  clear action in Settings (English/Russian).
+- Reduce zoom decoding work by sharing source reads and codec passes across up to
+  eight neighboring tiles. Use scaled JPEG IDCT below 1:1, smaller accumulation
+  buffers, and keep 256-pixel fallback previews from caching 1024-pixel pyramids.
+  PNG/GIF/BMP previews at 1:1 copy pixels without allocating per-pixel area sums.
+  A bounded eight-result queue lets a complete tile batch become ready between frames.
+
+- Update rustls-webpki to 0.103.16 to fix TLS certificate advisory RUSTSEC-2026-0382.
+
+- Prioritize image requests by visible area and distance to the viewport center,
+  replace superseded preview work, and request the target detail during smooth zoom.
+- Inspect large images beyond 2048 px through a fixed-size tile atlas. Only visible
+  regions produce pixels; cached tiles reuse the existing RAM/disk budgets. Pan and
+  zoom-out release unneeded tile residency, with previews filling missing regions.
+  Fit detail to whole-page VRAM capacity and replace individual LRU layers without
+  downgrading every neighboring image in the page.
+
+- Release oversized image textures after zooming out by copying resident lower
+  mips on the GPU, without decoding again; keep headroom for small zoom reversals.
+  OpenGL uses RGBA textures because its compressed-texture copies are unsupported.
 
 ## 0.1.0-alpha.7 — 2026-10-20
 

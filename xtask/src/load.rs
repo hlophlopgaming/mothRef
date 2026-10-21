@@ -14,11 +14,18 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub fn run(path: &Path, output: Option<&Path>) -> anyhow::Result<()> {
+pub fn run(path: &Path, output: Option<&Path>, mode: moth_io::CacheMode) -> anyhow::Result<()> {
     let root = std::env::temp_dir().join(format!("mothref-load-{}", moth_scene::Uuid::now_v7()));
     let storage = Arc::new(DesktopStorage::in_directory(root.join("recovery")));
     let worker = Worker::new_tab(storage.clone(), Arc::new(|| {}))?;
-    let result = measure(path, output, &storage, &worker);
+    let cache = Arc::new(moth_io::LodCache::new());
+    cache.set_store(Arc::new(moth_platform::lod_store::DiskStore::in_directory(
+        root.join("lod"),
+        64 * 1024 * 1024,
+    )));
+    cache.set_mode(mode);
+    cache.set_memory_budget(32 * 1024 * 1024);
+    let result = measure(path, output, &storage, &worker, cache);
     let finished = worker.finish();
     let cleanup = std::fs::remove_dir_all(&root);
     result?;
@@ -37,6 +44,7 @@ fn measure(
     output: Option<&Path>,
     storage: &Arc<DesktopStorage>,
     worker: &Worker,
+    cache: Arc<moth_io::LodCache>,
 ) -> anyhow::Result<()> {
     let mut gpu = pollster::block_on(moth_render::headless::Harness::new(false))
         .map_err(anyhow::Error::msg)?;
@@ -89,7 +97,7 @@ fn measure(
     // The parse-only probe warms the input; exclude it from end-to-end timings.
     let load_start = start + parse;
     handles.sort_by_key(|handle| handle.0);
-    let pool = moth_io::DecodePool::new(storage.clone(), Arc::new(|| {}))?;
+    let pool = moth_io::DecodePool::with_cache(storage.clone(), Arc::new(|| {}), cache)?;
     let mut known: HashSet<_> = handles.iter().copied().collect();
     let mut sent = 0;
     while !loaded || count < handles.len() {
@@ -121,6 +129,7 @@ fn measure(
         );
         while sent < handles.len() {
             let request = moth_io::Request {
+                tile: None,
                 handle: handles[sent],
                 side: 256,
                 format: moth_io::ImageFormat::Rgba8,
@@ -171,8 +180,9 @@ fn measure(
     anyhow::ensure!(count > 0, "no images loaded");
     let full = load_start.elapsed();
     println!(
-        "{} | {count} image previews | parse probe {:.3} ms | worker including parse/staging/journal {:.3} ms | decode result wait {:.3} ms | first image {:.3} ms | full previews {:.3} ms",
+        "{} | {:?} | {count} image previews | parse probe {:.3} ms | worker including parse/staging/journal {:.3} ms | decode result wait {:.3} ms | first image {:.3} ms | full previews {:.3} ms",
         path.display(),
+        pool.cache().mode(),
         parse.as_secs_f64() * 1000.,
         durable.as_secs_f64() * 1000.,
         decode.as_secs_f64() * 1000.,
@@ -200,6 +210,7 @@ mod tests {
                 "/../corpus/bee/tiny.bee"
             )),
             None,
+            moth_io::CacheMode::NoCache,
         )
         .unwrap();
     }

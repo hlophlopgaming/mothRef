@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Instanced image quads and a bounded adaptive LRU array-texture registry.
 mod opacity;
+mod tiles;
 use moth_io::{Decoded, ImageFormat};
 use moth_scene::{BlobId, Camera, Item};
 use std::sync::{
@@ -39,7 +40,7 @@ struct Instance {
     region: [f32; 4],
     layer: u32,
     lod: f32,
-    appearance: [f32; 2],
+    appearance: [f32; 3],
 }
 /// Content geometry of one item, shared by rendering and the scene-level hit tests.
 struct Content {
@@ -90,25 +91,29 @@ fn content(item: &Item, dims: [u32; 2], camera: Camera, screen: [f32; 2]) -> Con
             1. - point[1] / screen[1] * 2.,
         ];
     }
-    let flip = transform.flip;
     Content {
         corners,
         frame,
-        region: [
-            if flip[0] { dims[0] } else { 0. },
-            if flip[1] { dims[1] } else { 0. },
-            if flip[0] { -dims[0] } else { dims[0] },
-            if flip[1] { -dims[1] } else { dims[1] },
-        ],
+        region: source_region(dims, transform.flip),
     }
 }
+fn source_region(dims: [f32; 2], flip: [bool; 2]) -> [f32; 4] {
+    [
+        if flip[0] { dims[0] } else { 0. },
+        if flip[1] { dims[1] } else { 0. },
+        if flip[0] { -dims[0] } else { dims[0] },
+        if flip[1] { -dims[1] } else { dims[1] },
+    ]
+}
+
 #[derive(Clone, Copy)]
 struct Slot {
     hash: BlobId,
     side: u32,
     dimensions: [u32; 2],
     used: u64,
-    original_side: u32,
+    original: [u32; 2],
+    tile: bool,
     /// Number of mips written for this image; the shader's lod clamps to this.
     mips: u32,
     detail_lod: f32,
@@ -149,6 +154,8 @@ pub enum RenderError {
 pub struct Registry {
     /// Optional view-only grayscale leaves image metadata unchanged.
     pub grayscale: bool,
+    /// Low-quality mode keeps its preview ceiling instead of requesting original tiles.
+    pub tile_detail: bool,
     /// UI GPU resources share the renderer lifetime and are freed with the registry.
     pub ui: egui_wgpu::Renderer,
     arrays: Vec<Option<Array>>,
@@ -167,6 +174,7 @@ pub struct Registry {
     ceiling: u64,
     /// Texture format for image mips, chosen at runtime from adapter capabilities.
     image_format: ImageFormat,
+    tile_lod_bias: u32,
 }
 impl Registry {
     /// RGBA8 is the universally supported fallback; BC7 halves residency on adapters that support it.
@@ -205,7 +213,7 @@ impl Registry {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{label:Some("quads"),layout:Some(&pipeline_layout),vertex:wgpu::VertexState{module:&shader,entry_point:Some("vs"),buffers:&[Some(wgpu::VertexBufferLayout{array_stride:std::mem::size_of::<Instance>() as u64,step_mode:wgpu::VertexStepMode::Instance,attributes:&wgpu::vertex_attr_array![0=>Float32x2,1=>Float32x2,2=>Float32x2,3=>Float32x2,4=>Float32x2,5=>Float32x2,6=>Float32x2,7=>Float32x2,8=>Float32x4,9=>Uint32,10=>Float32,11=>Float32x2]})],compilation_options:Default::default()},fragment:Some(wgpu::FragmentState{module:&shader,entry_point:Some("fs"),targets:&[Some(wgpu::ColorTargetState{format,blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})],compilation_options:wgpu::PipelineCompilationOptions{constants:&[("OUTPUT_SRGB",if format.is_srgb(){1.}else{0.})],..Default::default()}}),primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview_mask:None,cache:None});
+        let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{label:Some("quads"),layout:Some(&pipeline_layout),vertex:wgpu::VertexState{module:&shader,entry_point:Some("vs"),buffers:&[Some(wgpu::VertexBufferLayout{array_stride:std::mem::size_of::<Instance>() as u64,step_mode:wgpu::VertexStepMode::Instance,attributes:&wgpu::vertex_attr_array![0=>Float32x2,1=>Float32x2,2=>Float32x2,3=>Float32x2,4=>Float32x2,5=>Float32x2,6=>Float32x2,7=>Float32x2,8=>Float32x4,9=>Uint32,10=>Float32,11=>Float32x3]})],compilation_options:Default::default()},fragment:Some(wgpu::FragmentState{module:&shader,entry_point:Some("fs"),targets:&[Some(wgpu::ColorTargetState{format,blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})],compilation_options:wgpu::PipelineCompilationOptions{constants:&[("OUTPUT_SRGB",if format.is_srgb(){1.}else{0.})],..Default::default()}}),primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview_mask:None,cache:None});
         let grid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("canvas grid"),
             source: wgpu::ShaderSource::Wgsl(include_str!("grid.wgsl").into()),
@@ -253,6 +261,7 @@ impl Registry {
         });
         Self {
             grayscale: false,
+            tile_detail: true,
             ui: egui_wgpu::Renderer::new(device, format, Default::default()),
             arrays: Vec::new(),
             locations: std::collections::HashMap::new(),
@@ -268,6 +277,7 @@ impl Registry {
             budget: TEXTURE_BUDGET,
             ceiling: TEXTURE_BUDGET,
             image_format,
+            tile_lod_bias: 0,
         }
     }
     /// Reports actual texture allocation, rather than the sum of resident source sizes.
@@ -323,9 +333,154 @@ impl Registry {
         self.locations
             .get(&hash)
             .and_then(|&(p, l)| self.arrays[p].as_ref()?.slots[l])
-            .is_some_and(|s| s.side >= side.min(s.original_side))
+            .is_some_and(|s| s.side >= side.min(s.original[0].max(s.original[1])))
     }
 
+    /// Original dimensions survive preview downsizing, so tile requests never open a file on the UI thread.
+    pub fn original_dimensions(&self, hash: BlobId) -> Option<[u32; 2]> {
+        let &(page, layer) = self.locations.get(&hash)?;
+        Some(self.arrays[page].as_ref()?.slots[layer]?.original)
+    }
+    /// Affine coverage respects crop, content rotation, mirroring and physical pixel density.
+    pub fn visible_tiles(
+        &self,
+        item: &Item,
+        camera: Camera,
+        screen: [f32; 2],
+        clip: [f32; 4],
+        scale: f32,
+    ) -> Vec<moth_io::tiles::Tile> {
+        if !self.tile_detail {
+            return Vec::new();
+        }
+        let Some(original) = item.blob().and_then(|hash| self.original_dimensions(hash)) else {
+            return Vec::new();
+        };
+        tiles::visible(
+            item,
+            original,
+            camera,
+            screen,
+            clip,
+            scale,
+            self.tile_lod_bias,
+        )
+    }
+    /// Coarsens an oversized viewport working set instead of repeatedly evicting its own detail.
+    pub fn fit_tile_budget(
+        &mut self,
+        items: &[&Item],
+        cameras: [Camera; 2],
+        screen: [f32; 2],
+        clip: [f32; 4],
+        scale: f32,
+    ) {
+        self.tile_lod_bias = 0;
+        if !self.tile_detail {
+            return;
+        }
+        let &(side, layers) = CLASSES
+            .iter()
+            .find(|c| c.0 == moth_io::tiles::SIDE)
+            .expect("the fixed tile side has a configured size class");
+        let mut preview_slots = std::collections::HashSet::new();
+        let mut reserved_pages = std::collections::HashSet::new();
+        for item in items {
+            let Some(hash) = item.blob() else { continue };
+            if let Some(&(page, layer)) = self.locations.get(&hash)
+                && let Some(array) = self.arrays[page].as_ref()
+            {
+                if array.size == side {
+                    preview_slots.insert((page, layer));
+                } else {
+                    reserved_pages.insert(page);
+                }
+            }
+            if let Some(&(page, _)) = self.fallbacks.get(&hash) {
+                reserved_pages.insert(page);
+            }
+        }
+        let reserved: u64 = reserved_pages
+            .into_iter()
+            .filter_map(|p| self.arrays[p].as_ref())
+            .map(|a| array_bytes(a.size, a.slots.len() as u32, self.image_format))
+            .sum();
+        let pages =
+            self.ceiling.saturating_sub(reserved) / array_bytes(side, layers, self.image_format);
+        let limit = (pages as usize * layers as usize).saturating_sub(preview_slots.len());
+        'levels: for bias in 0..=15 {
+            let mut wanted = std::collections::HashSet::new();
+            for camera in cameras {
+                for item in items {
+                    let Some(hash) = item.blob() else { continue };
+                    let Some(original) = self.original_dimensions(hash) else {
+                        continue;
+                    };
+                    for tile in tiles::visible(item, original, camera, screen, clip, scale, bias) {
+                        wanted.insert(tile.key(hash));
+                        if wanted.len() > limit {
+                            continue 'levels;
+                        }
+                    }
+                }
+            }
+            self.tile_lod_bias = bias;
+            return;
+        }
+        self.tile_lod_bias = 15;
+    }
+    /// Tile envelopes let the scheduler prefer visible pixels nearest the viewport center.
+    pub fn tile_screen_bounds(
+        &self,
+        item: &Item,
+        tile: moth_io::tiles::Tile,
+        camera: Camera,
+        screen: [f32; 2],
+    ) -> Option<[f32; 4]> {
+        let original = self.original_dimensions(item.blob()?)?;
+        let shape = content(item, original, camera, screen);
+        let piece = tiles::piece(&shape, tiles::range(tile, original), item.transform.flip);
+        let mut bounds = [
+            f32::INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+        ];
+        for point in piece.corners {
+            let point = [
+                (point[0] + 1.) * screen[0] / 2.,
+                (1. - point[1]) * screen[1] / 2.,
+            ];
+            bounds[0] = bounds[0].min(point[0]);
+            bounds[1] = bounds[1].min(point[1]);
+            bounds[2] = bounds[2].max(point[0]);
+            bounds[3] = bounds[3].max(point[1]);
+        }
+        Some(bounds)
+    }
+    /// Unneeded tile layers are released on pan/zoom, including in No cache mode.
+    pub fn retain_tiles(&mut self, wanted: &std::collections::HashSet<BlobId>) {
+        for array in self.arrays.iter_mut().flatten() {
+            for slot in &mut array.slots {
+                if slot.is_some_and(|s| s.tile && !wanted.contains(&s.hash)) {
+                    self.locations
+                        .remove(&slot.take().expect("tile was just checked").hash);
+                }
+            }
+        }
+        self.release_empty_pages();
+    }
+    fn release_empty_pages(&mut self) {
+        for array in &mut self.arrays {
+            if array
+                .as_ref()
+                .is_some_and(|a| a.slots.iter().all(Option::is_none))
+            {
+                let a = array.take().expect("empty page was just checked");
+                self.allocated -= array_bytes(a.size, a.slots.len() as u32, self.image_format);
+            }
+        }
+    }
     /// Uploading replaces the least recently drawn layer within a size class.
     pub fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, image: &Decoded) {
         self.upload_mip(device, queue, image, 0);
@@ -365,6 +520,7 @@ impl Registry {
         image: &Decoded,
         first_mip: usize,
     ) {
+        let hash = image.tile.map_or(image.hash, |tile| tile.key(image.hash));
         // A device-loss recreation can change the chosen format; skip stale results.
         // The preview path re-decodes with the current format on the next miss.
         if image.format != self.image_format {
@@ -377,7 +533,7 @@ impl Registry {
         let Some(&(size, layers)) = CLASSES.iter().find(|c| c.0 >= side) else {
             return;
         };
-        if self.resident(image.hash, side) {
+        if self.resident(hash, side) {
             return;
         }
         if first_mip == 0
@@ -389,81 +545,18 @@ impl Registry {
         {
             self.upload_mip(device, queue, image, base);
         }
-        if let Some((p, l)) = self.locations.remove(&image.hash)
+        if let Some((p, l)) = self.locations.remove(&hash)
             && let Some(a) = self.arrays[p].as_mut()
         {
             if a.size <= FALLBACK_SIDE && size > a.size {
-                self.fallbacks.insert(image.hash, (p, l));
+                self.fallbacks.insert(hash, (p, l));
             } else {
                 a.slots[l] = None;
             }
         }
-        let free = self.arrays.iter().position(|a| {
-            a.as_ref()
-                .is_some_and(|a| a.size == size && a.slots.iter().any(Option::is_none))
-        });
-        let index = if let Some(i) = free {
-            i
-        } else {
-            let bytes = array_bytes(size, layers, self.image_format);
-            self.budget = budget_for(self.allocated.saturating_add(bytes), self.ceiling);
-            while self.allocated + bytes > self.budget {
-                if !self.evict_oldest() {
-                    return;
-                }
-            }
-            let i = self
-                .arrays
-                .iter()
-                .position(Option::is_none)
-                .unwrap_or(self.arrays.len());
-            if i == self.arrays.len() {
-                self.arrays.push(None);
-            }
-            i
+        let Some(index) = self.page(device, size, layers, true) else {
+            return;
         };
-        if self.arrays[index].is_none() {
-            let bytes = array_bytes(size, layers, self.image_format);
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("image size class"),
-                size: wgpu::Extent3d {
-                    width: size,
-                    height: size,
-                    depth_or_array_layers: layers,
-                },
-                mip_level_count: mip_levels(size, self.image_format),
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu_format(self.image_format),
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-            let view = texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            });
-            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("array"),
-                layout: &self.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
-                ],
-            });
-            self.arrays[index] = Some(Array {
-                size,
-                texture,
-                bind,
-                slots: vec![None; layers as usize],
-            });
-            self.allocated += bytes;
-        }
         let Some(array) = self.arrays[index].as_mut() else {
             return;
         };
@@ -490,12 +583,13 @@ impl Registry {
                 self.fallbacks.remove(&old.hash);
             }
         }
-        self.locations.insert(image.hash, (index, layer));
+        self.locations.insert(hash, (index, layer));
         self.clock += 1;
         array.slots[layer] = Some(Slot {
-            hash: image.hash,
+            hash,
             side: size,
-            original_side: image.original[0].max(image.original[1]),
+            original: image.original,
+            tile: image.tile.is_some(),
             dimensions: [first.width, first.height],
             used: self.clock,
             mips: (image.mips.len() - first_mip) as u32,
@@ -537,6 +631,198 @@ impl Registry {
             );
         }
     }
+    fn page(
+        &mut self,
+        device: &wgpu::Device,
+        size: u32,
+        layers: u32,
+        evict: bool,
+    ) -> Option<usize> {
+        let free = self.arrays.iter().position(|a| {
+            a.as_ref()
+                .is_some_and(|a| a.size == size && a.slots.iter().any(Option::is_none))
+        });
+        let index = if let Some(i) = free {
+            i
+        } else {
+            let bytes = array_bytes(size, layers, self.image_format);
+            self.budget = budget_for(self.allocated.saturating_add(bytes), self.ceiling);
+            if !evict && self.allocated + bytes > self.budget {
+                return None;
+            }
+            if evict
+                && self.allocated + bytes > self.budget
+                && let Some((index, _)) = self
+                    .arrays
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, array)| {
+                        array.as_ref().filter(|a| a.size == size).map(|a| {
+                            (
+                                index,
+                                a.slots.iter().flatten().map(|s| s.used).min().unwrap_or(0),
+                            )
+                        })
+                    })
+                    .min_by_key(|(_, used)| *used)
+            {
+                return Some(index);
+            }
+            while self.allocated + bytes > self.budget {
+                if !self.evict_oldest() {
+                    return None;
+                }
+            }
+            let i = self
+                .arrays
+                .iter()
+                .position(Option::is_none)
+                .unwrap_or(self.arrays.len());
+            if i == self.arrays.len() {
+                self.arrays.push(None);
+            }
+            i
+        };
+        if self.arrays[index].is_none() {
+            let bytes = array_bytes(size, layers, self.image_format);
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("image size class"),
+                size: wgpu::Extent3d {
+                    width: size,
+                    height: size,
+                    depth_or_array_layers: layers,
+                },
+                mip_level_count: mip_levels(size, self.image_format),
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu_format(self.image_format),
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
+            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("array"),
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                ],
+            });
+            self.arrays[index] = Some(Array {
+                size,
+                texture,
+                bind,
+                slots: vec![None; layers as usize],
+            });
+            self.allocated += bytes;
+        }
+        Some(index)
+    }
+
+    fn shrink(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, hash: BlobId, side: u32) {
+        let Some(&(source, source_layer)) = self.locations.get(&hash) else {
+            return;
+        };
+        let slot = self.arrays[source]
+            .as_ref()
+            .and_then(|a| a.slots[source_layer]);
+        let Some(slot) = slot else { return };
+        // Keep zoom headroom so small wheel reversals do not trigger another decode.
+        if slot.side <= side.saturating_mul(4) {
+            return;
+        }
+        let size = side.saturating_mul(2).clamp(16, 2048).next_power_of_two();
+        let base = slot.side.ilog2() - size.ilog2();
+        if base >= slot.mips {
+            return;
+        }
+        let Some(&(_, layers)) = CLASSES.iter().find(|c| c.0 == size) else {
+            return;
+        };
+        // Never evict the source (or another visible image) to make room for a copy.
+        let Some(dest) = self.page(device, size, layers, false) else {
+            return;
+        };
+        let layer = self.arrays[dest]
+            .as_ref()
+            .and_then(|a| a.slots.iter().position(Option::is_none));
+        let Some(layer) = layer else { return };
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let source_array = self.arrays[source]
+            .as_ref()
+            .expect("source page cannot be evicted during a shrink");
+        let dest_array = self.arrays[dest]
+            .as_ref()
+            .expect("page allocation succeeded");
+        let mips = (slot.mips - base).min(mip_levels(size, self.image_format));
+        for level in 0..mips {
+            let extent = size >> level;
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &source_array.texture,
+                    mip_level: base + level,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: source_layer as u32,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &dest_array.texture,
+                    mip_level: level,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: layer as u32,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: extent,
+                    height: extent,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        queue.submit([encoder.finish()]);
+        self.arrays[dest]
+            .as_mut()
+            .expect("page allocation succeeded")
+            .slots[layer] = Some(Slot {
+            side: size,
+            dimensions: slot.dimensions.map(|v| (v >> base).max(1)),
+            mips,
+            detail_lod: (slot.detail_lod - base as f32).max(0.),
+            ..slot
+        });
+        self.locations.insert(hash, (dest, layer));
+        self.arrays[source]
+            .as_mut()
+            .expect("source page cannot be evicted during a shrink")
+            .slots[source_layer] = None;
+        if size <= FALLBACK_SIDE
+            && let Some(fallback) = self.fallbacks.remove(&hash)
+        {
+            self.arrays[fallback.0]
+                .as_mut()
+                .expect("fallback mapping owns a live page")
+                .slots[fallback.1] = None;
+        }
+        self.release_empty_pages();
+    }
+
     fn evict_oldest(&mut self) -> bool {
         let oldest = self
             .arrays
@@ -624,9 +910,175 @@ impl Registry {
         items: &[&Item],
         camera: Camera,
     ) {
-        for batch in 0..items.len().div_ceil(MAX_INSTANCES).max(1) {
+        let _span = tracing::info_span!("canvas_draw", visible = items.len()).entered();
+        self.clock += 1;
+        let scale = target.view.texture().width() as f32 / target.screen[0];
+        let mut demand = std::collections::HashMap::<BlobId, u32>::new();
+        for item in items {
+            if let Some(hash) = item.blob() {
+                let side =
+                    preview_side(item.rect.width.max(item.rect.height) * camera.zoom * scale);
+                demand
+                    .entry(hash)
+                    .and_modify(|s| *s = (*s).max(side))
+                    .or_insert(side);
+            }
+        }
+        for (hash, side) in demand {
+            self.shrink(device, queue, hash, side);
+        }
+        let mut instances = Vec::with_capacity(MAX_INSTANCES);
+        let mut classes = Vec::with_capacity(MAX_INSTANCES);
+        let mut first = true;
+        for item in items {
+            self.item_instances(item, camera, target, scale, &mut instances, &mut classes);
+            if instances.len() >= MAX_INSTANCES {
+                self.submit_instances(device, queue, target, &instances, &classes, &mut first);
+                instances.clear();
+                classes.clear();
+            }
+        }
+        if !instances.is_empty() || first {
+            self.submit_instances(device, queue, target, &instances, &classes, &mut first);
+        }
+    }
+    fn item_instances(
+        &mut self,
+        item: &Item,
+        camera: Camera,
+        target: Target<'_>,
+        scale: f32,
+        instances: &mut Vec<Instance>,
+        classes: &mut Vec<usize>,
+    ) {
+        let Some(blob) = item.blob() else { return };
+        let Some(&(class, layer)) = self.locations.get(&blob) else {
+            return;
+        };
+        let Some(slot) = self.arrays[class].as_ref().and_then(|a| a.slots[layer]) else {
+            return;
+        };
+        self.arrays[class]
+            .as_mut()
+            .expect("resident page was just checked")
+            .slots[layer]
+            .as_mut()
+            .expect("resident slot was just checked")
+            .used = self.clock;
+        let wanted = (item.rect.width.max(item.rect.height) * camera.zoom * scale).max(1.);
+        let base_lod = ((slot.dimensions[0].max(slot.dimensions[1]) as f32 / wanted).log2()
+            - item.transform.content_scale.log2())
+        .max(slot.detail_lod)
+        .min(slot.mips.saturating_sub(1) as f32);
+        let appearance = [
+            item.transform.opacity,
+            if item.transform.grayscale || self.grayscale {
+                1.
+            } else {
+                0.
+            },
+            0.,
+        ];
+        let clip = target.clip.map_or(
+            [0., 0., target.screen[0], target.screen[1]],
+            |[x, y, w, h]| {
+                [
+                    x as f32 / scale,
+                    y as f32 / scale,
+                    (x + w) as f32 / scale,
+                    (y + h) as f32 / scale,
+                ]
+            },
+        );
+        let tiles = if self.tile_detail {
+            tiles::visible(
+                item,
+                slot.original,
+                camera,
+                target.screen,
+                clip,
+                scale,
+                self.tile_lod_bias,
+            )
+        } else {
+            Vec::new()
+        };
+        if tiles.is_empty() {
+            let mut shape = content(item, slot.original, camera, target.screen);
+            shape.region = source_region(slot.dimensions.map(|v| v as f32), item.transform.flip);
+            instances.push(Instance {
+                corners: shape.corners,
+                frame: shape.frame,
+                region: shape.region,
+                layer: layer as u32,
+                lod: base_lod,
+                appearance,
+            });
+            classes.push(class);
+            return;
+        }
+        let shape = content(item, slot.original, camera, target.screen);
+        for tile in tiles {
+            let range = tiles::range(tile, slot.original);
+            let shape = tiles::piece(&shape, range, item.transform.flip);
+            let (class, layer, region, continuous) =
+                if let Some(&(page, layer)) = self.locations.get(&tile.key(blob)) {
+                    if let Some(slot) = self.arrays[page]
+                        .as_mut()
+                        .and_then(|a| a.slots[layer].as_mut())
+                    {
+                        slot.used = self.clock;
+                    }
+                    let bounds = tile
+                        .bounds(slot.original)
+                        .expect("tile coverage was clipped");
+                    (
+                        page,
+                        layer,
+                        [0.5, 0.5, bounds[2] as f32 + 1., bounds[3] as f32 + 1.],
+                        0.,
+                    )
+                } else {
+                    (
+                        class,
+                        layer,
+                        [
+                            range[0] * slot.dimensions[0].saturating_sub(1) as f32,
+                            range[1] * slot.dimensions[1].saturating_sub(1) as f32,
+                            (range[2] - range[0]) * slot.dimensions[0].saturating_sub(1) as f32,
+                            (range[3] - range[1]) * slot.dimensions[1].saturating_sub(1) as f32,
+                        ],
+                        1.,
+                    )
+                };
+            instances.push(Instance {
+                corners: shape.corners,
+                frame: shape.frame,
+                region,
+                layer: layer as u32,
+                lod: 0.,
+                appearance: [appearance[0], appearance[1], continuous],
+            });
+            classes.push(class);
+        }
+    }
+    fn submit_instances(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: Target<'_>,
+        instances: &[Instance],
+        classes: &[usize],
+        first: &mut bool,
+    ) {
+        for batch in 0..instances.len().div_ceil(MAX_INSTANCES).max(1) {
             let start = batch * MAX_INSTANCES;
-            let end = (start + MAX_INSTANCES).min(items.len());
+            let end = (start + MAX_INSTANCES).min(instances.len());
+            queue.write_buffer(
+                &self.instances,
+                0,
+                bytemuck::cast_slice(&instances[start..end]),
+            );
             let mut encoder = device.create_command_encoder(&Default::default());
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -636,7 +1088,7 @@ impl Registry {
                         resolve_target: None,
                         depth_slice: None,
                         ops: wgpu::Operations {
-                            load: if batch == 0 {
+                            load: if *first {
                                 wgpu::LoadOp::Clear(target.clear)
                             } else {
                                 wgpu::LoadOp::Load
@@ -649,84 +1101,28 @@ impl Registry {
                 if let Some([x, y, width, height]) = target.clip {
                     pass.set_scissor_rect(x, y, width, height);
                 }
-                if batch == 0 && target.grid {
+                if *first && target.grid {
                     pass.set_pipeline(&self.grid);
                     pass.draw(0..3, 0..1);
                 }
-                self.draw_batch(queue, &mut pass, &items[start..end], camera, target.screen);
+                pass.set_pipeline(&self.pipeline);
+                pass.set_vertex_buffer(0, self.instances.slice(..));
+                let mut run = start;
+                while run < end {
+                    let class = classes[run];
+                    let mut next = run + 1;
+                    while next < end && classes[next] == class {
+                        next += 1;
+                    }
+                    if let Some(array) = &self.arrays[class] {
+                        pass.set_bind_group(0, &array.bind, &[]);
+                        pass.draw(0..6, (run - start) as u32..(next - start) as u32);
+                    }
+                    run = next;
+                }
             }
             queue.submit([encoder.finish()]);
-        }
-    }
-    /// Draws consecutive array runs in scene z-order, preserving overlap semantics.
-    fn draw_batch(
-        &mut self,
-        queue: &wgpu::Queue,
-        pass: &mut wgpu::RenderPass<'_>,
-        items: &[&Item],
-        camera: Camera,
-        screen: [f32; 2],
-    ) {
-        let _span = tracing::info_span!("canvas_draw", visible = items.len()).entered();
-        self.clock += 1;
-        let mut instances = Vec::with_capacity(items.len().min(MAX_INSTANCES));
-        let mut classes = Vec::with_capacity(instances.capacity());
-        debug_assert!(items.len() <= MAX_INSTANCES);
-        for item in items {
-            // Notes are drawn by the UI layer; this pipeline only renders images.
-            let Some(blob) = item.blob() else {
-                continue;
-            };
-            let wanted = (item.rect.width.max(item.rect.height) * camera.zoom).max(1.);
-            let Some(&(class, layer)) = self.locations.get(&blob) else {
-                continue;
-            };
-            let Some(slot) = self.arrays[class].as_ref().and_then(|a| a.slots[layer]) else {
-                continue;
-            };
-            if let Some(a) = self.arrays[class].as_mut()
-                && let Some(s) = a.slots[layer].as_mut()
-            {
-                s.used = self.clock;
-            }
-            let shape = content(item, slot.dimensions, camera, screen);
-            instances.push(Instance {
-                corners: shape.corners,
-                frame: shape.frame,
-                region: shape.region,
-                layer: layer as u32,
-                appearance: [
-                    item.transform.opacity,
-                    if item.transform.grayscale || self.grayscale {
-                        1.
-                    } else {
-                        0.
-                    },
-                ],
-                // shortcut: content rotation is ignored when choosing the mip, so a rotated
-                // crop can alias by up to one level. Upgrade with a diagonal term if reported.
-                lod: ((slot.dimensions[0].max(slot.dimensions[1]) as f32 / wanted).log2()
-                    - item.transform.content_scale.log2())
-                .max(slot.detail_lod)
-                .min(slot.mips.saturating_sub(1) as f32),
-            });
-            classes.push(class);
-        }
-        queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(&instances));
-        pass.set_pipeline(&self.pipeline);
-        pass.set_vertex_buffer(0, self.instances.slice(..));
-        let mut start = 0;
-        while start < classes.len() {
-            let class = classes[start];
-            let mut end = start + 1;
-            while end < classes.len() && classes[end] == class {
-                end += 1;
-            }
-            if let Some(array) = &self.arrays[class] {
-                pass.set_bind_group(0, &array.bind, &[]);
-                pass.draw(0..6, start as u32..end as u32);
-            }
-            start = end;
+            *first = false;
         }
     }
     /// Board teardown explicitly releases arrays; accounting must return to zero.
@@ -791,13 +1187,15 @@ pub fn preview_side(pixels: f32) -> u32 {
 }
 
 /// Chooses the runtime image format from adapter capabilities: BC7 when the
-/// adapter can bind it and this build can encode it, otherwise RGBA8.
+/// adapter can bind and copy it and this build can encode it, otherwise RGBA8.
 ///
 /// The BC7 encoder only exists on x86/x86_64. Apple silicon and Windows on Arm
 /// adapters can report BC support; requesting BC7 there would make every decoded
 /// RGBA8 preview mismatch the registry format and never upload.
 pub fn pick_image_format(adapter: &wgpu::Adapter) -> ImageFormat {
     if cfg!(any(target_arch = "x86", target_arch = "x86_64"))
+        // wgpu's GL copies attach the source to an FBO; compressed textures cannot attach.
+        && adapter.get_info().backend != wgpu::Backend::Gl
         && adapter
             .features()
             .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)

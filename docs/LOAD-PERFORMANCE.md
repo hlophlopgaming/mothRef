@@ -370,6 +370,198 @@ screen size, capped at `MAX_SIDE` (2048); full-resolution visible tiles remain a
 separate unimplemented path. Neither measurement represents full original detail.
 
 
+## 2026-10-21 — Viewport scheduling and tiled detail
+
+Large originals now keep a small whole-image fallback and request fixed-size
+visible tiles. Requests follow the final zoom camera, prioritize visible area and
+center distance, and cancel superseded work. Tile coverage includes drag/animation
+previews, crop, rotation, mirroring and physical pixel density. Whole-page capacity
+reserves visible previews/fallbacks and can choose coarser tiles under pressure;
+raising the ceiling restores detail. Full size classes replace the oldest layer
+without dropping neighboring layers. See [decision 0015](decisions/0015-viewport-tiles-and-scheduling.md).
+
+### Quick measurements
+
+One before/after pair on the same workstation, using the llvmpipe software adapter
+(LLVM 22.1.8, 256 bits), with no concurrent build, fuzzer or benchmark:
+
+| Case | Before tile/JPEG dependency | After |
+| --- | --- | --- |
+| `cargo xtask bench --quick`, 10,000 distinct images, 100 frames, p99 | 27.378 ms | 26.812 ms |
+| Allocated image textures for that board | 13.32 MiB | 13.32 MiB |
+
+This single pair shows no observed regression in this fixture; it is not a
+calibrated speedup claim or a release-gate measurement. The synthetic small-image
+board does not itself measure large-image tile decode latency.
+
+The same command now also measures the real DecodePool scheduler/cache path for
+one original-resolution tile of `corpus/images/4k.jpg` (3840×2160), tile `(9, 2)`.
+The compressed source is already in memory; the target format is RGBA8. Each mode
+runs six requests; the first is excluded and the remaining five supply the median.
+
+| Tile mode | Median result latency | Source opens across six requests | Retained tile payload |
+| --- | --- | --- | --- |
+| No cache | 14.843 ms | 6 | 0 KiB |
+| In memory | 0.031 ms | 1 | 256 KiB |
+
+An assertion checks that warm hits never reopen/decode the original, and each
+result preserves the source dimensions, tile identity and 256×256 RGBA payload.
+These times exclude filesystem latency, GPU upload and BC7 encoding; they are not
+an end-to-end UI zoom measurement. Native JPEG uses mozjpeg scanlines and stops
+after the last required source row; earlier rows still need sequential decoding.
+
+### Validation
+
+- Workspace tests and workspace Clippy with warnings denied passed.
+- The 30 decoder library tests include exact source/gutter checks at all eight
+  EXIF orientations, multiple levels, partial edge tiles and one-pixel PNG detail
+  beyond 2048 px. Existing decoder compatibility tests remain enabled.
+- Both `dhat` allocation checks passed; the image decoder check now includes PNG
+  and JPEG detail tiles alongside the existing preview/clipboard checks. `dhat`
+  measures Rust allocations; native JPEG coefficient-plane admission is checked
+  separately, and the RSS soak covers native allocations.
+- The 16 renderer tests include tolerant golden checks, continuous fallback-cell
+  sampling, alpha without double blending, shared-image demands, GPU mip copying,
+  tile-page release, per-layer LRU, and VRAM-aware detail restoration.
+- The final 30-second `image_reader` fuzz run completed 591 executions in 31 s,
+  including tile decoding, with sanitizers enabled. LeakSanitizer needs execution
+  outside this session's sandbox; no sanitizer was disabled.
+- Android core check passed with NDK 27.2.12479018; CI now installs this C toolchain.
+  The WASM dependency graph excludes mozjpeg; browser JPEG tiles remain M8 work.
+- `cargo deny check` passed for advisories, bans, licenses and sources. Its newly
+  reported pre-existing RUSTSEC-2026-0382 finding was fixed by updating only
+  rustls-webpki from 0.103.15 to 0.103.16. IJG acknowledgments are in THIRD_PARTY.md.
+- `cargo build --release -p mothref -p xtask` passed. Native application interaction
+  on Windows/macOS and tier-3 release qualification were not run in this session.
+
+The render/persistence/tile soak completed 2,431 frames in 300 seconds before
+the requested stop took effect; final RSS was 461,036 KiB. It was not repeated.
+The maintainer subsequently set the agent fuzz duration to 90 seconds in
+AGENTS.md; the 31-second fuzz result above predates that instruction.
+
+## Zoom latency, cache visibility and allocator evaluation — 2026-10-21
+
+Settings now show RAM cache bytes/retention budget and disk usage, with an explicit
+background clear action. Only completed `.lod` files are removed: active temporary
+files, nested directories and board files are preserved. Concurrent decodes may
+repopulate the cache. Directory scans run on a bounded maintenance worker while
+settings are visible, not on the UI thread or an idle polling loop.
+
+Three regressions exposed unnecessary work: eight neighboring tiles opened the
+same original eight times; a 256 px fallback cached 2,764,220 bytes of 1024 px
+pyramid; and an unscaled 2048×1024 PNG allocated 64 MiB of area sums. Regression
+tests failed before the fixes. Tile batches now share reads/codec passes, reduced
+JPEG levels use scaled IDCT, coarse fallbacks retain only requested detail, and
+unscaled row previews copy pixels directly. Another regression test showed that
+an eight-tile batch blocked after its second result without a UI consumer; the
+completion queue now has eight slots, preserving a fixed bound while allowing a
+whole batch to become ready between frames. The PNG allocation probe observed
+75,497,472 → 27,262,992 peak Rust bytes; remaining scratch includes the unchanged
+Triangle mip filter's f32 intermediate. Original-resolution tile decoding passes
+a separate <1 MiB Rust-allocation guard. Native codec allocations are measured
+separately by heaptrack/RSS rather than claimed as covered by dhat.
+
+### Repeatable per-mode probes
+
+Linux 6.18.49-2-lts, Ryzen 5 3600 (6 cores / 12 threads), 31.3 GiB RAM,
+Rust 1.99.0. Builds/tests/profilers/fuzzers were stopped during timing runs.
+`target/load-profile` is btrfs; `/tmp` is tmpfs. Each mode uses a fresh private
+cache directory and a 32 MiB RAM-cache ceiling, distinct from the application's
+adaptive allowance (25%, capped at 4 GiB). Sources/cache identities are unchanged.
+
+```sh
+cargo build --release -p xtask -p mothref
+mkdir -p target/load-profile
+TMPDIR="$PWD/target/load-profile" target/release/xtask zoom memory
+TMPDIR="$PWD/target/load-profile" target/release/xtask zoom memory_low
+TMPDIR="$PWD/target/load-profile" target/release/xtask zoom disk
+TMPDIR="$PWD/target/load-profile" target/release/xtask zoom none
+TMPDIR="$PWD/target/load-profile" target/release/xtask zoom memory images/swords/British_Coronation_Swords.png
+TMPDIR="$PWD/target/load-profile" target/release/xtask load images/beerefTestFile.bee --mode memory
+```
+
+Repeat each mode three times, replacing `--mode` for the other board-open runs.
+`zoom` uses the real DecodePool scheduler/cache. It requests a coarse preview,
+then a 2048 px zoom target of the 3840×2160 corpus JPEG (level 1: 1920×1080,
+40 fixed atlas tiles), repeats that detail five times, zooms out and samples RSS,
+then releases the RAM cache and samples again. Low-quality mode deliberately
+stops at 1024 px and sends one preview request. RSS is an immediate snapshot,
+not a plateau measurement. A warm cached run asserts zero original-source opens;
+every returned tile and the RAM budget are checked.
+
+Compressed source bytes are already in RAM; timings include scheduling, codec
+work, RGBA copies and RAM/disk cache access, but exclude GPU upload, BC7 encoding
+and native-window presentation. The optional image argument allows other local
+inputs without copying paths into core crates. Board-open timings separately
+include durable staging/journal and drawing all 13 previews on llvmpipe; the
+parse-only probe is excluded, as in earlier sections.
+
+Medians of three independent process runs; each warm entry is itself a median of
+five zooms. Board-open ranges show substantial filesystem-sync jitter, so they
+cannot rank modes or establish a regression:
+
+| Mode | Cold zoom ms | Warm zoom ms | CPU cache MiB | RSS after zoom-out MiB | All 13 board previews ms, median (range) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Memory | 85.895 | 0.774 | 10.19 | 22.54 | 308.608 (216.779–496.828) |
+| MemoryLowQuality | 18.828 | 0.187 | 2.64 | 20.47 | 253.986 (244.099–315.757) |
+| Disk | 98.109 | 4.729 | 0.00 | 11.17 | 266.318 (261.654–543.244) |
+| NoCache | 116.441 | 124.975 | 0.00 | 10.94 | 262.630 (251.041–550.809) |
+
+Before batching/scaled IDCT, this JPEG workload took approximately 289 ms cold;
+the final median is approximately 86 ms. The standalone original-resolution
+single-tile benchmark remains around 14 ms: scanning source rows is still needed.
+The 1333×2000 PNG example took 202.914 ms for its first detail request before the
+direct-pixel fix; three final runs took 53.739 / 58.179 / 64.101 ms. That is one
+input, not evidence of a general speedup for all PNGs. In-memory mode intentionally
+retains visited detail within its budget; zoom-out alone does not empty RAM cache.
+
+### Allocator decision
+
+Kept the system allocator. Tested process-wide preload of
+[mimalloc v2.3.0](https://github.com/microsoft/mimalloc/tree/v2.3.0), revision
+`5459bece783e4ff86ef4c54dbb3b0d7a142a07d9`, against glibc defaults and
+`MALLOC_ARENA_MAX=2`, with the same release binary and workload. Mimalloc was built
+under `/tmp` with CMake Release; no allocator dependency or tuning is shipped.
+
+Median uninstrumented RSS after zoom-out, three runs:
+
+| Allocator | RSS MiB |
+| --- | ---: |
+| glibc | 22.71 |
+| arena2 | 21.21 |
+| mimalloc | 117.15 |
+
+Independent heaptrack 1.5.0 profiles on the same workload measured 12.11 MB peak
+live heap for both glibc and mimalloc (11.85 MB with two glibc arenas), but peak RSS
+including profiler overhead was 30.59 / 137.18 / 29.38 MB respectively. Instrumented
+RSS is not mixed with the uninstrumented table. This does not demonstrate an
+allocator RSS win; a process-wide preload also differs from a Rust-only allocator
+build. Allocator trials preceded the final 2→8 completion capacity change; all
+three allocator variants used the same binary. Neither mimalloc nor a glibc arena override is adopted from these results.
+
+### Validation and remaining qualification
+
+Workspace tests and clippy, Android core compilation, allocation guards and the
+quick render/IO benchmark were run. One continuous-preview GPU comparison failed
+once, then passed focused checks and five complete renderer repetitions with the
+same one-byte tolerance; diagnostics now report adapter and maximum pixel delta.
+The cause of that isolated failure is not established.
+
+The reference-machine measurement roadmap task remains open: these are CPU/cache
+and llvmpipe board-open probes, not native-window zoom timings on the specified
+8-core / GTX 1660 or Apple M1 class reference hardware. Native Windows/macOS
+manual qualification and tier-3 release runs remain external gates. The five-minute
+soak was not repeated in this follow-up, per maintainer instruction.
+
+The decoder fuzz run completed 1,803 executions in 91 seconds with ASan/LSan
+without errors (`-max_total_time=90`, `-max_len=1048576`, `-timeout=10`). The final
+completion-capacity change affects scheduling only; decoder functions were unchanged
+after that fuzz run. A new regression verifies all eight notifications arrive
+before the UI drains results, and neighboring tiles still use one source open.
+The final quick render benchmark measured p99 27.165 ms / 13.32 MiB on llvmpipe;
+the standalone original-resolution tile measured 14.001 ms cold / 0.019 ms cached.
+
+
 ### Follow-up: time until sharp detail — 2026-10-21
 
 The reported desktop symptom is delayed replacement of an already visible preview

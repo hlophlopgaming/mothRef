@@ -10,6 +10,12 @@ pub(super) struct CameraMotion {
     velocity: [f32; 2],
 }
 impl CameraMotion {
+    pub fn target(&self, current: Camera) -> Camera {
+        self.transition
+            .as_ref()
+            .map_or(current, |(_, target, _, _)| *target)
+    }
+
     pub fn stop(&mut self) {
         self.transition = None;
         self.velocity = [0.; 2];
@@ -160,6 +166,7 @@ mod tests {
             let anchor = [321., 153.];
             let world = camera.world(anchor);
             motion.zoom(&mut camera, anchor, 1.25, immediate);
+            assert!((motion.target(camera).zoom - 1.25 * 1.25).abs() < 0.00001);
             let now = Instant::now();
             for frame in 0..=60 {
                 let active = motion.step(

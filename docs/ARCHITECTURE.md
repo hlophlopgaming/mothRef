@@ -12,7 +12,10 @@
   uses allocation-budgeted DCT scaling, EXIF orientation and CMYK conversion; PNG
   and clipboard previews use alpha-weighted area averages, including Adam7 passes.
   Original dimensions determine geometry; pixels live only in worker results
-  and the renderer. Preview pyramids stop at 2048 pixels on the long side.
+  and the renderer. Whole-image previews stop at 2048 pixels on the long side;
+  large images keep only a 256-pixel fallback and use fixed 256×256 tiles for
+  visible detail at every finer level, including original resolution. PNG/GIF/BMP rows
+  share the preview streaming path; native JPEG tiles use mozjpeg scanlines.
 - `moth-platform`: native path resolution, clipboard access and durable staging.
   Filesystem and clipboard calls run in workers. Registration on the event
   thread records a path without opening it. The storage worker copies imported
@@ -108,8 +111,11 @@ support it, with RGBA8 as the fallback.
 
 ## Current limits
 
-Large-image visible tiles and full-resolution inspection beyond the 2048-pixel
-preview limit are not implemented. Rendering uses fixed-size ordered batches
+Browser JPEG tiles await the Web Worker codec in M8; the native mozjpeg dependency
+is excluded from WASM builds. WebP retains its existing 8 MiB full-frame admission
+limit because the codec cannot expose scanlines. Progressive JPEG coefficient
+planes have a separate admission check; rejected tiles leave the preview visible.
+Rendering uses fixed-size ordered batches
 instead of dropping items beyond the first 10,000. App admission, import backlog,
 source catalog, input-byte, journal and snapshot budgets still apply; this does
 not promise that every million-item board fits a 64 MiB checkpoint.
@@ -229,7 +235,8 @@ and returns UI events. Active decoded images go straight to `Shell::upload`
 through a callback; inactive tabs never upload and no intermediate pixel queue
 accumulates. Journal identity stays with the document when tabs switch.
 
-`Document::visible` selects items and requests missing LODs. `Shell::render`
+`Document::visible` selects items; `request_images` schedules their missing LODs
+only after the frame substitutes drag/animation previews. `Shell::render`
 acquires the surface, updates egui textures/buffers, draws the supplied item
 references, presents, frees textures and schedules the next repaint. Device and
 surface recovery rebuild GPU/egui state while retaining documents; `App` resets
@@ -261,3 +268,58 @@ settings worker, and reset with other preferences. Budget growth allocates nothi
 page; lower ceilings immediately evict LRU pages, including below the normal
 32 MiB floor. Empty boards clear the cache. No timer wakes an idle application;
 pressure changes are observed on subsequent activity. See decision 0013.
+
+## Viewport request scheduling and tiles
+
+`DecodePool::requests` keeps at most eight queued requests and four active decoder
+batches, with up to eight neighboring tiles per batch. Eight completion slots let
+a complete tile batch become ready between UI frames.
+Imports are not cancelled. Each frame replaces viewport requests with the highest
+priorities: visible area first, then distance to the viewport center. Shared blobs
+use their largest demand; the camera's final transition target drives requests,
+while the current and target views both protect resident tiles. Superseded queued
+jobs disappear; active jobs check cancellation before expensive stages and tile
+rows check it during decoding. Stale completions never upload. Workers sleep on a
+condition variable between requests, without polling.
+
+Large-image pyramid levels are chosen in source pixels per physical screen pixel,
+with at most 2× sampling headroom per axis. Original-resolution tiles are requested
+only at ≥ 1:1. Large images keep a 256-pixel preview instead of allocating a large
+square whole-image texture; finer levels use the fixed-size atlas.
+A tile holds 254×254 content pixels and a one-pixel filter gutter in a fixed-size
+256×256 array layer. Affine coverage includes frame/content rotation, panning,
+cropping and mirroring. Each visible cell draws either its tile or the corresponding
+preview region, so transparent images are never drawn twice. Both use the same
+ordered instancing path and registry budget. Tiles share 256-pixel pages, are
+removed when no longer needed by the current/target viewport, and release empty
+pages. Low-quality mode retains its capped whole-image preview path. Small whole-image
+previews retain the existing size classes and GPU mip
+copy downsizing with zoom headroom.
+
+Tile cache keys derive from the original hash plus pyramid level and coordinates;
+original blob identity is unchanged. RAM/disk caching uses the existing budgets,
+LRU, checksums and rebuildable cache format. No board schema or journal changes.
+See [decision 0015](decisions/0015-viewport-tiles-and-scheduling.md).
+
+Before scheduling, the registry fits the union of current/target tile coverage to
+whole-page capacity after reserving visible preview and fallback pages. It raises
+the mip floor under a small VRAM ceiling and restores detail when space returns.
+At capacity, uploads reuse the oldest layer in the matching size class rather than
+evicting every neighboring image in that page. This keeps a fitting viewport from
+cycling its own detail through the decoder.
+
+Neighboring tile requests at the same pyramid level share one input read and one
+codec scan, in batches of at most eight. Only one tile batch per source runs at a
+time; unrelated images retain parallel decoding. Cancellation aborts a batch once
+none of its tiles is wanted; individual stale completions still get discarded.
+JPEG levels below 1:1 use reduced IDCT (up to 1/8 per axis); original-resolution
+samples copy directly without area sums. Other area bins use u32 sums through
+level eight and u64 beyond that to preserve alpha weighting without overflow.
+Coarse previews up to 256 px bypass the cache's whole-image decode headroom.
+Settings sample disk usage and clear completed `.lod` files through a bounded
+maintenance worker. Active temporary files and board data are untouched;
+concurrent decode writes can repopulate the cache after a clear.
+
+The same direct-pixel path applies to unscaled PNG/GIF/BMP whole previews,
+including interlaced row scattering; alpha-zero pixels retain the previous
+normalization. Mip filtering and integrity validation remain unchanged.

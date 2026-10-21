@@ -87,6 +87,14 @@ pub enum Text {
     UndoLimit,
     /// Cache settings keep memory limits visible and adjustable.
     ImageCache,
+    /// Current CPU cache bytes and retention ceiling.
+    RamCacheUsage,
+    /// Last disk-cache sample from the maintenance worker.
+    DiskCacheUsage,
+    /// Explicitly deletes disposable disk entries.
+    ClearDiskCache,
+    /// Maintenance has not completed yet.
+    CachePending,
     /// Explicit cache ceiling in MiB.
     CacheLimit,
     /// Explains demand allocation and safe preview eviction.
@@ -611,6 +619,10 @@ mod tests {
             Text::WheelOff,
             Text::UndoLimit,
             Text::ImageCache,
+            Text::RamCacheUsage,
+            Text::DiskCacheUsage,
+            Text::ClearDiskCache,
+            Text::CachePending,
             Text::CacheLimit,
             Text::CacheHint,
             Text::PerformanceMode,

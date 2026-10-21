@@ -24,6 +24,9 @@ pub(super) struct Tools {
     pub threshold: usize,
     pub undo_limit: usize,
     pub cache_limit_mib: u32,
+    pub disk_cache_usage: Option<Result<u64, String>>,
+    pub disk_cache_busy: bool,
+    pub clear_disk_cache: bool,
     /// How decoded previews are kept between zoom steps.
     pub performance_mode: moth_io::CacheMode,
     pub wheel: u8,
@@ -63,6 +66,9 @@ impl Default for Tools {
             threshold: 5,
             undo_limit: 256,
             cache_limit_mib: 96,
+            disk_cache_usage: None,
+            disk_cache_busy: false,
+            clear_disk_cache: false,
             performance_mode: moth_io::CacheMode::default(),
             wheel: 0,
             smooth_zoom: true,
@@ -301,6 +307,37 @@ impl Tools {
                                 .text(label),
                         );
                         ui.label(text(Text::CacheHint));
+                        let cache = board.decode().cache();
+                        ui.label(format!(
+                            "{}: {:.1} / {:.1} MiB",
+                            text(Text::RamCacheUsage),
+                            cache.memory_bytes() as f64 / 1048576.,
+                            cache.memory_budget() as f64 / 1048576.
+                        ));
+                        match &self.disk_cache_usage {
+                            Some(Ok(bytes)) => {
+                                ui.label(format!(
+                                    "{}: {:.1} MiB",
+                                    text(Text::DiskCacheUsage),
+                                    *bytes as f64 / 1048576.
+                                ));
+                            }
+                            Some(Err(error)) => {
+                                ui.label(format!("{}: {error}", text(Text::DiskCacheUsage)));
+                            }
+                            None => {
+                                ui.label(text(Text::CachePending));
+                            }
+                        }
+                        if ui
+                            .add_enabled(
+                                !self.disk_cache_busy && !self.clear_disk_cache,
+                                egui::Button::new(text(Text::ClearDiskCache)),
+                            )
+                            .clicked()
+                        {
+                            self.clear_disk_cache = true;
+                        }
                     });
                     ui.checkbox(&mut self.reduced_motion, text(Text::ReducedMotion));
                     ui.checkbox(&mut self.show_outlines, text(Text::ShowOutlines));

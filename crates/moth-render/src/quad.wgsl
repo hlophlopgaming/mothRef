@@ -7,7 +7,7 @@ struct Out {
     @location(2) @interpolate(flat) region: vec4<f32>,
     @location(3) @interpolate(flat) layer: u32,
     @location(4) @interpolate(flat) lod: f32,
-    @location(5) @interpolate(flat) appearance: vec2<f32>,
+    @location(5) @interpolate(flat) appearance: vec3<f32>,
 }
 @group(0) @binding(0) var images: texture_2d_array<f32>;
 @group(0) @binding(1) var linear_sampler: sampler;
@@ -24,7 +24,7 @@ struct Out {
     @location(8) region: vec4<f32>,
     @location(9) layer: u32,
     @location(10) lod: f32,
-    @location(11) appearance: vec2<f32>,
+    @location(11) appearance: vec3<f32>,
 ) -> Out {
     // Two triangles over four corners; the CPU supplies rotated positions, so the shader
     // only picks one per vertex.
@@ -47,6 +47,11 @@ struct Out {
 }
 fn sample_mip(in: Out, level: f32) -> vec4<f32> {
     let size = vec2<f32>(textureDimensions(images, i32(level)));
+    if (in.appearance.z > 0.5) {
+        // Missing tile cells share one continuous base-preview coordinate system.
+        let uv = (vec2(0.5) + in.region.xy + in.local * in.region.zw) / size;
+        return textureSampleLevel(images, linear_sampler, uv, i32(in.layer), 0.);
+    }
     let step = in.region.zw / exp2(level);
     let pixels = max(vec2(1.), floor(abs(step)));
     // Each padded level has its own valid pixel extent, especially for odd dimensions.

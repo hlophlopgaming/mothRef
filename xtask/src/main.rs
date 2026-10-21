@@ -3,15 +3,20 @@
 //! MothRef measurement tools.
 mod load;
 mod reliability;
+mod tiles;
+mod zoom;
 use std::time::{Duration, Instant};
 fn main() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("load") => load::run(
             std::path::Path::new(args.get(1).ok_or_else(|| {
-                anyhow::anyhow!("usage: cargo xtask load <board-or-image-directory> [save-as.moth]")
+                anyhow::anyhow!("usage: cargo xtask load <board-or-image-directory> [save-as.moth] [--mode memory|memory_low|disk|none]")
             })?),
-            args.get(2).map(std::path::Path::new),
+            args.get(2).filter(|s| *s != "--mode").map(std::path::Path::new),
+            args.windows(2).find(|pair| pair[0] == "--mode").map(|pair| {
+                moth_io::CacheMode::from_code(&pair[1]).ok_or_else(|| anyhow::anyhow!("invalid cache mode"))
+            }).transpose()?.unwrap_or(moth_io::CacheMode::NoCache),
         )?,
         Some("load-writer") => {
             reliability::load_writer(args.get(1).ok_or_else(|| anyhow::anyhow!("missing path"))?)?
@@ -26,6 +31,10 @@ fn main() -> anyhow::Result<()> {
             reliability::writer(args.get(1).ok_or_else(|| anyhow::anyhow!("missing path"))?)?
         }
         Some("fixture") => reliability::fixture()?,
+        Some("zoom") => zoom::run(
+            args.get(1).map_or("memory", String::as_str),
+            args.get(2).map(std::path::Path::new),
+        )?,
         Some("bench") => {
             let mut harness = pollster::block_on(moth_render::headless::Harness::new(
                 args.iter().any(|a| a == "--software"),
@@ -48,6 +57,7 @@ fn main() -> anyhow::Result<()> {
             if args.iter().any(|a| a == "--enforce") {
                 anyhow::ensure!(result.p99_ms <= 12., "M0 p99 exceeds 12 ms");
             }
+            tiles::run()?;
         }
         Some("paste") => {
             let storage = moth_platform::DesktopStorage::default();
@@ -96,6 +106,7 @@ fn main() -> anyhow::Result<()> {
             let mut harness = pollster::block_on(moth_render::headless::Harness::new(false))
                 .map_err(anyhow::Error::msg)?;
             let persistence = reliability::Soak::new()?;
+            let mut tiles = tiles::Smoke::new()?;
             let start = Instant::now();
             let mut frame = 0;
             let mut samples = Vec::new();
@@ -103,6 +114,7 @@ fn main() -> anyhow::Result<()> {
             while start.elapsed() < Duration::from_secs(seconds) {
                 harness.frame(frame).map_err(anyhow::Error::msg)?;
                 persistence.step(frame)?;
+                tiles.step(frame)?;
                 frame += 1;
                 if start.elapsed().as_secs() >= next {
                     if let Ok(stat) = std::fs::read_to_string("/proc/self/status")
@@ -127,6 +139,7 @@ fn main() -> anyhow::Result<()> {
                 anyhow::ensure!(high - low <= 16384, "RSS failed to plateau within 16 MiB");
             }
             persistence.finish()?;
+            tiles.finish()?;
             println!(
                 "soak complete: {frame} frames in {} s",
                 start.elapsed().as_secs()
@@ -187,7 +200,7 @@ fn main() -> anyhow::Result<()> {
             println!("{count} image and board fixtures validated");
         }
         _ => anyhow::bail!(
-            "usage: cargo xtask load <board-or-image-directory> [save-as.moth] | load-killtest [count] | bench [--quick] [--enforce] [--software] | paste [--enforce] | soak [seconds] [sample-interval-seconds] | corpus | pur <board.pur>"
+            "usage: cargo xtask load <board-or-image-directory> [save-as.moth] [--mode memory|memory_low|disk|none] | load-killtest [count] | zoom [memory|memory_low|disk|none] [image] | bench [--quick] [--enforce] [--software] | paste [--enforce] | soak [seconds] [sample-interval-seconds] | corpus | pur <board.pur>"
         ),
     }
     Ok(())

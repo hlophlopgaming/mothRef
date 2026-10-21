@@ -42,6 +42,7 @@ pub fn fixture(index: u32, side: u32) -> Decoded {
         });
     }
     Decoded {
+        tile: None,
         hash: hash_fixture(index),
         original: [side, side],
         mips,
@@ -668,6 +669,379 @@ pub async fn golden_bc7(software: bool) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tile_detail_fits_the_page_budget_and_recovers_when_the_ceiling_rises() {
+        use super::*;
+        pollster::block_on(async {
+            let instance =
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let (_, device, queue) = crate::request_device(&instance, None, false).await.unwrap();
+            let mut registry =
+                Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm, ImageFormat::Rgba8);
+            registry.adapt_budget(true, crate::MIN_TEXTURE_BUDGET);
+            let mut preview = fixture(57, 256);
+            preview.original = [4096; 2];
+            registry.upload(&device, &queue, &preview);
+            let item = Item::image(
+                preview.hash,
+                Rect {
+                    x: 0.,
+                    y: 0.,
+                    width: 4096.,
+                    height: 4096.,
+                },
+                None,
+            );
+            let camera = Camera::default();
+            let screen = [3840., 2160.];
+            let clip = [0., 0., screen[0], screen[1]];
+            registry.fit_tile_budget(&[&item], [camera; 2], screen, clip, 1.);
+            let tiles = registry.visible_tiles(&item, camera, screen, clip, 1.);
+            assert!(!tiles.is_empty());
+            assert!(
+                tiles.iter().all(|t| t.level == 1),
+                "32 MiB coarsens a 4K viewport instead of thrashing"
+            );
+            let count = tiles.len() as u32 + 1;
+            let bytes = crate::array_bytes(256, count.div_ceil(32) * 32, ImageFormat::Rgba8)
+                + crate::array_bytes(32, 256, ImageFormat::Rgba8);
+            assert!(
+                bytes <= crate::MIN_TEXTURE_BUDGET,
+                "whole-page allocation and fallback must fit"
+            );
+            registry.adapt_budget(true, crate::MAX_TEXTURE_BUDGET);
+            registry.fit_tile_budget(&[&item], [camera; 2], screen, clip, 1.);
+            assert!(
+                registry
+                    .visible_tiles(&item, camera, screen, clip, 1.)
+                    .iter()
+                    .all(|t| t.level == 0),
+                "raising the ceiling restores original resolution"
+            );
+        });
+    }
+    #[test]
+    fn a_full_size_class_replaces_one_layer_without_downgrading_neighbors() {
+        use super::*;
+        pollster::block_on(async {
+            let instance =
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let (_, device, queue) = crate::request_device(&instance, None, false).await.unwrap();
+            let mut registry =
+                Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm, ImageFormat::Rgba8);
+            for index in 0..32 {
+                registry.upload(&device, &queue, &fixture(index, 256));
+            }
+            let bytes = registry.image_bytes();
+            registry.adapt_budget(true, bytes);
+            registry.upload(&device, &queue, &fixture(999, 256));
+            assert_eq!(registry.image_bytes(), bytes);
+            assert!(registry.resident(fixture(999, 16).hash, 256));
+            assert!(
+                registry.resident(fixture(0, 16).hash, 1),
+                "the replaced layer retains its fallback"
+            );
+            for index in 1..32 {
+                assert!(
+                    registry.resident(fixture(index, 16).hash, 256),
+                    "neighbor {index} must keep its detail"
+                );
+            }
+        });
+    }
+    #[test]
+    fn missing_tiles_preserve_the_whole_preview_across_cell_boundaries() {
+        use super::*;
+        pollster::block_on(async {
+            let instance =
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let (adapter, device, queue) =
+                crate::request_device(&instance, None, false).await.unwrap();
+            let mut registry =
+                Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm, ImageFormat::Rgba8);
+            let mut preview = fixture(56, 256);
+            preview.original = [4097, 1025];
+            for mip in &mut preview.mips {
+                mip.height = (mip.width / 4).max(1);
+                mip.bytes.truncate((mip.width * mip.height * 4) as usize);
+                for (i, pixel) in mip.bytes.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                    pixel.copy_from_slice(if i % 2 == 0 {
+                        &[255, 0, 0, 128]
+                    } else {
+                        &[0, 0, 255, 128]
+                    });
+                }
+            }
+            registry.upload(&device, &queue, &preview);
+            let item = Item::image(
+                preview.hash,
+                Rect {
+                    x: 0.,
+                    y: 0.,
+                    width: 4097.,
+                    height: 1025.,
+                },
+                None,
+            );
+            let camera = Camera {
+                origin: [1500., 500.],
+                zoom: 1.,
+            };
+            let texture = target(&device, 256, 256);
+            let view = texture.create_view(&Default::default());
+            let output = crate::Target {
+                view: &view,
+                screen: [256.; 2],
+                clip: None,
+                clear: wgpu::Color::TRANSPARENT,
+                grid: false,
+                opacity: 1.,
+            };
+            registry.tile_detail = false;
+            registry
+                .draw(&device, &queue, output, &[&item], camera)
+                .unwrap();
+            let whole = readback(&device, &queue, &texture, 1024).unwrap();
+            registry.tile_detail = true;
+            registry
+                .draw(&device, &queue, output, &[&item], camera)
+                .unwrap();
+            let pieces = readback(&device, &queue, &texture, 1024).unwrap();
+            let delta = whole
+                .iter()
+                .zip(pieces)
+                .map(|(&a, b)| a.abs_diff(b))
+                .max()
+                .unwrap_or(0);
+            assert!(
+                delta <= 1,
+                "fallback cells must sample the same continuous source region: max delta {delta}, adapter {:?}",
+                adapter.get_info()
+            );
+        });
+    }
+    #[test]
+    fn tiled_detail_replaces_preview_without_double_blending_and_frees_on_zoom_out() {
+        use super::*;
+        pollster::block_on(async {
+            let instance =
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let (adapter, device, queue) =
+                crate::request_device(&instance, None, false).await.unwrap();
+            for format in [ImageFormat::Rgba8, crate::pick_image_format(&adapter)] {
+                let mut registry = Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm, format);
+                let mut preview = fixture(55, 256);
+                preview.original = [4096, 4096];
+                for mip in &mut preview.mips {
+                    for pixel in mip.bytes.as_chunks_mut::<4>().0 {
+                        pixel.copy_from_slice(&[255, 0, 0, 128]);
+                    }
+                }
+                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                if format == ImageFormat::Bc7 {
+                    preview = moth_io::to_bc7(preview);
+                }
+                registry.upload(&device, &queue, &preview);
+                let mut item = Item::image(
+                    preview.hash,
+                    Rect {
+                        x: 0.,
+                        y: 0.,
+                        width: 4096.,
+                        height: 4096.,
+                    },
+                    None,
+                );
+                item.transform.opacity = 0.5;
+                let camera = Camera {
+                    origin: [1500., 1500.],
+                    zoom: 1.,
+                };
+                let visible =
+                    registry.visible_tiles(&item, camera, [256., 256.], [0., 0., 256., 256.], 1.);
+                assert!(
+                    visible.len() <= 9,
+                    "tile coverage follows screen pixels, not source size"
+                );
+                assert!(visible.iter().all(|tile| tile.level == 0));
+                let mut keys = std::collections::HashSet::new();
+                let mut resident_tiles = visible.clone();
+                resident_tiles
+                    .extend((0..6).flat_map(|y| {
+                        (0..8).map(move |x| moth_io::tiles::Tile { level: 0, x, y })
+                    }));
+                resident_tiles.sort();
+                resident_tiles.dedup();
+                for tile in &resident_tiles {
+                    let mut detail = fixture(55, 256);
+                    detail.original = preview.original;
+                    detail.tile = Some(*tile);
+                    detail.mips.truncate(1);
+                    for pixel in detail.mips[0].bytes.as_chunks_mut::<4>().0 {
+                        pixel.copy_from_slice(&[0, 0, 255, 128]);
+                    }
+                    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                    if format == ImageFormat::Bc7 {
+                        detail = moth_io::to_bc7(detail);
+                    }
+                    registry.upload(&device, &queue, &detail);
+                    keys.insert(tile.key(preview.hash));
+                }
+                let texture = target(&device, 256, 256);
+                let view = texture.create_view(&Default::default());
+                let output = crate::Target {
+                    view: &view,
+                    screen: [256., 256.],
+                    clip: None,
+                    clear: wgpu::Color::TRANSPARENT,
+                    grid: false,
+                    opacity: 1.,
+                };
+                for flip in [false, true] {
+                    item.transform.flip = [flip, flip];
+                    // The mirrored viewport needs the symmetric tiles, without changing their source identity.
+                    let camera = if flip {
+                        Camera {
+                            origin: [4096. - 1756.; 2],
+                            zoom: 1.,
+                        }
+                    } else {
+                        camera
+                    };
+                    registry
+                        .draw(&device, &queue, output, &[&item], camera)
+                        .unwrap();
+                    let pixels = readback(&device, &queue, &texture, 1024).unwrap();
+                    for pixel in pixels.as_chunks::<4>().0 {
+                        assert!(
+                            pixel
+                                .iter()
+                                .zip([0u8, 0, 64, 64])
+                                .all(|(&a, b)| a.abs_diff(b) <= 3),
+                            "{format:?} {pixel:?}"
+                        );
+                    }
+                }
+                assert!(keys.iter().all(|key| registry.resident(*key, 256)));
+                let before = registry.image_bytes();
+                registry.retain_tiles(&std::collections::HashSet::new());
+                assert!(
+                    registry.image_bytes() < before,
+                    "empty tile pages must release actual texture allocation"
+                );
+                assert!(keys.iter().all(|key| !registry.resident(*key, 1)));
+                assert!(registry.resident(preview.hash, 1));
+                registry.clear();
+                assert_eq!(registry.allocated_bytes(), 0);
+            }
+        });
+    }
+    #[test]
+    fn zoom_out_copies_resident_mips_and_releases_pages() {
+        use super::*;
+        pollster::block_on(async {
+            let instance =
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let (adapter, device, queue) =
+                crate::request_device(&instance, None, false).await.unwrap();
+            for format in [ImageFormat::Rgba8, crate::pick_image_format(&adapter)] {
+                let mut registry = Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm, format);
+                let mut image = fixture(42, 1024);
+                for (level, mip) in image.mips.iter_mut().enumerate() {
+                    for pixel in mip.bytes.as_chunks_mut::<4>().0 {
+                        pixel.copy_from_slice(if level == 0 {
+                            &[255, 0, 0, 255]
+                        } else {
+                            &[0, 0, 255, 255]
+                        });
+                    }
+                }
+                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                if format == ImageFormat::Bc7 {
+                    image = moth_io::to_bc7(image);
+                }
+                registry.upload(&device, &queue, &image);
+                let before = registry.image_bytes();
+                let small = Item::image(
+                    image.hash,
+                    Rect {
+                        x: 0.,
+                        y: 0.,
+                        width: 32.,
+                        height: 32.,
+                    },
+                    None,
+                );
+                let large = Item::image(
+                    image.hash,
+                    Rect {
+                        x: 0.,
+                        y: 0.,
+                        width: 1024.,
+                        height: 1024.,
+                    },
+                    None,
+                );
+                let texture = target(&device, 64, 64);
+                let view = texture.create_view(&Default::default());
+                let output = crate::Target {
+                    view: &view,
+                    screen: [64., 64.],
+                    clip: None,
+                    clear: wgpu::Color::BLACK,
+                    grid: false,
+                    opacity: 1.,
+                };
+                registry.set_detail_lod(image.hash, 5.);
+                registry
+                    .draw(
+                        &device,
+                        &queue,
+                        output,
+                        &[&small, &large],
+                        Camera::default(),
+                    )
+                    .unwrap();
+                assert!(
+                    registry.resident(image.hash, 1024),
+                    "shared images keep the largest visible demand"
+                );
+
+                registry
+                    .draw(&device, &queue, output, &[&small], Camera::default())
+                    .unwrap();
+                assert!(registry.image_bytes() < before);
+                assert!(registry.resident(image.hash, 64));
+                assert!(!registry.resident(image.hash, 128));
+                let pixels = readback(&device, &queue, &texture, 256).unwrap();
+                for y in 1..31 {
+                    for x in 1..31 {
+                        let offset = y * 256 + x * 4;
+                        assert!(
+                            pixels[offset..offset + 4]
+                                .iter()
+                                .zip([0u8, 0, 255, 255])
+                                .all(|(&a, b)| a.abs_diff(b) <= 8),
+                            "{format:?} ({x},{y}): {:?}",
+                            &pixels[offset..offset + 4]
+                        );
+                    }
+                }
+                let bytes = registry.image_bytes();
+                registry
+                    .draw(&device, &queue, output, &[&small], Camera::default())
+                    .unwrap();
+                assert_eq!(registry.image_bytes(), bytes);
+                registry.upload(&device, &queue, &image);
+                assert!(
+                    registry.resident(image.hash, 1024),
+                    "zoom-in can restore full detail"
+                );
+                registry.clear();
+                assert_eq!(registry.image_bytes(), 0);
+            }
+        });
+    }
     #[test]
     fn detail_refinement_blends_mips_without_extra_textures_or_geometry_changes() {
         use super::*;

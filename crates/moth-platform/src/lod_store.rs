@@ -49,6 +49,46 @@ impl Default for DiskStore {
     }
 }
 impl DiskStore {
+    /// Samples rebuildable entries on a worker, never on the event loop.
+    pub fn usage(&self) -> io::Result<u64> {
+        self.entries(false)
+    }
+    /// Removes completed cache entries; concurrent decodes may populate new entries.
+    pub fn clear(&self) -> io::Result<u64> {
+        self.entries(true)
+    }
+    fn entries(&self, clear: bool) -> io::Result<u64> {
+        let Some(directory) = &self.directory else {
+            return Ok(0);
+        };
+        let entries = match fs::read_dir(directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error),
+        };
+        let mut bytes = 0u64;
+        for entry in entries {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() || entry.path().extension().is_none_or(|e| e != "lod")
+            {
+                continue;
+            }
+            if clear {
+                match fs::remove_file(entry.path()) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            } else {
+                match entry.metadata() {
+                    Ok(metadata) => bytes = bytes.saturating_add(metadata.len()),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        Ok(bytes)
+    }
     /// Uses the OS cache folder; resolving it reads environment variables only.
     pub fn new() -> Self {
         Self {
@@ -127,6 +167,66 @@ impl DiskStore {
         Ok(())
     }
 }
+
+/// Bounded cache maintenance keeps directory scans and deletion off the UI thread.
+pub struct Maintenance {
+    requests: crossbeam_channel::Sender<bool>,
+    results: crossbeam_channel::Receiver<Result<u64, String>>,
+    last: Option<std::time::Instant>,
+    /// True until the previous scan or clear completes.
+    pub busy: bool,
+    /// Last sampled size or filesystem error, for the settings panel.
+    pub usage: Option<Result<u64, String>>,
+}
+impl Maintenance {
+    /// Shares the exact disk backend used by the decode pools.
+    pub fn new(
+        store: std::sync::Arc<DiskStore>,
+        wake: std::sync::Arc<dyn Fn() + Send + Sync>,
+    ) -> io::Result<Self> {
+        let (requests, rx) = crossbeam_channel::bounded(1);
+        let (tx, results) = crossbeam_channel::bounded(1);
+        std::thread::Builder::new()
+            .name("lod-maintenance".into())
+            .spawn(move || {
+                while let Ok(clear) = rx.recv() {
+                    let result = if clear { store.clear() } else { store.usage() }
+                        .map_err(|e| e.to_string());
+                    if tx.send(result).is_err() {
+                        break;
+                    }
+                    wake();
+                }
+            })?;
+        Ok(Self {
+            requests,
+            results,
+            last: None,
+            busy: false,
+            usage: None,
+        })
+    }
+    /// Samples only while settings are open; a clear is queued once explicitly requested.
+    pub fn update(&mut self, visible: bool, clear: bool) -> bool {
+        while let Ok(result) = self.results.try_recv() {
+            self.usage = Some(result);
+            self.busy = false;
+        }
+        if !self.busy
+            && (clear
+                || (visible
+                    && self
+                        .last
+                        .is_none_or(|t| t.elapsed() >= Duration::from_secs(2))))
+            && self.requests.try_send(clear).is_ok()
+        {
+            self.busy = true;
+            self.last = Some(std::time::Instant::now());
+            return clear;
+        }
+        false
+    }
+}
 impl moth_io::LodStore for DiskStore {
     fn read(&self, key: &str) -> io::Result<Option<Box<dyn ReadSeek>>> {
         let path = self.path(key)?;
@@ -187,6 +287,25 @@ mod tests {
     use super::*;
     use moth_io::LodStore;
     use std::io::Read;
+
+    #[test]
+    fn usage_and_clear_only_touch_completed_cache_entries() {
+        let root = std::env::temp_dir().join(format!("mothref-lod-{}", uuid::Uuid::now_v7()));
+        let store = DiskStore::in_directory(root.clone(), 1024 * 1024);
+        assert_eq!(store.usage().unwrap(), 0);
+        assert_eq!(store.clear().unwrap(), 0);
+        store.write("abc-rgba8", &[b"pixels"]).unwrap();
+        fs::write(root.join("active.tmp"), b"in progress").unwrap();
+        fs::write(root.join("keep.moth"), b"board").unwrap();
+        fs::create_dir(root.join("nested.lod")).unwrap();
+        assert_eq!(store.usage().unwrap(), 6);
+        assert_eq!(store.clear().unwrap(), 0);
+        assert_eq!(store.usage().unwrap(), 0);
+        assert!(root.join("active.tmp").exists());
+        assert!(root.join("keep.moth").exists());
+        assert!(root.join("nested.lod").is_dir());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn writes_replace_entries_and_reject_unsafe_keys() {

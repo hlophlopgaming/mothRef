@@ -6,6 +6,18 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Samples this process for profiling tools; callers must run it off the UI thread.
+pub fn resident_bytes() -> Option<u64> {
+    let pid = sysinfo::get_current_pid().ok()?;
+    let mut system = sysinfo::System::new();
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&[pid]),
+        true,
+        sysinfo::ProcessRefreshKind::nothing().with_memory(),
+    );
+    system.process(pid).map(|process| process.memory())
+}
+
 /// One queued query and one result bound sampling independently of board size.
 pub struct Monitor {
     requests: crossbeam_channel::Sender<()>,
