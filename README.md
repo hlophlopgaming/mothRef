@@ -13,10 +13,13 @@ Drop images onto an infinite canvas, arrange them, keep them in view while you w
 [![Latest release](https://img.shields.io/github/v/release/hlophlopgaming/mothRef?include_prereleases&label=release&color=a6c47a)](https://github.com/hlophlopgaming/mothRef/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/hlophlopgaming/mothRef/ci.yml?branch=main&label=CI)](https://github.com/hlophlopgaming/mothRef/actions/workflows/ci.yml)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
-[![Rust 1.95+](https://img.shields.io/badge/rust-1.95%2B-orange?logo=rust)](https://www.rust-lang.org)
+[![Pure Rust](https://img.shields.io/badge/pure-Rust-orange?logo=rust)](https://www.rust-lang.org)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-lightgrey)
+![Planned](https://img.shields.io/badge/planned-Android%20%C2%B7%20Web-lightgrey)
 
-[**Download**](#-download) · [Features](#-features) · [Controls](#-getting-around) · [Roadmap](#-roadmap) · [Build from source](#-build-from-source) · [Docs](#-documentation)
+[**Download**](#download) · [Features](#features) · [Controls](#getting-around) · [Roadmap](#roadmap) · [Build from source](#build-from-source) · [Docs](#documentation)
+
+<sub><b>English</b> · <a href="README.ru.md">Русский</a> · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português (BR)</a> · <a href="README.fr.md">Français</a> · <a href="README.de.md">Deutsch</a> · <a href="README.it.md">Italiano</a> · <a href="README.pl.md">Polski</a> · <a href="README.sv.md">Svenska</a> · <a href="README.fi.md">Suomi</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.ar.md">العربية</a> · <a href="README.hi.md">हिन्दी</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a></sub>
 
 <br>
 
@@ -30,7 +33,7 @@ Drop images onto an infinite canvas, arrange them, keep them in view while you w
 
 ---
 
-## 🦋 Why MothRef
+## Why MothRef
 
 [BeeRef](https://github.com/rbreu/beeref) was a lovely open-source reference board, and it stopped moving.
 [PureRef](https://www.pureref.com) is fast and polished, but closed. MothRef picks up where BeeRef left off:
@@ -38,16 +41,16 @@ native, open, and built to handle huge boards without eating your RAM.
 
 It is built around three promises, in this order:
 
-| | Promise | What it means in practice |
-| --- | --- | --- |
-| 💾 | **Never lose your work** | Every change goes to a recovery journal before it counts as done. A crash costs at most the last second. Board files are never overwritten in place. |
-| 🪶 | **Memory follows a budget, not the board size** | Every cache has a limit and evicts the least recently used images. You choose the trade-off between zoom speed and memory. |
-| ⚡ | **The interface never waits** | Decoding, disk and compression run off the main thread. An idle board uses 0% CPU and GPU. |
+| Promise | What it means in practice |
+| --- | --- |
+| **Never lose your work** | Every change goes to a recovery journal before it counts as done. A crash costs at most the last second. Board files are never overwritten in place. |
+| **Memory follows a budget, not the board size** | Every cache has a limit and evicts the least recently used images. You choose the trade-off between zoom speed and memory. |
+| **The interface never waits** | Decoding, disk and compression run off the main thread. An idle board uses 0% CPU and GPU. |
 
 Board files use the `.moth` extension. The format is [documented](docs/FORMAT.md), stores your original image
 bytes untouched (no re-encoding) and deduplicates identical images.
 
-## ✨ Features
+## Features
 
 What works in the current alpha:
 
@@ -94,7 +97,7 @@ What works in the current alpha:
 <img src="docs/screenshots/library.png" alt="MothRef board library on first launch" width="900">
 </details>
 
-## 📦 Download
+## Download
 
 Grab the latest build from **[GitHub Releases](https://github.com/hlophlopgaming/mothRef/releases)**.
 
@@ -110,8 +113,9 @@ SHA-256 checksums are published with every release.
 
 Installers and package managers (MSI, `.dmg`, AppImage, Flatpak, Homebrew, AUR and more) are
 [planned](ROADMAP.md#distribution) from 0.3 onward.
+An **Android** app and a **web** version are planned too; the core is already written to stay portable to both.
 
-## 🖱️ Getting around
+## Getting around
 
 | To do this | Use |
 | --- | --- |
@@ -137,20 +141,21 @@ PureRef, is in [docs/SHORTCUTS.md](docs/SHORTCUTS.md).
 
 </details>
 
-## 🗺️ Roadmap
+## Roadmap
 
 | Release | Milestone | Promise | Status |
 | --- | --- | --- | --- |
-| **0.1** pre-alpha | M1 | Does not lose data | ✅ alpha builds out |
-| **0.3** public alpha | M2, M2.5 | Replaces BeeRef, opens `.bee` and `.pur`, zooms faster than PureRef | 🚧 in progress |
-| **0.7** beta | M3, M4 | Overlay mode, browser extension, PureRef 2 feature parity | ⏳ planned |
-| **1.0** | M5–M7 | Board library with stacks and tags, Milanote-style elements, all performance targets met | ⏳ planned |
-| **2.0** | M8, M9 | Web build and real-time collaboration | 💭 later |
+| **0.1** pre-alpha | M1 | Does not lose data | alpha builds out |
+| **0.3** public alpha | M2, M2.5 | Replaces BeeRef, opens `.bee` and `.pur`, zooms faster than PureRef | in progress |
+| **0.7** beta | M3, M4 | Overlay mode, browser extension, PureRef 2 feature parity | planned |
+| **1.0** | M5–M7 | Board library with stacks and tags, Milanote-style elements, all performance targets met | planned |
+| **2.0** | M8, M9 | Web build and real-time collaboration | later |
+| — | — | Android app | planned |
 
 After 1.0: artist tools, review and presentation mode, Obsidian/Markdown interop and a command-line tool.
 The full plan, feature checklists and performance targets live in [ROADMAP.md](ROADMAP.md).
 
-## 🛠️ Build from source
+## Build from source
 
 You need [Rust](https://rustup.rs) 1.95 or newer. On Linux, also install the X11/Wayland headers
 (`libxkbcommon-dev` and `libwayland-dev` on Debian/Ubuntu).
@@ -219,7 +224,7 @@ docs/           format spec, architecture, decisions
 
 </details>
 
-## 📚 Documentation
+## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md) and [design decisions](docs/decisions/)
 - [The `.moth` file format](docs/FORMAT.md)
@@ -229,13 +234,13 @@ docs/           format spec, architecture, decisions
 - [Adding a language](docs/LOCALIZATION.md)
 - [Release process](docs/RELEASING.md) and [changelog](CHANGELOG.md)
 
-## 🤝 Contributing
+## Contributing
 
 Bug reports and ideas are welcome in [Issues](https://github.com/hlophlopgaming/mothRef/issues).
 Before sending code, read [AGENTS.md](AGENTS.md): it covers the architecture rules, data-safety rules and which
 checks to run. It applies to humans and AI coding agents alike.
 
-## 📄 License and credits
+## License and credits
 
 MothRef is free software under the **[GNU GPL v3.0 or later](LICENSE)**.
 Third-party fonts and code are listed in [THIRD_PARTY.md](THIRD_PARTY.md).
@@ -251,5 +256,5 @@ licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The il
 
 <div align="center">
 <br>
-<sub>Made with 🦀 Rust and a lot of moths.</sub>
+<sub>Made with Rust and a lot of moths.</sub>
 </div>
