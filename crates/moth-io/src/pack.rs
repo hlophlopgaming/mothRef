@@ -259,7 +259,7 @@ pub(crate) fn read_all(
         let mut bytes = vec![0u8; len as usize];
         reader.read_exact(&mut bytes)?;
         position = offset + len;
-        if blake3::hash(&bytes).as_bytes() != &digest {
+        if *blake3::hash(&bytes).as_bytes() != digest {
             return Err(invalid("pack tile checksum mismatch"));
         }
         emit(Decoded {

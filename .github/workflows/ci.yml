@@ -23,9 +23,13 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          cargo clippy --workspace --all-targets --message-format=short -- -D warnings 2>&1 \
-            | grep -E '(^|: )(error|warning)' | grep -v 'could not compile' | head -40 \
-            | sed -E 's/^/::error::/' || true
+          set +e
+          cargo clippy --workspace --all-targets --message-format=short -- -D warnings > clippy.txt 2>&1
+          echo "::notice::clippy exit $? with $(wc -l < clippy.txt) output lines"
+          grep -E 'error|warning' clippy.txt | grep -v 'could not compile' | head -30 \
+            | while IFS= read -r line; do echo "::error::${line//%/%25}"; done
+          tail -n 8 clippy.txt | while IFS= read -r line; do echo "::warning::${line//%/%25}"; done
+          exit 0
       - run: cargo test --workspace
       - run: cargo xtask corpus
       - if: runner.os == 'Linux'
