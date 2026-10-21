@@ -24,7 +24,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          cargo clippy --workspace --all-targets --message-format=short -- -D warnings > clippy.txt 2>&1
+          CARGO_TERM_COLOR=never cargo clippy --keep-going --workspace --all-targets --message-format=short -- -D warnings > clippy.txt 2>&1
           echo "::notice::clippy exit $? with $(wc -l < clippy.txt) output lines"
           grep -E 'error|warning' clippy.txt | grep -v 'could not compile' | head -30 \
             | while IFS= read -r line; do echo "::error::${line//%/%25}"; done

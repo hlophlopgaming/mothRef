@@ -196,7 +196,7 @@ pub(crate) fn read_tile(
         return Ok(None);
     };
     let len = payload(format);
-    if offset % len != 0 || offset + len > info.index {
+    if !offset.is_multiple_of(len) || offset + len > info.index {
         return Err(invalid("pack entry points outside its payloads"));
     }
     reader.seek(SeekFrom::Start(offset))?;
@@ -234,9 +234,9 @@ pub(crate) fn read_all(
     reader.read_exact(&mut index)?;
     let len = payload(format);
     let mut entries = Vec::with_capacity(info.count as usize);
-    for entry in index.chunks_exact(ENTRY as usize) {
+    for entry in index.as_chunks::<{ ENTRY as usize }>().0 {
         let offset = long(entry, 12);
-        if offset % len != 0 || offset + len > info.index {
+        if !offset.is_multiple_of(len) || offset + len > info.index {
             return Err(invalid("pack entry points outside its payloads"));
         }
         let tile = Tile {
