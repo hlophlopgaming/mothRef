@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Build image mip levels with integer pixel averaging instead of a full-frame
+  floating-point resize, reducing zoom-detail latency and temporary RAM use.
+  Keep the highest-detail pixels unchanged.
+
+
 ## 0.1.0-alpha.7 — 2026-10-20
 
 - Add a performance mode to the image-cache settings, as in PureRef: In memory

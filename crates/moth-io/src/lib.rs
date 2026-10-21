@@ -225,11 +225,11 @@ fn pyramid(mut level: image::RgbaImage, hash: blake3::Hash, original: [u32; 2]) 
     loop {
         let (width, height) = level.dimensions();
         let next = if width > 1 || height > 1 {
-            Some(image::imageops::resize(
+            // Integer area averaging avoids a full-frame f32 intermediate for every mip.
+            Some(image::imageops::thumbnail(
                 &level,
                 (width / 2).max(1),
                 (height / 2).max(1),
-                image::imageops::FilterType::Triangle,
             ))
         } else {
             None
@@ -899,6 +899,38 @@ mod tests {
     #[test]
     fn rejects_corrupt_input_without_panicking() {
         assert!(decode(b"garbage", 64).is_err());
+    }
+    #[test]
+    fn mip_averaging_preserves_base_pixels_and_thin_image_edges() {
+        for (width, height) in [(32, 16), (31, 17), (1, 17), (17, 1)] {
+            let source =
+                image::RgbaImage::from_pixel(width, height, image::Rgba([10, 20, 30, 255]));
+            let decoded = pyramid(source.clone(), blake3::hash(b"constant"), [width, height]);
+            assert_eq!(&decoded.mips[0].bytes, source.as_raw());
+            assert!(decoded.mips.iter().all(|m| {
+                m.bytes
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .all(|p| *p == [10, 20, 30, 255])
+            }));
+            assert_eq!(
+                decoded.mips.last().map(|m| [m.width, m.height]),
+                Some([1, 1])
+            );
+        }
+        let source = image::RgbaImage::from_fn(32, 16, |x, y| {
+            image::Rgba([if (x + y) % 2 == 0 { 0 } else { 255 }; 4])
+        });
+        let decoded = pyramid(source.clone(), blake3::hash(b"checker"), [32, 16]);
+        assert_eq!(&decoded.mips[0].bytes, source.as_raw());
+        assert!(
+            decoded
+                .mips
+                .iter()
+                .skip(1)
+                .all(|m| m.bytes.iter().all(|v| v.abs_diff(128) <= 1))
+        );
     }
     #[test]
     fn pyramid_reaches_one_pixel() {

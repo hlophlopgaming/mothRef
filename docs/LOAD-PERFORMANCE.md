@@ -368,3 +368,161 @@ This improves the existing requested-resolution preview path, not just the load
 harness's 256 px overview. The application still chooses resolution from visible
 screen size, capped at `MAX_SIDE` (2048); full-resolution visible tiles remain a
 separate unimplemented path. Neither measurement represents full original detail.
+
+
+### Follow-up: time until sharp detail — 2026-10-21
+
+The reported desktop symptom is delayed replacement of an already visible preview
+with sharp detail after zooming, rather than delayed initial image visibility.
+The CPU/cache probe above cannot qualify that symptom: it excludes GPU upload,
+native frame scheduling and presentation. Whole-preview upgrades additionally use
+a 180 ms refinement animation (`Shell::upload` / `Refinements::start`); this is a
+separate presentation cost, not evidence that decoding itself takes 180 ms.
+Its contribution to the reported case has not been reproduced.
+
+Repeated the existing release probe, three sequential processes per mode on the
+Ryzen 5 3600 workstation. The installed GPU is AMD Navi 10; these runs do not
+qualify the roadmap's reference-machine/native-window target. The release xtask
+binary was newer than the inspected decoder/cache/probe sources. Temporary cache
+and staging directories used `target/load-profile`, as above. No cargo/rustc,
+application or other xtask process was running at the initial process check.
+No source or cache-policy changes were made for this repetition.
+
+| Mode | Cold detail ms, median | Warm detail ms, median | Retained CPU cache MiB | RSS after zoom-out MiB, median | All 13 board previews ms, median (range) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Memory | 230.135 | 5.959 | 10.19 | 21.32 | 528.192 (525.067–571.366) |
+| MemoryLowQuality | 53.539 | 1.519 | 2.64 | 22.93 | 449.931 (407.562–735.514) |
+| Disk | 229.436 | 15.980 | 0.00 | 11.06 | 676.223 (482.574–1075.994) |
+| NoCache | 248.216 | 231.474 | 0.00 | 11.82 | 730.884 (684.166–855.363) |
+
+Each warm value is the median of five repeated detail requests; the table takes
+the median of those three process medians. Low-quality mode stops at 1024 px,
+so it does not satisfy a 2048 px detail comparison. All cached modes asserted
+zero original-source opens during warm detail requests. Memory mode retained
+10,682,348 payload bytes and stayed within the probe's 32 MiB budget. Its median
+RSS immediately after clearing the cache was 10.26 MiB. RSS includes allocator
+retention and worker scratch; it is not interchangeable with cache payload size.
+
+The cold tiled request needed 7–9 source opens across 40 tiles in this repetition;
+each bounded batch shares a codec pass, but later batches still scan the original.
+The slower results versus the earlier table are recorded without attributing them
+to a code regression: no controlled old/new binary comparison was performed.
+The board-open probe draws previews only and does not time sharp detail.
+
+Remaining reproduction needs the affected board/image, performance mode and
+whether revisiting the same zoomed region is also slow. Measure input-to-sharp-frame
+latency and separate CPU cache, process RSS and GPU allocation before changing
+retention policy. The roadmap measurement checkbox remains open.
+
+
+### Reported board: `jpgtest.moth`
+
+Located the reported board at `target/release/jpgtest.moth`; SHA-256 before/after
+read-only probes: `8810b2dcd425b7e670918f3950acdfae141d144add397deee7d39e2c83bd094f`.
+The existing board reader/load probe succeeded: first drawn preview 47.658 ms,
+all 103 drawn image previews 854.608 ms (one run, Memory mode). This is not a
+measurement of detail appearing after a zoom. There are 180 original-image
+records; unused records and off-screen items need not correspond to drawn previews.
+
+Disposable original-record copies under `/tmp/mothref-jpgtest-probe` were used
+with the unchanged zoom probe. All identified originals are JPEG, with maximum
+sides up to 2560 px. Below are individual diagnostic runs, not statistical results
+or a representative selection of all 180 records. Record numbers follow storage
+order and are not persistent item IDs.
+
+| Record | Original dimensions | Cold detail ms | Warm detail median ms | Retained cache MiB | RSS after zoom-out MiB | RSS after cache clear MiB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 2 | 1357×2036 | 86.349 | 2.218 | 14.05 | 83.75 | 73.11 |
+| 3 | 2048×2048 | 158.884 | 3.444 | 21.33 | 97.55 | 81.54 |
+| 7 | 2560×2560 | 195.183 | 0.718 | 9.33 | 60.05 | 32.18 |
+| 38 | 1365×2048 | 95.324 | 1.397 | 14.22 | 70.36 | 59.69 |
+| 54 | 2048×2048 | 182.304 | 3.154 | 21.33 | 111.89 | 95.89 |
+| 103 | 1218×1710 | 70.221 | 1.069 | 10.59 | 44.56 | 36.61 |
+
+Cached requests opened no original sources. Record 7 uses 36 level-1 tiles
+(1280×1280); the other rows use a whole-preview request up to 2048 px. Thus record
+7 is a diagnostic of the tiled path, not an equal-resolution comparison. All
+runs use RGBA8, excluding native desktop BC7 conversion and presentation.
+
+The saved desktop preferences specify Memory mode, reduced motion enabled and
+smooth zoom disabled. If these are the settings used for the report, the 180 ms
+refinement animation is bypassed and does not explain the delay. Cold detail
+preparation already exceeds 100 ms for the two square 2048 px examples, whereas
+warm detail preparation is fast. The high immediate RSS after cache clear does
+not establish a live allocation leak: cache payload ownership, temporary result
+copies and allocator retention need separate profiling. No decoder, renderer,
+cache-budget or allocator change has been made on the strength of these probes.
+The native input-to-sharp-frame reproduction and controlled before/after
+comparison remain outstanding.
+
+
+### Fix: bounded, integer mip construction — 2026-10-21
+
+The whole-preview pyramid builder now uses the existing `image::imageops::thumbnail`
+area averaging for each reduced mip instead of Triangle resize with a full-frame
+f32 intermediate. The top mip, original bytes, resolution ceilings, cache budgets,
+worker concurrency and tile decoder are unchanged. Reduced mips use a box-style
+average and can look slightly sharper than the former Triangle filter. Existing
+checksummed cache pyramids remain usable; the new filter applies when rebuilding
+an entry. No dependency, board schema or stored original changes.
+
+A native JPEG-preview codec experiment did not materially improve the slow square
+2048 px cases and was discarded. The final change keeps the existing JPEG codec
+and fixes the shared pyramid construction. New tests preserve the highest-detail
+pixels exactly, check constant colors and odd/one-pixel dimensions through the
+entire mip chain, and ensure checkerboard detail averages rather than aliases.
+
+The strengthened allocation regression failed before the change: an unscaled
+2048×1024 PNG preview peaked at 27,262,992 Rust heap bytes (26.0 MiB). Afterward it
+passes a strict <16 MiB bound, including the pixel output and mip chain. This is
+a transient Rust-allocation result, not a total-process RSS or native-codec limit.
+
+Controlled old/new release comparisons used the same six disposable JPEG originals
+from `jpgtest.moth`, three sequential before/after process pairs per original,
+Memory mode and the probe's 32 MiB cache limit. No build, test, fuzzer or other
+benchmark ran concurrently. Timings include decoding, mip construction and cache
+copies; they exclude desktop BC7 encoding, upload and native presentation.
+Medians of the three runs:
+
+| Record | Cold detail before ms | Cold detail after ms | RSS after zoom-out before MiB | RSS after zoom-out after MiB |
+| --- | ---: | ---: | ---: | ---: |
+| 2 | 80.699 | 77.265 | 83.67 | 67.65 |
+| 3 | 168.995 | 86.267 | 103.12 | 101.12 |
+| 7, tiled | 208.408 | 206.103 | 78.36 | 78.41 |
+| 38 | 99.316 | 85.293 | 83.40 | 67.57 |
+| 54 | 187.298 | 106.852 | 112.49 | 97.60 |
+| 103 | 71.307 | 62.563 | 54.62 | 52.48 |
+
+The two square 2048 px whole-preview cases improve by 49% and 43%. The tile path
+is essentially unchanged, as expected. Retained cache payload sizes are identical
+before/after; allocator retention still makes immediate RSS snapshots variable.
+Warm requests continue to assert zero original opens. The largest observed warm
+median in these after-runs was 4.150 ms. This does not establish a native-window
+latency bound or solve all large-image cold tile latency.
+
+Three disk-backed board-open pairs were also retained, without discarding slow
+runs. Before: all previews 3853.591 / 916.183 / 920.977 ms; after: 5066.414 /
+892.997 / 4764.273 ms. Corresponding observed durable worker completion was
+3853.557 / 182.145 / 174.682 ms before and 4777.710 / 192.953 / 4505.333 ms after.
+Storage/fsync scheduling dominates these outliers; these samples do not establish
+an opening speedup or isolate a board-open regression. The change does not touch
+storage. The native-window/reference-hardware qualification checkbox stays open.
+
+Validation: workspace tests (including all 16 renderer tests and all allocation
+guards), workspace Clippy with warnings denied, formatting and the application/tool
+release build passed. The allocation guard was observed failing before the fix.
+The sequential quick benchmark measured llvmpipe p99 26.211 → 26.328 ms, with
+13.32 MiB image textures in both runs. Original-resolution JPEG tile median was
+14.169 → 14.087 ms cold and 0.015 → 0.019 ms cached; neither tile result is a
+speedup claim. Cache lifetimes/budgets are unchanged; a new soak was not required
+for this transient mip-building change. Tier-3 checks were not run.
+
+The final decoder fuzz run completed 778 executions in 98 seconds with a
+90-second fuzz budget, ASan/LSan enabled and no reported error. Corpus initialization
+and the final in-flight input account for wall time beyond the budget. No
+sanitizer was disabled. The source board SHA-256 remains unchanged.
+
+A separate JPEG-only allocation regression is included in the focused mip fix, so
+it does not depend on the other pending PNG optimizations. On the 1920×1080
+detail level it fails with the old filter (26,956,816 peak Rust bytes) and passes
+with the new filter under a strict three-RGBA-frame bound (24,883,200 bytes).
