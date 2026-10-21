@@ -319,7 +319,11 @@ fn encode_bc7(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
     // Most references are opaque (photos, JPEG); the opaque preset skips the alpha
     // modes' search and is several times faster. The ultra-fast presets keep zoom
     // loading quick; BC7 quality at this level is close to the slower presets.
-    let opaque = padded.as_chunks::<4>().0.iter().all(|pixel| pixel[3] == 255);
+    let opaque = padded
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .all(|pixel| pixel[3] == 255);
     let settings = if opaque {
         intel_tex_2::bc7::opaque_ultra_fast_settings()
     } else {
