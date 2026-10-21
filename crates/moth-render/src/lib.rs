@@ -316,6 +316,7 @@ impl Registry {
             || self
                 .arrays
                 .iter()
+                .rev()
                 .flatten()
                 .any(|a| a.size == size && a.slots.iter().any(Option::is_none))
         {
@@ -698,7 +699,9 @@ impl Registry {
         layers: u32,
         evict: bool,
     ) -> Option<usize> {
-        let free = self.arrays.iter().position(|a| {
+        // Newest pages are the ones still filling; searching from the end keeps a
+        // board-sized upload linear instead of rescanning every full page.
+        let free = self.arrays.iter().rposition(|a| {
             a.as_ref()
                 .is_some_and(|a| a.size == size && a.slots.iter().any(Option::is_none))
         });

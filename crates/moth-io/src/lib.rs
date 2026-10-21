@@ -235,7 +235,11 @@ fn decode_inner(bytes: &[u8], side: u32) -> Result<Decoded, DecodeError> {
     };
     Ok(pyramid(image.into_rgba8(), blake3::hash(bytes), original))
 }
-fn pyramid(mut level: image::RgbaImage, hash: blake3::Hash, original: [u32; 2]) -> Decoded {
+pub(crate) fn pyramid(
+    mut level: image::RgbaImage,
+    hash: blake3::Hash,
+    original: [u32; 2],
+) -> Decoded {
     let mut mips = Vec::new();
     loop {
         let (width, height) = level.dimensions();
@@ -312,8 +316,17 @@ fn encode_bc7(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
             padded.extend_from_slice(&row[(w - 1) * 4..]);
         }
     }
+    // Most references are opaque (photos, JPEG); the opaque preset skips the alpha
+    // modes' search and is several times faster. The ultra-fast presets keep zoom
+    // loading quick; BC7 quality at this level is close to the slower presets.
+    let opaque = padded.as_chunks::<4>().0.iter().all(|pixel| pixel[3] == 255);
+    let settings = if opaque {
+        intel_tex_2::bc7::opaque_ultra_fast_settings()
+    } else {
+        intel_tex_2::bc7::alpha_ultra_fast_settings()
+    };
     intel_tex_2::bc7::compress_blocks(
-        &intel_tex_2::bc7::alpha_very_fast_settings(),
+        &settings,
         &intel_tex_2::RgbaSurface {
             data: &padded,
             width: pw as u32,

@@ -52,11 +52,30 @@ graphics card, far below what modern adapters have.
 - Opening a board costs a decode and BC7 encoding of every original the first time,
   in parallel; later openings mostly read files. The progress bar shows how far it is.
 - Video-memory use grows with the board up to the limit. RAM caches stay bounded;
-  the preload holds at most 64 prepared images in flight plus one streaming bake per
-  worker (each capped at 192 MiB of accumulators).
+  the preload holds at most 256 prepared tiles in flight and at most 1 GiB of decoded
+  frames across its workers (see the update below).
 - Other performance modes are unchanged apart from the larger, hardware-based limit.
 - No `.moth` format change, no new dependency; detection spawns `nvidia-smi` or `reg`
   where present and falls back silently.
+
+## Update 2026-10-22: faster loading
+
+First openings were slow even for 100 images. Each image was decoded twice (preview,
+then tiles), every level was area-averaged from the full-resolution source (one pass
+per level), and BC7 used the alpha "very fast" preset for opaque photos. Reopening
+uploaded through a 64-image channel and searched texture pages from the first one,
+which grows quadratically with the number of tiles.
+
+- `tiles::bake` decodes once into an oriented RGBA frame and builds each level from
+  the previous one by alpha-weighted 2×2 averaging (≈1.33 passes in total); the same
+  pass yields the 256-pixel preview. Level 0 is identical to on-demand tiles; coarser
+  levels differ by rounding only. Interlaced images now bake too.
+- Frames are bounded per pool: workers lease their frame size from a 1 GiB budget
+  (a larger frame runs alone). Worker count follows the CPU up to 32.
+- BC7 uses `opaque_ultra_fast` for fully opaque surfaces and `alpha_ultra_fast`
+  otherwise.
+- The result channel holds 256 tiles (16 MiB in BC7); texture pages are searched from
+  the newest, which is the one still filling.
 
 Validation: per maintainer instruction, nothing was built or run in the authoring
 session; formatting was applied with rustfmt and the workspace checks run in CI.

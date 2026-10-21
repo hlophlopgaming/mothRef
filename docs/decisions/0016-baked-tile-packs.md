@@ -20,7 +20,8 @@ without the app holding much more RAM.
   tiles (longer side > 2048 px), the decode pool offers it to a single background
   `lod-bake` thread. The bake decodes the original once and streams rows through the
   existing tile accumulators: an accumulator exists only while its tile's rows are
-  being read, so memory follows one band of tiles per level (capped at 192 MiB),
+  being read, so memory follows one band of tiles per level (capped at 192 MiB;
+  superseded by a single full-frame decode, see the update in decision 0017),
   not the image area. Every tile of every tiled level is encoded to the GPU format
   and written to one pack file per image and format: fixed-size payloads, an index
   sorted by tile, and a trailer with the content hash. Each tile has a blake3 digest;

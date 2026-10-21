@@ -386,7 +386,20 @@ mod tests {
                     let direct = tiles::decode(&bytes, tile, &cancel).unwrap();
                     assert_eq!(baked.tile, Some(tile));
                     assert_eq!(baked.original, direct.original);
-                    assert_eq!(baked.mips[0].bytes, direct.mips[0].bytes, "{tile:?}");
+                    if level == 0 {
+                        assert_eq!(baked.mips[0].bytes, direct.mips[0].bytes, "{tile:?}");
+                    } else {
+                        // Coarser levels average the previous level, so rounding can
+                        // differ from a direct area average by about one step per level.
+                        let worst = baked.mips[0]
+                            .bytes
+                            .iter()
+                            .zip(&direct.mips[0].bytes)
+                            .map(|(a, b)| a.abs_diff(*b))
+                            .max()
+                            .unwrap_or(0);
+                        assert!(u32::from(worst) <= level, "{tile:?}: {worst}");
+                    }
                 }
             }
         }
@@ -431,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn cancelled_or_interlaced_bakes_leave_no_pack() {
+    fn cancelled_bakes_emit_nothing_and_interlaced_images_bake() {
         let cancel = AtomicBool::new(true);
         let bytes = include_bytes!("../../../corpus/images/4k.jpg");
         let mut tiles = 0;
@@ -442,7 +455,20 @@ mod tests {
         assert!(matches!(result, Err(DecodeError::Cancelled)));
         assert_eq!(tiles, 0);
         let interlaced = include_bytes!("../../../corpus/images/adam7.png");
-        let result = tiles::bake(interlaced, 0..1, &AtomicBool::new(false), &mut |_| Ok(()));
-        assert!(result.is_err());
+        let cancel = AtomicBool::new(false);
+        let mut first = None;
+        let preview = tiles::bake(interlaced, 0..1, &cancel, &mut |tile| {
+            first.get_or_insert(tile);
+            Ok(())
+        })
+        .unwrap();
+        let first = first.unwrap();
+        let direct = tiles::decode(interlaced, first.tile.unwrap(), &cancel).unwrap();
+        assert_eq!(first.mips[0].bytes, direct.mips[0].bytes);
+        assert_eq!(preview.original, direct.original);
+        assert_eq!(
+            preview.mips.last().map(|m| (m.width, m.height)),
+            Some((1, 1))
+        );
     }
 }

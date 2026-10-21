@@ -303,9 +303,10 @@ LRU, checksums and rebuildable cache format. No board schema or journal changes.
 See [decision 0015](decisions/0015-viewport-tiles-and-scheduling.md).
 
 Tile packs: in the "In memory" and "Cache on disk" modes, the first viewport request
-for an image drawn from tiles offers it to the pool's `lod-bake` thread. One streamed
-pass over the original emits every tile of every tiled level (accumulators live only
-while their rows are read, ≤ 192 MiB), encodes them to the GPU format and writes one
+for an image drawn from tiles offers it to the pool's `lod-bake` thread. One decode of
+the original into an oriented RGBA frame, followed by alpha-weighted 2×2 averaging per
+level (`tiles::bake`), emits every tile of every tiled level and the 256-pixel preview,
+encodes them to the GPU format (opaque or alpha ultra-fast BC7) and writes one
 checksummed pack per image and format through `LodStore::writer`. Tile requests read
 the pack first, through the OS file cache, before the RAM/disk caches or the original.
 While a tile loads, the renderer draws the matching region of the nearest resident
