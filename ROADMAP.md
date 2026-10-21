@@ -26,13 +26,14 @@ Every milestone and every pull request is judged against these, in this order:
 | 0.3 public alpha | M2, M2.5 | Replaces BeeRef, opens `.bee` and `.pur`, zooms faster than PureRef |
 | 0.7 beta | M4 | Feature parity with PureRef 2 |
 | 1.0 | M7 | All P0 and P1 features done, all performance targets met |
-| 2.0 | M9 | Web build and real-time collaboration |
+| 1.5 | M10 (items tagged 1.5), M12, M14 | Reference analysis (composition overlays, ruler with calibration), Obsidian interop, capture integrations for third-party tools |
+| 2.0 | M9, M10 (items tagged 2.0), M16 | Web build and real-time collaboration; perspective and value tools; Excalidraw, draw.io and UML/XML interop, Blender plugin, video-frame capture |
 
 Starting with **M1 / release 0.1**, every tagged release includes downloadable Windows, macOS and Linux binaries on **GitHub Releases**.
 
 Milestones run strictly in order. M8 and M9 come after 1.0, but the architecture decisions they depend on (stable UUIDs, fractional z-order, command-based mutations, content-addressed blobs) are made in M0–M1.
 
-M10–M13 (artist tools, review workflow, note-app interop, CLI and automation) also come after 1.0. They do not depend on M8 or M9, so they may run in parallel with them and ship in 1.x minor releases as they land.
+M10–M16 (artist tools, review workflow, note-app interop, CLI and automation, capture integrations, PDF references, diagram-format and Blender interop) also come after 1.0. They do not depend on M8 or M9, so they may run in parallel with them and ship in 1.x minor releases as they land. Release targets set by the maintainer on 2026-10-21: items tagged **1.5** ship by release 1.5, items tagged **2.0** by release 2.0; untagged post-1.0 items have no target yet.
 
 ---
 
@@ -286,15 +287,27 @@ before writing and preserve the original file.
 
 Tools that help while painting from references, not only while collecting them. None of them changes the source image; they are view settings or overlays.
 
-- [ ] Composition overlays per image: rule of thirds, golden ratio, diagonals, center cross, and an N × M grid for transferring a drawing; line color and opacity
+- [ ] **1.5** Composition overlays per image (non-destructive, toggled and cycled by a rebindable shortcut, with a touch path); line color and opacity:
+  - Grids: rule of thirds, N × M grid, square grid for transferring a drawing (cell size or cell count), center cross
+  - Golden ratio: phi grid (0.382 / 0.618), golden spiral in four orientations with mirroring, golden triangles; for non-golden images choose "stretch to image" or "largest inscribed golden rectangle"
+  - Diagonals: main diagonals, baroque and sinister diagonals, dynamic-symmetry armature (diagonals plus perpendiculars from the corners)
+  - Aspect-ratio frames (3:4, 4:3, 1:1, 16:9, custom) to check how a reference would crop
+  - Overlays are stored in normalized coordinates of the visible (cropped) image, so they follow crop, rotation and flip; drawn on top of the image texture with the item transform; scene export offers "with overlays"
+- [ ] **1.5** Ruler and measuring (ideas from [This Ruler Rules](https://github.com/TheSmallKiwi/ThisRulerRules), MIT; no code copied without attribution in `THIRD_PARTY.md`):
+  - A measurement is a child item of an image, stored in source-image pixel coordinates; it survives move, scale, any rotation, flip and crop. No screen-anchored lines and no PNG round-trip
+  - Calibration per image (enter what a segment represents: cm, m, inches, "heads" or a custom unit; recalibrating recomputes every measurement) and an optional board-wide scale for size-comparison collages
+  - Click a scale bar on the image to detect it: scan the row for the contrast edge, refine both edges to sub-pixel precision from the gradient, accept only thin bars, then open the calibration prompt
+  - Loupe on the image texture (nearest-neighbour zoom with a pixel crosshair, no screen capture, works on Wayland); mild horizontal/vertical snapping (about 7°, relative to the image) with a toggle
+  - Protractor (angle between two lines), ratio between two segments
+  - Numbered labels laid out to avoid each other, with thin leaders when pushed away; measurement table in the side panel; CSV export
 - [ ] Mirror view: flip the whole canvas view horizontally or vertically without changing the board, to check one's own drawing with fresh eyes
-- [ ] Value check: posterize an image or the whole canvas into 2–5 tones (notan), next to the existing grayscale
-- [ ] Measuring: ruler with length in image pixels, angle tool between two lines
+- [ ] **2.0** Value check: posterize an image or the whole canvas into 2–5 tones (notan), next to the existing grayscale; a blur ("squint") view
+- [ ] **2.0** Perspective helper: draw two converging lines to find a vanishing point; show the horizon and perspective guide lines through one, two or three vanishing points
 - [ ] Video references (replaces the "video on the canvas" P2 row): MP4 and WebM items, play / pause, frame step, playback speed 0.1–2×, A–B loop, grab a frame as a new image item; decoding through an LGPL-compatible library, off the UI thread
 - [ ] "Open in…": open an image in an external editor (Krita, Photoshop, GIMP, Clip Studio or any configured program); linked images reload when the file changes on disk
 - [ ] Timer: a countdown / Pomodoro-style timer overlay for focused drawing sessions
 
-**Exit criteria:** every tool works on a 1,000-image board without breaking the frame budget; none of them mutates image data or needs a format change beyond view settings.
+**Exit criteria:** every tool works on a 1,000-image board without breaking the frame budget; none of them mutates image data. Persisted overlays, measurements and calibrations follow the format-change rules (schema bump, migration, corpus files, `docs/FORMAT.md`).
 
 ### M11 — Review and presentation (after 1.0)
 
@@ -309,6 +322,8 @@ For art directors who collect references and give feedback on work in progress. 
 **Exit criteria:** a review round (annotate, set statuses, compare versions, export a PDF) is possible without leaving the app.
 
 ### M12 — Note-app interop: Obsidian and other Markdown tools (after 1.0)
+
+**Target: 1.5** (maintainer, 2026-10-21), except the Obsidian viewer plugin, which waits for M8.
 
 Integration goes through open formats and URIs, not through one application's API, so it also works with Logseq, Zettlr and others.
 
@@ -338,6 +353,43 @@ A headless mode of the `mothref` binary, so agents, scripts and power users can 
 - [ ] Every command and flag documented in `--help` and in a CLI reference under `docs/`
 
 **Exit criteria:** an agent creates a board, fetches reference images from the internet, arranges them into a tidy layout, and exports a preview — in one scripted invocation, producing files the GUI opens unchanged.
+
+### M14 — Capture integrations for third-party tools (after 1.0, target 1.5)
+
+PureRef has no plugin API, so its community built tools that push images into it from outside: browser clippers with a local helper (RefDrop, PureDrop), a ComfyUI connector, ShareX setups and hotkey scripts. MothRef offers this officially. The browser extension itself stays in M3; M14 opens the same path to other tools.
+
+- [ ] Local drop API in `moth-bridge`: a running MothRef accepts image bytes or an image URL plus source metadata (page URL, title, tool name) and adds them to a chosen board or its Inbox through a `Command`. Off by default, enabled in settings; local connections only (named pipe / Unix socket, or loopback HTTP with a per-install token); fetching a URL counts as the user action required by the network rule
+- [ ] Documented protocol with ready-to-copy examples: `curl`, Python, AutoHotkey; the M13 CLI `add` covers the "app not running" case
+- [ ] ShareX custom destination (Windows) and examples for Flameshot and Spectacle (Linux) and the macOS screenshot folder (via the M3 watch folder)
+- [ ] ComfyUI custom node "Save to MothRef": generated images go to a chosen board in rows, with the workflow kept in the image metadata
+- [ ] "Send to MothRef" from the OS file manager: Explorer context menu, Nautilus and Dolphin actions, macOS Share / Services
+- [ ] Source and provenance shown on the item (where it came from, which tool sent it), feeding "Open image source"
+
+**Exit criteria:** with MothRef running, a screenshot from ShareX, an image from a ComfyUI run and a file sent from the file manager each land on the chosen board within 1 second, journaled like a paste, and nothing listens on the network unless the user enabled it.
+
+### M15 — PDF references (after 1.0, release to be confirmed by the maintainer)
+
+PureRef handles images and GIFs only; a PDF (an artbook, a model sheet, a manual) has to be converted to images first. MothRef imports PDFs directly.
+
+- [ ] PDF backend behind a `PdfBackend` trait: [`hayro`](https://github.com/LaurenzV/hayro) (pure Rust, Apache-2.0 OR MIT, no `unsafe`, builds for Android and wasm) by default; [`pdfium-render`](https://github.com/ajrcarey/pdfium-render) as an optional feature for files hayro cannot render. MuPDF is excluded (AGPL). Encrypted PDFs are reported as unsupported until a backend handles them
+- [ ] **Import dialog before anything is added:** a grid of page thumbnails rendered off the UI thread; select all, select none, click or Shift-click pages to pick a subset, or type page ranges by hand (for example `1-3, 7, 10-12`); the selection and the page count stay in sync; Cancel adds nothing
+- [ ] Import modes in the same dialog: one document item with page navigation and a page counter; selected pages as separate items, arranged with the M2 arrange methods; extract the embedded images of the selected pages as separate image items (useful for artbooks)
+- [ ] Rendering by zoom: pages are vector, so render at the on-screen resolution in the decode pool, show the previous rendering until the new one is ready, tile pages at high zoom, and keep results in the M2.5 performance-mode caches with their budgets
+- [ ] Storage: the original PDF bytes are stored once as a content-addressed blob (deduplicated by hash), never rasterized pages; this is a format change (schema bump, migration, corpus files, `docs/FORMAT.md`)
+- [ ] Crop, overlays and measurements (M10) work on pages like on images; no text selection or search (MothRef is not a PDF reader)
+- [ ] Corrupt or hostile PDFs never crash the app: parsing and rendering run inside `catch_unwind` with page-count, page-size and decoded-memory limits; a fuzz target for the PDF importer
+
+**Exit criteria:** a 300-page artbook PDF shows its thumbnails in the import dialog within 2 seconds of the first page, a hand-typed page range imports exactly those pages, and the board stays within the memory budget of the active performance mode while zooming through them.
+
+### M16 — Diagram formats, Blender and video-frame capture (after 1.0, target 2.0)
+
+- [ ] Excalidraw: read `.excalidraw` JSON and Obsidian's `.excalidraw.md` (plain and compressed); images become image items (their embedded files as blobs), text becomes notes, rectangles, ellipses, arrows, lines and freehand strokes map to M4/M6 shapes, lines and drawings; unsupported elements are reported. Export is a later decision
+- [ ] draw.io / diagrams.net: read `.drawio` XML (compressed and uncompressed diagrams); shapes, text and connectors map to MothRef elements where they exist, otherwise the diagram is imported as one vector item
+- [ ] UML and other XML diagram formats: choose the formats worth importing (candidates: XMI, PlantUML and Mermaid sources) in a decision record before implementation
+- [ ] Blender integration as a MothRef plugin with a matching Blender add-on: send selected images to Blender as reference images with crop and flip applied and the real-world scale taken from the M10 calibration; bring a viewport capture or render back into a board's Inbox. Talks to MothRef through the M14 local API; the plugin API itself (scope, sandboxing, versioning) is designed in a decision record first
+- [ ] Video-frame capture: grab the current frame of a video playing in the browser through the extension (frame plus page URL and timestamp as the source), alongside the frame grab of M10 video items
+
+**Exit criteria:** an Excalidraw file and a draw.io file open as editable boards with a report of anything skipped; a reference sent to Blender arrives at its calibrated size; a captured video frame keeps a link back to the exact moment in the source video.
 
 ---
 
@@ -404,7 +456,9 @@ Priorities: **P0** = no release without it, **P1** = required for 1.0, **P2** = 
 | Library sorting, views, board stats, library health | MothRef | P1 | M5 |
 | Palette export/import (`.gpl`, `.ase`) | MothRef | P1 | M6 |
 | SpaceMouse | PureRef 2.0 | P2 | after 1.0 |
-| Composition overlays, mirror view, value check, measuring | MothRef | P2 | M10 |
+| Composition overlays, ruler with calibration (target 1.5) | MothRef, This Ruler Rules | P2 | M10 |
+| Mirror view | MothRef | P2 | M10 |
+| Value check, perspective helper (target 2.0) | MothRef | P2 | M10 |
 | Video references | FrameRef | P2 | M10 |
 | Open in external editor | MothRef | P2 | M10 |
 | Redlines, review statuses, image comparison | MothRef | P2 | M11 |
@@ -413,6 +467,11 @@ Priorities: **P0** = no release without it, **P1** = required for 1.0, **P2** = 
 | Deep links, wiki-links, linked `.md` notes, preview sidecar | MothRef | P2 | M12 |
 | CLI / headless automation (`clap` subcommands, `--json`) | MothRef | P2 | M13 |
 | Fetch images from HTTP(S) URLs into a board | MothRef | P2 | M13 |
+| Local drop API, ShareX / ComfyUI / file-manager integrations (target 1.5) | RefDrop, PureDrop, MothRef | P2 | M14 |
+| PDF import with page picker (release to be confirmed) | MothRef | P2 | M15 |
+| Excalidraw, draw.io and UML/XML import (target 2.0) | MothRef | P2 | M16 |
+| Blender plugin (target 2.0) | MothRef | P2 | M16 |
+| Video-frame capture from the browser (target 2.0) | RefDrop, MothRef | P2 | M16 |
 
 `#NNN` refers to issues in the [BeeRef repository](https://github.com/rbreu/beeref/issues).
 
@@ -559,7 +618,7 @@ Inventory of [Milanote](https://milanote.com) features from its [help center](ht
 - [ ] **Comment pins** on items, shown on hover; hidden in presentation mode (M6)
 - [ ] Table card with formulas (after 1.0)
 - [ ] Document card — long-form text opened full-screen (after 1.0)
-- [ ] File cards (PDF and other uploads) and audio cards (after 1.0)
+- [ ] PDF documents (M15); other file cards and audio cards (after 1.0)
 - [ ] Video card and video link embeds (YouTube, Vimeo) (after 1.0, together with video on the canvas)
 - Map card — **skip** (needs online map tiles)
 - Built-in stock photo search (Pexels) — **skip** (network service; the browser extension covers collecting)
@@ -686,6 +745,7 @@ Known issues to plan for: macOS notarization needs a paid Apple Developer accoun
 
 | Date | Decision |
 | --- | --- |
+| 2026-10-21 | Post-1.0 release targets: 1.5 = composition overlays and ruler (M10), Obsidian interop (M12), capture integrations (M14); 2.0 = perspective and value tools (M10), Excalidraw / draw.io / UML-XML interop, Blender plugin, video-frame capture (M16); PDF import with a page picker (M15), release to be confirmed |
 | 2026-10-20 | [Performance modes and LOD cache](docs/decisions/0014-performance-modes-lod-cache.md): PureRef-style In memory (default) / low zoom quality / Cache on disk / No cache; decode once per zoom range from a budgeted RAM or disk cache; BC7 only where it can be encoded |
 | 2026-10-19 | [RAM-aware texture budget](docs/decisions/0013-ram-aware-texture-budget.md): replace per-image growth with actual texture bytes and available RAM; configurable RAM allowance/cache limits, adapter defaults and LRU eviction |
 | 2026-10-19 | [Progressive durable loading](docs/decisions/0012-progressive-board-loading.md): journaled loading batches overlap previews with storage; bounded footer-chain indexing accelerates healthy `.moth` reads while retaining scanner recovery |
