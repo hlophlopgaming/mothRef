@@ -53,7 +53,7 @@ impl Shell {
         software: bool,
     ) -> Self {
         let ctx = egui::Context::default();
-        moth_ui::theme(&ctx);
+        moth_ui::theme(&ctx, &moth_ui::Tokens::DARK);
         let repaint = proxy.clone();
         ctx.set_request_repaint_callback(move |info| {
             let _ = repaint.send_event(Wake::Repaint(info.delay));
@@ -109,8 +109,11 @@ impl Shell {
     pub(super) fn recover(&mut self) -> anyhow::Result<()> {
         self.refinements.clear();
         self.gpu = None;
+        let tokens = moth_ui::tokens(&self.ctx);
+        let zoom = self.ctx.zoom_factor();
         self.ctx = egui::Context::default();
-        moth_ui::theme(&self.ctx);
+        moth_ui::theme(&self.ctx, &tokens);
+        self.ctx.set_zoom_factor(zoom);
         let proxy = self.proxy.clone();
         self.ctx.set_request_repaint_callback(move |info| {
             let _ = proxy.send_event(Wake::Repaint(info.delay));

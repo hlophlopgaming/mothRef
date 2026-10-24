@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The infinite canvas: notes, selection frames, drag overlays and the tool rail.
-use super::{Document, Editing, Intent, arrange};
+use super::{Document, Editing, Intent};
 use crate::gpu::Gpu;
 use moth_scene::{Camera, Item, Rect, Uuid};
 use moth_ui::Actions;
@@ -9,6 +9,9 @@ use moth_ui::Actions;
 pub(super) struct Canvas<'a> {
     pub board: &'a Document,
     pub tools: &'a mut super::tools::Tools,
+    pub settings: &'a mut super::settings::Settings,
+    pub enabled: &'a [bool],
+    pub registry: &'a super::bindings::Registry,
     pub editing: &'a mut Option<Editing>,
     pub drag: Option<([f32; 2], [f32; 2], bool)>,
     pub moving: Option<(Uuid, Rect)>,
@@ -28,6 +31,9 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
     let Canvas {
         board,
         tools,
+        settings,
+        enabled,
+        registry,
         editing,
         drag,
         moving,
@@ -41,28 +47,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
     } = ctx;
     let mut view = board.view;
     if !overlay {
-        egui::Panel::bottom("board_tools_button").show(ui, |ui| {
-            if ui
-                .button(moth_ui::tooltip(ui.ctx(), moth_ui::Text::Tools))
-                .clicked()
-            {
-                intents.push(Intent::ToggleTools);
-            }
-        });
-        let (edits, target, note, tool_intents) = tools.show(ui, board, editing.is_some());
-        intents.extend(tool_intents);
-        if !edits.is_empty() {
-            intents.push(Intent::Commands(edits));
-        }
-        if let Some(target) = target {
-            intents.push(Intent::Export(target));
-        }
-        if note {
-            intents.push(Intent::AddNote(
-                view.camera
-                    .world([view.viewport.center().x, view.viewport.center().y]),
-            ));
-        }
+        intents.extend(tools.show(ui, board, settings, enabled, registry));
     }
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
@@ -108,8 +93,8 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
             }
             let fade = ui.ctx().animate_bool_with_time(
                 hover_key,
-                tools.show_outlines && hover.is_some() && moving.is_none(),
-                if tools.reduced_motion || !tools.show_outlines {
+                settings.show_outlines && hover.is_some() && moving.is_none(),
+                if settings.reduced_motion || !settings.show_outlines {
                     0.
                 } else {
                     0.09
@@ -118,7 +103,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
             let hover_id = ui.ctx().data(|data| data.get_temp::<Uuid>(hover_key));
             let previous = view.viewport;
             view.viewport = ui.max_rect();
-            if tools.scale_with_window
+            if settings.scale_with_window
                 && previous.is_positive()
                 && previous.size() != view.viewport.size()
             {
@@ -146,7 +131,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                 .camera
                 .world([view.viewport.min.x, view.viewport.min.y]);
             let returning: std::collections::HashMap<_, _> = motion
-                .returning(motion.now(), tools.reduced_motion)
+                .returning(motion.now(), settings.reduced_motion)
                 .into_iter()
                 .map(|item| (item.id, item))
                 .collect();
@@ -191,7 +176,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                         item,
                         drag,
                         view.camera.zoom,
-                        tools.reduced_motion,
+                        settings.reduced_motion,
                     ));
                     if duplicate && item.blob().is_none() {
                         draw_note(ui, &view.camera, item);
@@ -214,11 +199,15 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                                 item.rect.height * view.camera.zoom,
                             ),
                         );
-                        ui.painter().rect_filled(rect, 2., moth_ui::BACKGROUND);
+                        ui.painter().rect_filled(
+                            rect,
+                            moth_ui::tokens(ui.ctx()).radius_placeholder as f32,
+                            moth_ui::tokens(ui.ctx()).canvas,
+                        );
                         ui.painter().rect_stroke(
                             rect,
-                            2.,
-                            egui::Stroke::new(1., moth_ui::ACCENT),
+                            moth_ui::tokens(ui.ctx()).radius_placeholder as f32,
+                            egui::Stroke::new(1., moth_ui::tokens(ui.ctx()).accent),
                             egui::StrokeKind::Inside,
                         );
                     }
@@ -235,13 +224,14 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                         ui,
                         &view.camera,
                         item,
-                        board.selection.contains(&item.id)
+                        board.selection.len() == 1
+                            && board.selection.contains(&item.id)
                             && !(duplicate
                                 && moving.is_none()
                                 && !returning.is_empty()
                                 && !returning.contains_key(&item.id)),
                         if hover_id == Some(item.id) { fade } else { 0. },
-                        tools.show_outlines,
+                        settings.show_outlines,
                     );
                 }
             }
@@ -250,7 +240,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     draw_note(ui, &view.camera, ghost);
                 }
                 if !overlay && board.scene.get(ghost.id).is_none() {
-                    outline(ui, &view.camera, ghost, true, 0., tools.show_outlines);
+                    outline(ui, &view.camera, ghost, true, 0., settings.show_outlines);
                 }
             }
             for ghost in transitions {
@@ -274,6 +264,12 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                 let mut bounds = egui::Rect::NOTHING;
                 let mut count = 0;
                 for item in board.selection.iter().filter_map(|id| board.scene.get(*id)) {
+                    let presented = if moving.is_some() && !tools.locked && !board.loading {
+                        Some(motion.preview(item, drag, view.camera.zoom, settings.reduced_motion))
+                    } else {
+                        board.motion.get(item.id, motion.now())
+                    };
+                    let item = presented.as_ref().unwrap_or(item);
                     let envelope = item.rect.rotated_envelope(item.transform.rotation);
                     let lo = envelope.lower();
                     let hi = envelope.upper();
@@ -292,6 +288,44 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                 }
                 if bounds.is_finite() {
                     moth_ui::canvas::selection_badge(ui.ctx(), view.viewport, count, bounds.size());
+                    if marquee.is_none() && !board.selection.is_empty() {
+                        let screen = |p: egui::Pos2| {
+                            let p = view.camera.screen([p.x, p.y]);
+                            egui::pos2(p[0], p[1])
+                        };
+                        let frame =
+                            egui::Rect::from_min_max(screen(bounds.min), screen(bounds.max));
+                        if board.selection.len() > 1 && settings.show_outlines {
+                            moth_ui::canvas::selection(
+                                ui,
+                                [
+                                    frame.left_top(),
+                                    frame.right_top(),
+                                    frame.left_bottom(),
+                                    frame.right_bottom(),
+                                ],
+                            );
+                        }
+                        let kind = if board.selection.len() > 1 && settings.show_outlines {
+                            super::surfaces::SelectionKind::Several
+                        } else if board
+                            .selection
+                            .iter()
+                            .any(|id| board.scene.get(*id).is_some_and(|i| i.note().is_some()))
+                        {
+                            super::surfaces::SelectionKind::Note
+                        } else {
+                            super::surfaces::SelectionKind::Image
+                        };
+                        intents.extend(super::surfaces::selection(
+                            ui.ctx(),
+                            frame,
+                            view.viewport,
+                            kind,
+                            enabled,
+                            registry,
+                        ));
+                    }
                 }
             }
             if !overlay {
@@ -302,163 +336,13 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                 );
                 if !secondary_gesture {
                     response.context_menu(|ui| {
-                        if ui
-                            .add_enabled(
-                                board.idle() && editing.is_none(),
-                                egui::Button::new(moth_ui::tooltip(
-                                    ui.ctx(),
-                                    moth_ui::Text::AddNote,
-                                )),
-                            )
-                            .clicked()
-                        {
-                            if let Some(pos) = response.interact_pointer_pos() {
-                                let world = view.camera.world([pos.x, pos.y]);
-                                intents.push(Intent::AddNote(world));
-                            }
-                            ui.close();
-                        }
-                        ui.separator();
-                        if ui
-                            .button(moth_ui::tooltip(ui.ctx(), moth_ui::Text::Fit))
-                            .clicked()
-                        {
-                            actions.fit = true;
-                            ui.close();
-                        }
-                        ui.add_enabled_ui(board.idle(), |ui| {
-                            if ui
-                                .button(moth_ui::tooltip(ui.ctx(), moth_ui::Text::Undo))
-                                .clicked()
-                            {
-                                intents.push(Intent::Undo);
-                                ui.close();
-                            }
-                            if ui
-                                .button(moth_ui::tooltip(ui.ctx(), moth_ui::Text::Redo))
-                                .clicked()
-                            {
-                                intents.push(Intent::Redo);
-                                ui.close();
-                            }
-                            ui.separator();
-                            let enabled = !board.scene.is_empty();
-                            ui.add_enabled_ui(enabled, |ui| {
-                                let mut items: Vec<_> = board
-                                    .scene
-                                    .items()
-                                    .filter(|i| {
-                                        board.selection.is_empty()
-                                            || board.selection.contains(&i.id)
-                                    })
-                                    .collect();
-                                items.sort_unstable_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
-                                if ui
-                                    .button(moth_ui::tooltip(ui.ctx(), moth_ui::Text::FitSelection))
-                                    .clicked()
-                                {
-                                    intents.push(Intent::FitSelection);
-                                    ui.close();
-                                }
-                                ui.menu_button(moth_ui::text(moth_ui::Text::Arrange), |ui| {
-                                    for (label, mode) in [
-                                        (moth_ui::Text::Horizontal, arrange::Arrange::Horizontal),
-                                        (moth_ui::Text::Vertical, arrange::Arrange::Vertical),
-                                        (moth_ui::Text::Grid, arrange::Arrange::Grid),
-                                        (moth_ui::Text::Optimal, arrange::Arrange::Optimal),
-                                    ] {
-                                        if moth_ui::icons::labeled_button(
-                                            ui,
-                                            super::tools::layout_icon(mode),
-                                            &moth_ui::tooltip(ui.ctx(), label),
-                                            false,
-                                        )
-                                        .clicked()
-                                        {
-                                            intents.push(Intent::Commands(
-                                                tools.arrange(&mut items, mode),
-                                            ));
-                                            ui.close();
-                                        }
-                                    }
-                                });
-                                ui.menu_button(moth_ui::text(moth_ui::Text::Normalize), |ui| {
-                                    for (label, mode) in [
-                                        (moth_ui::Text::NormalizeWidth, arrange::Normalize::Width),
-                                        (
-                                            moth_ui::Text::NormalizeHeight,
-                                            arrange::Normalize::Height,
-                                        ),
-                                        (moth_ui::Text::NormalizeSize, arrange::Normalize::Size),
-                                        (moth_ui::Text::NormalizeArea, arrange::Normalize::Area),
-                                    ] {
-                                        if ui.button(moth_ui::tooltip(ui.ctx(), label)).clicked() {
-                                            intents.push(Intent::Commands(arrange::normalize(
-                                                &items, mode,
-                                            )));
-                                            ui.close();
-                                        }
-                                    }
-                                });
-                                for (label, quarters) in [
-                                    (moth_ui::Text::RotateCw, 1.),
-                                    (moth_ui::Text::RotateCcw, -1.),
-                                ] {
-                                    if ui.button(moth_ui::tooltip(ui.ctx(), label)).clicked() {
-                                        intents.push(Intent::Commands(super::transform_selection(
-                                            &board.scene,
-                                            &board.selection,
-                                            |transform| super::rotated(transform, quarters),
-                                        )));
-                                        ui.close();
-                                    }
-                                }
-                                for (label, axis) in [
-                                    (moth_ui::Text::FlipHorizontal, 0),
-                                    (moth_ui::Text::FlipVertical, 1),
-                                ] {
-                                    if ui.button(moth_ui::tooltip(ui.ctx(), label)).clicked() {
-                                        intents.push(Intent::Commands(super::transform_selection(
-                                            &board.scene,
-                                            &board.selection,
-                                            |transform| super::mirrored(transform, axis),
-                                        )));
-                                        ui.close();
-                                    }
-                                }
-                                if ui
-                                    .button(moth_ui::tooltip(
-                                        ui.ctx(),
-                                        moth_ui::Text::ResetTransform,
-                                    ))
-                                    .clicked()
-                                {
-                                    intents.push(Intent::OriginalGeometry(
-                                        items.iter().map(|i| i.id).collect(),
-                                        moth_platform::export::Geometry::All,
-                                    ));
-                                    ui.close();
-                                }
-                                if ui
-                                    .add_enabled(
-                                        !board.selection.is_empty(),
-                                        egui::Button::new(moth_ui::tooltip(
-                                            ui.ctx(),
-                                            moth_ui::Text::Delete,
-                                        )),
-                                    )
-                                    .clicked()
-                                {
-                                    intents.push(Intent::Commands(
-                                        items
-                                            .iter()
-                                            .map(|i| moth_scene::Command::Remove(i.id))
-                                            .collect(),
-                                    ));
-                                    ui.close();
-                                }
-                            });
-                        });
+                        super::surfaces::menu(
+                            ui,
+                            super::surfaces::CONTEXT_MENU,
+                            enabled,
+                            registry,
+                            &mut intents,
+                        )
                     });
                 }
                 // Double-click edits a note in place, or creates one on empty canvas.
@@ -508,12 +392,16 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                         });
                 }
             }
-            if !board.scene.is_empty() && !overlay {
-                let tool = moth_ui::canvas::tools(ui.ctx(), view.viewport, &mut view.pan);
-                actions.paste |= tool.paste;
-                actions.fit |= tool.fit;
-                actions.open |= tool.open;
-                actions.overlay |= tool.overlay;
+            if !overlay {
+                intents.extend(super::surfaces::toolbar(
+                    ui.ctx(),
+                    view.viewport,
+                    enabled,
+                    registry,
+                    view.camera.zoom,
+                    view.pan,
+                ));
+
                 if let Some(bounds) = board.scene.bounds() {
                     let normalize = |x: f32, y: f32| {
                         egui::pos2(
@@ -565,8 +453,8 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
             {
                 ui.painter().rect_stroke(
                     egui::Rect::from_two_pos(egui::pos2(a[0], a[1]), egui::pos2(b[0], b[1])),
-                    0.,
-                    egui::Stroke::new(1., moth_ui::ACCENT),
+                    moth_ui::tokens(ui.ctx()).radius_none as f32,
+                    egui::Stroke::new(1., moth_ui::tokens(ui.ctx()).accent),
                     egui::StrokeKind::Inside,
                 );
             }
@@ -596,7 +484,12 @@ fn outline(
     } else {
         ui.painter().add(egui::Shape::closed_line(
             vec![corners[0], corners[1], corners[3], corners[2]],
-            egui::Stroke::new(1., moth_ui::ACCENT.gamma_multiply(hover * 0.65)),
+            egui::Stroke::new(
+                1.,
+                moth_ui::tokens(ui.ctx())
+                    .accent
+                    .gamma_multiply(hover * 0.65),
+            ),
         ));
     }
     ui.set_opacity(opacity);
@@ -623,12 +516,17 @@ fn draw_note(ui: &egui::Ui, camera: &Camera, item: &Item) {
     // so an imported note scaled by BeeRef's `scale` renders at that size.
     let font_size = (item.rect.height / (rows * 1.3)).max(4.0) * zoom;
     let font = egui::FontId::proportional(font_size);
-    let color = egui::Color32::from_rgb(224, 226, 231).gamma_multiply(item.transform.opacity);
-    let fill = egui::Color32::from_rgba_unmultiplied(39, 42, 50, 235)
+    let color = moth_ui::tokens(ui.ctx())
+        .text
+        .gamma_multiply(item.transform.opacity);
+    let fill = moth_ui::tokens(ui.ctx())
+        .note_fill()
         .gamma_multiply(item.transform.opacity);
     let stroke = egui::Stroke::new(
         1.,
-        egui::Color32::from_rgb(48, 52, 60).gamma_multiply(item.transform.opacity),
+        moth_ui::tokens(ui.ctx())
+            .border
+            .gamma_multiply(item.transform.opacity),
     );
     let rotation = item.transform.rotation;
 
@@ -639,9 +537,14 @@ fn draw_note(ui: &egui::Ui, camera: &Camera, item: &Item) {
             egui::pos2(p[0], p[1]),
             egui::vec2(item.rect.width * zoom, item.rect.height * zoom),
         );
-        ui.painter().rect_filled(card, 4. * zoom, fill);
         ui.painter()
-            .rect_stroke(card, 4. * zoom, stroke, egui::StrokeKind::Inside);
+            .rect_filled(card, moth_ui::tokens(ui.ctx()).radius_s as f32 * zoom, fill);
+        ui.painter().rect_stroke(
+            card,
+            moth_ui::tokens(ui.ctx()).radius_s as f32 * zoom,
+            stroke,
+            egui::StrokeKind::Inside,
+        );
         let mut y = p[1];
         for line in text.lines() {
             ui.painter().text(
@@ -683,7 +586,7 @@ fn draw_note(ui: &egui::Ui, camera: &Camera, item: &Item) {
 pub(super) fn measure_note(ctx: &egui::Context, text: &str) -> [f32; 2] {
     let font_size = moth_scene::NOTE_FONT_SIZE;
     let font = egui::FontId::proportional(font_size);
-    let color = egui::Color32::WHITE;
+    let color = moth_ui::tokens(ctx).text;
     let mut width = 0.0f32;
     let mut lines = 0usize;
     for line in text.lines() {
@@ -707,8 +610,11 @@ pub(super) fn preload_cover(
 ) {
     // Called with the root UI after the canvas panel: the canvas images are drawn below
     // egui, so this opaque rect hides them while windows such as Settings stay above it.
-    ui.painter()
-        .rect_filled(viewport, 0., ui.visuals().panel_fill);
+    ui.painter().rect_filled(
+        viewport,
+        moth_ui::tokens(ui.ctx()).radius_none as f32,
+        ui.visuals().panel_fill,
+    );
     let width = viewport.width().clamp(1., 360.);
     egui::Area::new(egui::Id::new("preload_progress"))
         .order(egui::Order::Foreground)

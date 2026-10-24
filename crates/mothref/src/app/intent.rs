@@ -18,8 +18,6 @@ pub(super) enum Intent {
     Action(super::bindings::Action),
     /// Commit the locally laid-out canvas before applying its user actions.
     View(super::document::View),
-    /// Toggle the board tools window.
-    ToggleTools,
     /// Acknowledge the inline editor focus request.
     NoteFocused,
     /// Acknowledge the save-path widget focus request.
@@ -31,8 +29,6 @@ pub(super) enum Intent {
     Paste,
     /// Fit the camera to the whole board immediately.
     Fit,
-    /// Defer a fit until the canvas lays out next frame.
-    NeedsFit,
     /// Relative zoom from buttons and shortcuts.
     Zoom(f32),
     /// Exact scale replaces any pending animated zoom target.
@@ -105,14 +101,14 @@ pub(super) enum Intent {
     ResetCamera,
     /// Step selection focus to the previous/next image.
     Focus(i32),
+    /// Open a schema row found through command search.
+    SettingsRow(usize),
     /// Persist changed preferences and re-apply the theme.
     PreferencesDirty,
     /// Dismiss the pending arrangement prompt without arranging.
     DismissArrangePrompt,
     /// Toggle the focus-return camera for an item, fitting to it on first focus.
     FocusItem(Uuid),
-    /// Sync the per-tab lock and grayscale view flags from the tools panel.
-    SetViewFlags { locked: bool, grayscale: bool },
     /// Dismiss the recovery browser without opening a board.
     DismissRecovery,
 }
@@ -120,11 +116,14 @@ pub(super) enum Intent {
 /// Converts the shared chrome action set into intents in application order.
 pub(super) fn intents_from_actions(actions: Actions) -> Vec<Intent> {
     let mut intents = Vec::new();
+    if actions.settings {
+        intents.push(Intent::Action(super::bindings::Action::Settings));
+    }
     if actions.paste {
-        intents.push(Intent::Paste);
+        intents.push(Intent::Action(super::bindings::Action::Paste));
     }
     if actions.fit {
-        intents.push(Intent::Fit);
+        intents.push(Intent::Action(super::bindings::Action::Fit));
     }
     if actions.zoom > 0. {
         intents.push(Intent::Zoom(actions.zoom));
@@ -133,31 +132,31 @@ pub(super) fn intents_from_actions(actions: Actions) -> Vec<Intent> {
         intents.push(Intent::ZoomTo(zoom));
     }
     if actions.home {
-        intents.push(Intent::Home);
+        intents.push(Intent::Action(super::bindings::Action::Library));
     }
     if actions.new {
-        intents.push(Intent::New);
+        intents.push(Intent::Action(super::bindings::Action::New));
     }
     if actions.open {
-        intents.push(Intent::Open);
+        intents.push(Intent::Action(super::bindings::Action::Open));
     }
     if actions.save {
-        intents.push(Intent::Save);
+        intents.push(Intent::Action(super::bindings::Action::Save));
     }
     if actions.undo {
-        intents.push(Intent::Undo);
+        intents.push(Intent::Action(super::bindings::Action::Undo));
     }
     if actions.redo {
-        intents.push(Intent::Redo);
+        intents.push(Intent::Action(super::bindings::Action::Redo));
     }
     if actions.overlay {
-        intents.push(Intent::Overlay);
+        intents.push(Intent::Action(super::bindings::Action::Overlay));
     }
     if let Some(target) = actions.pin_choice {
         intents.push(Intent::PinChoice(target));
     }
     if actions.pin {
-        intents.push(Intent::Pin);
+        intents.push(Intent::Action(super::bindings::Action::Pin));
     }
     if let Some(index) = actions.tab {
         intents.push(Intent::Tab(index));
@@ -166,16 +165,16 @@ pub(super) fn intents_from_actions(actions: Actions) -> Vec<Intent> {
         intents.push(Intent::CloseTab(index));
     }
     if actions.close {
-        intents.push(Intent::CloseWindow);
+        intents.push(Intent::Action(super::bindings::Action::CloseWindow));
     }
     if actions.drag {
         intents.push(Intent::Drag);
     }
     if actions.minimize {
-        intents.push(Intent::Minimize);
+        intents.push(Intent::Action(super::bindings::Action::Minimize));
     }
     if actions.maximize {
-        intents.push(Intent::Maximize);
+        intents.push(Intent::Action(super::bindings::Action::Maximize));
     }
     if let Some(language) = actions.language {
         intents.push(Intent::Language(language));

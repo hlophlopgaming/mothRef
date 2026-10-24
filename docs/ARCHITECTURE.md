@@ -204,7 +204,7 @@ two sessions in this process from writing the same canonical native path.
 
 
 The application boundary is `App → {Shell, Workspace, LibraryScreen, Modal,
-Tools, InputState}`. `App` coordinates the native event loop; these types keep
+Settings, SettingsWindow, Tools, InputState}`. `App` coordinates the native event loop; these types keep
 window/GPU state, board lifetimes, library widgets/textures, dialogs, tool drafts
 and pointer state separate.
 
@@ -214,11 +214,23 @@ flowchart LR
     App --> Workspace
     App --> LibraryScreen
     App --> Modal
+    App --> Settings
+    App --> SettingsWindow
     App --> Tools
     App --> InputState
     Workspace --> Document
     Document --> View
 ```
+
+`Settings` owns persisted preferences. One schema generates preference keys,
+validation, settings rows, defaults and command-search results. Its window is
+separate from per-board transient editors. `surfaces.rs` defines ordered action
+lists for the bottom toolbar, selection bars and context menu; availability and
+effects come from `action_enabled` / `run_action`. UI modules build no scene
+commands. `Tools` retains only editor/picker drafts, arrangement state and
+read-only diagnostic snapshots; the Board tools window is removed. Theme colors
+and surface metrics come from active `moth-ui::Tokens` in both light and dark
+sets. See [implementation and validation notes](plans/ui-architecture/VALIDATION.md).
 
 The frame path is **event → Gesture/Intent → apply → render**. `InputState`
 adapts native pointers and recognizes gestures. `chrome`, `canvas` and
@@ -229,7 +241,7 @@ mutating the document inside the UI pass. `SaveAndClose` arms the close and
 queues a save; only a successful storage completion permits journal discard.
 
 `Workspace::{activate,new_board,open_in_tab,request_close,finish_close}` return
-`TabChange`. `App::reset_board_ui` reloads the tab's tools, clears library/editor
+`TabChange`. `App::reset_board_ui` resets transient editors and restores tab view flags, clears library/editor
 and gesture state, and clears texture residency after a switch. `Workspace::pump`
 drains all tab workers, applies journal acknowledgments to their owning scenes,
 and returns UI events. Active decoded images go straight to `Shell::upload`

@@ -573,6 +573,35 @@ pub fn reorder(
     }
     out
 }
+pub(super) fn scale(items: &[&moth_scene::Item], factor: f32) -> Vec<Command> {
+    if !factor.is_finite() || factor <= 0. {
+        return Vec::new();
+    }
+    let Some(first) = items.first() else {
+        return Vec::new();
+    };
+    let commands: Vec<_> = items
+        .iter()
+        .map(|item| Command::SetRect {
+            id: item.id,
+            rect: Rect {
+                x: first.rect.x + (item.rect.x - first.rect.x) * factor,
+                y: first.rect.y + (item.rect.y - first.rect.y) * factor,
+                width: item.rect.width * factor,
+                height: item.rect.height * factor,
+            },
+        })
+        .collect();
+    if commands
+        .iter()
+        .all(|c| matches!(c,Command::SetRect{rect,..} if rect.valid()))
+    {
+        commands
+    } else {
+        Vec::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

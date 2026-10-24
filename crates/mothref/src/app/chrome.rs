@@ -71,7 +71,6 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
                 .window_capabilities(ctx.window)
                 .on_top,
         },
-        &mut ctx.board.view.pan,
         &tab_labels,
     );
     let opacity = ui.ctx().animate_bool_with_time(

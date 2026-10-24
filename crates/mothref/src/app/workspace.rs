@@ -13,6 +13,7 @@ pub(super) enum Event {
     TabChanged,
     Opened,
     Preferences(std::collections::BTreeMap<String, String>),
+    Language(moth_ui::Locale),
 }
 pub(super) struct Pump<'a> {
     pub format: moth_io::ImageFormat,
@@ -454,7 +455,7 @@ impl Workspace {
                 }
                 Completion::Settings(code) => {
                     if let Some(language) = moth_ui::Locale::from_code(&code) {
-                        moth_ui::set_locale(language);
+                        pump.events.push(Event::Language(language));
                     }
                 }
                 done => {

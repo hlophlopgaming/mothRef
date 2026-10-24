@@ -1,10 +1,53 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![forbid(unsafe_code)]
 //! Shared theme and localized M0 controls.
-use egui::{Color32, Context};
+use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Settings section for bindings and input.
+    KeysSettings,
+    /// Localized UI control.
+    UnsavedChip,
+    /// Localized UI control.
+    EditNote,
+
+    /// Localized UI control.
+    GeneralSettings,
+    /// Localized UI control.
+    AppearanceSettings,
+    /// Localized UI control.
+    CanvasSettings,
+    /// Localized UI control.
+    AddingSettings,
+    /// Localized UI control.
+    WindowSettings,
+    /// Localized UI control.
+    PerformanceSettings,
+    /// Localized UI control.
+    IntegrationsSettings,
+    /// Localized UI control.
+    DeveloperSettings,
+    /// Localized UI control.
+    ResetSection,
+    /// Localized UI control.
+    Insert,
+    /// Localized UI control.
+    More,
+    /// Localized UI control.
+    EditItem,
+    /// Localized UI control.
+    ArrangeOptions,
+    /// Localized UI control.
+    ScaleApply,
+    /// Localized UI control.
+    ApplyItem,
+    /// Localized UI control.
+    CancelItem,
+    /// Localized UI control.
+    Images,
+    /// Localized UI control.
+    Language,
     /// Localized control.
     CheatSheet,
     /// Localized control.
@@ -271,8 +314,6 @@ pub enum Text {
     ZoomOut,
     /// Editable camera percentage.
     Zoom,
-    /// Localized Tools control.
-    Tools,
     /// Localized Frame control.
     Frame,
     /// Localized Rotation control.
@@ -545,12 +586,11 @@ pub enum Text {
 mod localization;
 pub use localization::{Locale, locale, set_locale, text};
 
-/// Color tokens are shared by the canvas overlays and the egui theme.
-pub const BACKGROUND: Color32 = Color32::from_rgb(17, 19, 23);
-/// Selection color remains visible over both dark and bright images.
-pub const ACCENT: Color32 = Color32::from_rgb(181, 206, 143);
-/// Applies one house theme without embedding colors in individual controls.
-pub fn theme(ctx: &Context) {
+/// House theme tokens and application.
+pub mod theme;
+pub use theme::{Tokens, tokens};
+/// Installs bundled fonts and the chosen house theme.
+pub fn theme(ctx: &Context, tokens: &Tokens) {
     let mut fonts = egui::FontDefinitions::empty();
     fonts.font_data.insert(
         "Hack".into(),
@@ -564,39 +604,15 @@ pub fn theme(ctx: &Context) {
             "../fonts/NotoSans-Regular.ttf"
         ))),
     );
-    fonts
-        .families
-        .insert(egui::FontFamily::Proportional, vec!["Noto Sans".into()]);
+    fonts.families.insert(
+        egui::FontFamily::Proportional,
+        vec!["Noto Sans".into(), "Hack".into()],
+    );
     fonts
         .families
         .insert(egui::FontFamily::Monospace, vec!["Hack".into()]);
     ctx.set_fonts(fonts);
-    let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
-    style.visuals = egui::Visuals::dark();
-    style.visuals.panel_fill = Color32::from_rgb(31, 34, 40);
-    style.visuals.window_fill = Color32::from_rgb(31, 34, 40);
-    style.visuals.window_stroke = egui::Stroke::new(1., Color32::from_rgb(48, 52, 60));
-    style.visuals.window_corner_radius = egui::CornerRadius::same(14);
-    style.visuals.override_text_color = Some(Color32::from_rgb(224, 226, 231));
-    style.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(37, 41, 48);
-    style.visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(49, 55, 61);
-    style.visuals.selection.bg_fill = Color32::from_rgb(61, 76, 45);
-    style.visuals.selection.stroke = egui::Stroke::new(1., ACCENT);
-    style.spacing.button_padding = egui::vec2(12., 8.);
-    style.spacing.item_spacing = egui::vec2(8., 8.);
-    style.spacing.interact_size = egui::vec2(36., 36.);
-    style.visuals.widgets.noninteractive.bg_stroke =
-        egui::Stroke::new(1., Color32::from_rgb(47, 51, 59));
-    for widget in [
-        &mut style.visuals.widgets.inactive,
-        &mut style.visuals.widgets.hovered,
-        &mut style.visuals.widgets.active,
-    ] {
-        widget.corner_radius = egui::CornerRadius::same(8);
-    }
-    style.animation_time = 0.12;
-    ctx.set_style_of(egui::Theme::Dark, style);
-    ctx.set_theme(egui::Theme::Dark);
+    theme::apply(ctx, tokens);
 }
 /// Canvas overlays and navigation widgets.
 pub mod canvas;
@@ -606,11 +622,6 @@ pub mod icons;
 /// Responsive board catalog.
 pub mod library;
 pub use chrome::{Actions, Status, Tab, toolbar};
-/// Raised surfaces use the same neutral tone throughout the app.
-pub const PANEL: Color32 = Color32::from_rgb(31, 34, 40);
-/// Secondary metadata recedes without disappearing.
-pub const MUTED: Color32 = Color32::from_rgb(120, 125, 136);
-
 /// Centers the import entry point while keeping it usable on narrow windows.
 pub fn empty_board(ui: &mut egui::Ui) -> Actions {
     let bounds = ui.max_rect();
@@ -621,8 +632,8 @@ pub fn empty_board(ui: &mut egui::Ui) -> Actions {
     let rect = egui::Rect::from_center_size(bounds.center(), size);
     ui.painter().rect_stroke(
         rect,
-        14.,
-        egui::Stroke::new(1., Color32::from_rgb(59, 63, 72)),
+        crate::tokens(ui.ctx()).radius_l as f32,
+        egui::Stroke::new(1., crate::tokens(ui.ctx()).empty_border),
         egui::StrokeKind::Inside,
     );
     let mut actions = Actions::default();
@@ -630,9 +641,13 @@ pub fn empty_board(ui: &mut egui::Ui) -> Actions {
         ui.vertical_centered(|ui| {
             ui.add_space((size.y * 0.17).max(0.));
             let (icon, _) = ui.allocate_exact_size(egui::vec2(38., 32.), egui::Sense::hover());
-            let stroke = egui::Stroke::new(1.5, Color32::from_rgb(113, 119, 132));
-            ui.painter()
-                .rect_stroke(icon, 3., stroke, egui::StrokeKind::Inside);
+            let stroke = egui::Stroke::new(1.5, crate::tokens(ui.ctx()).empty_icon);
+            ui.painter().rect_stroke(
+                icon,
+                crate::tokens(ui.ctx()).radius_picture as f32,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
             ui.painter()
                 .circle_stroke(icon.min + egui::vec2(11., 10.), 3., stroke);
             ui.painter().line_segment(
@@ -649,11 +664,11 @@ pub fn empty_board(ui: &mut egui::Ui) -> Actions {
                 ],
                 stroke,
             );
-            ui.add_space(20.);
+            ui.add_space(crate::tokens(ui.ctx()).space_content as f32);
             ui.label(text(Text::Empty));
-            ui.add_space(4.);
+            ui.add_space(crate::tokens(ui.ctx()).space_xs as f32);
             ui.small(text(Text::Volatile));
-            ui.add_space(20.);
+            ui.add_space(crate::tokens(ui.ctx()).space_content as f32);
             ui.horizontal(|ui| {
                 ui.add_space(((ui.available_width() - 230.) / 2.).max(0.));
                 actions.paste = ui
@@ -698,6 +713,18 @@ pub fn tooltip(ctx: &Context, key: Text) -> String {
 mod tests {
     use super::*;
     #[test]
+    fn proportional_font_falls_back_for_menu_and_change_arrows() {
+        let ctx = Context::default();
+        theme(&ctx, &Tokens::DARK);
+        ctx.run_ui(Default::default(), |ui| {
+            ui.fonts_mut(|fonts| {
+                assert!(fonts.has_glyphs(&egui::FontId::proportional(14.), "→▸▾›"))
+            });
+        })
+        .textures_delta
+        .clear();
+    }
+    #[test]
     fn shortcut_labels_follow_rebinding_and_unbinding() {
         let ctx = Context::default();
         set_shortcuts(&ctx, vec![(Text::Save, "Alt+F2".into())]);
@@ -708,7 +735,25 @@ mod tests {
     #[test]
     fn every_text_key_has_a_non_empty_translation_and_switches_locale() {
         let keys = [
-            Text::Tools,
+            Text::Settings,
+            Text::GeneralSettings,
+            Text::AppearanceSettings,
+            Text::CanvasSettings,
+            Text::AddingSettings,
+            Text::WindowSettings,
+            Text::PerformanceSettings,
+            Text::IntegrationsSettings,
+            Text::DeveloperSettings,
+            Text::ResetSection,
+            Text::Insert,
+            Text::More,
+            Text::EditItem,
+            Text::ArrangeOptions,
+            Text::ScaleApply,
+            Text::ApplyItem,
+            Text::CancelItem,
+            Text::Images,
+            Text::Language,
             Text::Frame,
             Text::Rotation,
             Text::Content,
@@ -943,7 +988,7 @@ mod tests {
     fn window_controls_reveal_without_hover_through_keyboard() {
         let draw = |events| {
             let ctx = Context::default();
-            theme(&ctx);
+            theme(&ctx, &Tokens::DARK);
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
@@ -954,7 +999,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    toolbar(ui, status(false), &mut false, &[]);
+                    toolbar(ui, status(false), &[]);
                 },
             );
             output.textures_delta.clear();
@@ -983,22 +1028,33 @@ mod tests {
         );
     }
     #[test]
-    fn persistence_status_distinguishes_saved_journaled_and_untitled() {
+    fn persistence_chip_distinguishes_saved_and_unsaved_documents() {
         for (path, dirty, expected) in [
             ("board.moth", false, ["saved", "сохранено"]),
-            ("board.moth", true, ["journaled", "в журнале"]),
-            ("", false, ["recovery on", "восстановление включено"]),
+            ("board.moth", true, ["Not saved", "Не сохранено"]),
+            ("", false, ["Not saved", "Не сохранено"]),
         ] {
             let ctx = Context::default();
+            theme(&ctx, &Tokens::DARK);
+            for _ in 0..2 {
+                ctx.run_ui(Default::default(), |ui| {
+                    let mut state = status(false);
+                    state.path = path;
+                    state.dirty = dirty;
+                    toolbar(ui, state, &[]);
+                })
+                .textures_delta
+                .clear();
+            }
             let mut output = ctx.run_ui(Default::default(), |ui| {
                 let mut state = status(false);
                 state.path = path;
                 state.dirty = dirty;
-                toolbar(ui, state, &mut false, &[]);
+                toolbar(ui, state, &[]);
             });
             output.textures_delta.clear();
             assert!(output.shapes.iter().any(|shape| {
-                matches!(&shape.shape, egui::Shape::Text(t) if expected.contains(&t.galley.text()))
+                matches!(&shape.shape, egui::Shape::Text(t) if expected.iter().any(|prefix|t.galley.text().starts_with(prefix)))
             }));
         }
     }
@@ -1006,11 +1062,11 @@ mod tests {
     fn toolbar_does_not_flash_while_journaling() {
         let draw = |idle| {
             let ctx = Context::default();
-            theme(&ctx);
+            theme(&ctx, &Tokens::DARK);
             let mut output = ctx.run_ui(Default::default(), |ui| {
                 let mut state = status(false);
                 state.idle = idle;
-                toolbar(ui, state, &mut false, &[]);
+                toolbar(ui, state, &[]);
             });
             output.textures_delta.clear();
             format!("{:?}", output.shapes)
@@ -1035,14 +1091,14 @@ mod tests {
                     })
                     .collect();
                 let ctx = Context::default();
-                theme(&ctx);
+                theme(&ctx, &Tokens::DARK);
                 let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
                         ..Default::default()
                     },
                     |ui| {
-                        toolbar(ui, status(library), &mut false, &tabs);
+                        toolbar(ui, status(library), &tabs);
                         if library {
                             library::Library::default().show(ui, &[]);
                         } else {
@@ -1072,7 +1128,7 @@ mod tests {
     #[test]
     fn idle_canvas_furniture_does_not_request_continuous_frames() {
         let ctx = Context::default();
-        theme(&ctx);
+        theme(&ctx, &Tokens::DARK);
         let mut delay = std::time::Duration::ZERO;
         for frame in 0..30 {
             let mut output = ctx.run_ui(
@@ -1085,10 +1141,9 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    toolbar(ui, status(false), &mut false, &[]);
+                    toolbar(ui, status(false), &[]);
                     egui::CentralPanel::default().show(ui, |ui| {
                         let viewport = ui.max_rect();
-                        canvas::tools(ui.ctx(), viewport, &mut false);
                         canvas::minimap(
                             ui.ctx(),
                             viewport,

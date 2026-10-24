@@ -32,7 +32,7 @@ impl Overlay {
             )?,
         );
         let ctx = egui::Context::default();
-        moth_ui::theme(&ctx);
+        moth_ui::theme(&ctx, &moth_ui::Tokens::DARK);
         let repaint = wake.clone();
         ctx.set_request_repaint_callback(move |_| repaint());
         let gpu = pollster::block_on(Gpu::new(window.clone(), wake.clone(), software))?;
@@ -95,8 +95,9 @@ impl Overlay {
                 self.wake.clone(),
                 self.software,
             ))?;
+            let tokens = moth_ui::tokens(&self.ctx);
             self.ctx = egui::Context::default();
-            moth_ui::theme(&self.ctx);
+            moth_ui::theme(&self.ctx, &tokens);
             let repaint = self.wake.clone();
             self.ctx.set_request_repaint_callback(move |_| repaint());
             self.state = egui_winit::State::new(
@@ -123,7 +124,11 @@ impl Overlay {
             .ctx
             .run_ui(self.state.take_egui_input(&self.window), |ui| {
                 egui::CentralPanel::default()
-                    .frame(egui::Frame::new().fill(moth_ui::PANEL).inner_margin(8))
+                    .frame(
+                        egui::Frame::new()
+                            .fill(moth_ui::tokens(&self.ctx).surface)
+                            .inner_margin(moth_ui::tokens(&self.ctx).space_s as i8),
+                    )
                     .show(ui, |ui| {
                         ui.horizontal_wrapped(|ui| {
                             if icons::button(ui, Icon::Pan, text(Text::Pan), false).drag_started() {
@@ -133,7 +138,7 @@ impl Overlay {
                                 ui.label(
                                     egui::RichText::new(text(Text::Opacity))
                                         .size(10.)
-                                        .color(moth_ui::MUTED),
+                                        .color(moth_ui::tokens(&self.ctx).text_muted),
                                 );
                                 ui.add(
                                     egui::Slider::new(&mut self.opacity, 0.1..=1.)

@@ -180,13 +180,17 @@ Board logic, the format and the renderer are not touched. Step plans for agents:
 Each step is one PR, keeps behavior and appearance unchanged unless it says
 otherwise, and leaves the app shippable.
 
-- [ ] **Step 1 — Theme tokens.** One `moth-ui` theme module owns every color, radius and spacing value as named tokens, with a dark set (today's look) and a light set; `theme()` takes the active set; no `Color32` literal remains outside the module. Appearance unchanged.
-- [ ] **Step 2 — Buttons run actions.** Every button in the Board tools window, the toolbar, the canvas context menu and modals runs a registered `Action` through `Intent::Action`; missing actions are added to `app/bindings.rs`; no surface builds a `Command`. Each action gains an icon id. Behavior unchanged.
-- [ ] **Step 3 — Settings model and window.** Move every persisted preference out of `Tools` into one `Settings` struct with a schema (section, label, kind, default, range); persistence, a settings window opened by Ctrl/⌘+, and settings search in the palette are built from the schema. The settings part of Board tools is removed. Sections: General, Appearance, Canvas and navigation, Adding images, Window and overlay, Performance and memory, Keys and mouse, Integrations, For developers.
-- [ ] **Step 4 — Surfaces as lists.** A bottom toolbar (tool group, Insert menu, undo/redo, fit, zoom), a selection bar with a list per item type, and the canvas context menu are built from ordered action lists; diagnostics leave the status bar for Settings › For developers.
-- [ ] **Step 5 — Remove Board tools.** Delete the window and `Intent::ToggleTools`; every former control is reachable from a surface list, the palette and a touch path.
+- [x] **Step 1 — Theme tokens.** One `moth-ui` theme module owns every color, radius and spacing value as named tokens, with a dark set (today's look) and a light set; `theme()` takes the active set; no `Color32` literal remains outside the module. Appearance unchanged.
+- [x] **Step 2 — Buttons run actions.** Every button in the Board tools window, the toolbar, the canvas context menu and modals runs a registered `Action` through `Intent::Action`; missing actions are added to `app/bindings.rs`; no surface builds a `Command`. Each action gains an icon id. Behavior unchanged.
+- [x] **Step 3 — Settings model and window.** Move every persisted preference out of `Tools` into one `Settings` struct with a schema (section, label, kind, default, range); persistence, a settings window opened by Ctrl/⌘+, and settings search in the palette are built from the schema. The settings part of Board tools is removed. Sections: General, Appearance, Canvas and navigation, Adding images, Window and overlay, Performance and memory, Keys and mouse, Integrations, For developers.
+- [x] **Step 4 — Surfaces as lists.** A bottom toolbar (tool group, Insert menu, undo/redo, fit, zoom), a selection bar with a list per item type, and the canvas context menu are built from ordered action lists; diagnostics leave the status bar for Settings › For developers.
+- [x] **Step 5 — Remove Board tools.** Delete the window and `Intent::ToggleTools`; every former control is reachable from a surface list, the palette and a touch path.
 
 **Exit criteria:** no `Command` is built in UI code; no `Color32` literal outside the theme module; moving a button between surfaces is a one-line list change; the Board tools window is gone with no lost capability; headless UI screenshots of the board, library, settings and selection states are compared in CI.
+
+Implementation inventory and pending native/CI qualification:
+[UI refactor validation](docs/plans/ui-architecture/VALIDATION.md). The auxiliary
+minimap-thumbnail improvement remains a follow-up; no new image cache is added.
 
 ### M3 — Everyday usability, board conversion, window, overlay, browser
 

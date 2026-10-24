@@ -11,15 +11,15 @@ not redistributed here.
 `Space` = the screenshot's `Spc`. Drag combinations mean holding the listed keys
 while dragging. MothRef command shortcuts use Command on macOS instead of Ctrl.
 Entries marked **missing** or **partial** are requirements, not available shortcuts.
-An action being present in Tools does not mean its PureRef binding is implemented.
+An action being present in a menu does not mean its PureRef binding is implemented.
 
 ## Available MothRef controls
 
 | Task | Current control |
 | --- | --- |
-| Select / Hand tool | `V` / `H`; visible tool-rail buttons |
+| Select / Hand tool | `V` / `H`; bottom-toolbar buttons |
 | Pan | MMB-drag, Space+LMB-drag, or LMB-drag with Hand selected; two-contact touch pan |
-| Zoom | Wheel at cursor, toolbar `+` / `−`; pinch / continuous trackpad zoom |
+| Zoom | Wheel at cursor, bottom-toolbar `−` / percentage / `+`; pinch / continuous trackpad zoom |
 | Fit entire board | `Home`, Fit board button |
 | Fit selected group | Tap Space over the selection, or select images, double-click any selected image: fit the combined rotated bounds in both viewport dimensions with padding; double-click the same image again to return |
 | Focus one image | Double-click an image outside the selection |
@@ -30,13 +30,14 @@ An action being present in Tools does not mean its PureRef binding is implemente
 | Rotate / flip | `R` / `Shift+R`: ±90°; `Shift+H` / `Shift+V`: horizontal / vertical flip |
 | Reset all selected transforms | `Shift+0` |
 | Cancel drag | `Esc`; cancellation does not commit a move |
-| Create / edit note | Double-click empty canvas / an existing note; Add note in Tools |
+| Create / edit note | Double-click empty canvas / an existing note; Insert → Add note |
 | New / open / save board | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` |
 | Paste / undo / redo | `Ctrl+V` / `Ctrl+Z` / `Ctrl+Y` |
-| Duplicate / delete selection | `Ctrl+D` / `Delete`; visible Tools controls |
-| Command palette | `Ctrl+K` or Commands → Command palette; arrows, Enter, Esc |
-| Searchable shortcut cheat sheet | `/` or Help → Shortcut cheat sheet; all actions grouped by category, with current custom bindings |
-| Edit bindings | Commands → Keyboard and mouse bindings, or the button in the cheat sheet |
+| Duplicate / delete selection | `Ctrl+D` / `Delete`; selection-bar and context-menu controls |
+| Command palette | `Ctrl+K` or More actions → View → Command palette; arrows, Enter, Esc |
+| Searchable shortcut cheat sheet | `/` or More actions → View → Shortcut cheat sheet; all actions grouped by category, with current custom bindings |
+| Edit bindings | Settings → Keys and mouse → Keyboard and mouse bindings, or the button in the cheat sheet |
+| Settings | `Ctrl+,` / `Cmd+,`, or the visible Settings button; palette search also finds individual settings rows |
 | Zoom / 100% | `=` / `−`; bind Zoom to 100% in the editor |
 | Library / close tab / overlay | `Ctrl+L` / `Ctrl+W` / `Ctrl+T` |
 
@@ -45,18 +46,18 @@ modals and active drags. Single-shot actions do not repeat while held; nudges an
 zoom may repeat. A Space tap focuses the hovered item or the selected group;
 moving at least four logical screen points while Space is held commits to pan
 and suppresses focus on release. Escape and loss of window focus cancel the gesture.
-Visible Hand, zoom, fit, previous/next and Tools controls remain pen/touch alternatives.
+Visible Hand, zoom, fit, previous/next and menu controls remain pen/touch alternatives.
 
 ## Configure and preview bindings
 
-Open **Commands → Keyboard and mouse bindings** (also available from the `/` cheat sheet). Search by localized
+Open **Settings → Keys and mouse → Keyboard and mouse bindings** (also available from the `/` cheat sheet). Search by localized
 name or stable action ID. Each row shows an editable proposed chord and the current
 binding. Leave a chord empty to unbind it. `Cmd` is the portable Ctrl/Command
 modifier; `Shift`, `Alt`, `Super` (Windows/Linux), physical key names (`R`, `ArrowLeft`, `F2`, `Space`)
 and `Mouse1/2/3` (left/right/middle) compose exact chords. Examples:
 `Cmd+Shift+S`, `Alt+Mouse1`, `Space+Mouse1`. Keyboard actions require keys;
 drag actions require a mouse button, optionally with one held key.
-The existing wheel zoom/pan/off preference remains in Tools; touch pinch and
+The existing wheel zoom/pan/off preference lives in Settings → Canvas and navigation; touch pinch and
 trackpad streams retain their normalized device behavior.
 
 The preview lists all changes and conflicts before **Apply**. Duplicate chords
@@ -86,7 +87,7 @@ categorized Help cheat sheet uses the same registry and includes pointer gesture
 
 | Action | Screenshot binding | MothRef status / route |
 | --- | --- | --- |
-| Note | `Ctrl+N` | Add note in Tools / double-click empty canvas; **conflict:** Ctrl+N creates a board |
+| Note | `Ctrl+N` | Insert → Add note / double-click empty canvas; **conflict:** Ctrl+N creates a board |
 | Always on bottom | `Ctrl+Shift+B` | Missing; M3 window capability |
 | Always on top | `Ctrl+Shift+A` | Pin button; platform-dependent, defaults to `Ctrl+Shift+T` |
 | Arrange by addition | `Ctrl+Alt+A` | Tools arrange order: time added; no matching binding |
@@ -193,7 +194,9 @@ as shipped or authorizing all missing features now.
 - [Application input and intents](../crates/mothref/src/app.rs): keyboard dispatch,
   focus selection, camera fitting and command routing.
 - [Canvas](../crates/mothref/src/app/canvas.rs): double-click and context menus.
-- [Tools](../crates/mothref/src/app/tools.rs): arrangement, transforms and pickers.
+- [Surfaces](../crates/mothref/src/app/surfaces.rs): toolbar, selection bar and grouped context menu.
+- [Settings](../crates/mothref/src/app/settings.rs): persisted preferences and schema-driven settings window.
+- [Tools](../crates/mothref/src/app/tools.rs): transient geometry, arrangement, export and picker editors.
 - [UI tooltips](../crates/moth-ui/src/lib.rs): advertised bindings.
 
 This is a code audit, not a manual qualification of every listed interaction.

@@ -119,7 +119,7 @@ An **Android** app and a **web** version are planned too; the core is already wr
 
 | To do this | Use |
 | --- | --- |
-| Add images | Drop files, <kbd>Ctrl</kbd>+<kbd>V</kbd>, or **Paste image** |
+| Add images | Drop files, <kbd>Ctrl</kbd>+<kbd>V</kbd>, or **Insert → Paste** |
 | Pan | Middle-drag, <kbd>Space</kbd>+drag, or left-drag with the Hand tool (<kbd>H</kbd>) |
 | Zoom | Mouse wheel, pinch, or the <kbd>+</kbd> / <kbd>−</kbd> buttons |
 | Fit everything | <kbd>Home</kbd>, or tap <kbd>Space</kbd> with nothing selected |
@@ -127,7 +127,8 @@ An **Android** app and a **web** version are planned too; the core is already wr
 | Duplicate while dragging | <kbd>Alt</kbd>+drag |
 | Rotate / flip | <kbd>R</kbd> / <kbd>Shift</kbd>+<kbd>H</kbd>, <kbd>Shift</kbd>+<kbd>V</kbd> |
 | Command palette | <kbd>Ctrl</kbd>+<kbd>K</kbd> |
-| Edit bindings | <kbd>/</kbd> |
+| Settings / edit bindings | <kbd>Ctrl</kbd>+<kbd>,</kbd>; **Keys and mouse** |
+| Arrange / edit / export selection | Selection bar or **More actions**; context menu or command palette |
 
 On macOS, use <kbd>Cmd</kbd> instead of <kbd>Ctrl</kbd>. The full list, plus a side-by-side comparison with
 PureRef, is in [docs/SHORTCUTS.md](docs/SHORTCUTS.md).

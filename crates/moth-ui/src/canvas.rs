@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Lightweight canvas furniture uses screen rectangles, without retaining scene items.
-use super::{
-    icons::{self, Icon},
-    *,
-};
+use super::*;
 /// Adds visible handles around a possibly rotated frame, without implying that
 /// selection changed the source image.
 ///
@@ -13,10 +10,10 @@ pub fn selection(ui: &egui::Ui, corners: [egui::Pos2; 4]) {
     let [top_left, top_right, bottom_left, bottom_right] = corners;
     ui.painter().add(egui::Shape::closed_line(
         vec![top_left, top_right, bottom_right, bottom_left],
-        egui::Stroke::new(1., ACCENT),
+        egui::Stroke::new(1., crate::tokens(ui.ctx()).accent),
     ));
-    for across in 0..3u8 {
-        for down in 0..3u8 {
+    for across in [0, 2u8] {
+        for down in [0, 2u8] {
             if across == 1 && down == 1 {
                 continue;
             }
@@ -25,79 +22,19 @@ pub fn selection(ui: &egui::Ui, corners: [egui::Pos2; 4]) {
             let bottom = bottom_left.lerp(bottom_right, ratio(across));
             let handle =
                 egui::Rect::from_center_size(top.lerp(bottom, ratio(down)), egui::vec2(6., 6.));
-            ui.painter().rect_filled(handle, 0., BACKGROUND);
+            ui.painter().rect_filled(
+                handle,
+                crate::tokens(ui.ctx()).radius_none as f32,
+                crate::tokens(ui.ctx()).canvas,
+            );
             ui.painter().rect_stroke(
                 handle,
-                0.,
-                egui::Stroke::new(1., ACCENT),
+                crate::tokens(ui.ctx()).radius_none as f32,
+                egui::Stroke::new(1., crate::tokens(ui.ctx()).accent),
                 egui::StrokeKind::Inside,
             );
         }
     }
-}
-/// A floating tool rail leaves the whole canvas available for content.
-pub fn tools(ctx: &Context, viewport: egui::Rect, pan: &mut bool) -> Actions {
-    let mut a = Actions::default();
-    egui::Area::new(egui::Id::new("canvas_tools"))
-        .fixed_pos(viewport.left_top() + egui::vec2(12., 12.))
-        .show(ctx, |ui| {
-            // Separators fill the cross axis, so constrain it to the buttons.
-            let horizontal = viewport.height() < 360.;
-            let button_width = if ctx.content_rect().width() < 600. {
-                44.
-            } else {
-                36.
-            };
-            ui.set_max_width(if horizontal {
-                (viewport.width() - 24.).max(0.)
-            } else {
-                button_width + 10.
-            });
-            if horizontal {
-                ui.set_max_height(button_width + 10.);
-            }
-            egui::Frame::new()
-                .fill(ui.visuals().panel_fill)
-                .corner_radius(12)
-                .inner_margin(5)
-                .stroke(egui::Stroke::new(1., Color32::from_rgb(47, 51, 59)))
-                .show(ui, |ui| {
-                    let layout = if horizontal {
-                        egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true)
-                    } else {
-                        egui::Layout::top_down(egui::Align::Min)
-                    };
-                    ui.with_layout(layout, |ui| {
-                        if icons::button(ui, Icon::Select, &tooltip(ui.ctx(), Text::Select), !*pan)
-                            .clicked()
-                        {
-                            *pan = false;
-                        }
-                        if icons::button(ui, Icon::Pan, &tooltip(ui.ctx(), Text::Pan), *pan)
-                            .clicked()
-                        {
-                            *pan = true;
-                        }
-                        a.paste =
-                            icons::button(ui, Icon::Paste, &tooltip(ui.ctx(), Text::Paste), false)
-                                .clicked();
-                        a.open =
-                            icons::button(ui, Icon::Folder, &tooltip(ui.ctx(), Text::Open), false)
-                                .clicked();
-                        ui.separator();
-                        a.fit = icons::button(ui, Icon::Fit, &tooltip(ui.ctx(), Text::Fit), false)
-                            .clicked();
-                        a.overlay = icons::button(
-                            ui,
-                            Icon::Overlay,
-                            &tooltip(ui.ctx(), Text::Overlay),
-                            false,
-                        )
-                        .clicked();
-                    });
-                });
-        });
-    a
 }
 /// Draws bounded metadata samples and returns a normalized click for camera navigation.
 pub fn minimap(
@@ -116,8 +53,8 @@ pub fn minimap(
         .show(ctx, |ui| {
             egui::Frame::new()
                 .fill(ui.visuals().panel_fill)
-                .corner_radius(10)
-                .inner_margin(10)
+                .corner_radius(crate::tokens(ui.ctx()).radius_card)
+                .inner_margin(crate::tokens(ui.ctx()).space_badge as i8)
                 .show(ui, |ui| {
                     let (r, response) = ui.allocate_exact_size(
                         size - egui::vec2(20., 20.),
@@ -129,15 +66,15 @@ pub fn minimap(
                         ui.painter().rect_filled(
                             egui::Rect::from_min_max(transform(item.min), transform(item.max))
                                 .intersect(r),
-                            0.,
-                            Color32::from_rgb(69, 75, 82),
+                            crate::tokens(ui.ctx()).radius_none as f32,
+                            crate::tokens(ui.ctx()).minimap_item,
                         );
                     }
                     ui.painter().rect_stroke(
                         egui::Rect::from_min_max(transform(camera.min), transform(camera.max))
                             .intersect(r),
-                        0.,
-                        egui::Stroke::new(1., ACCENT),
+                        crate::tokens(ui.ctx()).radius_none as f32,
+                        egui::Stroke::new(1., crate::tokens(ui.ctx()).accent),
                         egui::StrokeKind::Inside,
                     );
                     if (response.clicked() || response.dragged())
@@ -156,14 +93,14 @@ pub fn minimap(
 /// Keeps selection measurements visible without retaining scene metadata.
 pub fn selection_badge(ctx: &Context, viewport: egui::Rect, count: usize, size: egui::Vec2) {
     egui::Area::new(egui::Id::new("selection_badge"))
-        .fixed_pos(viewport.center_bottom() - egui::vec2(0., 8.))
+        .fixed_pos(viewport.center_bottom() - egui::vec2(0., 76.))
         .pivot(egui::Align2::CENTER_BOTTOM)
         .interactable(false)
         .show(ctx, |ui| {
             egui::Frame::new()
                 .fill(ui.visuals().panel_fill)
-                .inner_margin(8)
-                .corner_radius(6)
+                .inner_margin(crate::tokens(ui.ctx()).space_s as i8)
+                .corner_radius(crate::tokens(ui.ctx()).radius_badge)
                 .show(ui, |ui| {
                     ui.label(format!(
                         "{} {} · {:.0} × {:.0}",
@@ -180,52 +117,6 @@ pub fn selection_badge(ctx: &Context, viewport: egui::Rect, count: usize, size: 
 mod tests {
     use super::*;
 
-    #[test]
-    fn tool_rail_stays_compact_across_canvas_sizes() {
-        let ctx = Context::default();
-        let mut pan = true;
-        for size in [
-            egui::vec2(1430., 720.),
-            egui::vec2(800., 300.),
-            egui::vec2(320., 240.),
-            egui::vec2(320., 720.),
-            egui::vec2(1430., 720.),
-        ] {
-            let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
-            let input = || egui::RawInput {
-                screen_rect: Some(viewport),
-                ..Default::default()
-            };
-            let mut output = ctx.run_ui(input(), |ui| {
-                tools(ui.ctx(), viewport, &mut pan);
-            });
-            output.textures_delta.clear();
-            let mut output = ctx.run_ui(input(), |ui| {
-                tools(ui.ctx(), viewport, &mut pan);
-            });
-            output.textures_delta.clear();
-            let rail = output
-                .shapes
-                .iter()
-                .find_map(|s| match &s.shape {
-                    egui::Shape::Rect(r) if r.corner_radius == egui::CornerRadius::same(12) => {
-                        Some(r.rect)
-                    }
-                    _ => None,
-                })
-                .expect("tool rail paints its frame");
-            if size.y >= 360. {
-                assert!(rail.width() < 80., "tool rail expanded to {rail:?}");
-                assert!(rail.height() < 360., "tool rail expanded to {rail:?}");
-            } else {
-                assert!(rail.height() < 120., "horizontal rail expanded to {rail:?}");
-                assert!(
-                    rail.width() <= size.x - 24.,
-                    "rail leaves viewport: {rail:?}"
-                );
-            }
-        }
-    }
     #[test]
     fn badge_reports_count_and_world_size() {
         let ctx = Context::default();
@@ -265,7 +156,10 @@ mod tests {
             [corners[0], corners[1], corners[3], corners[2]]
         );
         assert!(path.closed);
-        assert_eq!(path.fill, Color32::TRANSPARENT);
-        assert_eq!(path.stroke.color, egui::epaint::ColorMode::Solid(ACCENT));
+        assert_eq!(path.fill, egui::Color32::TRANSPARENT);
+        assert_eq!(
+            path.stroke.color,
+            egui::epaint::ColorMode::Solid(Tokens::DARK.accent)
+        );
     }
 }

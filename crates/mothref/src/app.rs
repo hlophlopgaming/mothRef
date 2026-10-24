@@ -53,9 +53,11 @@ mod library;
 mod modal;
 mod motion;
 mod overlay;
+mod settings;
 mod shell;
 mod shortcuts;
 mod snap;
+mod surfaces;
 mod tools;
 mod workspace;
 use document::Document;
@@ -69,6 +71,8 @@ pub struct App {
     cache_maintenance: moth_platform::lod_store::Maintenance,
     workspace: workspace::Workspace,
     tools: tools::Tools,
+    settings: settings::Settings,
+    settings_window: settings::SettingsWindow,
     shortcuts: shortcuts::Shortcuts,
     overlay: Option<overlay::Overlay>,
     pinned: bool,
@@ -124,6 +128,8 @@ impl App {
             cache_maintenance,
             workspace: workspace::Workspace::new(board, shell.wake()),
             tools: tools::Tools::default(),
+            settings: settings::Settings::default(),
+            settings_window: settings::SettingsWindow::default(),
             shortcuts: shortcuts::Shortcuts::default(),
             overlay: None,
             pinned: false,
@@ -254,14 +260,7 @@ impl App {
     }
 
     fn reset_board_ui(&mut self) {
-        let preferences = self
-            .tools
-            .preferences()
-            .into_iter()
-            .map(|(k, v)| (k.to_owned(), v))
-            .collect();
         self.tools = tools::Tools::default();
-        self.tools.load(&preferences);
         self.tools.locked = self.workspace.board.locked;
         self.tools.grayscale = self.workspace.board.grayscale;
         self.library_screen.cards.clear();
@@ -321,7 +320,7 @@ impl App {
     }
     /// Whether the board is hidden behind the full-resolution preload progress.
     fn covered_by_preload(&self) -> bool {
-        self.tools.performance_mode == moth_io::CacheMode::Full
+        self.settings.performance_mode == moth_io::CacheMode::Full
             && !self.workspace.library
             && !self.workspace.board.preload_ready
     }
@@ -484,7 +483,7 @@ impl App {
     fn adapt_gpu_budget(&mut self) {
         if self
             .cache_maintenance
-            .update(self.tools.open, self.tools.clear_disk_cache)
+            .update(self.settings_window.open, self.tools.clear_disk_cache)
         {
             self.tools.clear_disk_cache = false;
         }
@@ -492,7 +491,7 @@ impl App {
         self.tools.disk_cache_busy = self.cache_maintenance.busy;
         let available = self.memory.available();
         let cache = moth_io::LodCache::shared();
-        let mode = self.tools.performance_mode;
+        let mode = self.settings.performance_mode;
         if cache.mode() != mode {
             cache.set_mode(mode);
         }
@@ -501,7 +500,7 @@ impl App {
             cache.memory_bytes(),
             mode.uses_memory(),
         ));
-        cache.set_bake_mode(self.tools.bake_mode);
+        cache.set_bake_mode(self.settings.bake_mode);
         if let Some(gpu) = &self.shell.gpu {
             self.workspace
                 .board
@@ -518,7 +517,7 @@ impl App {
             let active = self.workspace.board.image_count > 0 || !self.workspace.board.idle();
             let limit = self
                 .tools
-                .vram_limit()
+                .vram_limit(&self.settings)
                 .unwrap_or(moth_render::TEXTURE_BUDGET);
             gpu.registry.set_hard_limit(limit);
             let ceiling = if gpu.kind == moth_platform::gpu::AdapterKind::Discrete {
@@ -559,13 +558,6 @@ impl App {
                 .as_ref()
                 .and_then(|rx| rx.try_recv().ok())
         {
-            if self.tools.vram_limit_mib == 0 {
-                self.workspace.board.message = format!(
-                    "{}. {}",
-                    tools::video_summary(&video),
-                    moth_ui::text(moth_ui::Text::VideoDetected)
-                );
-            }
             self.video = Some(video);
         }
         if self.tools.video != self.video {
@@ -617,9 +609,9 @@ impl App {
             format,
             cursor,
             fallback,
-            auto_arrange: self.tools.auto_arrange,
-            threshold: self.tools.threshold,
-            upload: &mut |image| self.shell.upload(image, self.tools.reduced_motion),
+            auto_arrange: self.settings.auto_arrange,
+            threshold: self.settings.threshold,
+            upload: &mut |image| self.shell.upload(image, self.settings.reduced_motion),
             events: Vec::new(),
         });
         self.adapt_gpu_budget();
@@ -627,18 +619,25 @@ impl App {
             match event {
                 workspace::Event::TabChanged => self.reset_board_ui(),
                 workspace::Event::Opened => self.editing = None,
+                workspace::Event::Language(language) => {
+                    self.settings.language = language;
+                    moth_ui::set_locale(language);
+                }
                 workspace::Event::Preferences(values) => {
-                    self.tools.load(&values);
+                    self.settings.load(&values);
                     if !self.shortcuts.registry.load(&values) {
                         self.workspace.board.message =
                             moth_ui::text(moth_ui::Text::InvalidBinding).into();
                     }
-                    self.shell.context().set_theme(if self.tools.dark {
-                        egui::Theme::Dark
-                    } else {
-                        egui::Theme::Light
-                    });
-                    self.shell.context().set_zoom_factor(self.tools.ui_scale);
+                    moth_ui::theme::apply(
+                        self.shell.context(),
+                        &if self.settings.dark {
+                            moth_ui::Tokens::DARK
+                        } else {
+                            moth_ui::Tokens::LIGHT
+                        },
+                    );
+                    self.shell.context().set_zoom_factor(self.settings.ui_scale);
                 }
             }
         }
@@ -727,8 +726,8 @@ impl App {
         let target = self.workspace.board.view.camera;
         if before.origin != target.origin || before.zoom != target.zoom {
             self.camera_motion
-                .transition(before, target, self.tools.reduced_motion);
-            if !self.tools.reduced_motion {
+                .transition(before, target, self.settings.reduced_motion);
+            if !self.settings.reduced_motion {
                 self.workspace.board.view.camera = before;
             }
             self.redraw();
@@ -750,7 +749,6 @@ impl App {
         match intent {
             Intent::Action(action) => self.run_action(action, event_loop),
             Intent::View(view) => self.workspace.board.view = view,
-            Intent::ToggleTools => self.tools.open = !self.tools.open,
             Intent::NoteFocused => {
                 if let Some(editing) = &mut self.editing {
                     editing.focus = false;
@@ -790,7 +788,7 @@ impl App {
                         self.workspace.board.view.viewport.center().y,
                     ],
                     factor,
-                    self.tools.reduced_motion || !self.tools.smooth_zoom,
+                    self.settings.reduced_motion || !self.settings.smooth_zoom,
                 );
                 self.redraw();
             }
@@ -882,6 +880,7 @@ impl App {
                 }
             }
             Intent::Language(language) => {
+                self.settings.language = language;
                 moth_ui::set_locale(language);
                 self.workspace
                     .persist(moth_platform::boards::Request::SaveSettings(
@@ -941,16 +940,16 @@ impl App {
                     arrange::arrange(
                         &items,
                         mode,
-                        self.tools.gap,
-                        arrange::FreeRectChoice::from_index(self.tools.arrange_choice),
-                        arrange::GuillotineSplit::from_index(self.tools.arrange_split),
+                        self.settings.gap,
+                        arrange::FreeRectChoice::from_index(self.settings.arrange_choice),
+                        arrange::GuillotineSplit::from_index(self.settings.arrange_split),
                     )
                 } else {
                     arrange::counted(
                         &items,
                         mode,
                         self.tools.layout_counts[mode as usize],
-                        self.tools.gap,
+                        self.settings.gap,
                     )
                 };
                 if !commands.is_empty() {
@@ -962,7 +961,6 @@ impl App {
             Intent::Export(target) => self
                 .workspace
                 .persist(moth_platform::boards::Request::Export(target)),
-            Intent::NeedsFit => self.workspace.board.view.needs_fit = true,
             Intent::ResetCamera => self.workspace.board.view.camera = Camera::default(),
             Intent::Focus(step) => {
                 let mut items: Vec<_> = self
@@ -984,18 +982,22 @@ impl App {
                     self.fit_selection();
                 }
             }
+            Intent::SettingsRow(index) => self.settings_window.open_row(index),
             Intent::PreferencesDirty => {
                 self.adapt_gpu_budget();
-                self.shell.context().set_theme(if self.tools.dark {
-                    egui::Theme::Dark
-                } else {
-                    egui::Theme::Light
-                });
-                self.shell.context().set_zoom_factor(self.tools.ui_scale);
+                moth_ui::theme::apply(
+                    self.shell.context(),
+                    &if self.settings.dark {
+                        moth_ui::Tokens::DARK
+                    } else {
+                        moth_ui::Tokens::LIGHT
+                    },
+                );
+                self.shell.context().set_zoom_factor(self.settings.ui_scale);
                 for tab in &mut self.workspace.tabs {
                     let values = std::collections::BTreeMap::from([(
                         "undo_limit".to_owned(),
-                        self.tools.undo_limit.to_string(),
+                        self.settings.undo_limit.to_string(),
                     )]);
                     if tab
                         .boards()
@@ -1010,7 +1012,7 @@ impl App {
                 }
                 self.workspace
                     .persist(moth_platform::boards::Request::Preferences(
-                        self.tools
+                        self.settings
                             .preferences()
                             .into_iter()
                             .map(|(k, v)| (k.to_owned(), v))
@@ -1042,10 +1044,7 @@ impl App {
                     self.fit_selection();
                 }
             }
-            Intent::SetViewFlags { locked, grayscale } => {
-                self.workspace.board.locked = locked;
-                self.workspace.board.grayscale = grayscale;
-            }
+
             Intent::DismissRecovery => self.workspace.dismiss_recovery(),
         }
         self.animate_camera(before);
@@ -1130,14 +1129,14 @@ impl App {
             } => {
                 if input::canvas_navigation(
                     self.workspace.board.view.viewport,
-                    self.tools.open,
+                    self.tools.blocked() || self.settings_window.open,
                     position,
                 ) {
                     self.camera_motion.stop();
                     if continuous {
                         if finished {
                             self.camera_motion
-                                .release(Instant::now(), self.tools.reduced_motion);
+                                .release(Instant::now(), self.settings.reduced_motion);
                         } else {
                             self.camera_motion.pan_sample(delta, Instant::now());
                         }
@@ -1155,7 +1154,7 @@ impl App {
             } => {
                 if input::canvas_navigation(
                     self.workspace.board.view.viewport,
-                    self.tools.open,
+                    self.tools.blocked() || self.settings_window.open,
                     position,
                 ) {
                     if continuous {
@@ -1166,7 +1165,7 @@ impl App {
                             &mut self.workspace.board.view.camera,
                             position,
                             factor,
-                            self.tools.reduced_motion || !self.tools.smooth_zoom,
+                            self.settings.reduced_motion || !self.settings.smooth_zoom,
                         );
                     }
                 }
@@ -1271,7 +1270,7 @@ impl App {
                 }
                 if p.phase == Phase::Up && p.kind == moth_platform::input::Kind::Touch {
                     self.camera_motion
-                        .release(Instant::now(), self.tools.reduced_motion);
+                        .release(Instant::now(), self.settings.reduced_motion);
                 }
                 if self.input.gestures.active() {
                     self.drag = None;
@@ -1415,7 +1414,7 @@ impl App {
                                         &commands,
                                         &self.workspace.board.scene,
                                         [dx, dy],
-                                        self.tools.reduced_motion,
+                                        self.settings.reduced_motion,
                                     );
                                     self.workspace.persist_batch(
                                         commands.into_iter().map(|c| (c, None)).collect(),
@@ -1469,7 +1468,7 @@ impl App {
             self.motion.cancel(
                 items,
                 [(b[0] - a[0]) / zoom, (b[1] - a[1]) / zoom],
-                self.tools.reduced_motion,
+                self.settings.reduced_motion,
             );
         }
         self.drag = None;
@@ -1511,7 +1510,7 @@ impl App {
         if let Some(gpu) = &mut self.shell.gpu {
             let active = self.shell.refinements.step(
                 Instant::now(),
-                self.tools.reduced_motion,
+                self.settings.reduced_motion,
                 |hash, level| gpu.registry.set_detail_lod(*hash, level),
             );
             if active {
@@ -1527,17 +1526,17 @@ impl App {
             .workspace
             .board
             .motion
-            .step(Instant::now(), self.tools.reduced_motion);
+            .step(Instant::now(), self.settings.reduced_motion);
         self.camera_active = self.camera_motion.step(
             &mut self.workspace.board.view.camera,
             Instant::now(),
-            self.tools.reduced_motion,
+            self.settings.reduced_motion,
         );
         self.motion
-            .configure(self.tools.drag_animation, self.tools.drag_opacity);
+            .configure(self.settings.drag_animation, self.settings.drag_opacity);
         self.motion.step(
             Instant::now(),
-            self.tools.reduced_motion,
+            self.settings.reduced_motion,
             self.moving.is_some(),
         );
         if self.workspace.board.discarded {
@@ -1561,7 +1560,11 @@ impl App {
         let mut intents: Vec<Intent> = Vec::new();
         let ctx = self.shell.context().clone();
         ctx.all_styles_mut(|style| {
-            style.animation_time = if self.tools.reduced_motion { 0. } else { 0.1 }
+            style.animation_time = if self.settings.reduced_motion {
+                0.
+            } else {
+                0.1
+            }
         });
         self.shortcuts.registry.publish(&ctx);
         let enabled: Vec<_> = bindings::ACTIONS
@@ -1585,38 +1588,6 @@ impl App {
                 if self.motion.frames.active() || self.camera_active || self.items_active {
                     ui.ctx().request_repaint();
                 }
-                if self.overlay.is_none() {
-                    egui::Panel::top("commands_menu").show(ui, |ui| {
-                        ui.menu_button(moth_ui::text(moth_ui::Text::Commands), |ui| {
-                            for action in
-                                [bindings::Action::Palette, bindings::Action::BindingSettings]
-                            {
-                                if ui
-                                    .add_enabled(
-                                        enabled[action as usize],
-                                        egui::Button::new(moth_ui::tooltip(
-                                            ui.ctx(),
-                                            action.label(),
-                                        )),
-                                    )
-                                    .clicked()
-                                {
-                                    intents.push(Intent::Action(action));
-                                    ui.close();
-                                }
-                            }
-                        });
-                        ui.menu_button(moth_ui::text(moth_ui::Text::Help), |ui| {
-                            if ui
-                                .button(moth_ui::tooltip(ui.ctx(), moth_ui::Text::CheatSheet))
-                                .clicked()
-                            {
-                                intents.push(Intent::Action(bindings::Action::Shortcuts));
-                                ui.close();
-                            }
-                        });
-                    });
-                }
                 if self.picking_window || self.moving_window {
                     egui::Panel::top("pick_window").show(ui, |ui| {
                         ui.horizontal_wrapped(|ui| {
@@ -1637,7 +1608,7 @@ impl App {
                     chrome::chrome(
                         ui,
                         chrome::Chrome {
-                            zoom_increment: self.tools.zoom_increment,
+                            zoom_increment: self.settings.zoom_increment,
                             board: &mut self.workspace.board,
                             tabs: &self.workspace.tabs,
                             gpu,
@@ -1658,6 +1629,9 @@ impl App {
                         canvas::Canvas {
                             board: &self.workspace.board,
                             tools: &mut self.tools,
+                            settings: &mut self.settings,
+                            enabled: &enabled,
+                            registry: &self.shortcuts.registry,
                             editing: &mut self.editing,
                             drag: self.drag,
                             moving: self.moving,
@@ -1686,24 +1660,41 @@ impl App {
                     && !self.workspace.confirm_close
                     && self.workspace.board.arrange_prompt.is_none()
                 {
-                    let (action, changed) = self.shortcuts.show(ui, &|a| enabled[a as usize]);
+                    let (action, changed, setting) =
+                        self.shortcuts.show(ui, &|a| enabled[a as usize]);
                     if let Some(action) = action {
                         intents.push(Intent::Action(action));
+                    }
+                    if let Some(index) = setting {
+                        intents.push(Intent::SettingsRow(index));
                     }
                     if changed {
                         intents.push(Intent::PreferencesDirty);
                     }
                 }
+                intents.extend(self.settings_window.show(
+                    ui,
+                    &mut self.settings,
+                    &mut self.tools,
+                    &self.workspace.board,
+                    &format!(
+                        "{} · {:.1}/{:.1} MiB",
+                        gpu.adapter,
+                        gpu.registry.allocated_bytes() as f64 / 1048576.,
+                        gpu.registry.budget_bytes() as f64 / 1048576.
+                    ),
+                    &enabled,
+                ));
                 self.shortcuts.toast(
                     ui.ctx(),
-                    self.tools.shortcut_feedback,
-                    self.tools.reduced_motion,
+                    self.settings.shortcut_feedback,
+                    self.settings.reduced_motion,
                 );
                 intents.extend(self.modal.show(
                     ui,
                     &self.workspace,
-                    self.tools.auto_arrange,
-                    self.tools.default_arrange,
+                    self.settings.auto_arrange,
+                    self.settings.default_arrange,
                 ));
             })
         };
@@ -1711,6 +1702,7 @@ impl App {
     }
     fn render(&mut self, output: egui::FullOutput) -> anyhow::Result<()> {
         let covered = self.covered_by_preload();
+        let canvas_color = moth_ui::tokens(self.shell.context()).canvas;
         let Some(gpu) = self.shell.gpu.as_mut() else {
             return Ok(());
         };
@@ -1721,18 +1713,12 @@ impl App {
             opacity: self.overlay.as_ref().map_or(1., |overlay| overlay.opacity),
             clear: if self.overlay.is_some() {
                 wgpu::Color::TRANSPARENT
-            } else if !self.tools.dark {
-                wgpu::Color {
-                    r: 0.9,
-                    g: 0.91,
-                    b: 0.93,
-                    a: 1.,
-                }
             } else {
+                let [r, g, b, _] = canvas_color.to_array();
                 wgpu::Color {
-                    r: 17. / 255.,
-                    g: 19. / 255.,
-                    b: 23. / 255.,
+                    r: r as f64 / 255.,
+                    g: g as f64 / 255.,
+                    b: b as f64 / 255.,
                     a: 1.,
                 }
             },
@@ -1752,7 +1738,7 @@ impl App {
                 .filter_map(|id| self.workspace.board.scene.get(*id))
                 .map(|item| {
                     self.motion
-                        .preview(item, self.drag, camera.zoom, self.tools.reduced_motion)
+                        .preview(item, self.drag, camera.zoom, self.settings.reduced_motion)
                 })
                 .collect()
         } else {
@@ -1760,7 +1746,7 @@ impl App {
         };
         previews.extend(
             self.motion
-                .returning(self.motion.now(), self.tools.reduced_motion),
+                .returning(self.motion.now(), self.settings.reduced_motion),
         );
         let drag_ids: HashSet<_> = previews.iter().map(|item| item.id).collect();
         previews.extend(
@@ -1953,8 +1939,8 @@ impl ApplicationHandler<Wake> for App {
                 self.redraw();
             }
         }
-        self.input.adapter.wheel = self.tools.wheel;
-        self.input.adapter.zoom_increment = self.tools.zoom_increment;
+        self.input.adapter.wheel = self.settings.wheel;
+        self.input.adapter.zoom_increment = self.settings.zoom_increment;
         if let Some(input) = self
             .input
             .event(&event, window.scale_factor(), self.shell.context())
@@ -2041,6 +2027,17 @@ impl ApplicationHandler<Wake> for App {
                 }
                 if pressed && key == egui::Key::Escape {
                     self.cancel_window_mode();
+                    if !blocked {
+                        self.workspace.board.view.pan = false;
+                        self.tools.picking = false;
+                        self.tools.coordinates = false;
+                        self.tools.picker_open = false;
+                        self.tools.inspector = false;
+                        self.tools.export_open = false;
+                        self.tools.arrange_open = false;
+                        self.settings_window.open = false;
+                        self.redraw();
+                    }
                 }
                 if pressed && !blocked && key == egui::Key::Escape && self.overlay.is_some() {
                     self.toggle_overlay(event_loop);
@@ -2051,7 +2048,7 @@ impl ApplicationHandler<Wake> for App {
                         state.egui_input_mut().events.truncate(egui_events_before);
                     }
                     if !(pressed && action == bindings::Action::Focus) {
-                        if self.action_enabled(action) && self.tools.shortcut_feedback {
+                        if self.action_enabled(action) && self.settings.shortcut_feedback {
                             self.shortcuts.feedback(action, Instant::now());
                         }
                         self.run_action(action, event_loop);
@@ -2311,7 +2308,7 @@ mod tests {
             (vec![Phase::Up, Phase::Cancel], true),
         ] {
             let ctx = egui::Context::default();
-            moth_ui::theme(&ctx);
+            moth_ui::theme(&ctx, &moth_ui::Tokens::DARK);
             let raw = || egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,

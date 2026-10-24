@@ -75,11 +75,11 @@ impl Library {
                 .frame(
                     egui::Frame::new()
                         .fill(ui.visuals().panel_fill)
-                        .inner_margin(16),
+                        .inner_margin(crate::tokens(ui.ctx()).space_l as i8),
                 )
                 .show(ui, |ui| {
                     self.search(ui);
-                    ui.add_space(12.);
+                    ui.add_space(crate::tokens(ui.ctx()).space_m as f32);
                     for (icon, label, pinned) in [
                         (Icon::Grid, Text::AllBoards, false),
                         (Icon::Pin, Text::Pinned, true),
@@ -89,9 +89,9 @@ impl Library {
                                 ui,
                                 egui::Rect::from_min_size(ui.cursor().min, egui::vec2(20., 30.)),
                                 icon,
-                                MUTED,
+                                crate::tokens(ui.ctx()).text_muted,
                             );
-                            ui.add_space(24.);
+                            ui.add_space(crate::tokens(ui.ctx()).space_xl as f32);
                             if ui
                                 .selectable_label(
                                     self.pinned == pinned
@@ -107,12 +107,12 @@ impl Library {
                             }
                         });
                     }
-                    ui.add_space(28.);
+                    ui.add_space(crate::tokens(ui.ctx()).space_section as f32);
                     ui.label(
                         egui::RichText::new(text(Text::Stacks))
                             .monospace()
                             .size(10.)
-                            .color(MUTED),
+                            .color(crate::tokens(ui.ctx()).text_muted),
                     );
                     let mut stacks: Vec<&str> = cards
                         .iter()
@@ -127,9 +127,9 @@ impl Library {
                                 ui,
                                 egui::Rect::from_min_size(ui.cursor().min, egui::vec2(20., 30.)),
                                 Icon::Folder,
-                                ACCENT,
+                                crate::tokens(ui.ctx()).accent,
                             );
-                            ui.add_space(24.);
+                            ui.add_space(crate::tokens(ui.ctx()).space_xl as f32);
                             if ui
                                 .selectable_label(self.stack.as_deref() == Some(stack), stack)
                                 .clicked()
@@ -139,12 +139,12 @@ impl Library {
                             }
                         });
                     }
-                    ui.add_space(24.);
+                    ui.add_space(crate::tokens(ui.ctx()).space_xl as f32);
                     ui.label(
                         egui::RichText::new(text(Text::SmartCollections))
                             .monospace()
                             .size(10.)
-                            .color(MUTED),
+                            .color(crate::tokens(ui.ctx()).text_muted),
                     );
                     for tag in tags.iter().take(12) {
                         if ui
@@ -156,15 +156,19 @@ impl Library {
                             self.pinned = false;
                         }
                     }
-                    ui.add_space(16.);
+                    ui.add_space(crate::tokens(ui.ctx()).space_l as f32);
                     intent.browse = ui.button(text(Text::Open)).clicked();
                 });
         }
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
-                    .fill(Color32::from_rgb(23, 25, 30))
-                    .inner_margin(if ui.available_width() > 700. { 28 } else { 14 }),
+                    .fill(crate::tokens(ui.ctx()).sidebar)
+                    .inner_margin(if ui.available_width() > 700. {
+                        crate::tokens(ui.ctx()).space_section as i8
+                    } else {
+                        crate::tokens(ui.ctx()).space_header as i8
+                    }),
             )
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -180,9 +184,9 @@ impl Library {
                             .add(
                                 egui::Button::new(
                                     egui::RichText::new(format!("+  {}", text(Text::NewBoard)))
-                                        .color(BACKGROUND),
+                                        .color(crate::tokens(ui.ctx()).canvas),
                                 )
-                                .fill(ACCENT),
+                                .fill(crate::tokens(ui.ctx()).accent),
                             )
                             .clicked();
                         if icons::button(ui, Icon::List, text(Text::ListView), self.list).clicked()
@@ -218,9 +222,9 @@ impl Library {
                     ))
                     .monospace()
                     .size(11.)
-                    .color(MUTED),
+                    .color(crate::tokens(ui.ctx()).text_muted),
                 );
-                ui.add_space(16.);
+                ui.add_space(crate::tokens(ui.ctx()).space_l as f32);
                 if ui.available_width() <= 700. {
                     self.search(ui);
                     ui.horizontal(|ui| {
@@ -257,7 +261,7 @@ impl Library {
                         }
                     }
                 });
-                ui.add_space(12.);
+                ui.add_space(crate::tokens(ui.ctx()).space_m as f32);
                 let needle = self.search.to_lowercase();
                 let mut indices: Vec<usize> = cards
                     .iter()
@@ -276,7 +280,7 @@ impl Library {
                     indices.sort_by(|&a, &b| cards[a].title.cmp(&cards[b].title));
                 }
                 if indices.is_empty() {
-                    ui.add_space(80.);
+                    ui.add_space(crate::tokens(ui.ctx()).space_empty as f32);
                     ui.vertical_centered(|ui| {
                         ui.label(text(if cards.is_empty() {
                             Text::LibraryEmpty
@@ -296,7 +300,8 @@ impl Library {
                         (ui.available_width() - (columns - 1) as f32 * 24.) / columns as f32;
                     for row in indices.chunks(columns) {
                         ui.horizontal_top(|ui| {
-                            ui.spacing_mut().item_spacing.x = 24.;
+                            ui.spacing_mut().item_spacing.x =
+                                crate::tokens(ui.ctx()).space_xl as f32;
                             for &index in row {
                                 let c = &cards[index];
                                 ui.allocate_ui_with_layout(
@@ -319,12 +324,23 @@ impl Library {
                                         );
                                         ui.painter().rect_filled(
                                             rect.translate(egui::vec2(0., 3. * lift)),
-                                            10.,
-                                            Color32::BLACK.gamma_multiply(0.2 * lift),
+                                            crate::tokens(ui.ctx()).radius_card as f32,
+                                            crate::tokens(ui.ctx())
+                                                .shadow
+                                                .gamma_multiply(0.2 * lift),
                                         );
-                                        ui.painter().rect_filled(rect, 10., BACKGROUND);
+                                        ui.painter().rect_filled(
+                                            rect,
+                                            crate::tokens(ui.ctx()).radius_card as f32,
+                                            crate::tokens(ui.ctx()).canvas,
+                                        );
                                         if c.previews.is_empty() {
-                                            icons::paint(ui, rect, Icon::Image, MUTED);
+                                            icons::paint(
+                                                ui,
+                                                rect,
+                                                Icon::Image,
+                                                crate::tokens(ui.ctx()).text_muted,
+                                            );
                                         }
                                         for (i, texture) in c.previews.iter().enumerate() {
                                             let area = if i == 0 {
@@ -362,14 +378,19 @@ impl Library {
                                                     egui::Pos2::ZERO,
                                                     egui::pos2(1., 1.),
                                                 ),
-                                                Color32::WHITE,
+                                                crate::tokens(ui.ctx()).image_tint,
                                             );
                                         }
                                         if lift > 0. {
                                             ui.painter().rect_stroke(
                                                 rect,
-                                                10.,
-                                                egui::Stroke::new(1., ACCENT.gamma_multiply(lift)),
+                                                crate::tokens(ui.ctx()).radius_card as f32,
+                                                egui::Stroke::new(
+                                                    1.,
+                                                    crate::tokens(ui.ctx())
+                                                        .accent
+                                                        .gamma_multiply(lift),
+                                                ),
                                                 egui::StrokeKind::Inside,
                                             );
                                         }
@@ -412,7 +433,7 @@ impl Library {
                                             ))
                                             .monospace()
                                             .size(10.)
-                                            .color(MUTED),
+                                            .color(crate::tokens(ui.ctx()).text_muted),
                                         );
                                         ui.horizontal_wrapped(|ui| {
                                             if ui.small_button(text(Text::Tags)).clicked() {
@@ -423,7 +444,7 @@ impl Library {
                                                 ui.label(
                                                     egui::RichText::new(format!("#{tag}"))
                                                         .size(10.)
-                                                        .color(MUTED),
+                                                        .color(crate::tokens(ui.ctx()).text_muted),
                                                 );
                                             }
                                         });
@@ -431,7 +452,7 @@ impl Library {
                                 );
                             }
                         });
-                        ui.add_space(16.);
+                        ui.add_space(crate::tokens(ui.ctx()).space_l as f32);
                     }
                 });
             });
@@ -475,7 +496,7 @@ mod tests {
     #[test]
     fn card_labels_flow_below_previews() {
         let ctx = egui::Context::default();
-        theme(&ctx);
+        theme(&ctx, &Tokens::DARK);
         let cards: Vec<_> = (0..8)
             .map(|i| Card {
                 path: format!("board-{i}.moth").into(),

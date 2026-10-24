@@ -18,6 +18,8 @@ pub struct Tab<'a> {
 /// Window and board controls share the same action path as shortcuts.
 #[derive(Default)]
 pub struct Actions {
+    /// Open application preferences.
+    pub settings: bool,
     /// Clipboard import.
     pub paste: bool,
     /// Frame content.
@@ -97,7 +99,7 @@ pub struct Status<'a> {
     pub maximized: bool,
 }
 /// Draws a custom titlebar and the active workspace's toolbar.
-pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Tab<'_>]) -> Actions {
+pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, tabs: &[Tab<'_>]) -> Actions {
     let compact = ui.ctx().content_rect().width() < 600.;
     if compact {
         ui.spacing_mut().interact_size = egui::vec2(44., 44.);
@@ -107,21 +109,25 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
         .frame(
             egui::Frame::new()
                 .fill(ui.visuals().extreme_bg_color)
-                .inner_margin(egui::Margin::symmetric(12, 0)),
+                .inner_margin(egui::Margin::symmetric(
+                    crate::tokens(ui.ctx()).space_m as i8,
+                    crate::tokens(ui.ctx()).space_none as i8,
+                )),
         )
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.;
+                ui.spacing_mut().item_spacing.x = crate::tokens(ui.ctx()).space_xs as f32;
                 if !compact {
                     let (logo, _) =
                         ui.allocate_exact_size(egui::vec2(14., 20.), egui::Sense::hover());
-                    ui.painter().circle_filled(logo.center(), 6., ACCENT);
+                    ui.painter()
+                        .circle_filled(logo.center(), 6., crate::tokens(ui.ctx()).accent);
                     ui.label(egui::RichText::new(text(Text::Title)).monospace());
-                    ui.add_space(14.);
+                    ui.add_space(crate::tokens(ui.ctx()).space_header as f32);
                     if status.library {
                         ui.label(
                             egui::RichText::new(text(Text::Library))
-                                .color(MUTED)
+                                .color(crate::tokens(ui.ctx()).text_muted)
                                 .monospace(),
                         );
                     }
@@ -160,7 +166,12 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                                     if emphasis > 0. {
                                         ui.painter().line_segment(
                                             [response.rect.left_top(), response.rect.right_top()],
-                                            egui::Stroke::new(2., ACCENT.gamma_multiply(emphasis)),
+                                            egui::Stroke::new(
+                                                2.,
+                                                crate::tokens(ui.ctx())
+                                                    .accent
+                                                    .gamma_multiply(emphasis),
+                                            ),
                                         );
                                     }
                                     if response.clicked() {
@@ -180,10 +191,10 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                             });
                         });
                 }
+                a.settings = icons::button(ui, Icon::List, text(Text::Settings), false).clicked();
                 a.new = icons::button(ui, Icon::Plus, &tooltip(ui.ctx(), Text::NewBoard), false)
                     .clicked();
                 if compact {
-                    a.language = language_picker(ui);
                     ui.end_row();
                 }
                 let controls_width = ((if compact { 6. } else { 7. })
@@ -292,9 +303,6 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                                 .on_hover_text(text(Text::OnTop));
                             });
                         });
-                        if !compact {
-                            a.language = language_picker(ui);
-                        }
                         let drag = ui.allocate_response(
                             ui.available_size_before_wrap(),
                             egui::Sense::drag(),
@@ -311,154 +319,30 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
             brand.response.rect.bottom(),
         )
     });
-    egui::Panel::bottom("status")
-        .frame(
-            egui::Frame::new()
-                .fill(ui.visuals().panel_fill)
-                .inner_margin(egui::Margin::symmetric(16, 4)),
-        )
-        .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    egui::RichText::new(status.adapter)
-                        .monospace()
-                        .size(10.)
-                        .color(MUTED),
-                );
-                ui.add_space(16.);
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} {}  ·  {} {}  ·  {:.1}/{:.0} MiB",
+    if !status.library {
+        egui::Area::new(egui::Id::new("save_chip"))
+            .fixed_pos(egui::pos2(
+                ui.max_rect().left() + 12.,
+                ui.max_rect().top() + 12.,
+            ))
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.label(format!(
+                        "{} · {} {}",
+                        text(if status.dirty || status.path.is_empty() {
+                            Text::UnsavedChip
+                        } else {
+                            Text::SaveState
+                        }),
                         status.count,
-                        text(Text::Items),
-                        status.selected,
-                        text(Text::Selected),
-                        status.texture_bytes as f64 / 1048576.,
-                        status.texture_budget as f64 / 1048576.
-                    ))
-                    .monospace()
-                    .size(10.)
-                    .color(MUTED),
-                );
-                if status.pinned {
-                    ui.label(text(if status.target_pin {
-                        Text::AboveWindow
-                    } else {
-                        Text::AboveAll
-                    }));
-                }
-                if status.dirty || !status.path.is_empty() {
-                    ui.label(text(if status.dirty {
-                        Text::Journaled
-                    } else {
-                        Text::SaveState
-                    }));
-                }
-                ui.label(text(Text::RecoveryOn));
-                if !status.message.is_empty() {
-                    ui.colored_label(ACCENT, status.message);
-                }
-            });
-        });
-    if status.library {
-        return a;
-    }
-    egui::Panel::top("toolbar")
-        .frame(
-            egui::Frame::new()
-                .fill(ui.visuals().panel_fill)
-                .inner_margin(egui::Margin::symmetric(8, 2)),
-        )
-        .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                a.home = icons::button(ui, Icon::Home, &tooltip(ui.ctx(), Text::Library), false)
-                    .clicked();
-                ui.separator();
-                ui.add_enabled_ui(status.idle, |ui| {
-                    // Journal acknowledgements must not flash the toolbar.
-                    ui.set_opacity(1.);
-                    a.undo = icons::button(ui, Icon::Undo, &tooltip(ui.ctx(), Text::Undo), false)
-                        .clicked();
-                    a.redo = icons::button(ui, Icon::Redo, &tooltip(ui.ctx(), Text::Redo), false)
-                        .clicked();
+                        text(Text::Images)
+                    ));
+                    if !status.message.is_empty() {
+                        ui.label(status.message);
+                    }
                 });
-                ui.separator();
-                ui.selectable_value(pan, false, text(Text::Select))
-                    .on_hover_text(tooltip(ui.ctx(), Text::Select));
-                ui.selectable_value(pan, true, text(Text::Pan))
-                    .on_hover_text(tooltip(ui.ctx(), Text::Pan));
-                a.paste = ui
-                    .button(text(Text::PasteImage))
-                    .on_hover_text(tooltip(ui.ctx(), Text::PasteImage))
-                    .clicked();
-                {
-                    ui.add_enabled_ui(status.idle, |ui| {
-                        ui.set_opacity(1.);
-                        a.save = ui
-                            .add(
-                                egui::Button::new(
-                                    egui::RichText::new(text(Text::Save)).color(BACKGROUND),
-                                )
-                                .fill(ACCENT),
-                            )
-                            .on_hover_text(tooltip(ui.ctx(), Text::Save))
-                            .clicked();
-                    });
-                    a.overlay =
-                        icons::button(ui, Icon::Overlay, &tooltip(ui.ctx(), Text::Overlay), false)
-                            .clicked();
-                    a.fit = icons::button(ui, Icon::Fit, &tooltip(ui.ctx(), Text::Fit), false)
-                        .clicked();
-                    if ui.button("+").on_hover_text(text(Text::ZoomIn)).clicked() {
-                        a.zoom = 1. + status.zoom_increment / 100.;
-                    }
-                    let mut percent = status.zoom * 100.;
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut percent)
-                                .range(1.0..=6400.0)
-                                .suffix("%")
-                                .speed(1.0),
-                        )
-                        .on_hover_text(text(Text::Zoom))
-                        .changed()
-                        && percent.is_finite()
-                    {
-                        a.zoom_to = Some(percent / 100.);
-                    }
-                    if ui.button("−").on_hover_text(text(Text::ZoomOut)).clicked() {
-                        a.zoom = 1. / (1. + status.zoom_increment / 100.);
-                    }
-                    if ui.available_width() > 100. {
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(if status.path.is_empty() {
-                                    text(Text::NotSaved)
-                                } else {
-                                    status.path
-                                })
-                                .monospace()
-                                .size(11.)
-                                .color(MUTED),
-                            )
-                            .truncate(),
-                        );
-                    }
-                }
             });
-        });
-    a
-}
+    }
 
-fn language_picker(ui: &mut egui::Ui) -> Option<Locale> {
-    let mut language = locale();
-    egui::ComboBox::from_id_salt("language")
-        .width(ui.spacing().interact_size.x * 2.)
-        .selected_text(language.name())
-        .show_ui(ui, |ui| {
-            for candidate in Locale::ALL {
-                ui.selectable_value(&mut language, candidate, candidate.name());
-            }
-        });
-    (language != locale()).then_some(language)
+    a
 }

@@ -106,12 +106,15 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
         Icon::Paste => {
             ui.painter().rect_stroke(
                 Rect::from_min_max(p(4., 4.), p(15., 16.)),
-                2.,
+                crate::tokens(ui.ctx()).radius_placeholder as f32,
                 stroke,
                 egui::StrokeKind::Inside,
             );
-            ui.painter()
-                .rect_filled(Rect::from_min_max(p(7., 2.), p(12., 5.)), 1., color);
+            ui.painter().rect_filled(
+                Rect::from_min_max(p(7., 2.), p(12., 5.)),
+                crate::tokens(ui.ctx()).radius_icon as f32,
+                color,
+            );
         }
         Icon::Folder => line(&[
             (2., 5.),
@@ -181,7 +184,7 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
                 for y in [2., 10.] {
                     ui.painter().rect_stroke(
                         Rect::from_min_size(p(x, y), Vec2::splat(5.)),
-                        0.,
+                        crate::tokens(ui.ctx()).radius_none as f32,
                         stroke,
                         egui::StrokeKind::Inside,
                     );
@@ -203,7 +206,7 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
             for &[x, y, w, h] in boxes {
                 ui.painter().rect_stroke(
                     Rect::from_min_size(p(x, y), Vec2::new(w, h)),
-                    0.,
+                    crate::tokens(ui.ctx()).radius_none as f32,
                     stroke,
                     egui::StrokeKind::Inside,
                 );
@@ -223,8 +226,12 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
             line(&[(9., 4.), (9., 9.), (13., 11.)]);
         }
         Icon::Image => {
-            ui.painter()
-                .rect_stroke(r, 2., stroke, egui::StrokeKind::Inside);
+            ui.painter().rect_stroke(
+                r,
+                crate::tokens(ui.ctx()).radius_placeholder as f32,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
             ui.painter().circle_stroke(p(5., 5.), 2., stroke);
             line(&[(1., 16.), (10., 8.), (17., 14.)]);
         }
@@ -232,7 +239,7 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
         Icon::Maximize => {
             ui.painter().rect_stroke(
                 Rect::from_min_max(p(3., 3.), p(15., 15.)),
-                1.,
+                crate::tokens(ui.ctx()).radius_icon as f32,
                 stroke,
                 egui::StrokeKind::Inside,
             );
@@ -263,10 +270,12 @@ pub fn button(ui: &mut Ui, icon: Icon, label: &str, selected: bool) -> Response 
     if hover > 0. || pressed > 0. {
         ui.painter().rect_stroke(
             response.rect.shrink(1.),
-            5.,
+            crate::tokens(ui.ctx()).radius_hover as f32,
             Stroke::new(
                 1. + pressed,
-                super::ACCENT.gamma_multiply(hover * 0.5 + pressed * 0.5),
+                crate::tokens(ui.ctx())
+                    .accent
+                    .gamma_multiply(hover * 0.5 + pressed * 0.5),
             ),
             egui::StrokeKind::Inside,
         );
@@ -276,7 +285,7 @@ pub fn button(ui: &mut Ui, icon: Icon, label: &str, selected: bool) -> Response 
         response.rect.translate(egui::vec2(0., -hover + pressed)),
         icon,
         if selected {
-            super::ACCENT
+            crate::tokens(ui.ctx()).accent
         } else {
             ui.visuals().text_color()
         },

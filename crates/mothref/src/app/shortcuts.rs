@@ -170,13 +170,33 @@ impl Shortcuts {
             })
             .collect()
     }
+    fn settings_results(&self) -> Vec<usize> {
+        let query = self.query.to_lowercase();
+        super::settings::SCHEMA
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| {
+                format!(
+                    "{} {} {} {}",
+                    text(Text::Settings),
+                    text(e.section.label()),
+                    text(e.label),
+                    e.key
+                )
+                .to_lowercase()
+                .contains(&query)
+            })
+            .map(|(index, _)| index)
+            .collect()
+    }
     /// Returns one action and whether preferences changed; board writes stay in App.
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
         enabled: &impl Fn(Action) -> bool,
-    ) -> (Option<Action>, bool) {
+    ) -> (Option<Action>, bool, Option<usize>) {
         let mut action = None;
+        let mut setting = None;
         let mut changed = false;
         if self.sheet {
             let response =
@@ -243,6 +263,8 @@ impl Shortcuts {
             let response =
                 egui::Modal::new(egui::Id::new("command_palette")).show(ui.ctx(), |ui| {
                     ui.set_width((ui.ctx().content_rect().width() - 40.).clamp(1., 560.));
+                    let height = (ui.ctx().content_rect().height() * 0.7).min(500.);
+                    ui.set_height(height);
                     ui.heading(text(Text::CommandPalette));
                     let input = ui.add(
                         egui::TextEdit::singleline(&mut self.query)
@@ -257,36 +279,48 @@ impl Shortcuts {
                         self.selected = 0;
                     }
                     let results = self.results();
-                    self.selected = self.selected.min(results.len().saturating_sub(1));
+                    let settings = self.settings_results();
+                    let total = results.len() + settings.len();
+                    self.selected = self.selected.min(total.saturating_sub(1));
                     let navigate = ui.input(|i| {
                         i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::ArrowUp)
                     });
                     if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown))
                     {
-                        self.selected = (self.selected + 1).min(results.len().saturating_sub(1));
+                        self.selected = (self.selected + 1).min(total.saturating_sub(1));
                     }
                     if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)) {
                         self.selected = self.selected.saturating_sub(1);
                     }
                     if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
                         action = results.get(self.selected).copied().filter(|a| enabled(*a));
+                        if self.selected >= results.len() {
+                            setting = settings.get(self.selected - results.len()).copied();
+                        }
                     }
-                    if results.is_empty() {
+                    if total == 0 {
                         ui.label(text(Text::NoActions));
                     }
                     egui::ScrollArea::vertical()
-                        .max_height(ui.ctx().content_rect().height() * 0.55)
+                        .max_height((height - 140.).max(1.))
+                        .auto_shrink([false, false])
                         .show(ui, |ui| {
+                            let mut category = None;
                             for (index, candidate) in results.iter().enumerate() {
-                                let label = format!(
-                                    "{}    {}",
-                                    text(candidate.label()),
-                                    self.registry.label(*candidate)
-                                );
-                                let response = ui.add_enabled(
-                                    enabled(*candidate),
-                                    egui::Button::new(label).selected(index == self.selected),
-                                );
+                                if category != Some(candidate.category()) {
+                                    ui.strong(text(candidate.category()));
+                                    category = Some(candidate.category());
+                                }
+                                let response = ui
+                                    .add_enabled_ui(enabled(*candidate), |ui| {
+                                        ui.add_sized(
+                                            [ui.available_width(), ui.spacing().interact_size.y],
+                                            egui::Button::new(text(candidate.label()))
+                                                .shortcut_text(self.registry.label(*candidate))
+                                                .selected(index == self.selected),
+                                        )
+                                    })
+                                    .inner;
                                 if index == self.selected && navigate {
                                     response.scroll_to_me(Some(egui::Align::Center));
                                 }
@@ -294,12 +328,35 @@ impl Shortcuts {
                                     action = Some(*candidate);
                                 }
                             }
+                            if !settings.is_empty() {
+                                ui.strong(text(Text::Settings));
+                            }
+                            for (offset, index) in settings.iter().enumerate() {
+                                let entry = &super::settings::SCHEMA[*index];
+                                let label = format!(
+                                    "{} › {} › {}",
+                                    text(Text::Settings),
+                                    text(entry.section.label()),
+                                    text(entry.label)
+                                );
+                                let response = ui.add_sized(
+                                    [ui.available_width(), ui.spacing().interact_size.y],
+                                    egui::Button::new(label)
+                                        .selected(self.selected == results.len() + offset),
+                                );
+                                if response.clicked() {
+                                    setting = Some(*index);
+                                }
+                                if navigate && self.selected == results.len() + offset {
+                                    response.scroll_to_me(Some(egui::Align::Center));
+                                }
+                            }
                         });
                     if ui.button(text(Text::Cancel)).clicked() {
                         self.palette = false;
                     }
                 });
-            if response.should_close() || action.is_some() {
+            if response.should_close() || action.is_some() || setting.is_some() {
                 self.palette = false;
             }
         }
@@ -369,14 +426,14 @@ impl Shortcuts {
                                 candidate.as_ref().is_some_and(|c| c.conflicts().is_empty());
                             if candidate.is_none() {
                                 ui.colored_label(
-                                    egui::Color32::LIGHT_RED,
+                                    moth_ui::tokens(ui.ctx()).danger,
                                     text(Text::InvalidBinding),
                                 );
                             }
                             if let Some(candidate) = &candidate {
                                 for (a, b) in candidate.conflicts() {
                                     ui.colored_label(
-                                        egui::Color32::LIGHT_RED,
+                                        moth_ui::tokens(ui.ctx()).danger,
                                         format!(
                                             "{}: {} ↔ {} ({})",
                                             text(Text::BindingConflict),
@@ -428,12 +485,21 @@ impl Shortcuts {
                 self.open = false;
             }
         }
-        (action, changed)
+        (action, changed, setting)
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn settings_search_finds_sections_and_rows() {
+        let mut state = Shortcuts::default();
+        for query in ["settings", "memory", "zoom"] {
+            state.query = query.into();
+            assert!(!state.settings_results().is_empty(), "{query}");
+        }
+        assert_eq!(state.registry.label(Action::Shortcuts), "/");
+    }
     #[test]
     fn feedback_replaces_repeats_and_expires_or_disables() {
         let ctx = egui::Context::default();

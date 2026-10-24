@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Replace Board tools with a floating bottom toolbar, a selection bar and grouped
+  context menus. Arrangement, geometry editing, export and pickers have their own
+  small windows; all editing commands also use the shared command palette.
+- Open Settings with Ctrl/Command+comma or its visible button. Preferences are
+  grouped and searchable from the palette, apply immediately and retain existing
+  settings-file keys. Language moves to General; adapter, memory and journal
+  diagnostics move to For developers.
+- Add token-based paper light and existing dark themes, keep the selected theme
+  across GPU recovery, and draw four handles around a combined multi-selection.
+  Show a compact save-state chip, list every supported image format on empty
+  boards, add missing-arrow font fallback, and order zoom controls as minus,
+  percentage, plus.
+
 ## 0.1.0-alpha.8 — 2026-10-24
 
 - Update the Windows clipboard dependency to 5.4.3, replacing the yanked 5.4.1 release.

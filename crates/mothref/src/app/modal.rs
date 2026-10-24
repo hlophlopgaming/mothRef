@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Save-as dialog, close confirmation, arrangement prompt and recovery browser.
 
-use super::{Intent, arrange, workspace::Workspace};
+use super::{Intent, arrange, bindings::Action, workspace::Workspace};
 
 /// Modal state owned by the application, drawn as egui popups each frame.
 #[derive(Default)]
@@ -37,7 +37,7 @@ impl Modal {
                     }
                 }
                 if ui.button(moth_ui::text(moth_ui::Text::Keep)).clicked() {
-                    intents.push(Intent::DismissRecovery);
+                    intents.push(Intent::Action(Action::DismissRecovery));
                 }
             });
         }
@@ -58,7 +58,7 @@ impl Modal {
                 let submit = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 ui.horizontal(|ui| {
                     if ui.button(moth_ui::text(moth_ui::Text::Cancel)).clicked() {
-                        intents.push(Intent::CancelDialog);
+                        intents.push(Intent::Action(Action::CancelDialog));
                     }
                     if ui
                         .add_enabled(
@@ -68,11 +68,7 @@ impl Modal {
                         .clicked()
                         || submit
                     {
-                        let mut path = std::path::PathBuf::from(&self.dialog_path);
-                        if path.extension().is_none() {
-                            path.set_extension("moth");
-                        }
-                        intents.push(Intent::SaveAs(path));
+                        intents.push(Intent::Action(Action::SavePath));
                     }
                 });
             });
@@ -81,25 +77,25 @@ impl Modal {
             egui::Modal::new(egui::Id::new("confirm_close")).show(ui.ctx(), |ui| {
                 ui.set_max_width(380.);
                 ui.heading(moth_ui::text(moth_ui::Text::SaveQuestion));
-                ui.add_space(8.);
+                ui.add_space(moth_ui::tokens(ui.ctx()).space_s as f32);
                 ui.label(moth_ui::text(moth_ui::Text::CloseWarning));
-                ui.add_space(12.);
+                ui.add_space(moth_ui::tokens(ui.ctx()).space_m as f32);
                 ui.separator();
                 ui.horizontal_wrapped(|ui| {
                     if ui
                         .add(
                             egui::Button::new(
                                 egui::RichText::new(moth_ui::text(moth_ui::Text::Close))
-                                    .color(egui::Color32::from_rgb(209, 133, 123)),
+                                    .color(moth_ui::tokens(ui.ctx()).danger),
                             )
                             .frame(false),
                         )
                         .clicked()
                     {
-                        intents.push(Intent::Discard);
+                        intents.push(Intent::Action(Action::Discard));
                     }
                     if ui.button(moth_ui::text(moth_ui::Text::Keep)).clicked() {
-                        intents.push(Intent::KeepOpen);
+                        intents.push(Intent::Action(Action::KeepOpen));
                     }
                     if ui
                         .add_enabled(
@@ -109,13 +105,13 @@ impl Modal {
                                 && board.waiting.is_empty(),
                             egui::Button::new(
                                 egui::RichText::new(moth_ui::text(moth_ui::Text::Save))
-                                    .color(moth_ui::BACKGROUND),
+                                    .color(moth_ui::tokens(ui.ctx()).canvas),
                             )
-                            .fill(moth_ui::ACCENT),
+                            .fill(moth_ui::tokens(ui.ctx()).accent),
                         )
                         .clicked()
                     {
-                        intents.push(Intent::SaveAndClose);
+                        intents.push(Intent::Action(Action::SaveAndClose));
                     }
                 });
             });
@@ -131,7 +127,7 @@ impl Modal {
                 egui::Modal::new(egui::Id::new("arrange_prompt")).show(ui.ctx(), |ui| {
                     ui.set_max_width(380.);
                     ui.heading(moth_ui::text(moth_ui::Text::ArrangePrompt));
-                    ui.add_space(12.);
+                    ui.add_space(moth_ui::tokens(ui.ctx()).space_m as f32);
                     ui.separator();
                     ui.horizontal_wrapped(|ui| {
                         for (label, mode) in [
@@ -148,12 +144,16 @@ impl Modal {
                             )
                             .clicked()
                             {
-                                intents.push(Intent::Arrange(mode, ids.clone()));
-                                intents.push(Intent::DismissArrangePrompt);
+                                intents.push(Intent::Action(match mode {
+                                    arrange::Arrange::Horizontal => Action::Horizontal,
+                                    arrange::Arrange::Vertical => Action::Vertical,
+                                    arrange::Arrange::Grid => Action::Grid,
+                                    arrange::Arrange::Optimal => Action::Optimal,
+                                }));
                             }
                         }
                         if ui.button(moth_ui::text(moth_ui::Text::Cancel)).clicked() {
-                            intents.push(Intent::DismissArrangePrompt);
+                            intents.push(Intent::Action(Action::CancelArrange));
                         }
                     });
                 });

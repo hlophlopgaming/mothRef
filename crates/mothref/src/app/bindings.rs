@@ -5,92 +5,124 @@ use moth_ui::Text;
 use std::collections::{BTreeMap, HashSet};
 
 macro_rules! actions {
-    ($($id:ident, $label:ident, $default:literal;)+) => {
+    ($($id:ident, $label:ident, $default:literal, $icon:expr;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub(super) enum Action { $($id,)+ }
         pub(super) const ACTIONS: &[Action] = &[$(Action::$id,)+];
         impl Action {
             pub fn id(self) -> &'static str { match self { $(Self::$id => stringify!($id),)+ } }
             pub fn label(self) -> Text { match self { $(Self::$id => Text::$label,)+ } }
+            pub fn icon(self) -> Option<moth_ui::icons::Icon> { match self { $(Self::$id => $icon,)+ } }
             fn default(self) -> &'static str { match self { $(Self::$id => $default,)+ } }
         }
     }
 }
 actions! {
-    Palette, CommandPalette, "Cmd+K";
-    Shortcuts, CheatSheet, "Slash";
-    BindingSettings, Shortcuts, "";
-    New, NewBoard, "Cmd+N";
-    Open, Open, "Cmd+O";
-    Save, Save, "Cmd+S";
-    Library, Library, "Cmd+L";
-    CloseTab, CloseTab, "Cmd+W";
-    NextTab, NextTab, "Cmd+Tab";
-    Paste, Paste, "Cmd+V";
-    Undo, Undo, "Cmd+Z";
-    Redo, Redo, "Cmd+Y";
-    Overlay, Overlay, "Cmd+T";
-    Pin, OnTop, "Cmd+Shift+T";
-    MoveWindow, MoveWindow, "Cmd+Shift+M";
-    Fullscreen, Fullscreen, "F11";
-    Minimize, Minimize, "";
-    Maximize, Maximize, "";
-    Tools, Tools, "";
-    Select, Select, "V";
-    Hand, Pan, "H";
-    Fit, Fit, "Home";
-    Focus, FitSelection, "Space";
-    Previous, PreviousImage, "PageUp";
-    Next, NextImage, "PageDown";
-    ZoomIn, ZoomIn, "Equal";
-    ZoomOut, ZoomOut, "Minus";
-    ZoomReset, ZoomReset, "";
-    ResetCamera, ResetCamera, "";
-    Note, AddNote, "";
-    Delete, Delete, "Delete";
-    Duplicate, Duplicate, "Cmd+D";
-    RotateCw, RotateCw, "R";
-    RotateCcw, RotateCcw, "Shift+R";
-    FlipHorizontal, FlipHorizontal, "Shift+H";
-    FlipVertical, FlipVertical, "Shift+V";
-    ResetTransform, ResetTransform, "Shift+0";
-    ResetCrop, ResetCrop, "";
-    NudgeLeft, NudgeLeft, "ArrowLeft";
-    NudgeRight, NudgeRight, "ArrowRight";
-    NudgeUp, NudgeUp, "ArrowUp";
-    NudgeDown, NudgeDown, "ArrowDown";
-    NudgeLeftFast, NudgeLeftFast, "Shift+ArrowLeft";
-    NudgeRightFast, NudgeRightFast, "Shift+ArrowRight";
-    NudgeUpFast, NudgeUpFast, "Shift+ArrowUp";
-    NudgeDownFast, NudgeDownFast, "Shift+ArrowDown";
-    BringFront, BringFront, "";
-    SendBack, SendBack, "";
-    BringForward, BringForward, "";
-    SendBackward, SendBackward, "";
-    Horizontal, Horizontal, "";
-    Vertical, Vertical, "";
-    Grid, Grid, "";
-    Optimal, Optimal, "";
-    ArrangeName, ArrangeName, "";
-    ArrangeTime, ArrangeTime, "";
-    PackFit, PackFit, "";
-    NormalizeWidth, NormalizeWidth, "";
-    NormalizeHeight, NormalizeHeight, "";
-    NormalizeSize, NormalizeSize, "";
-    NormalizeArea, NormalizeArea, "";
-    AlignLeft, AlignLeft, "";
-    AlignRight, AlignRight, "";
-    AlignTop, AlignTop, "";
-    AlignBottom, AlignBottom, "";
-    Stack, Stack, "";
-    Lock, LockCanvas, "";
-    Grayscale, CanvasGrayscale, "";
-    MoveDrag, MoveDrag, "Mouse1";
-    ExtendDrag, ExtendDrag, "Shift+Mouse1";
-    DuplicateDrag, DuplicateDrag, "Alt+Mouse1";
-    PanDrag, PanDrag, "Mouse3";
-    PanSpaceDrag, PanSpaceDrag, "Space+Mouse1";
-    PanAltDrag, PanAltDrag, "";
+    Palette, CommandPalette, "Cmd+K", None;
+    Shortcuts, CheatSheet, "Slash", None;
+    BindingSettings, Shortcuts, "", None;
+    New, NewBoard, "Cmd+N", Some(moth_ui::icons::Icon::Plus);
+    Open, Open, "Cmd+O", Some(moth_ui::icons::Icon::Folder);
+    Save, Save, "Cmd+S", Some(moth_ui::icons::Icon::Save);
+    Library, Library, "Cmd+L", Some(moth_ui::icons::Icon::Home);
+    CloseTab, CloseTab, "Cmd+W", Some(moth_ui::icons::Icon::Close);
+    NextTab, NextTab, "Cmd+Tab", None;
+    Paste, Paste, "Cmd+V", Some(moth_ui::icons::Icon::Paste);
+    Undo, Undo, "Cmd+Z", Some(moth_ui::icons::Icon::Undo);
+    Redo, Redo, "Cmd+Y", Some(moth_ui::icons::Icon::Redo);
+    Overlay, Overlay, "Cmd+T", Some(moth_ui::icons::Icon::Overlay);
+    Pin, OnTop, "Cmd+Shift+T", Some(moth_ui::icons::Icon::Pin);
+    MoveWindow, MoveWindow, "Cmd+Shift+M", None;
+    Fullscreen, Fullscreen, "F11", None;
+    Minimize, Minimize, "", Some(moth_ui::icons::Icon::Minus);
+    Maximize, Maximize, "", Some(moth_ui::icons::Icon::Maximize);
+    Settings, Settings, "Cmd+Comma", Some(moth_ui::icons::Icon::List);
+    Select, Select, "V", Some(moth_ui::icons::Icon::Select);
+    Hand, Pan, "H", Some(moth_ui::icons::Icon::Pan);
+    Fit, Fit, "Home", Some(moth_ui::icons::Icon::Fit);
+    Focus, FitSelection, "Space", Some(moth_ui::icons::Icon::Fit);
+    Previous, PreviousImage, "PageUp", None;
+    Next, NextImage, "PageDown", None;
+    ZoomIn, ZoomIn, "Equal", Some(moth_ui::icons::Icon::Plus);
+    ZoomOut, ZoomOut, "Minus", Some(moth_ui::icons::Icon::Minus);
+    ZoomReset, ZoomReset, "", None;
+    ResetCamera, ResetCamera, "", None;
+    Note, AddNote, "", Some(moth_ui::icons::Icon::Plus);
+    Delete, Delete, "Delete", None;
+    Duplicate, Duplicate, "Cmd+D", None;
+    RotateCw, RotateCw, "R", None;
+    RotateCcw, RotateCcw, "Shift+R", None;
+    FlipHorizontal, FlipHorizontal, "Shift+H", None;
+    FlipVertical, FlipVertical, "Shift+V", None;
+    ResetTransform, ResetTransform, "Shift+0", None;
+    ResetCrop, ResetCrop, "", None;
+    NudgeLeft, NudgeLeft, "ArrowLeft", None;
+    NudgeRight, NudgeRight, "ArrowRight", None;
+    NudgeUp, NudgeUp, "ArrowUp", None;
+    NudgeDown, NudgeDown, "ArrowDown", None;
+    NudgeLeftFast, NudgeLeftFast, "Shift+ArrowLeft", None;
+    NudgeRightFast, NudgeRightFast, "Shift+ArrowRight", None;
+    NudgeUpFast, NudgeUpFast, "Shift+ArrowUp", None;
+    NudgeDownFast, NudgeDownFast, "Shift+ArrowDown", None;
+    BringFront, BringFront, "", None;
+    SendBack, SendBack, "", None;
+    BringForward, BringForward, "", None;
+    SendBackward, SendBackward, "", None;
+    Horizontal, Horizontal, "", Some(moth_ui::icons::Icon::ArrangeHorizontal);
+    Vertical, Vertical, "", Some(moth_ui::icons::Icon::ArrangeVertical);
+    Grid, Grid, "", Some(moth_ui::icons::Icon::ArrangeGrid);
+    Optimal, Optimal, "", Some(moth_ui::icons::Icon::ArrangeOptimal);
+    ArrangeName, ArrangeName, "", None;
+    ArrangeTime, ArrangeTime, "", None;
+    PackFit, PackFit, "", Some(moth_ui::icons::Icon::ArrangeOptimal);
+    NormalizeWidth, NormalizeWidth, "", None;
+    NormalizeHeight, NormalizeHeight, "", None;
+    NormalizeSize, NormalizeSize, "", None;
+    NormalizeArea, NormalizeArea, "", None;
+    AlignLeft, AlignLeft, "", None;
+    AlignRight, AlignRight, "", None;
+    AlignTop, AlignTop, "", None;
+    AlignBottom, AlignBottom, "", None;
+    Stack, Stack, "", None;
+    Lock, LockCanvas, "", None;
+    Grayscale, CanvasGrayscale, "", None;
+    MoveDrag, MoveDrag, "Mouse1", None;
+    ExtendDrag, ExtendDrag, "Shift+Mouse1", None;
+    DuplicateDrag, DuplicateDrag, "Alt+Mouse1", None;
+    PanDrag, PanDrag, "Mouse3", None;
+    PanSpaceDrag, PanSpaceDrag, "Space+Mouse1", None;
+    PanAltDrag, PanAltDrag, "", None;
+    SaveAndClose, SaveClose, "", Some(moth_ui::icons::Icon::Save);
+    Discard, Close, "", Some(moth_ui::icons::Icon::Close);
+    KeepOpen, Keep, "", None;
+    CancelDialog, Cancel, "", None;
+    SavePath, Save, "", Some(moth_ui::icons::Icon::Save);
+    DismissRecovery, Keep, "", None;
+    CancelArrange, Cancel, "", None;
+    CloseWindow, CloseWindow, "", Some(moth_ui::icons::Icon::Close);
+    EditNote, EditNote, "", Some(moth_ui::icons::Icon::List);
+    EditItem, EditItem, "", Some(moth_ui::icons::Icon::List);
+    ApplyItem, ApplyItem, "", None;
+    CancelItem, CancelItem, "", None;
+    ArrangeOptions, ArrangeOptions, "", Some(moth_ui::icons::Icon::ArrangeOptimal);
+    ScaleApply, ScaleApply, "", None;
+    DistributeHorizontal, DistributeHorizontal, "", None;
+    DistributeVertical, DistributeVertical, "", None;
+    ResetRotation, ResetRotation, "", None;
+    ResetFlip, ResetFlip, "", None;
+    ResetScale, ResetScale, "", None;
+    NormalizeScale, NormalizeScale, "", None;
+    SampleColor, SampleColor, "", Some(moth_ui::icons::Icon::Pointer);
+    CoordinatePicker, CoordinatePicker, "", Some(moth_ui::icons::Icon::Pointer);
+    Export, Export, "", Some(moth_ui::icons::Icon::Folder);
+    ExportScene, ExportScene, "", None;
+    ExportSelection, ExportSelection, "", None;
+    ExportOriginal, ExportOriginal, "", None;
+    ExportOriginals, ExportOriginals, "", None;
+    ExportZip, ExportZip, "", None;
+    CopyImage, CopyImage, "", None;
+    ClearDiskCache, ClearDiskCache, "", Some(moth_ui::icons::Icon::Close);
+
 }
 impl Action {
     pub fn category(self) -> Text {
@@ -102,9 +134,8 @@ impl Action {
             Select | Hand | Fit | Focus | Previous | Next | ZoomIn | ZoomOut | ZoomReset
             | ResetCamera | Lock | Grayscale => Text::CategoryView,
             Palette | BindingSettings | Shortcuts | New | Open | Save | Library | CloseTab
-            | NextTab | Overlay | Pin | Minimize | Maximize | MoveWindow | Fullscreen | Tools => {
-                Text::CategoryBoard
-            }
+            | NextTab | Overlay | Pin | Minimize | Maximize | MoveWindow | Fullscreen
+            | Settings | CloseWindow => Text::CategoryBoard,
             _ => Text::CategoryEdit,
         }
     }
@@ -267,7 +298,8 @@ impl Registry {
         self.entries[action as usize] = Chord::parse(value);
     }
     pub fn label(&self, action: Action) -> String {
-        self.get(action).map_or_else(String::new, Chord::display)
+        self.get(action)
+            .map_or_else(String::new, |chord| chord.display().replace("Slash", "/"))
     }
     pub fn conflicts(&self) -> Vec<(Action, Action)> {
         let mut conflicts = Vec::new();
