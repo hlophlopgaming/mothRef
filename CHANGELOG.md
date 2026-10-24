@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.9 — 2026-10-24
+
+- Keep wrapped toolbar buttons inside narrow viewports by measuring native button widgets directly. Verify fallback arrow rendering by comparing rasterized glyphs rather than egui's fallback-face detection.
+
 - Replace Board tools with a floating bottom toolbar, a selection bar and grouped
   context menus. Arrangement, geometry editing, export and pickers have their own
   small windows; all editing commands also use the shared command palette.

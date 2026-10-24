@@ -69,3 +69,22 @@ needs a separately budgeted implementation; this refactor adds no pixel cache or
 decoding on the UI thread. The main surface-list migration does not depend on it.
 Design open questions (arrangement default, performance-mode merging, future
 Shapes tools and the final moth mark) remain as recorded in DESIGN.md.
+
+## Release preparation — v0.1.0-alpha.9
+
+- All 263 workspace tests passed, including the new UI checks; local socket tests
+  ran outside sandbox restrictions with `XDG_DATA_HOME` under `/tmp`. This
+  supersedes the earlier deferral of automated test execution.
+- `cargo check --workspace`, `cargo fmt --all --check`, workspace Clippy and
+  `cargo deny check` passed. Cargo deny retains existing duplicate-version warnings.
+- The toolbar size regression exposed nested enabled scopes bypassing button
+  wrapping. Native enabled buttons now fit the 320–1440 px test viewports.
+- egui 0.36's `has_glyph` compares fallback face IDs with its replacement face,
+  giving false negatives for Hack fallback glyphs. The regression compares actual
+  rasterized glyphs with a missing-character glyph instead; removing Hack makes
+  the check fail, and restoring it passes.
+- Quick benchmark passed on llvmpipe: 10,000 images, p99 27.199 ms; this does not
+  establish a discrete-GPU performance comparison.
+- The 300-second soak passed: 2,441 frames, RSS 438,860–452,448 KiB;
+  second-half RSS spread 768 KiB, below the 16 MiB plateau guard.
+- Manual/native qualification and screenshot comparison remain pending.
