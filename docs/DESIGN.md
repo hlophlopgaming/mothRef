@@ -32,9 +32,22 @@ moth line. The sage-and-white palette the project started with becomes a system.
 | `moss` | Moss | `#55702F` | Sage for text and thin lines on paper |
 | `eraser` | Eraser | `#E9B7A8` | Rare warm accent: labels, calm warnings |
 
-The dark theme is graphite-based (backgrounds derived from `#23241F`, text from
-`#F3EFE4`, accent `#A6C47A`). Exact derived shades are set when the theme-token
-module exists; every token needs a light and a dark value.
+### Dark theme palette (from exploration C, maintainer 2026-10-24)
+
+The dark theme takes its colors from the «Pixel» exploration; its pixel font and
+hard-edged styling are not used.
+
+| Token | Name | HEX | Role in dark theme |
+| --- | --- | --- | --- |
+| `screen` | Screen | `#1E2420` | Background and canvas |
+| `ink` | Ink | `#1A1A1A` | Deepest surfaces, shadows, text on sage |
+| `bone` | Bone | `#E8E4D6` | Text and icons |
+| `sage` | Sage | `#A6C47A` | Accent: selection, active tool (shared with the light theme) |
+| `wing` | Wing | `#E58FAE` | Rare warm accent: labels, calm warnings (dark counterpart of Eraser) |
+
+Raised surfaces and borders are derived from `screen` (lighter steps of the same
+green-grey). Exact derived shades are set when the theme-token module exists;
+every token needs a light and a dark value.
 
 ### Type
 
@@ -44,7 +57,7 @@ module exists; every token needs a light and a dark value.
 
 ### Themes
 
-- Light «paper» theme is the default; graphite dark theme for night work.
+- Light «paper» theme is the default; dark theme in the palette above for night work.
 - Selection, focus and the active tool use `sage`; text links and thin accents on
   paper use `moss`.
 
@@ -77,10 +90,38 @@ module exists; every token needs a light and a dark value.
 | 11 | Compact window and overlay | Window bar slides in on hover, Tab or a corner tap; overlay HUD with opacity, click-through, exit, and a grab handle that always takes clicks | M3 |
 | 12, 12b | Drawing sessions | Full-screen session and a mini window over the editor that keeps the current image's aspect ratio while resized | M4 |
 | 14 | Groups | Ctrl/⌘+G: backdrop plus an inline title field focused at once; clicking the title selects the whole group; dragging the title moves it; layers in a slide-out drawer | M4 |
+| 15 | Window modes | Collect ⇄ View with `Tab`, Over with `Ctrl/⌘+T` | M3 |
+| 16 | View | Images only; window bar with a "View" popover for opacity and background | M3 |
+| 17 | Over | Glass background, three opacity controls, click-through, grab handle | M3 |
 
 ---
 
 ## 4. Interaction decisions
+
+- **Window modes (screens 15–17).** One board, three window modes; a mode changes
+  only the chrome and the window, never the content.
+  - *Collect* — Miro-like: bottom toolbar, Insert, notes, groups, layers drawer, tabs.
+  - *View* — PureRef-like: images only, frameless window; the window bar slides
+    in from the top edge with the board switcher, a "View" popover (image opacity,
+    board background solid / translucent / glass, whole-window opacity, "images
+    only"), pin and overlay. Editing works through the mouse, the context menu and
+    keys.
+  - *Over* — window above another app: the same controls as the View popover,
+    plus click-through and an always-clickable grab handle.
+  - Keys: `Tab` toggles Collect ⇄ View (ignored in text fields); `Ctrl/⌘+T`
+    toggles Over; clicking a group title then `Tab` views only that group;
+    `Ctrl/⌘+Shift+F` resizes the window to the selection. A window narrower than
+    about 600 px switches to View by itself; the mode is remembered per board.
+  - Opacity is a secondary feature: it lives in the View popover and the Over
+    panel, never in its own floating window. Number keys `1`…`0` set the selected
+    image's opacity with the Select tool (pen width with the drawing tools);
+    `Alt+1`…`0` set the whole window.
+  - Glass needs a platform blur capability (capability flag); where the OS cannot
+    blur, Glass falls back to a translucent tint and says so.
+- **Looking at one image closely.** Already in the app and kept: double-click a
+  selected image (or press Space) fits the camera to it, double-click again goes
+  back; dragging a corner handle scales the image itself. Planned in M3: "overlay
+  selection" pops selected images into their own borderless windows.
 
 - **Groups (M4).** Select images, press Ctrl/⌘+G: a tinted backdrop appears under
   them and a title field opens immediately (Enter keeps it, Esc leaves it
