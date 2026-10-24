@@ -108,6 +108,15 @@ the tool-rail sizing fix do not close this work.
   improve discoverability, control layout and feedback; fix interaction and resize
   issues found during native manual use. Confirm usability with the maintainer
   before marking this task complete.
+  Target layout agreed on 2026-10-24: [docs/DESIGN.md](docs/DESIGN.md) (screens 1–7, 13).
+  - [ ] One floating bottom toolbar (tool group, Insert ▾, undo/redo, fit, zoom "− % +") replaces the top toolbar and the left tool rail; Select is the default tool and Esc returns to it
+  - [ ] Selection bar above the selection and a grouped context menu with right-aligned shortcuts; one bounding box with four handles for multi-selection
+  - [ ] Settings in their own window (Ctrl/⌘+,) with sections, icons and search; language picker moves there from the title bar
+  - [ ] Status bar replaced by a "Saved · N images" chip; adapter, journal and budgets only in Settings › For developers
+  - [ ] Adding many images arranges them at once, fits the camera and shows a toast with method ▾ and Undo; "ask above N" becomes an option (maintainer to confirm the default, see DESIGN.md §6)
+  - [ ] Empty board: plain wording, every supported format listed, "Choose files…" and "Paste"
+  - [ ] Fix defects from the 2026-10-24 alpha review (DESIGN.md §5): missing "→"/"▸" glyphs, palette focus and position, minimap thumbnails, zoom button order, top menu height
+- [ ] Apply the «Album» identity (DESIGN.md §2): light paper theme by default, graphite dark theme, sage/moss accents, Bricolage Grotesque for the logo and large headings; new app icon and README logo once the final mark is drawn
 
 **Current priority (maintainer, 2026-10-18):** accelerate bulk image import and
 board opening. Other feature work waits until this performance task is complete.
@@ -219,17 +228,17 @@ before writing and preserve the original file.
 
 ### M4 — PureRef 2 parity
 
-- [ ] Groups and a hierarchy tree view
+- [ ] Groups and a hierarchy tree view: Ctrl/⌘+G adds a tinted backdrop and focuses an inline title field at once; clicking the title selects the whole group, dragging it moves the group, dropping an image on the backdrop adds it; the hierarchy tree lives in a slide-out Layers drawer (DESIGN.md screen 14)
 - [ ] Freehand drawing (3 widths, eraser, color) and shapes (ellipse, rectangle, line)
 - [ ] Drawing pens: marker (thin / thick) and highlighter (thin / thick), each with color selection
 - [ ] Washi tape: textured tape strips from a built-in set, plus user-added custom textures
 - [ ] Eraser in two modes: pencil-style (erases part of a stroke) and object/layer eraser (removes a whole stroke at once)
 - [ ] Emoji stamp: drop emoji reactions (like, not done, …) from a base set, with a custom emoji picker
 - [ ] Rich text notes with links and checklists; configurable heading font size (BeeRef #130)
-- [ ] Animated GIFs with frame stepping
+- [ ] Animated GIFs with frame stepping: the player sits on the image (scrubber, play/pause, frame counter, speed) and steps 1, 2, 3 or 4 frames at a time
 - [ ] Line/dot grid with snapping; automatic alignment guides and edge/center snapping (BeeRef #129). Images snap by their displayed bounds; make grid visibility and snapping independently toggleable, with a temporary bypass while dragging
 - [ ] Slideshow (incl. random order), embedded ICC profiles
-- [ ] Timed drawing sessions on top of the slideshow: images from the board, a group or a selection; fixed intervals (30 s, 1, 2, 5, 10 min) or a session plan (for example 10 × 30 s, 5 × 2 min); pause, skip, countdown and a sound cue; list of the shown images at the end
+- [ ] Timed drawing sessions on top of the slideshow: images from the board, a group or a selection; fixed intervals (30 s, 1, 2, 5, 10 min) or a session plan (for example 10 × 30 s, 5 × 2 min); pause, skip, countdown and a sound cue; list of the shown images at the end; runs full screen or in a mini window pinned over other apps that keeps the current image's aspect ratio while resized
 - [ ] Minimap / navigator: board overview with the viewport rectangle; click or drag to move the camera; toggle with a shortcut
 - [ ] All parity- and Milanote-checklist items tagged M4 (presentation mode, note formatting and markdown shortcuts, sketch card, drawing shortcuts, GIF frame tools, drawing details, locked groups, hierarchy tools, note parenting and links)
 
@@ -243,7 +252,7 @@ before writing and preserve the original file.
 - [ ] Stacks are real folders on disk (Procreate-style: drop a board on a board to create a stack); "smart collections" are saved tag filters
 - [ ] File manager thumbnails for `.moth` and `.bee` (BeeRef #152): Windows `IThumbnailProvider`, freedesktop thumbnailer, macOS Quick Look extension
 - [ ] Board preview image rendered off the UI thread after a checkpoint and stored as a rebuildable chunk (format version bump); used by the start screen, file-manager thumbnails and the note-app sidecar (M12)
-- [ ] Library sidebar: All boards, Recent, Pinned, Trash (boards deleted from the library go to the OS trash and are listed here), Stacks, Smart collections; counts next to each entry
+- [ ] Library sidebar: All boards, Recent, Pinned, Trash (boards deleted from the library go to the OS trash and are listed here), Stacks, Smart collections; counts next to each entry; an icon per entry (pin for Pinned); stack colors picked from a palette and repeated as a dot on the board cards
 - [ ] Library view options: sort by last opened, last edited, name, item count or size; grid / list view; tag filter chips above the grid
 - [ ] Board cards show item count, last edited time, file size, pinned state and an "unsaved" badge when a recovery journal is pending; the library header shows totals
 - [ ] Library health: boards with missing linked files (with relink), duplicate images across boards by content hash, largest boards
@@ -257,7 +266,7 @@ before writing and preserve the original file.
 - [ ] Columns (auto-stacking containers), nested boards with breadcrumbs
 - [ ] Color swatch cards and palette extraction from an image; link cards; comment pins
 - [ ] Palettes: a palette element holding several swatches; export to `.gpl` (Krita, GIMP, Inkscape) and `.ase` (Adobe); import of both
-- [ ] Collapsible left toolbar (hidden by default)
+- [ ] Create elements from the "Insert ▾" menu of the bottom toolbar, with an icon per element (replaces the planned collapsible left toolbar; maintainer, 2026-10-24)
 - [ ] All Milanote-checklist items tagged M6 (unsorted tray, item labels, synced notes, card colors, captions, to-do cards, board shortcuts, back/forward navigation, Markdown export)
 
 ### M7 — Full import compatibility and release qualification
