@@ -105,7 +105,7 @@ impl Modal {
                                 && board.waiting.is_empty(),
                             egui::Button::new(
                                 egui::RichText::new(moth_ui::text(moth_ui::Text::Save))
-                                    .color(moth_ui::tokens(ui.ctx()).canvas),
+                                    .color(moth_ui::tokens(ui.ctx()).on_accent),
                             )
                             .fill(moth_ui::tokens(ui.ctx()).accent),
                         )

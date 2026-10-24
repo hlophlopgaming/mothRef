@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Recolor the dark theme with the «Pixel» palette from docs/DESIGN.md: green-grey Screen background, Bone text, Sage accent, Wing for destructive actions. In the light «Album» theme, primary buttons now use dark Graphite text instead of near-white text on sage, idle buttons have an outline, and selected icons use Moss so they stay visible on paper.
+
 ## 0.1.0-alpha.9 — 2026-10-24
 
 - Keep wrapped toolbar buttons inside narrow viewports by measuring native button widgets directly. Verify fallback arrow rendering by comparing rasterized glyphs rather than egui's fallback-face detection.

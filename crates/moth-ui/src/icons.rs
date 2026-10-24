@@ -296,7 +296,7 @@ pub fn enabled_button(
         response.rect.translate(egui::vec2(0., -hover + pressed)),
         icon,
         if selected {
-            crate::tokens(ui.ctx()).accent
+            crate::tokens(ui.ctx()).accent_text
         } else {
             ui.visuals().text_color()
         },

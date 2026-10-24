@@ -12,6 +12,8 @@ pub struct Tokens {
     pub accent: Color32,
     /// Accent suitable for text and thin lines.
     pub accent_text: Color32,
+    /// Text and icons drawn on an `accent` fill, such as primary buttons.
+    pub on_accent: Color32,
     /// Semantic surface color.
     pub surface: Color32,
     /// Semantic text muted color.
@@ -99,27 +101,29 @@ impl Tokens {
         let [r, g, b, _] = self.note_fill.to_array();
         Color32::from_rgba_unmultiplied(r, g, b, 235)
     }
-    /// Original dark palette.
+    /// Dark palette from the «Pixel» exploration (docs/DESIGN.md): Screen
+    /// background, Bone text, Sage accent, Ink shadows, Wing warm accent.
     pub const DARK: Self = Self {
         dark: true,
-        canvas: Color32::from_rgb(17, 19, 23),
-        accent: Color32::from_rgb(181, 206, 143),
-        accent_text: Color32::from_rgb(181, 206, 143),
-        surface: Color32::from_rgb(31, 34, 40),
-        text_muted: Color32::from_rgb(120, 125, 136),
-        border: Color32::from_rgb(48, 52, 60),
-        text: Color32::from_rgb(224, 226, 231),
-        surface_raised: Color32::from_rgb(37, 41, 48),
-        hover: Color32::from_rgb(49, 55, 61),
-        selection: Color32::from_rgb(61, 76, 45),
-        divider: Color32::from_rgb(47, 51, 59),
-        empty_border: Color32::from_rgb(59, 63, 72),
-        empty_icon: Color32::from_rgb(113, 119, 132),
-        sidebar: Color32::from_rgb(23, 25, 30),
-        minimap_item: Color32::from_rgb(69, 75, 82),
-        danger: Color32::from_rgb(209, 133, 123),
-        note_fill: Color32::from_rgb(39, 42, 50),
-        shadow: Color32::from_rgb(0, 0, 0),
+        canvas: Color32::from_rgb(30, 36, 32),
+        accent: Color32::from_rgb(166, 196, 122),
+        accent_text: Color32::from_rgb(166, 196, 122),
+        on_accent: Color32::from_rgb(26, 26, 26),
+        surface: Color32::from_rgb(37, 44, 39),
+        text_muted: Color32::from_rgb(154, 159, 148),
+        border: Color32::from_rgb(58, 68, 60),
+        text: Color32::from_rgb(232, 228, 214),
+        surface_raised: Color32::from_rgb(44, 52, 46),
+        hover: Color32::from_rgb(52, 62, 54),
+        selection: Color32::from_rgb(62, 77, 48),
+        divider: Color32::from_rgb(51, 60, 53),
+        empty_border: Color32::from_rgb(70, 81, 74),
+        empty_icon: Color32::from_rgb(138, 146, 137),
+        sidebar: Color32::from_rgb(24, 29, 26),
+        minimap_item: Color32::from_rgb(74, 86, 77),
+        danger: Color32::from_rgb(229, 143, 174),
+        note_fill: Color32::from_rgb(42, 50, 44),
+        shadow: Color32::from_rgb(26, 26, 26),
         image_tint: Color32::from_rgb(255, 255, 255),
         radius_none: 0,
         radius_icon: 1,
@@ -146,17 +150,18 @@ impl Tokens {
         space_l: 16,
         space_xl: 24,
     };
-    /// Paper light palette.
+    /// «Album» light palette (docs/DESIGN.md): Paper, Graphite, Sage, Moss.
     pub const LIGHT: Self = Self {
         dark: false,
         canvas: Color32::from_rgb(243, 239, 228),
         accent: Color32::from_rgb(166, 196, 122),
         accent_text: Color32::from_rgb(85, 112, 47),
+        on_accent: Color32::from_rgb(35, 36, 31),
         surface: Color32::from_rgb(249, 247, 240),
         text_muted: Color32::from_rgb(105, 107, 97),
         border: Color32::from_rgb(196, 195, 181),
         text: Color32::from_rgb(35, 36, 31),
-        surface_raised: Color32::from_rgb(236, 233, 220),
+        surface_raised: Color32::from_rgb(230, 226, 211),
         hover: Color32::from_rgb(225, 230, 212),
         selection: Color32::from_rgb(218, 232, 194),
         divider: Color32::from_rgb(209, 208, 194),
@@ -225,6 +230,11 @@ pub fn apply(ctx: &Context, tokens: &Tokens) {
     style.spacing.item_spacing = egui::Vec2::splat(tokens.space_s as f32);
     style.spacing.interact_size = egui::vec2(36., 36.);
     style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1., tokens.divider);
+    if !tokens.dark {
+        // Raised paper is close to the page itself; an outline keeps idle
+        // buttons visible in the light theme.
+        style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1., tokens.border);
+    }
     for widget in [
         &mut style.visuals.widgets.inactive,
         &mut style.visuals.widgets.hovered,
@@ -240,6 +250,46 @@ pub fn apply(ctx: &Context, tokens: &Tokens) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// WCAG relative luminance.
+    fn luminance(color: Color32) -> f32 {
+        let channel = |v: u8| {
+            let v = v as f32 / 255.;
+            if v <= 0.039_28 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let [r, g, b, _] = color.to_array();
+        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+    }
+    fn contrast(a: Color32, b: Color32) -> f32 {
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+    #[test]
+    fn text_stays_readable_on_every_background() {
+        for palette in [Tokens::DARK, Tokens::LIGHT] {
+            for background in [
+                palette.canvas,
+                palette.surface,
+                palette.surface_raised,
+                palette.sidebar,
+                palette.note_fill,
+                palette.hover,
+                palette.selection,
+            ] {
+                assert!(contrast(palette.text, background) >= 4.5, "{palette:?}");
+                assert!(
+                    contrast(palette.text_muted, background) >= 3.,
+                    "{palette:?}"
+                );
+            }
+            assert!(contrast(palette.on_accent, palette.accent) >= 4.5);
+            assert!(contrast(palette.accent_text, palette.canvas) >= 4.5);
+            assert!(contrast(palette.danger, palette.surface) >= 4.5);
+        }
+    }
     #[test]
     fn switching_updates_both_visuals_and_widget_tokens() {
         let ctx = Context::default();
