@@ -23,7 +23,7 @@ Every milestone and every pull request is judged against these, in this order:
 | Release | After milestone | Promise |
 | --- | --- | --- |
 | 0.1 pre-alpha | M1 | Does not lose data |
-| 0.3 public alpha | M2, M2.5 | Replaces BeeRef, opens `.bee` and `.pur`, zooms faster than PureRef |
+| 0.3 public alpha | M2, M2.5, M2.6 | Replaces BeeRef, opens `.bee` and `.pur`, zooms faster than PureRef |
 | 0.7 beta | M4 | Feature parity with PureRef 2 |
 | 1.0 | M7 | All P0 and P1 features done, all performance targets met |
 | 1.5 | M10 (items tagged 1.5), M12, M14 | Reference analysis (composition overlays, ruler with calibration), Obsidian interop, capture integrations for third-party tools |
@@ -166,6 +166,27 @@ default is "In memory". See [decision 0014](docs/decisions/0014-performance-mode
 - [ ] Measure per mode on reference hardware: warm-cache zoom latency to 2048 px, RSS after zooming in and back out, board open time; record results in [load performance](docs/LOAD-PERFORMANCE.md)
 
 **Exit criteria:** in the default mode, zooming to full detail on an image already shown completes in ≤ 100 ms with a warm cache; every mode stays within its documented memory budget; "No cache" releases texture memory when zoomed out to fit the board.
+
+### M2.6 — UI architecture: surfaces from actions, settings model, theme tokens
+
+**Why (maintainer, 2026-10-24):** the open M2 task "rework and polish the editing
+tools" is a UI redesign. Today buttons build commands inline, settings are fields
+of the Board tools panel and colors are literals, so every redesign would be a
+rewrite. This milestone makes the UI cheap to rearrange first
+([decision 0018](docs/decisions/0018-ui-surfaces-from-action-registry.md)).
+Board logic, the format and the renderer are not touched. Step plans for agents:
+[docs/plans/ui-architecture](docs/plans/ui-architecture/README.md).
+
+Each step is one PR, keeps behavior and appearance unchanged unless it says
+otherwise, and leaves the app shippable.
+
+- [ ] **Step 1 — Theme tokens.** One `moth-ui` theme module owns every color, radius and spacing value as named tokens, with a dark set (today's look) and a light set; `theme()` takes the active set; no `Color32` literal remains outside the module. Appearance unchanged.
+- [ ] **Step 2 — Buttons run actions.** Every button in the Board tools window, the toolbar, the canvas context menu and modals runs a registered `Action` through `Intent::Action`; missing actions are added to `app/bindings.rs`; no surface builds a `Command`. Each action gains an icon id. Behavior unchanged.
+- [ ] **Step 3 — Settings model and window.** Move every persisted preference out of `Tools` into one `Settings` struct with a schema (section, label, kind, default, range); persistence, a settings window opened by Ctrl/⌘+, and settings search in the palette are built from the schema. The settings part of Board tools is removed. Sections: General, Appearance, Canvas and navigation, Adding images, Window and overlay, Performance and memory, Keys and mouse, Integrations, For developers.
+- [ ] **Step 4 — Surfaces as lists.** A bottom toolbar (tool group, Insert menu, undo/redo, fit, zoom), a selection bar with a list per item type, and the canvas context menu are built from ordered action lists; diagnostics leave the status bar for Settings › For developers.
+- [ ] **Step 5 — Remove Board tools.** Delete the window and `Intent::ToggleTools`; every former control is reachable from a surface list, the palette and a touch path.
+
+**Exit criteria:** no `Command` is built in UI code; no `Color32` literal outside the theme module; moving a button between surfaces is a one-line list change; the Board tools window is gone with no lost capability; headless UI screenshots of the board, library, settings and selection states are compared in CI.
 
 ### M3 — Everyday usability, board conversion, window, overlay, browser
 
@@ -763,6 +784,7 @@ Known issues to plan for: macOS notarization needs a paid Apple Developer accoun
 
 | Date | Decision |
 | --- | --- |
+| 2026-10-24 | [UI surfaces from the action registry](docs/decisions/0018-ui-surfaces-from-action-registry.md): buttons run registered actions, surfaces are action lists, settings are a schema-driven model, visual values come from light/dark theme tokens; Board tools window removed in M2.6 |
 | 2026-10-22 | [Full-resolution mode](docs/decisions/0017-full-resolution-mode.md): default mode preloads every image at full resolution into video memory behind a progress bar and never loads while zooming; video-memory limit detected from the adapter and shown to the user; AGENTS.md exception |
 | 2026-10-21 | [Baked tile packs](docs/decisions/0016-baked-tile-packs.md): one background decode per large image writes every detail tile; parent tiles stand in while loading; "Prepare zoom tiles" setting (on screen / whole board / off); RAM cache 12.5% ≤ 1 GiB written through to an 8 GiB disk cache |
 | 2026-10-21 | [Viewport tiles and scheduling](docs/decisions/0015-viewport-tiles-and-scheduling.md): bounded replaceable viewport queue; fixed-size visible detail tiles; native JPEG scanlines and Android NDK toolchain |
