@@ -135,6 +135,14 @@ Android and the browser are future targets. These rules keep the port cheap; the
 - **UI layout is responsive.** No fixed desktop pixel sizes; panels must adapt to small screens and touch-sized targets.
 - CI builds the core crates for `aarch64-linux-android` (and `wasm32-unknown-unknown` from M8). Do not add a dependency that breaks those builds.
 
+### UI surfaces ([decision 0018](docs/decisions/0018-ui-surfaces-from-action-registry.md))
+- **A button is a reference to an action.** Every clickable command runs a registered `Action` (`app/bindings.rs`) through `Intent::Action`. Surfaces never build `Command`s themselves; availability comes from `App::action_enabled`, the effect from `App::run_action`.
+- **Surfaces are lists.** The bottom toolbar, the selection bar (per item type), the context menu and the command palette are ordered lists of actions. To move a button, edit the list.
+- **Settings are a model.** A new preference is one entry in the `Settings` schema (section, label, kind, default). Never add a preference as a field of a panel struct.
+- **Visual values come from theme tokens.** No `Color32` literal, radius or spacing constant outside the `moth-ui` theme module. Both the light and the dark token set must cover every new token.
+- **Every feature plan says where it lives in the UI:** which surface, which list, which settings section. The Board tools window is being removed (ROADMAP M2.6); do not add anything to it.
+- **Nothing technical is shown to users by default.** Adapter names, journal state, budgets and other diagnostics go to Settings › For developers.
+
 ---
 
 ## 5. Data safety rules
@@ -233,5 +241,6 @@ Targets are in `ROADMAP.md`. Rules for agents:
 - Make network requests from the desktop app without an explicit user action (link previews load only on click; the update check can be disabled).
 - Claim checks passed without running them. Follow section 3 for which checks to run, and report checks deferred until release.
 - Run tier-3 checks inside a session, or run benchmarks while a build or fuzzer is running.
+- Build a `Command` inside a UI surface, add a `Color32` literal outside the theme module, or add a control to the Board tools window (see "UI surfaces" in section 4).
 
 When something is ambiguous, write down the question and the options in the PR description instead of guessing.
