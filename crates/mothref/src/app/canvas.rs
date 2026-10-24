@@ -770,6 +770,30 @@ mod tests {
         assert_eq!(preview_rect(rect, None, 2.), rect);
     }
     #[test]
+    fn zoom_during_drag_keeps_the_grabbed_point_under_the_cursor() {
+        let rect = Rect {
+            x: 0.,
+            y: 0.,
+            width: 100.,
+            height: 100.,
+        };
+        let mut camera = Camera {
+            origin: [0., 0.],
+            zoom: 1.,
+        };
+        // Grab the image at its centre, then wheel-zoom 2x around the cursor.
+        let grab = [50., 50.];
+        let anchor = camera.world(grab);
+        let cursor = [80., 60.];
+        camera.zoom_at(cursor, 2.);
+        // App::rebase_drag re-projects the start through the new camera.
+        let start = camera.screen(anchor);
+        let moved = preview_rect(rect, Some((start, cursor, false)), camera.zoom);
+        let grabbed = camera.screen([moved.x + 50., moved.y + 50.]);
+        assert!((grabbed[0] - cursor[0]).abs() < 0.001);
+        assert!((grabbed[1] - cursor[1]).abs() < 0.001);
+    }
+    #[test]
     fn library_and_resized_canvas_keep_scissors_inside_the_surface() {
         assert_eq!(
             canvas_clip(egui::Rect::NOTHING, 1., [1440, 900]),

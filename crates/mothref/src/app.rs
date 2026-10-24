@@ -92,6 +92,10 @@ pub struct App {
     pub startup_error: Option<anyhow::Error>,
     shell: shell::Shell,
     drag: Option<([f32; 2], [f32; 2], bool)>,
+    /// World point under the pointer when an item or selection drag started. The
+    /// screen start in `drag` is rebuilt from it whenever the camera moves, so zooming
+    /// or wheel-panning mid-drag keeps the dragged images under the cursor.
+    drag_anchor: Option<[f32; 2]>,
     drag_pointer: Option<(moth_platform::input::Kind, u64)>,
     input: InputState,
     startup: Vec<std::path::PathBuf>,
@@ -149,6 +153,7 @@ impl App {
             startup_error: None,
             shell,
             drag: None,
+            drag_anchor: None,
             drag_pointer: None,
             input: InputState::default(),
             startup: std::env::args_os()
@@ -1145,6 +1150,7 @@ impl App {
                         delta[0] / self.workspace.board.view.camera.zoom;
                     self.workspace.board.view.camera.origin[1] -=
                         delta[1] / self.workspace.board.view.camera.zoom;
+                    self.rebase_drag();
                 }
             }
             Input::Zoom {
@@ -1168,9 +1174,12 @@ impl App {
                             self.settings.reduced_motion || !self.settings.smooth_zoom,
                         );
                     }
+                    self.rebase_drag();
                 }
             }
             Input::Pointer(mut p) => {
+                // Smooth zoom and inertia move the camera between pointer events.
+                self.rebase_drag();
                 if p.phase == Phase::Down {
                     let action = self.shortcuts.registry.pointer(
                         p.button,
@@ -1354,6 +1363,7 @@ impl App {
                             p.position,
                             p.pan || self.workspace.board.view.pan,
                         ));
+                        self.drag_anchor = Some(self.workspace.board.view.camera.world(p.position));
                         self.drag_pointer = Some((p.kind, p.id));
                     }
                     Phase::Move => {
@@ -1450,6 +1460,15 @@ impl App {
             }
         }
     }
+    /// Keeps a board-space drag glued to the board while the camera changes under it.
+    /// Item moves, rubber-band selection and cancel all derive their world delta from
+    /// `(last - start) / zoom`; re-projecting `start` makes that equal to the real
+    /// world distance under the current camera instead of mixing two zoom levels.
+    fn rebase_drag(&mut self) {
+        if let (Some((start, _, false)), Some(anchor)) = (self.drag.as_mut(), self.drag_anchor) {
+            *start = self.workspace.board.view.camera.screen(anchor);
+        }
+    }
     fn cancel_drag(&mut self) {
         if self.moving.is_some()
             && let Some((a, b, false)) = self.drag
@@ -1532,6 +1551,7 @@ impl App {
             Instant::now(),
             self.settings.reduced_motion,
         );
+        self.rebase_drag();
         self.motion
             .configure(self.settings.drag_animation, self.settings.drag_opacity);
         self.motion.step(
@@ -1554,6 +1574,7 @@ impl App {
         for intent in intents {
             self.apply(intent, event_loop);
         }
+        self.rebase_drag();
         self.render(output)
     }
     fn run_ui(&mut self, window: &Window) -> Option<(egui::FullOutput, Vec<Intent>)> {
