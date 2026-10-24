@@ -4,6 +4,8 @@
 
 ## 0.1.0-alpha.8 — 2026-10-24
 
+- Update the Windows clipboard dependency to 5.4.3, replacing the yanked 5.4.1 release.
+
 - Skip zero-sized overlay-controller frames, refresh its surface after uncovering or display-scale changes, and retry after surface recovery. Disable click-through controls when the platform reports no support.
 
 - Restore visible arrangement gutters when old settings contain a zero gap: use the default 24 units and require a positive gap for Grid, rows and columns. Optimal remains gapless.
