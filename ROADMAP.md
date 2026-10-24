@@ -116,7 +116,7 @@ the tool-rail sizing fix do not close this work.
   - [ ] Adding many images arranges them at once, fits the camera and shows a toast with method ▾ and Undo; "ask above N" becomes an option (maintainer to confirm the default, see DESIGN.md §6)
   - [ ] Empty board: plain wording, every supported format listed, "Choose files…" and "Paste"
   - [ ] Fix defects from the 2026-10-24 alpha review (DESIGN.md §5): missing "→"/"▸" glyphs, palette focus and position, minimap thumbnails, zoom button order, top menu height
-- [ ] Apply the «Album» identity (DESIGN.md §2): light paper theme by default, graphite dark theme, sage/moss accents, Bricolage Grotesque for the logo and large headings; new app icon and README logo once the final mark is drawn
+- [ ] Apply the «Album» identity (DESIGN.md §2): light paper theme by default, dark theme in the «Pixel» palette (screen, ink, bone, sage, wing), sage/moss accents, Bricolage Grotesque for the logo and large headings; new app icon and README logo once the final mark is drawn
 
 **Current priority (maintainer, 2026-10-18):** accelerate bulk image import and
 board opening. Other feature work waits until this performance task is complete.
@@ -231,6 +231,7 @@ before writing and preserve the original file.
 
 - [x] Always-on-top, frameless window, move window by hotkey
 - [x] Auto-reveal window bar: minimize, maximize/restore, close and pin controls appear on pointer approach; also reveal through keyboard focus and an explicit touch action
+- [ ] Window modes (DESIGN.md §4, screens 15–17): Collect (full chrome) ⇄ View (images only, PureRef-like) with `Tab`; Over with `Ctrl/⌘+T`; a group can be viewed on its own; narrow windows switch to View; mode remembered per board. Opacity and board background (solid / translucent / glass with platform blur) live in the View popover and the Over panel
 - [x] Pin button and rebindable shortcut: choose above all windows or above a chosen window; for the latter, let the user click the target, with cancel and visible active mode. A shortcut toggles the mode off/on using the last choice; respect platform capability flags
 - [ ] Desktop GUI launch without a terminal: investigate the reported extra cmd window on Windows and ensure packaged GUI launches do not open a console; check normal Finder launch on macOS for the same symptom. Preserve diagnostic logging and intentional CLI output; qualify both launch paths
 - [ ] Windows maximize/restore/fullscreen reliability: exercise repeated transitions, resize and surface recreation without losing the scene. Field report: PureRef crashed on Windows when expanded to fill the screen; maximize versus fullscreen is unconfirmed, and this is not yet a reproduced MothRef bug
