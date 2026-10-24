@@ -127,7 +127,7 @@ impl Library {
                                 ui,
                                 egui::Rect::from_min_size(ui.cursor().min, egui::vec2(20., 30.)),
                                 Icon::Folder,
-                                crate::tokens(ui.ctx()).accent,
+                                crate::tokens(ui.ctx()).accent_text,
                             );
                             ui.add_space(crate::tokens(ui.ctx()).space_xl as f32);
                             if ui
@@ -184,7 +184,7 @@ impl Library {
                             .add(
                                 egui::Button::new(
                                     egui::RichText::new(format!("+  {}", text(Text::NewBoard)))
-                                        .color(crate::tokens(ui.ctx()).canvas),
+                                        .color(crate::tokens(ui.ctx()).on_accent),
                                 )
                                 .fill(crate::tokens(ui.ctx()).accent),
                             )
