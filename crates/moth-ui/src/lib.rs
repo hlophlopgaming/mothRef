@@ -718,7 +718,32 @@ mod tests {
         theme(&ctx, &Tokens::DARK);
         ctx.run_ui(Default::default(), |ui| {
             ui.fonts_mut(|fonts| {
-                assert!(fonts.has_glyphs(&egui::FontId::proportional(14.), "→▸▾›"))
+                // has_glyph confuses the fallback face with replacement; compare actual glyph pixels.
+                let mut raster = |character: char| {
+                    let galley = fonts.layout_no_wrap(
+                        character.to_string(),
+                        egui::FontId::proportional(14.),
+                        Tokens::DARK.text,
+                    );
+                    let glyph = &galley.rows[0].glyphs[0];
+                    let image = fonts.image();
+                    let [left, top] = glyph.uv_rect.min.map(usize::from);
+                    let [right, bottom] = glyph.uv_rect.max.map(usize::from);
+                    let pixels: Vec<_> = (top..bottom)
+                        .flat_map(|y| {
+                            image.pixels[y * image.size[0] + left..y * image.size[0] + right]
+                                .iter()
+                                .copied()
+                        })
+                        .collect();
+                    ([right - left, bottom - top], pixels)
+                };
+                let replacement = raster('\u{10ffff}');
+                for character in "→▸▾›".chars() {
+                    let glyph = raster(character);
+                    assert!(!glyph.1.is_empty());
+                    assert_ne!(glyph, replacement, "replacement rendered for {character}");
+                }
             });
         })
         .textures_delta

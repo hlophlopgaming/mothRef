@@ -248,7 +248,18 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
 }
 /// Icon buttons retain native egui focus, tooltips and accessibility labels.
 pub fn button(ui: &mut Ui, icon: Icon, label: &str, selected: bool) -> Response {
-    let response = ui.add(
+    enabled_button(ui, icon, label, selected, true)
+}
+/// Uses native disabled-button layout so wrapped surfaces measure the button itself.
+pub fn enabled_button(
+    ui: &mut Ui,
+    icon: Icon,
+    label: &str,
+    selected: bool,
+    enabled: bool,
+) -> Response {
+    let response = ui.add_enabled(
+        enabled,
         egui::Button::new("")
             .min_size(Vec2::splat(if ui.ctx().content_rect().width() < 600. {
                 44.

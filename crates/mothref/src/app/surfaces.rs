@@ -142,40 +142,40 @@ fn button(
     selected: bool,
 ) -> bool {
     let label = text(action.label());
-    ui.add_enabled_ui(
-        enabled.get(action as usize).copied().unwrap_or(false),
-        |ui| {
-            if icon_only && let Some(icon) = action.icon() {
-                return moth_ui::icons::button(
-                    ui,
-                    icon,
-                    &format!("{label} {}", registry.label(action)),
-                    selected,
-                )
-                .clicked();
-            }
-            let button = egui::Button::new(if action.icon().is_some() {
-                format!("     {label}")
-            } else {
-                label.to_owned()
-            })
-            .shortcut_text(registry.label(action))
-            .selected(selected);
-            let response = ui.add_sized(
-                [ui.available_width().min(360.), ui.spacing().interact_size.y],
-                button,
-            );
-            if let Some(icon) = action.icon() {
-                let rect = egui::Rect::from_center_size(
-                    egui::pos2(response.rect.left() + 14., response.rect.center().y),
-                    egui::vec2(18., 18.),
-                );
-                moth_ui::icons::paint(ui, rect, icon, ui.visuals().text_color());
-            }
-            response.clicked()
-        },
-    )
-    .inner
+    let enabled = enabled.get(action as usize).copied().unwrap_or(false);
+    if icon_only && let Some(icon) = action.icon() {
+        return moth_ui::icons::enabled_button(
+            ui,
+            icon,
+            &format!("{label} {}", registry.label(action)),
+            selected,
+            enabled,
+        )
+        .clicked();
+    }
+    let label = if action.icon().is_some() {
+        format!("     {label}")
+    } else {
+        label.to_owned()
+    };
+    let width = if icon_only {
+        0.
+    } else {
+        ui.available_width().min(360.)
+    };
+    let button = egui::Button::new(label)
+        .shortcut_text(registry.label(action))
+        .selected(selected)
+        .min_size(egui::vec2(width, ui.spacing().interact_size.y));
+    let response = ui.add_enabled(enabled, button);
+    if let Some(icon) = action.icon() {
+        let rect = egui::Rect::from_center_size(
+            egui::pos2(response.rect.left() + 14., response.rect.center().y),
+            egui::vec2(18., 18.),
+        );
+        moth_ui::icons::paint(ui, rect, icon, ui.visuals().text_color());
+    }
+    response.clicked()
 }
 pub(super) fn menu(
     ui: &mut egui::Ui,
