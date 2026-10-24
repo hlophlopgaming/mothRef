@@ -118,9 +118,10 @@ every token needs a light and a dark value.
     `Alt+1`…`0` set the whole window.
   - Glass needs a platform blur capability (capability flag); where the OS cannot
     blur, Glass falls back to a translucent tint and says so.
-- **Looking at one image closely.** Already in the app and kept: double-click a
-  selected image (or press Space) fits the camera to it, double-click again goes
-  back; dragging a corner handle scales the image itself. Planned in M3: "overlay
+- **Looking at one image closely.** Implemented and kept: double-click an image
+  (or select it and press Space) fits the camera to it, double-click again goes
+  back; dragging a corner handle scales the image itself. Today the double-click
+  works only with the Select tool (section 5). Planned in M3: "overlay
   selection" pops selected images into their own borderless windows.
 
 - **Groups (M4).** Select images, press Ctrl/⌘+G: a tinted backdrop appears under
@@ -152,6 +153,11 @@ every token needs a light and a dark value.
 - Minimap draws grey boxes instead of thumbnails; zoom buttons read "+ 100% −";
   handles drawn on every selected image.
 - The two-item "Commands" menu and "Help" take about 90 px at the top.
+- Double-clicking an image to focus it does nothing while the Hand tool is
+  active, and Hand is the default tool: `activate` in `app.rs` requires the
+  move-drag pointer action and `!view.pan`. Focus on double-click should work
+  with any navigation tool; making Select the default (section 1) also fixes it
+  for most users.
 
 ---
 
