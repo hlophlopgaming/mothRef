@@ -360,7 +360,6 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                                     intents.push(Intent::FitSelection);
                                     ui.close();
                                 }
-                                let target_width = view.viewport.width() / view.camera.zoom;
                                 ui.menu_button(moth_ui::text(moth_ui::Text::Arrange), |ui| {
                                     for (label, mode) in [
                                         (moth_ui::Text::Horizontal, arrange::Arrange::Horizontal),
@@ -368,12 +367,17 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                                         (moth_ui::Text::Grid, arrange::Arrange::Grid),
                                         (moth_ui::Text::Optimal, arrange::Arrange::Optimal),
                                     ] {
-                                        if ui.button(moth_ui::tooltip(ui.ctx(), label)).clicked() {
-                                            intents.push(Intent::Commands(tools.arrange(
-                                                &mut items,
-                                                mode,
-                                                target_width,
-                                            )));
+                                        if moth_ui::icons::labeled_button(
+                                            ui,
+                                            super::tools::layout_icon(mode),
+                                            &moth_ui::tooltip(ui.ctx(), label),
+                                            false,
+                                        )
+                                        .clicked()
+                                        {
+                                            intents.push(Intent::Commands(
+                                                tools.arrange(&mut items, mode),
+                                            ));
                                             ui.close();
                                         }
                                     }

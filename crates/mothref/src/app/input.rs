@@ -39,6 +39,17 @@ pub(super) fn canvas_navigation(
 }
 
 impl InputState {
+    /// Match native pointer coordinates to the points used by the canvas and egui.
+    pub fn event(
+        &mut self,
+        event: &winit::event::WindowEvent,
+        native_scale: f64,
+        context: &egui::Context,
+    ) -> Option<moth_platform::input::Input> {
+        self.adapter
+            .event(event, native_scale * f64::from(context.zoom_factor()))
+    }
+
     /// egui intentionally omits Super outside macOS; exact matching still needs it.
     pub fn modifiers_event(&mut self, event: &winit::event::WindowEvent) {
         if let winit::event::WindowEvent::ModifiersChanged(modifiers) = event {
@@ -107,6 +118,33 @@ mod tests {
     use super::super::bindings::{Action, Registry};
     use super::*;
     use egui::Key;
+    #[test]
+    fn pointer_matches_canvas_points_at_custom_ui_scale() {
+        for native_scale in [1., 2.] {
+            for zoom in [0.75, 1., 1.5, 2.] {
+                let context = egui::Context::default();
+                context.set_zoom_factor(zoom);
+                context
+                    .run_ui(Default::default(), |_| {})
+                    .textures_delta
+                    .clear();
+                let mut input = InputState::default();
+                let event = winit::event::WindowEvent::CursorMoved {
+                    device_id: winit::event::DeviceId::dummy(),
+                    position: winit::dpi::PhysicalPosition::new(
+                        300. * native_scale * f64::from(zoom),
+                        200. * native_scale * f64::from(zoom),
+                    ),
+                };
+                let Some(moth_platform::input::Input::Pointer(pointer)) =
+                    input.event(&event, native_scale, &context)
+                else {
+                    panic!("cursor movement must produce a pointer");
+                };
+                assert_eq!(pointer.position, [300., 200.]);
+            }
+        }
+    }
     #[test]
     fn open_tools_keep_wheel_and_trackpad_navigation_off_the_board() {
         let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.));

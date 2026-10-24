@@ -11,6 +11,7 @@ impl App {
         if matches!(
             action,
             Palette
+                | BindingSettings
                 | Shortcuts
                 | Tools
                 | New
@@ -21,15 +22,18 @@ impl App {
                 | Overlay
                 | Minimize
                 | Maximize
+                | MoveWindow
+                | Fullscreen
         ) {
             return true;
         }
         if action == Pin {
-            return self
-                .shell
-                .window
-                .as_ref()
-                .is_some_and(|w| moth_platform::Desktop.window_capabilities(w).on_top);
+            return self.overlay.is_none()
+                && self
+                    .shell
+                    .window
+                    .as_ref()
+                    .is_some_and(|w| moth_platform::Desktop.window_capabilities(w).on_top);
         }
         if self.workspace.library {
             return false;
@@ -101,6 +105,11 @@ impl App {
             }
             Shortcuts => {
                 self.cancel_drag();
+                self.shortcuts.open_cheatsheet();
+                return;
+            }
+            BindingSettings => {
+                self.cancel_drag();
                 self.shortcuts.open_settings();
                 return;
             }
@@ -121,6 +130,14 @@ impl App {
             Redo => Intent::Redo,
             Overlay => Intent::Overlay,
             Pin => Intent::Pin,
+            MoveWindow => {
+                self.cancel_drag();
+                let moving = !self.moving_window;
+                self.cancel_window_mode();
+                self.moving_window = moving;
+                return;
+            }
+            Fullscreen => Intent::Fullscreen,
             Minimize => Intent::Minimize,
             Maximize => Intent::Maximize,
             Select => {
@@ -241,8 +258,6 @@ impl App {
                                 Grid => arrange::Arrange::Grid,
                                 _ => arrange::Arrange::Optimal,
                             },
-                            self.workspace.board.view.viewport.width()
-                                / self.workspace.board.view.camera.zoom,
                         )
                     }
                 };

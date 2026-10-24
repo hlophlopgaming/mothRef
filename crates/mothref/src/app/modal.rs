@@ -140,7 +140,14 @@ impl Modal {
                             (moth_ui::Text::Grid, arrange::Arrange::Grid),
                             (moth_ui::Text::Optimal, arrange::Arrange::Optimal),
                         ] {
-                            if ui.button(moth_ui::text(label)).clicked() {
+                            if moth_ui::icons::labeled_button(
+                                ui,
+                                super::tools::layout_icon(mode),
+                                moth_ui::text(label),
+                                false,
+                            )
+                            .clicked()
+                            {
                                 intents.push(Intent::Arrange(mode, ids.clone()));
                                 intents.push(Intent::DismissArrangePrompt);
                             }

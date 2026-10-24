@@ -50,21 +50,19 @@ Dependency direction is strict: `moth-scene` and `moth-format` depend on nothing
 
 ## 3. Commands
 
-Checks come in three tiers. Agents run tiers 1 and 2; tier 3 is the release gate and runs in CI or by the maintainer, never inside an agent session. A tier-3 run takes 10 minutes to hours, outlives tool timeouts and competes with builds for CPU.
+Checks come in three tiers. During ordinary development, agents run formatting and Clippy for changed crates, plus `cargo deny check` when dependencies change. Run tests (including targeted tests, corpus checks, fuzzing, killtests and soak tests) and benchmarks only when preparing a release or when the maintainer explicitly requests them. Writing regression tests is still expected; running them follows this policy. Tier 3 runs in CI or by the maintainer, never inside an agent session.
 
 ### Tier 1: fast loop (every change, must finish in a few minutes)
 
 ```sh
 cargo fmt --all --check
 cargo clippy -p <changed crates> --all-targets -- -D warnings
-cargo test -p <changed crates>
-cargo xtask corpus                    # when touching format or import: round-trip every corpus file
 cargo deny check                      # when adding or bumping a dependency
 ```
 
-Before a PR is final, run the workspace-wide versions once: `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace`.
+Before a PR is final, run `cargo clippy --workspace --all-targets -- -D warnings`. For a release or an explicit test request, run `cargo test -p <changed crates>` or `cargo test --workspace` as appropriate, and `cargo xtask corpus` when touching format or import.
 
-### Tier 2: quick stress (only for the area you touched)
+### Tier 2: quick stress (release preparation or explicit request; only for the area you touched)
 
 Run these **one at a time, in the foreground, with no build, fuzzer or other benchmark running**. Timing results under load are meaningless: a failed `bench` or `paste` guard while anything else runs is not a regression, rerun it on an idle machine before acting on it.
 
@@ -184,7 +182,7 @@ Per the maintainer, these images are licensed under Creative Commons; artwork in
 | Anything holding long-lived data | `cargo xtask soak 300 5` smoke run; the 30-minute plateau check is tier 3 and runs in the Reliability workflow |
 | Platform code | Manual test notes in the PR for each OS you could not run in CI |
 
-Bug fixes start with a failing test that reproduces the bug.
+Bug fixes include a regression test that reproduces the bug. Execute it only under the policy in section 3; the run requirements in this table apply at that time.
 
 ---
 
@@ -233,7 +231,7 @@ Targets are in `ROADMAP.md`. Rules for agents:
 - Use `std::fs` paths in core crates, read raw mouse events outside the input layer, or hard-code a GPU texture format (see "Portability").
 - Touch PureRef binaries in any way (see the clean-room rule).
 - Make network requests from the desktop app without an explicit user action (link previews load only on click; the update check can be disabled).
-- Claim a task is done without running the tier-1 commands (and the tier-2 commands for the area you touched) in section 3.
+- Claim checks passed without running them. Follow section 3 for which checks to run, and report checks deferred until release.
 - Run tier-3 checks inside a session, or run benchmarks while a build or fuzzer is running.
 
 When something is ambiguous, write down the question and the options in the PR description instead of guessing.

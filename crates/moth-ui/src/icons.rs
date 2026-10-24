@@ -32,6 +32,14 @@ pub enum Icon {
     Close,
     /// Grid library view.
     Grid,
+    /// Unequal rectangles in a row.
+    ArrangeHorizontal,
+    /// Unequal rectangles in a column.
+    ArrangeVertical,
+    /// Rectangles filling a square with gutters.
+    ArrangeGrid,
+    /// Rectangles filling a square without gutters.
+    ArrangeOptimal,
     /// List library view.
     List,
     /// Find boards.
@@ -180,6 +188,27 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
                 }
             }
         }
+        Icon::ArrangeHorizontal
+        | Icon::ArrangeVertical
+        | Icon::ArrangeGrid
+        | Icon::ArrangeOptimal => {
+            let boxes: &[[f32; 4]] = match icon {
+                Icon::ArrangeHorizontal => {
+                    &[[1., 5., 4., 9.], [7., 3., 4., 11.], [13., 7., 4., 7.]]
+                }
+                Icon::ArrangeVertical => &[[3., 1., 11., 4.], [5., 7., 9., 4.], [1., 13., 13., 4.]],
+                Icon::ArrangeGrid => &[[1., 1., 7., 16.], [10., 1., 7., 7.], [10., 10., 7., 7.]],
+                _ => &[[2., 2., 8., 14.], [10., 2., 6., 8.], [10., 10., 6., 6.]],
+            };
+            for &[x, y, w, h] in boxes {
+                ui.painter().rect_stroke(
+                    Rect::from_min_size(p(x, y), Vec2::new(w, h)),
+                    0.,
+                    stroke,
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
         Icon::List => {
             for y in [4., 9., 14.] {
                 line(&[(3., y), (15., y)]);
@@ -256,4 +285,16 @@ pub fn button(ui: &mut Ui, icon: Icon, label: &str, selected: bool) -> Response 
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
     response.on_hover_text(label)
+}
+
+/// A reserved vector slot keeps labels, focus and touch targets in the native button layout.
+pub fn labeled_button(ui: &mut Ui, icon: Icon, label: &str, selected: bool) -> Response {
+    let id = ui.next_auto_id().with("icon");
+    let result = egui::Button::new((egui::Atom::custom(id, Vec2::splat(18.)), label))
+        .selected(selected)
+        .atom_ui(ui);
+    if let Some(rect) = result.rect(id) {
+        paint(ui, rect, icon, ui.visuals().text_color());
+    }
+    result.response
 }

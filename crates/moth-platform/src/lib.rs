@@ -384,6 +384,23 @@ pub trait Platform {
     fn capabilities(&self) -> Capabilities;
     /// Compositors can reject topmost windows while still supporting transparent surfaces.
     fn window_capabilities(&self, window: &winit::window::Window) -> WindowCapabilities;
+    /// Validates the remembered target before restoring a pin.
+    fn pin_target_available(&self, pin: &pin::Pin) -> bool {
+        pin.available()
+    }
+    /// Applies target stacking without transferring window ownership.
+    fn pin_target(
+        &self,
+        pin: &mut pin::Pin,
+        window: &winit::window::Window,
+        enabled: bool,
+    ) -> Result<(), String> {
+        pin.enable(window, enabled)
+    }
+    /// Polls native selection only while the explicit picker is active.
+    fn pick_pin_target(&self, pin: &mut pin::Pin, window: &winit::window::Window) -> Option<bool> {
+        pin.pick(window)
+    }
     /// Applies reversible window effects through one platform boundary.
     fn window_effects(
         &self,
@@ -398,6 +415,8 @@ pub trait Platform {
 pub struct WindowCapabilities {
     /// Wayland compositors control stacking, so the app cannot promise topmost behavior.
     pub on_top: bool,
+    /// Selecting a foreign window is supported by this backend.
+    pub above_window: bool,
     /// The backend supports an empty input region.
     pub click_through: bool,
 }
@@ -421,6 +440,7 @@ impl Platform for Desktop {
             .is_ok_and(|h| matches!(h.as_raw(), RawWindowHandle::Wayland(_)));
         WindowCapabilities {
             on_top: !wayland,
+            above_window: cfg!(target_os = "windows"),
             click_through: true,
         }
     }
@@ -704,3 +724,9 @@ mod tests {
         other.discard().unwrap();
     }
 }
+
+/// Native target selection and event-driven stacking without owning foreign windows.
+pub mod pin;
+
+/// Bounded diagnostic logging for GUI launches without a terminal.
+pub mod diagnostics;

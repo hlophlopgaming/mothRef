@@ -111,7 +111,14 @@ fn pick(name: &str, adapters: &[(String, u64)]) -> Option<u64> {
 /// Runs a short query command, giving up after a few seconds.
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 fn query(program: &str, args: &[&str]) -> Option<String> {
-    let mut child = std::process::Command::new(program)
+    let mut command = std::process::Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // Registry and driver probes are console executables even when MothRef is a GUI.
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let mut child = command
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -245,6 +252,16 @@ fn parse_registry(text: &str) -> Vec<(String, u64)> {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn hidden_probes_preserve_captured_output() {
+        assert_eq!(
+            query("cmd", &["/C", "echo mothref-probe"])
+                .as_deref()
+                .map(str::trim),
+            Some("mothref-probe")
+        );
+    }
     #[test]
     fn limits_leave_room_for_the_desktop_and_follow_the_memory_model() {
         let ram = Some(32 * GIB);

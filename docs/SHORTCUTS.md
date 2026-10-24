@@ -23,6 +23,7 @@ An action being present in Tools does not mean its PureRef binding is implemente
 | Fit entire board | `Home`, Fit board button |
 | Fit selected group | Tap Space over the selection, or select images, double-click any selected image: fit the combined rotated bounds in both viewport dimensions with padding; double-click the same image again to return |
 | Focus one image | Double-click an image outside the selection |
+| Previous / next image | `PageUp` / `PageDown`; cycles in layer order and wraps, ignoring notes |
 | Move / duplicate selection | LMB-drag / Alt+LMB-drag; selected images move as a group |
 | Add to selection | Shift+click; drag empty canvas for a selection rectangle |
 | Nudge selection | Arrow keys: 1 scene unit; Shift+arrows: 10 |
@@ -34,7 +35,8 @@ An action being present in Tools does not mean its PureRef binding is implemente
 | Paste / undo / redo | `Ctrl+V` / `Ctrl+Z` / `Ctrl+Y` |
 | Duplicate / delete selection | `Ctrl+D` / `Delete`; visible Tools controls |
 | Command palette | `Ctrl+K` or Commands → Command palette; arrows, Enter, Esc |
-| Bindings and searchable command inventory | `/` or Commands → Keyboard and mouse bindings |
+| Searchable shortcut cheat sheet | `/` or Help → Shortcut cheat sheet; all actions grouped by category, with current custom bindings |
+| Edit bindings | Commands → Keyboard and mouse bindings, or the button in the cheat sheet |
 | Zoom / 100% | `=` / `−`; bind Zoom to 100% in the editor |
 | Library / close tab / overlay | `Ctrl+L` / `Ctrl+W` / `Ctrl+T` |
 
@@ -47,7 +49,7 @@ Visible Hand, zoom, fit, previous/next and Tools controls remain pen/touch alter
 
 ## Configure and preview bindings
 
-Open **Commands → Keyboard and mouse bindings** (or `/`). Search by localized
+Open **Commands → Keyboard and mouse bindings** (also available from the `/` cheat sheet). Search by localized
 name or stable action ID. Each row shows an editable proposed chord and the current
 binding. Leave a chord empty to unbind it. `Cmd` is the portable Ctrl/Command
 modifier; `Shift`, `Alt`, `Super` (Windows/Linux), physical key names (`R`, `ArrowLeft`, `F2`, `Space`)
@@ -78,7 +80,7 @@ The palette searches the same action IDs, localized labels and current shortcuts
 Unavailable actions remain visible but disabled; Enter cannot run them. Parameterized
 editing/export controls remain in Tools, which is also a palette action.
 The binding editor's searchable inventory shares this registry; the roadmap's
-separate categorized Help cheat sheet is still pending.
+categorized Help cheat sheet uses the same registry and includes pointer gestures.
 
 ## Actions from the screenshot
 
@@ -86,7 +88,7 @@ separate categorized Help cheat sheet is still pending.
 | --- | --- | --- |
 | Note | `Ctrl+N` | Add note in Tools / double-click empty canvas; **conflict:** Ctrl+N creates a board |
 | Always on bottom | `Ctrl+Shift+B` | Missing; M3 window capability |
-| Always on top | `Ctrl+Shift+A` | Pin button; platform-dependent, no matching binding |
+| Always on top | `Ctrl+Shift+A` | Pin button; platform-dependent, defaults to `Ctrl+Shift+T` |
 | Arrange by addition | `Ctrl+Alt+A` | Tools arrange order: time added; no matching binding |
 | Arrange by name | `Ctrl+Alt+N` | Tools arrange order: filename; no matching binding |
 | Clear canvas | `Ctrl+K` | No dedicated action/binding; command palette reserves Ctrl+K |
@@ -212,3 +214,19 @@ final changed-crate tests after focus/gesture guards were tightened. The tier-2
 quick benchmark rendered 10,000 images at 4.816 ms p99; `cargo xtask soak 300 5`
 completed 2,828 frames, with RSS stable at 194,324 KiB from 45 seconds onward.
 Tier-3 checks were not run in the agent session.
+
+## Arrangement and shortcut feedback
+
+Tools → Arrange offers integer sliders with editable exact values. Horizontal uses a row count and fills each row left-to-right before moving down. Vertical uses a column count and fills each column top-to-bottom before moving right. Grid uses a column count and fills rows left-to-right. Counts are clamped to the affected selection (or all items when selection is empty). Uneven horizontal/vertical layouts put the extra items in the first rows/columns. Arrangement preserves each frame size and uses one undo step.
+
+Shortcut feedback displays the executed action and its current binding for 3.5 seconds, then dissolves over half a second. Hover holds it; pointer leave dismisses it. Tab focus holds it too; activate Hold with Enter/Space or touch to keep it visible, and use Dismiss or Escape to close. Repeated actions refresh one toast. Settings → Show shortcut feedback disables it. Reduced motion replaces the dissolve with immediate dismissal at four seconds.
+
+## Window controls
+
+`Ctrl+Shift+T` (`Cmd+Shift+T` on macOS) toggles the last session pin choice.
+Use the pin menu to choose all windows or click a target (Windows only); Escape
+or Cancel cancels selection. Unsupported choices are disabled by platform capabilities.
+`Ctrl+Shift+M` (`Cmd+Shift+M`) arms native window movement; drag the canvas, or
+cancel with Escape/the Cancel button. `F11` toggles borderless fullscreen.
+These actions are rebindable and available from the command palette. Pointer
+approach, Tab focus and the Window controls button reveal the titlebar controls.

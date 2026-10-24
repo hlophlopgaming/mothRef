@@ -71,6 +71,10 @@ impl Overlay {
                 self.exit = true
             }
             WindowEvent::Resized(size) => self.gpu.resize(size.width, size.height),
+            WindowEvent::Occluded(false) | WindowEvent::ScaleFactorChanged { .. } => {
+                let size = self.window.inner_size();
+                self.gpu.resize(size.width, size.height);
+            }
             _ => {}
         }
         self.window.request_redraw();
@@ -81,6 +85,10 @@ impl Overlay {
             icons::{self, Icon},
             text,
         };
+        let size = self.window.inner_size();
+        if size.width == 0 || size.height == 0 {
+            return Ok(());
+        }
         if self.gpu.lost.load(Ordering::Acquire) {
             self.gpu = pollster::block_on(Gpu::new(
                 self.window.clone(),
@@ -106,6 +114,7 @@ impl Overlay {
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 let size = self.window.inner_size();
                 self.gpu.resize(size.width, size.height);
+                self.window.request_redraw();
                 return Ok(());
             }
             _ => return Ok(()),
@@ -132,8 +141,10 @@ impl Overlay {
                                 );
                             });
                             ui.monospace(format!("{:.0}%", self.opacity * 100.));
-                            ui.toggle_value(&mut self.click_through, text(Text::ClickThrough));
                             let caps = moth_platform::Desktop.window_capabilities(&self.window);
+                            ui.add_enabled_ui(caps.click_through, |ui| {
+                                ui.toggle_value(&mut self.click_through, text(Text::ClickThrough));
+                            });
                             ui.add_enabled_ui(caps.on_top, |ui| {
                                 ui.toggle_value(&mut self.on_top, text(Text::OnTop));
                             });

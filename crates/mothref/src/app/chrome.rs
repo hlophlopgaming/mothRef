@@ -13,6 +13,7 @@ pub(super) struct Chrome<'a> {
     pub gpu: &'a Gpu,
     pub library: bool,
     pub pinned: bool,
+    pub target_pin: bool,
     pub zoom_increment: f32,
     pub catalog: &'a mut moth_ui::library::Library,
     pub cards: &'a [moth_ui::library::Card],
@@ -61,6 +62,11 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
             dirty: ctx.board.dirty,
             library: ctx.library,
             pinned: ctx.pinned,
+            target_pin: ctx.target_pin,
+            maximized: ctx.window.is_maximized(),
+            can_attach: moth_platform::Desktop
+                .window_capabilities(ctx.window)
+                .above_window,
             can_pin: moth_platform::Desktop
                 .window_capabilities(ctx.window)
                 .on_top,

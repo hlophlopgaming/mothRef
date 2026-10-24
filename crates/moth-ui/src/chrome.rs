@@ -42,6 +42,8 @@ pub struct Actions {
     pub overlay: bool,
     /// Toggle native topmost support.
     pub pin: bool,
+    /// Choose all windows (false) or select a target (true).
+    pub pin_choice: Option<bool>,
     /// Activate an inactive session.
     pub tab: Option<usize>,
     /// Request safe closure of a session (zero is the active board).
@@ -87,44 +89,55 @@ pub struct Status<'a> {
     pub pinned: bool,
     /// Native topmost capability.
     pub can_pin: bool,
+    /// Native target selection capability.
+    pub can_attach: bool,
+    /// Last chosen pin mode.
+    pub target_pin: bool,
+    /// Maximize uses a restore label while active.
+    pub maximized: bool,
 }
 /// Draws a custom titlebar and the active workspace's toolbar.
 pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Tab<'_>]) -> Actions {
-    if ui.ctx().content_rect().width() < 600. {
+    let compact = ui.ctx().content_rect().width() < 600.;
+    if compact {
         ui.spacing_mut().interact_size = egui::vec2(44., 44.);
     }
     let mut a = Actions::default();
-    egui::Panel::top("brand")
+    let brand = egui::Panel::top("brand")
         .frame(
             egui::Frame::new()
                 .fill(ui.visuals().extreme_bg_color)
                 .inner_margin(egui::Margin::symmetric(12, 0)),
         )
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.;
-                let (logo, _) = ui.allocate_exact_size(egui::vec2(14., 20.), egui::Sense::hover());
-                ui.painter().circle_filled(logo.center(), 6., ACCENT);
-                ui.label(egui::RichText::new(text(Text::Title)).monospace());
-                ui.add_space(14.);
-                if status.library {
-                    ui.label(
-                        egui::RichText::new(text(Text::Library))
-                            .color(MUTED)
-                            .monospace(),
-                    );
+                if !compact {
+                    let (logo, _) =
+                        ui.allocate_exact_size(egui::vec2(14., 20.), egui::Sense::hover());
+                    ui.painter().circle_filled(logo.center(), 6., ACCENT);
+                    ui.label(egui::RichText::new(text(Text::Title)).monospace());
+                    ui.add_space(14.);
+                    if status.library {
+                        ui.label(
+                            egui::RichText::new(text(Text::Library))
+                                .color(MUTED)
+                                .monospace(),
+                        );
+                    }
                 }
-                if !status.library
-                    || status.dirty
-                    || status.count > 0
-                    || !status.path.is_empty()
-                    || tabs.len() > 1
+                if !tabs.is_empty()
+                    && (!status.library
+                        || status.dirty
+                        || status.count > 0
+                        || !status.path.is_empty()
+                        || tabs.len() > 1)
                 {
-                    let tab_width = (ui.available_width()
-                        - if ui.ctx().content_rect().width() < 600. {
-                            95.
+                    let tab_width = (ui.available_size_before_wrap().x
+                        - if compact {
+                            160.
                         } else {
-                            180.
+                            7. * (ui.spacing().interact_size.x.max(36.) + 4.) + 44.
                         })
                     .max(0.);
                     egui::ScrollArea::horizontal()
@@ -169,47 +182,135 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                 }
                 a.new = icons::button(ui, Icon::Plus, &tooltip(ui.ctx(), Text::NewBoard), false)
                     .clicked();
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    a.close = icons::button(
-                        ui,
-                        Icon::Close,
-                        &tooltip(ui.ctx(), Text::CloseWindow),
-                        false,
-                    )
-                    .clicked();
-                    if ui.ctx().content_rect().width() >= 600. {
-                        a.maximize = icons::button(
-                            ui,
-                            Icon::Maximize,
-                            &tooltip(ui.ctx(), Text::Maximize),
-                            false,
-                        )
-                        .clicked();
-                        a.minimize = icons::button(
-                            ui,
-                            Icon::Minus,
-                            &tooltip(ui.ctx(), Text::Minimize),
-                            false,
-                        )
-                        .clicked();
-                    }
-                    let mut language = locale();
-                    egui::ComboBox::from_id_salt("language")
-                        .selected_text(language.name())
-                        .show_ui(ui, |ui| {
-                            for candidate in Locale::ALL {
-                                ui.selectable_value(&mut language, candidate, candidate.name());
+                if compact {
+                    a.language = language_picker(ui);
+                    ui.end_row();
+                }
+                let controls_width = ((if compact { 6. } else { 7. })
+                    * (ui.spacing().interact_size.x.max(36.) + ui.spacing().item_spacing.x))
+                    .min(ui.max_rect().width());
+                ui.allocate_ui_with_layout(
+                    egui::vec2(
+                        ui.available_size_before_wrap().x.max(controls_width),
+                        ui.spacing().interact_size.y,
+                    ),
+                    egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
+                    |ui| {
+                        let id = ui.id().with("window_controls");
+                        let mut explicit = ui
+                            .ctx()
+                            .data_mut(|d| d.get_temp::<bool>(id).unwrap_or(false));
+                        let reveal =
+                            icons::button(ui, Icon::Maximize, text(Text::WindowControls), explicit);
+                        if reveal.clicked() {
+                            explicit = !explicit;
+                            ui.ctx().data_mut(|d| d.insert_temp(id, explicit));
+                        }
+                        let bar_bottom = ui
+                            .ctx()
+                            .data(|d| d.get_temp::<f32>(egui::Id::new("window_bar_bottom")))
+                            .unwrap_or(ui.min_rect().top() + 56.);
+                        let show = explicit
+                            || reveal.has_focus()
+                            || ui.input(|i| {
+                                i.pointer
+                                    .hover_pos()
+                                    .is_some_and(|p| p.y < bar_bottom + 24.)
+                                    || i.key_pressed(egui::Key::Tab)
+                            })
+                            || ui.memory(|m| m.focused().is_some())
+                            || egui::Popup::is_any_open(ui.ctx());
+                        ui.scope(|ui| {
+                            if !show {
+                                ui.set_invisible();
                             }
+                            a.close = icons::button(
+                                ui,
+                                Icon::Close,
+                                &tooltip(ui.ctx(), Text::CloseWindow),
+                                false,
+                            )
+                            .clicked();
+                            {
+                                a.maximize = icons::button(
+                                    ui,
+                                    Icon::Maximize,
+                                    &tooltip(
+                                        ui.ctx(),
+                                        if status.maximized {
+                                            Text::Restore
+                                        } else {
+                                            Text::Maximize
+                                        },
+                                    ),
+                                    false,
+                                )
+                                .clicked();
+                                a.minimize = icons::button(
+                                    ui,
+                                    Icon::Minus,
+                                    &tooltip(ui.ctx(), Text::Minimize),
+                                    false,
+                                )
+                                .clicked();
+                            }
+                            ui.add_enabled_ui(status.can_pin, |ui| {
+                                a.pin = icons::button(
+                                    ui,
+                                    Icon::Pin,
+                                    &tooltip(
+                                        ui.ctx(),
+                                        if status.target_pin {
+                                            Text::AboveWindow
+                                        } else {
+                                            Text::AboveAll
+                                        },
+                                    ),
+                                    status.pinned,
+                                )
+                                .clicked();
+                                ui.menu_button("▾", |ui| {
+                                    if ui
+                                        .selectable_label(!status.target_pin, text(Text::AboveAll))
+                                        .clicked()
+                                    {
+                                        a.pin_choice = Some(false);
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .add_enabled(
+                                            status.can_attach,
+                                            egui::Button::new(text(Text::AboveWindow)),
+                                        )
+                                        .clicked()
+                                    {
+                                        a.pin_choice = Some(true);
+                                        ui.close();
+                                    }
+                                })
+                                .response
+                                .on_hover_text(text(Text::OnTop));
+                            });
                         });
-                    if language != locale() {
-                        a.language = Some(language);
-                    }
-                    let drag = ui.allocate_response(ui.available_size(), egui::Sense::drag());
-                    a.drag = drag.drag_started();
-                    a.maximize |= drag.double_clicked();
-                });
+                        if !compact {
+                            a.language = language_picker(ui);
+                        }
+                        let drag = ui.allocate_response(
+                            ui.available_size_before_wrap(),
+                            egui::Sense::drag(),
+                        );
+                        a.drag = drag.drag_started();
+                        a.maximize |= drag.double_clicked();
+                    },
+                );
             });
         });
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(
+            egui::Id::new("window_bar_bottom"),
+            brand.response.rect.bottom(),
+        )
+    });
     egui::Panel::bottom("status")
         .frame(
             egui::Frame::new()
@@ -239,6 +340,13 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                     .size(10.)
                     .color(MUTED),
                 );
+                if status.pinned {
+                    ui.label(text(if status.target_pin {
+                        Text::AboveWindow
+                    } else {
+                        Text::AboveAll
+                    }));
+                }
                 if status.dirty || !status.path.is_empty() {
                     ui.label(text(if status.dirty {
                         Text::Journaled
@@ -296,15 +404,6 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
                             .on_hover_text(tooltip(ui.ctx(), Text::Save))
                             .clicked();
                     });
-                    ui.add_enabled_ui(status.can_pin, |ui| {
-                        a.pin = icons::button(
-                            ui,
-                            Icon::Pin,
-                            &tooltip(ui.ctx(), Text::OnTop),
-                            status.pinned,
-                        )
-                        .clicked();
-                    });
                     a.overlay =
                         icons::button(ui, Icon::Overlay, &tooltip(ui.ctx(), Text::Overlay), false)
                             .clicked();
@@ -349,4 +448,17 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, pan: &mut bool, tabs: &[Ta
             });
         });
     a
+}
+
+fn language_picker(ui: &mut egui::Ui) -> Option<Locale> {
+    let mut language = locale();
+    egui::ComboBox::from_id_salt("language")
+        .width(ui.spacing().interact_size.x * 2.)
+        .selected_text(language.name())
+        .show_ui(ui, |ui| {
+            for candidate in Locale::ALL {
+                ui.selectable_value(&mut language, candidate, candidate.name());
+            }
+        });
+    (language != locale()).then_some(language)
 }

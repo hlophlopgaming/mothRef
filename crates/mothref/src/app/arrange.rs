@@ -2,7 +2,7 @@
 //! Normalize and arrange for a selection: pure geometry that emits reversible commands.
 //!
 //! The first item (z-sorted, like the rest of the selection menu) is the reference:
-//! normalize matches its frame along one measure, arrange anchors the layout at its top-left.
+//! normalize matches its frame along one measure; arrange uses the selection's minimum x/y.
 use moth_scene::{Command, Item, Rect};
 
 /// Which frame measure to match against the reference item.
@@ -25,10 +25,76 @@ pub enum Arrange {
     Horizontal,
     /// One column, top to bottom.
     Vertical,
-    /// Rows of roughly the square root of the item count.
+    /// Compact mosaic with the same gutter on both axes.
     Grid,
-    /// Packs displayed bounds into free rectangles within the viewport width.
+    /// Packs unchanged displayed bounds tightly into a small square, without gaps.
     Optimal,
+}
+
+/// Preference for the unused space surrounding the next item.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FreeRectChoice {
+    /// `BestAreaFit`: least leftover area.
+    BestArea,
+    /// `BestShortSideFit`: least waste on the shorter leftover side.
+    BestShortSide,
+    /// `BestLongSideFit`: least waste on the longer leftover side.
+    BestLongSide,
+    /// `WorstAreaFit`: most leftover area.
+    WorstArea,
+    /// `WorstShortSideFit`: most waste on the shorter leftover side.
+    WorstShortSide,
+    /// `WorstLongSideFit`: most waste on the longer leftover side.
+    WorstLongSide,
+}
+
+impl FreeRectChoice {
+    /// Every heuristic, in display order.
+    pub const ALL: [Self; 6] = [
+        Self::BestArea,
+        Self::BestShortSide,
+        Self::BestLongSide,
+        Self::WorstArea,
+        Self::WorstShortSide,
+        Self::WorstLongSide,
+    ];
+    /// The heuristic stored under `index`; out-of-range falls back to the default.
+    pub fn from_index(index: u8) -> Self {
+        Self::ALL
+            .get(index as usize)
+            .copied()
+            .unwrap_or(Self::BestShortSide)
+    }
+}
+
+/// Preference for dividing unused space below and beside a placed item.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GuillotineSplit {
+    ShorterLeftoverAxis,
+    LongerLeftoverAxis,
+    MinimizeArea,
+    MaximizeArea,
+    ShorterAxis,
+    LongerAxis,
+}
+
+impl GuillotineSplit {
+    /// Every heuristic, in display order.
+    pub const ALL: [Self; 6] = [
+        Self::ShorterLeftoverAxis,
+        Self::LongerLeftoverAxis,
+        Self::MinimizeArea,
+        Self::MaximizeArea,
+        Self::ShorterAxis,
+        Self::LongerAxis,
+    ];
+    /// The heuristic stored under `index`; out-of-range falls back to the default.
+    pub fn from_index(index: u8) -> Self {
+        Self::ALL
+            .get(index as usize)
+            .copied()
+            .unwrap_or(Self::ShorterLeftoverAxis)
+    }
 }
 
 /// Scales every frame to match the reference along `mode`, keeping each top-left anchor.
@@ -72,7 +138,13 @@ pub fn normalize(items: &[&Item], mode: Normalize) -> Vec<Command> {
 }
 
 /// Repositions frames starting at the reference anchor, keeping each frame's size.
-pub fn arrange(items: &[&Item], mode: Arrange, target_width: f32, gap: f32) -> Vec<Command> {
+pub fn arrange(
+    items: &[&Item],
+    mode: Arrange,
+    gap: f32,
+    choice: FreeRectChoice,
+    split: GuillotineSplit,
+) -> Vec<Command> {
     if !gap.is_finite() || !(0.0..=10000.0).contains(&gap) {
         return Vec::new();
     }
@@ -86,8 +158,57 @@ pub fn arrange(items: &[&Item], mode: Arrange, target_width: f32, gap: f32) -> V
     match mode {
         Arrange::Horizontal => flow(items, usize::MAX, start, gap, &mut commands),
         Arrange::Vertical => flow(items, 1, start, gap, &mut commands),
-        Arrange::Grid => flow(items, grid_columns(items.len()), start, gap, &mut commands),
-        Arrange::Optimal => pack(items, target_width, start, gap, &mut commands),
+        Arrange::Grid => pack(items, start, gap, choice, split, &mut commands),
+        Arrange::Optimal => pack(items, start, 0., choice, split, &mut commands),
+    }
+    commands
+}
+
+/// Count means rows for horizontal flow or columns for vertical flow.
+pub fn counted(items: &[&Item], mode: Arrange, count: usize, gap: f32) -> Vec<Command> {
+    if !matches!(mode, Arrange::Horizontal | Arrange::Vertical)
+        || items.is_empty()
+        || !gap.is_finite()
+        || !(0.0..=10000.).contains(&gap)
+    {
+        return Vec::new();
+    }
+    let start = items.iter().fold((f32::INFINITY, f32::INFINITY), |a, i| {
+        (a.0.min(i.rect.x), a.1.min(i.rect.y))
+    });
+    let count = count.clamp(1, items.len());
+    let vertical = matches!(mode, Arrange::Vertical);
+    let line_length = |line: usize| items.len() / count + usize::from(line < items.len() % count);
+    let mut line = 0;
+    let mut next_line = line_length(line);
+    let mut commands = Vec::with_capacity(items.len());
+    let (mut x, mut y) = start;
+    let mut extent = 0.0f32;
+    for (index, item) in items.iter().enumerate() {
+        if index == next_line {
+            line += 1;
+            next_line += line_length(line);
+            if vertical {
+                x += extent + gap;
+                y = start.1;
+            } else {
+                y += extent + gap;
+                x = start.0;
+            }
+            extent = 0.;
+        }
+        let rect = Rect { x, y, ..item.rect };
+        if !rect.valid() {
+            return Vec::new();
+        }
+        push(&mut commands, item, rect);
+        if vertical {
+            y += item.rect.height + gap;
+            extent = extent.max(item.rect.width);
+        } else {
+            x += item.rect.width + gap;
+            extent = extent.max(item.rect.height);
+        }
     }
     commands
 }
@@ -108,89 +229,178 @@ fn flow(items: &[&Item], columns: usize, start: (f32, f32), gap: f32, commands: 
     }
 }
 
-/// Largest-first guillotine packing reuses holes instead of leaving whole shelves empty.
+/// Search finite square bins using all displayed sizes, independently of the viewport.
+/// Geometry is calculated in f64 so area scores and accumulated positions stay finite.
 fn pack(
     items: &[&Item],
-    target_width: f32,
     start: (f32, f32),
     gap: f32,
+    choice: FreeRectChoice,
+    split: GuillotineSplit,
     commands: &mut Vec<Command>,
 ) {
-    if !target_width.is_finite() || target_width <= 0. {
+    if items
+        .iter()
+        .any(|item| !item.rect.valid() || !item.transform.valid())
+    {
         return;
     }
-    let bounds: Vec<_> = items
+    let gap = f64::from(gap);
+    let sizes: Vec<_> = items
         .iter()
-        .map(|i| {
-            let e = i.rect.rotated_envelope(i.transform.rotation);
-            Rect {
-                x: e.lower()[0],
-                y: e.lower()[1],
-                width: e.upper()[0] - e.lower()[0],
-                height: e.upper()[1] - e.lower()[1],
-            }
+        .map(|item| {
+            let (sin, cos) = f64::from(item.transform.rotation).sin_cos();
+            let r = item.rect;
+            [
+                f64::from(r.width) * cos.abs() + f64::from(r.height) * sin.abs() + gap,
+                f64::from(r.width) * sin.abs() + f64::from(r.height) * cos.abs() + gap,
+            ]
         })
         .collect();
-    let width = bounds.iter().fold(target_width, |w, r| w.max(r.width)) + gap;
-    let mut free = vec![Rect {
-        x: start.0,
-        y: start.1,
-        width,
-        height: f32::INFINITY,
-    }];
     let mut order: Vec<_> = (0..items.len()).collect();
     order.sort_by(|&a, &b| {
-        (bounds[b].width * bounds[b].height)
-            .total_cmp(&(bounds[a].width * bounds[a].height))
+        (sizes[b][0] * sizes[b][1])
+            .total_cmp(&(sizes[a][0] * sizes[a][1]))
             .then(a.cmp(&b))
     });
-    let mut placed = vec![None; items.len()];
-    for index in order {
-        let b = bounds[index];
-        let w = b.width + gap;
-        let h = b.height + gap;
+    let area: f64 = sizes.iter().map(|s| s[0] * s[1]).sum();
+    let mut low = sizes
+        .iter()
+        .fold(area.sqrt(), |side, s| side.max(s[0]).max(s[1]));
+    let limit: f64 = sizes.iter().map(|s| s[0].max(s[1])).sum();
+    let mut high = low;
+    let mut positions = loop {
+        if let Some(positions) = pack_square(&sizes, &order, high, choice, split) {
+            break positions;
+        }
+        if high >= limit {
+            return;
+        }
+        low = high;
+        high = (high * 1.25).min(limit);
+    };
+    // shortcut: bounded greedy search, not exhaustive packing; revisit if real boards leave large holes.
+    for _ in 0..8 {
+        if high - low <= high * 0.001 {
+            break;
+        }
+        let side = (low + high) / 2.;
+        if let Some(candidate) = pack_square(&sizes, &order, side, choice, split) {
+            high = side;
+            positions = candidate;
+        } else {
+            low = side;
+        }
+    }
+    let result: Vec<_> = items
+        .iter()
+        .zip(sizes)
+        .zip(positions)
+        .map(|((item, size), position)| Rect {
+            x: (f64::from(start.0)
+                + position[0]
+                + (size[0] - gap - f64::from(item.rect.width)) / 2.) as f32,
+            y: (f64::from(start.1)
+                + position[1]
+                + (size[1] - gap - f64::from(item.rect.height)) / 2.) as f32,
+            ..item.rect
+        })
+        .collect();
+    // A layout outside scene coordinate limits must not move only part of the selection.
+    if result.iter().all(|r| r.valid()) {
+        commands.extend(
+            items
+                .iter()
+                .zip(result)
+                .map(|(item, rect)| Command::SetRect { id: item.id, rect }),
+        );
+    }
+}
+
+fn pack_square(
+    sizes: &[[f64; 2]],
+    order: &[usize],
+    side: f64,
+    choice: FreeRectChoice,
+    split: GuillotineSplit,
+) -> Option<Vec<[f64; 2]>> {
+    let mut free = vec![PackingRect {
+        x: 0.,
+        y: 0.,
+        width: side,
+        height: side,
+    }];
+    let mut positions = vec![[0.; 2]; sizes.len()];
+    for &index in order {
+        let [w, h] = sizes[index];
         let slot = free
             .iter()
             .enumerate()
             .filter(|(_, r)| r.width >= w && r.height >= h)
-            .min_by(|(_, a), (_, b)| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)))
-            .map(|(i, _)| i);
-        let Some(slot) = slot else {
-            return;
-        };
-        let r = free.swap_remove(slot);
-        placed[index] = Some(Rect {
-            x: items[index].rect.x + r.x - b.x,
-            y: items[index].rect.y + r.y - b.y,
-            ..items[index].rect
-        });
-        if r.width > w {
-            free.push(Rect {
-                x: r.x + w,
-                y: r.y,
-                width: r.width - w,
-                height: h,
-            });
-        }
-        if r.height > h {
-            free.push(Rect {
-                x: r.x,
-                y: r.y + h,
-                width: r.width,
-                height: r.height - h,
-            });
-        }
+            .min_by(|(_, a), (_, b)| a.score(w, h, choice).total_cmp(&b.score(w, h, choice)))
+            .map(|(index, _)| index)?;
+        let space = free.remove(slot);
+        positions[index] = [space.x, space.y];
+        free.extend(
+            space
+                .remainder(w, h, split)
+                .into_iter()
+                .filter(|r| r.width > 0. && r.height > 0.),
+        );
     }
-    if placed.iter().flatten().all(|r| r.valid()) {
-        for (item, rect) in items.iter().zip(placed.into_iter().flatten()) {
-            push(commands, item, rect);
-        }
-    }
+    Some(positions)
 }
 
-/// A square-ish layout uses the ceiling of the square root as the column count.
-fn grid_columns(len: usize) -> usize {
-    (len as f32).sqrt().ceil().max(1.0) as usize
+#[derive(Clone, Copy)]
+struct PackingRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+impl PackingRect {
+    fn score(self, width: f64, height: f64, choice: FreeRectChoice) -> f64 {
+        let across = self.width - width;
+        let down = self.height - height;
+        match choice {
+            FreeRectChoice::BestArea => self.width * self.height - width * height,
+            FreeRectChoice::WorstArea => width * height - self.width * self.height,
+            FreeRectChoice::BestShortSide => across.min(down),
+            FreeRectChoice::WorstShortSide => -across.min(down),
+            FreeRectChoice::BestLongSide => across.max(down),
+            FreeRectChoice::WorstLongSide => -across.max(down),
+        }
+    }
+
+    fn remainder(self, width: f64, height: f64, split: GuillotineSplit) -> [Self; 2] {
+        let across = self.width - width;
+        let down = self.height - height;
+        let below_area = self.width * down;
+        let beside_area = self.height * across;
+        let horizontal = match split {
+            GuillotineSplit::ShorterLeftoverAxis => across <= down,
+            GuillotineSplit::LongerLeftoverAxis => across > down,
+            GuillotineSplit::ShorterAxis => self.width <= self.height,
+            GuillotineSplit::LongerAxis => self.width > self.height,
+            GuillotineSplit::MinimizeArea => below_area < beside_area,
+            GuillotineSplit::MaximizeArea => below_area >= beside_area,
+        };
+        [
+            Self {
+                x: self.x + width,
+                y: self.y,
+                width: across,
+                height: if horizontal { height } else { self.height },
+            },
+            Self {
+                x: self.x,
+                y: self.y + height,
+                width: if horizontal { self.width } else { width },
+                height: down,
+            },
+        ]
+    }
 }
 
 fn push(commands: &mut Vec<Command>, item: &Item, rect: Rect) {
@@ -392,29 +602,82 @@ mod tests {
             })
             .collect()
     }
+    #[test]
+    fn counted_layouts_use_exact_counts_and_preserve_sizes() {
+        let items: Vec<_> = (0..5)
+            .map(|n| item(n, 10. + f32::from(n), 20. + f32::from(n)))
+            .collect();
+        let refs: Vec<_> = items.iter().collect();
+        for mode in [Arrange::Horizontal, Arrange::Vertical] {
+            for requested in [0, 1, 2, 3, 4, 5, 100] {
+                let out = rects(&counted(&refs, mode, requested, 7.));
+                assert_eq!(out.len(), items.len());
+                let mut lines: Vec<_> = out
+                    .iter()
+                    .map(|r| {
+                        if matches!(mode, Arrange::Vertical) {
+                            r.x
+                        } else {
+                            r.y
+                        }
+                    })
+                    .collect();
+                lines.dedup();
+                assert_eq!(lines.len(), requested.clamp(1, items.len()));
+                for (rect, item) in out.iter().zip(&items) {
+                    assert_eq!(
+                        (rect.width, rect.height),
+                        (item.rect.width, item.rect.height)
+                    );
+                }
+            }
+        }
+        let vertical = rects(&counted(&refs, Arrange::Vertical, 2, 7.));
+        assert_eq!(vertical[0].x, vertical[2].x);
+        assert!(vertical[1].y > vertical[0].y);
+        assert!(vertical[3].x > vertical[0].x);
+        let horizontal = rects(&counted(&refs, Arrange::Horizontal, 2, 7.));
+        assert_eq!(horizontal[0].y, horizontal[2].y);
+        assert!(horizontal[1].x > horizontal[0].x);
+        assert!(horizontal[3].y > horizontal[0].y);
+        assert!(counted(&refs, Arrange::Grid, 2, f32::NAN).is_empty());
+        assert!(counted(&[], Arrange::Vertical, 0, 0.).is_empty());
+    }
+    fn arrange_default(items: &[&Item], mode: Arrange, gap: f32) -> Vec<Command> {
+        arrange(
+            items,
+            mode,
+            gap,
+            FreeRectChoice::BestShortSide,
+            GuillotineSplit::ShorterLeftoverAxis,
+        )
+    }
 
     proptest::proptest! {
         #[test]
         fn packing_keeps_displayed_bounds_disjoint(
             sizes in proptest::collection::vec((1f32..300., 1f32..300., -std::f32::consts::PI..std::f32::consts::PI), 1..40),
-            gap in 0f32..30., width in 10f32..1000.
+            gap in 0f32..30., choice in 0u8..6, split in 0u8..6
         ) {
             let items: Vec<_> = sizes.into_iter().enumerate().map(|(n,(w,h,rotation))| {
                 let mut i=item(n as u8,w,h); i.transform.rotation=rotation; i
             }).collect();
             let refs: Vec<_> = items.iter().collect();
-            let commands=arrange(&refs,Arrange::Optimal,width,gap);
-            proptest::prop_assert_eq!(commands.len(),items.len());
-            let rects=rects(&commands);
-            let envelopes: Vec<_> = rects.iter().zip(&items).map(|(r,i)| {
-                let e=r.rotated_envelope(i.transform.rotation);
-                [e.lower()[0],e.lower()[1],e.upper()[0],e.upper()[1]]
-            }).collect();
-            for (n,r) in rects.iter().enumerate() {
-                proptest::prop_assert_eq!((r.width,r.height),(items[n].rect.width,items[n].rect.height));
-                for b in &envelopes[n+1..] {
-                    let a=envelopes[n];
-                    proptest::prop_assert!(a[2]+gap <= b[0]+0.001 || b[2]+gap <= a[0]+0.001 || a[3]+gap <= b[1]+0.001 || b[3]+gap <= a[1]+0.001);
+            for mode in [Arrange::Optimal, Arrange::Grid] {
+                let commands=arrange(&refs,mode,gap,FreeRectChoice::from_index(choice),GuillotineSplit::from_index(split));
+                proptest::prop_assert_eq!(commands.len(),items.len());
+                let rects=rects(&commands);
+                let envelopes: Vec<_> = rects.iter().zip(&items).map(|(r,i)| {
+                    let e=r.rotated_envelope(i.transform.rotation);
+                    [e.lower()[0],e.lower()[1],e.upper()[0],e.upper()[1]]
+                }).collect();
+                let spacing = if matches!(mode, Arrange::Grid) { gap } else { 0. };
+                for (n,r) in rects.iter().enumerate() {
+                    proptest::prop_assert_eq!((r.width,r.height),(items[n].rect.width,items[n].rect.height));
+                    for b in &envelopes[n+1..] {
+                        let a=envelopes[n];
+                        proptest::prop_assert!(a[2]+spacing <= b[0]+0.001 || b[2]+spacing <= a[0]+0.001 || a[3]+spacing <= b[1]+0.001 || b[3]+spacing <= a[1]+0.001);
+                    }
                 }
             }
         }
@@ -426,7 +689,13 @@ mod tests {
             for duplicate in [false,true] {
                 let mut items:Vec<_>=scene.items().collect();items.sort_by(|a,b|a.z.cmp(&b.z));
                 let mut commands=translate(&items,[dx,dy],duplicate,scene.top());
-                commands.extend(arrange(&items,Arrange::Optimal,150.,0.));
+                commands.extend(arrange_default(&items,Arrange::Optimal,0.));
+                commands.extend(arrange_default(&items,Arrange::Grid,7.));
+                for mode in [Arrange::Horizontal, Arrange::Vertical] {
+                    for count in [0, 1, n / 2, n, n + 1] {
+                        commands.extend(counted(&items, mode, count, 7.));
+                    }
+                }
                 for mode in [Align::Left,Align::Right,Align::Top,Align::Bottom,Align::Horizontal,Align::Vertical,Align::Stack] {commands.extend(align(&items,mode));}
                 let selected=items.iter().take(2).map(|i|i.id).collect();
                 commands.extend(reorder(&scene,&selected,true,false));
@@ -509,8 +778,131 @@ mod tests {
     fn optimal_fills_space_beside_tall_images() {
         let items = [item(1, 50., 100.), item(2, 50., 50.), item(3, 50., 50.)];
         let refs: Vec<_> = items.iter().collect();
-        let out = rects(&arrange(&refs, Arrange::Optimal, 100., 0.));
+        let out = rects(&arrange_default(&refs, Arrange::Optimal, 0.));
         assert_eq!(out.iter().map(|r| r.y + r.height).fold(0., f32::max), 100.);
+    }
+
+    #[test]
+    fn every_heuristic_pair_packs_without_overlap() {
+        let sizes = [
+            (100., 60.),
+            (40., 90.),
+            (70., 70.),
+            (120., 30.),
+            (50., 50.),
+            (30., 120.),
+            (90., 40.),
+        ];
+        let items: Vec<_> = sizes
+            .into_iter()
+            .enumerate()
+            .map(|(n, (w, h))| item(n as u8, w, h))
+            .collect();
+        let refs: Vec<_> = items.iter().collect();
+        for choice in FreeRectChoice::ALL {
+            for split in GuillotineSplit::ALL {
+                let mut commands = Vec::new();
+                pack(&refs, (0., 0.), 4., choice, split, &mut commands);
+                let rects = rects(&commands);
+                assert_eq!(rects.len(), items.len(), "{choice:?} {split:?}");
+                for (n, r) in rects.iter().enumerate() {
+                    for o in rects.iter().skip(n + 1) {
+                        assert!(
+                            r.x + r.width <= o.x
+                                || o.x + o.width <= r.x
+                                || r.y + r.height <= o.y
+                                || o.y + o.height <= r.y,
+                            "{choice:?} {split:?} overlap {r:?} vs {o:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn packing_handles_wide_items_and_preserves_command_order() {
+        let items = [item(1, 30., 80.), item(2, 400., 10.), item(3, 20., 40.)];
+        let refs: Vec<_> = items.iter().collect();
+        for choice in FreeRectChoice::ALL {
+            for split in GuillotineSplit::ALL {
+                let commands = arrange(&refs, Arrange::Optimal, 7., choice, split);
+                assert_eq!(commands.len(), items.len());
+                for (command, item) in commands.iter().zip(&items) {
+                    let Command::SetRect { id, rect } = command else {
+                        panic!("unexpected command")
+                    };
+                    assert_eq!(*id, item.id);
+                    assert!(rect.valid());
+                    assert_eq!(
+                        (rect.width, rect.height),
+                        (item.rect.width, item.rect.height)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn packing_rejects_invalid_input_and_out_of_range_layout_atomically() {
+        let a = item(1, 10., 10.);
+        let mut b = item(2, 10., 10.);
+        b.transform.rotation = f32::NAN;
+        assert!(arrange_default(&[&a, &b], Arrange::Optimal, 0.).is_empty());
+        b.transform.rotation = 0.;
+        for gap in [-1., f32::NAN, f32::INFINITY] {
+            assert!(arrange_default(&[&a, &b], Arrange::Optimal, gap).is_empty());
+        }
+        let mut a = item(1, 1e9, 1e9);
+        let mut b = item(2, 1e9, 1e9);
+        a.rect.x = 1e9;
+        a.rect.y = 1e9;
+        b.rect.x = 1e9;
+        b.rect.y = 1e9;
+        assert!(arrange_default(&[&a, &b], Arrange::Optimal, 0.).is_empty());
+    }
+
+    #[test]
+    fn optimal_uses_all_images_for_a_tight_square_and_ignores_the_flow_gap() {
+        let items: Vec<_> = (0..9).map(|n| item(n, 100., 100.)).collect();
+        let refs: Vec<_> = items.iter().collect();
+        let packed = rects(&arrange_default(&refs, Arrange::Optimal, 0.));
+        assert_eq!(
+            packed,
+            rects(&arrange_default(&refs, Arrange::Optimal, 24.))
+        );
+        assert_eq!(
+            packed.iter().map(|r| r.x + r.width).fold(0., f32::max),
+            300.
+        );
+        assert_eq!(
+            packed.iter().map(|r| r.y + r.height).fold(0., f32::max),
+            300.
+        );
+        let mixed = [item(0, 120., 200.), item(1, 80., 120.), item(2, 80., 80.)];
+        let packed = rects(&arrange_default(
+            &mixed.iter().collect::<Vec<_>>(),
+            Arrange::Optimal,
+            24.,
+        ));
+        assert_eq!(
+            packed.iter().map(|r| r.x + r.width).fold(0., f32::max),
+            200.
+        );
+        assert_eq!(
+            packed.iter().map(|r| r.y + r.height).fold(0., f32::max),
+            200.
+        );
+    }
+    #[test]
+    fn identical_images_pack_into_a_tight_grid() {
+        let items: Vec<_> = (0..4).map(|n| item(n, 50., 50.)).collect();
+        let refs: Vec<_> = items.iter().collect();
+        let out = rects(&arrange_default(&refs, Arrange::Optimal, 0.));
+        let width = out.iter().map(|r| r.x + r.width).fold(0., f32::max);
+        let height = out.iter().map(|r| r.y + r.height).fold(0., f32::max);
+        assert_eq!(width, 100.);
+        assert_eq!(height, 100.);
     }
 
     #[test]
@@ -543,10 +935,10 @@ mod tests {
         let a = item(1, 100., 50.);
         let b = item(2, 80., 40.);
         let items = [&a, &b];
-        let vertical = rects(&arrange(&items, Arrange::Vertical, 1000., 24.));
+        let vertical = rects(&arrange_default(&items, Arrange::Vertical, 24.));
         assert_eq!(vertical[1].y, vertical[0].y + 50. + 24.);
         assert_eq!(vertical[1].x, vertical[0].x);
-        let horizontal = rects(&arrange(&items, Arrange::Horizontal, 1000., 24.));
+        let horizontal = rects(&arrange_default(&items, Arrange::Horizontal, 24.));
         assert_eq!(horizontal[1].x, horizontal[0].x + 100. + 24.);
         assert_eq!(horizontal[1].y, horizontal[0].y);
     }
@@ -555,22 +947,48 @@ mod tests {
     fn custom_gap_and_invalid_gap() {
         let a = item(1, 10., 20.);
         let b = item(2, 10., 20.);
-        let out = rects(&arrange(&[&a, &b], Arrange::Horizontal, 100., 7.));
+        let out = rects(&arrange_default(&[&a, &b], Arrange::Horizontal, 7.));
         assert_eq!(out[1].x, 17.);
-        assert!(arrange(&[&a, &b], Arrange::Horizontal, 100., f32::NAN).is_empty());
-        assert!(arrange(&[&a, &b], Arrange::Horizontal, 100., -1.).is_empty());
+        assert!(arrange_default(&[&a, &b], Arrange::Horizontal, f32::NAN).is_empty());
+        assert!(arrange_default(&[&a, &b], Arrange::Horizontal, -1.).is_empty());
     }
     #[test]
-    fn arrange_grid_wraps_after_sqrt_columns() {
-        let items: Vec<_> = (0..5).map(|n| item(n, 10., 10.)).collect();
-        let refs: Vec<&Item> = items.iter().collect();
-        let out = rects(&arrange(&refs, Arrange::Grid, 1000., 24.));
-        assert_eq!(grid_columns(5), 3);
-        // row 2 starts at the reference x, one row down.
-        assert_eq!(out[3].x, out[0].x);
-        assert_eq!(out[3].y, out[0].y + 10. + 24.);
+    fn grid_fills_a_square_with_equal_gutters() {
+        let items: Vec<_> = (0..4).map(|n| item(n, 100., 100.)).collect();
+        let out = rects(&arrange_default(
+            &items.iter().collect::<Vec<_>>(),
+            Arrange::Grid,
+            24.,
+        ));
+        assert_eq!(out.iter().map(|r| r.x + r.width).fold(0., f32::max), 224.);
+        assert_eq!(out.iter().map(|r| r.y + r.height).fold(0., f32::max), 224.);
+        assert_eq!(out[1].x - out[0].x - 100., 24.);
+        assert_eq!(out[2].y - out[0].y - 100., 24.);
     }
-
+    #[test]
+    fn grid_uses_the_same_edge_gap_vertically_and_horizontally() {
+        let items = [
+            item(0, 100., 200.),
+            item(1, 100., 100.),
+            item(2, 100., 100.),
+        ];
+        let out = rects(&arrange_default(
+            &items.iter().collect::<Vec<_>>(),
+            Arrange::Grid,
+            24.,
+        ));
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[1].x, out[2].x);
+        assert_eq!(out[1].y, out[0].y);
+        assert_eq!(out[1].x - out[0].x - out[0].width, 24.);
+        assert_eq!(out[2].y - out[1].y - out[1].height, 24.);
+        for (rect, item) in out.iter().zip(&items) {
+            assert_eq!(
+                (rect.width, rect.height),
+                (item.rect.width, item.rect.height)
+            );
+        }
+    }
     #[test]
     fn commands_apply_and_undo_to_identity() {
         let items: Vec<_> = (0..4).map(|n| item(n, 10. * n as f32 + 10., 20.)).collect();
@@ -580,7 +998,7 @@ mod tests {
             scene.apply(Command::Insert(item.clone())).unwrap();
         }
         let mut commands = normalize(&refs, Normalize::Area);
-        commands.extend(arrange(&refs, Arrange::Grid, 1000., 24.));
+        commands.extend(arrange_default(&refs, Arrange::Grid, 24.));
         let mut undo = Vec::new();
         for command in commands {
             undo.push(scene.apply(command).unwrap());

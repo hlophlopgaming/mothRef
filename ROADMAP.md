@@ -171,11 +171,11 @@ before the browser extension and advanced window integration.
   - Resolve Space focus versus Space+drag pan, Alt-drag pan versus duplicate, and arrows for focus/layering versus nudging; keep visible pen/touch alternatives
 - [x] Zoom preferences: choose smooth or immediate stepped zoom and configure the zoom increment/sensitivity; persist the settings, keep the point under the pointer stable, and validate mouse-wheel and trackpad behavior
 - [x] Tap Space to fit the selection, or the whole board when nothing is selected; Space + drag pans without triggering fit on release; ignore these bindings while typing
-- [x] Tighter optimal packing for mixed-size images: minimize empty space using each item's displayed bounds, preserve relative sizes/aspect ratios, and allow zero gap; one undoable action (refinement of the completed M2 packer)
-- [ ] Arrangement controls: choose row/column count for vertical, horizontal and grid layouts through a slider with an exact numeric value; define orientation semantics in the UI, clamp the count to the selection size, preserve relative image sizes, and apply the arrangement as one undoable action. Proposed semantics to validate: vertical fills columns top-to-bottom; horizontal fills rows left-to-right; grid uses a chosen column count
-- [ ] Hotkey feedback: a small non-blocking toast with the executed action and its current binding, remain visible for 3–4 seconds, then dissolve; hovering keeps the toast visible, and pointer leave dismisses it immediately. Provide an equivalent hold/dismiss path for keyboard and touch; repeated presses of the same action update one toast and restart its fade timer instead of stacking notifications; allow disabling, and stop redraws after fading
-- [ ] Hotkey to jump between images (BeeRef #116)
-- [ ] In-app shortcut cheat sheet: all actions and their current bindings (including custom bindings), grouped by category and searchable; open with `/` or from Help
+- [x] Tighter optimal packing for mixed-size images: search a compact square using every item's displayed bounds, preserve relative sizes/aspect ratios, and use zero gap; one undoable action (refinement of the completed M2 packer)
+- [x] Arrangement controls: choose row/column count for vertical and horizontal layouts through an exact slider; vertical fills columns top-to-bottom and horizontal fills rows left-to-right. Per maintainer clarification, Grid uses a compact mosaic with the same gutter on both axes instead of fixed cells/columns. Preserve image sizes and make each arrangement one undoable action.
+- [x] Hotkey feedback: a small non-blocking toast with the executed action and its current binding, remain visible for 3–4 seconds, then dissolve; hovering keeps the toast visible, and pointer leave dismisses it immediately. Provide an equivalent hold/dismiss path for keyboard and touch; repeated presses of the same action update one toast and restart its fade timer instead of stacking notifications; allow disabling, and stop redraws after fading
+- [x] Hotkey to jump between images (BeeRef #116)
+- [x] In-app shortcut cheat sheet: all actions and their current bindings (including custom bindings), grouped by category and searchable; open with `/` or from Help
 - [x] Command Palette (Omnibar / Quick Search): search and run application actions, show their current shortcuts; open with Ctrl/⌘+K or a visible menu button, navigate with arrows, Enter to run, Esc to close
 - [ ] Full navigation without pressing the middle mouse button: Space + left-drag to pan, a visible Hand tool with left-drag, and rebindable pan controls; middle-click remains optional
 - [ ] Pan the canvas with WASD as an alternative to middle-button dragging; allow rebinding and disable canvas shortcuts while typing in text fields
@@ -195,13 +195,15 @@ measured size benefits and warn that repeated editing/saving between application
 has no guaranteed round-trip compatibility. It must report unsupported content
 before writing and preserve the original file.
 
-- [ ] Always-on-top, frameless window, move window by hotkey
-- [ ] Auto-reveal window bar: minimize, maximize/restore, close and pin controls appear on pointer approach; also reveal through keyboard focus and an explicit touch action
-- [ ] Pin button and rebindable shortcut: choose above all windows or above a chosen window; for the latter, let the user click the target, with cancel and visible active mode. A shortcut toggles the mode off/on using the last choice; respect platform capability flags
+- [x] Always-on-top, frameless window, move window by hotkey
+- [x] Auto-reveal window bar: minimize, maximize/restore, close and pin controls appear on pointer approach; also reveal through keyboard focus and an explicit touch action
+- [x] Pin button and rebindable shortcut: choose above all windows or above a chosen window; for the latter, let the user click the target, with cancel and visible active mode. A shortcut toggles the mode off/on using the last choice; respect platform capability flags
 - [ ] Desktop GUI launch without a terminal: investigate the reported extra cmd window on Windows and ensure packaged GUI launches do not open a console; check normal Finder launch on macOS for the same symptom. Preserve diagnostic logging and intentional CLI output; qualify both launch paths
 - [ ] Windows maximize/restore/fullscreen reliability: exercise repeated transitions, resize and surface recreation without losing the scene. Field report: PureRef crashed on Windows when expanded to fill the screen; maximize versus fullscreen is unconfirmed, and this is not yet a reproduced MothRef bug
+  Implementation and pending native qualification: [M3 window validation](docs/M3-WINDOW-VALIDATION.md).
 - [ ] Transparent overlay with adjustable opacity and click-through (BeeRef #100)
   - [x] Native overlay controls and composited master opacity; X11 qualification (Windows/macOS pending)
+  - Pending cross-platform overlay and controller-recovery checks: [M3 window validation](docs/M3-WINDOW-VALIDATION.md#transparent-overlay).
 - [ ] Board tabs in one window; drag a tab out into its own window and back
   - [x] Four independent journaled tabs, with dirty-close prompts and stable ordering
 - [ ] Tab state: unsaved marker for boards that live only in the journal, close button, middle-click to close, "+" for a new board
@@ -496,7 +498,7 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 - [x] Normalize scale (PR)
 
 #### Arrange (M2 unless noted)
-- [x] Optimal — pack to fit the current window (PR, BR)
+- [x] Optimal — tightly pack all selected displayed bounds into a compact square, with no gap or resizing; independent of window size and zoom (maintainer clarification)
 - [x] By name / by filename (PR, BR)
 - [x] By time added (PR)
 - [ ] By file path (PR)
@@ -504,7 +506,7 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 - [ ] By hierarchy order (PR) — M4, needs the hierarchy
 - [x] Horizontal, vertical and square layouts by filename (BR)
 - [x] Running the same arrange command again reverses the order (PR)
-- [x] Configurable gap between items (PR, BR)
+- [x] Configurable gap between items for horizontal, vertical and grid layouts; Optimal always uses zero gap
 - [x] Auto-arrange newly added images, with a chosen default method (PR "select and pack new images", BR "default arrange method")
   - [x] Ask how to arrange when one drop/paste adds more than `arrange_prompt_threshold` (default 5) images; result lands at the cursor in one undo step
   - [x] Make the threshold and the default method real settings instead of a constant
@@ -653,7 +655,7 @@ Inventory of [Milanote](https://milanote.com) features from its [help center](ht
 - [ ] **Presentation mode**: full-screen, editing locked, comments hidden, click an item to focus/zoom it, settings remembered (M4, alongside slideshow)
 - [x] Dark / light theme toggle (M2)
 - [x] Interface scale smaller / larger (M2)
-- [ ] Searchable in-app shortcut cheat sheet on `/` and in Help: all actions grouped by category, showing current custom bindings (M3, next to the command palette)
+- [x] Searchable in-app shortcut cheat sheet on `/` and in Help: all actions grouped by category, showing current custom bindings (M3, next to the command palette)
 
 #### Export
 - [x] PDF export of a board or a selection (M2)

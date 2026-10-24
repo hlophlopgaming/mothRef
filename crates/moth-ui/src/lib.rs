@@ -5,6 +5,41 @@ use egui::{Color32, Context};
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Localized control.
+    CheatSheet,
+    /// Localized control.
+    Help,
+    /// Localized control.
+    ShortcutFeedback,
+    /// Localized control.
+    ToastHold,
+    /// Localized control.
+    ToastDismiss,
+    /// Localized control.
+    ToastHint,
+    /// Localized control.
+    LayoutRows,
+    /// Localized control.
+    LayoutColumns,
+    /// Localized control.
+    VerticalHint,
+    /// Localized control.
+    HorizontalHint,
+    /// Localized control.
+    GridHint,
+    /// Explains the gap exception for optimal packing.
+    GapHint,
+    /// Explains square packing without resizing.
+    OptimalHint,
+    /// Localized control.
+    CategoryBoard,
+    /// Localized control.
+    CategoryView,
+    /// Localized control.
+    CategoryEdit,
+    /// Localized control.
+    CategoryPointer,
+
     /// Shortcut editor column.
     BindingAction,
     /// Shortcut editor column.
@@ -242,6 +277,32 @@ pub enum Text {
     Frame,
     /// Localized Rotation control.
     Rotation,
+    /// Localized SnapRotation control.
+    SnapRotation,
+    /// Localized PackBestArea control.
+    PackBestArea,
+    /// Localized PackBestShortSide control.
+    PackBestShortSide,
+    /// Localized PackBestLongSide control.
+    PackBestLongSide,
+    /// Localized PackWorstArea control.
+    PackWorstArea,
+    /// Localized PackWorstShortSide control.
+    PackWorstShortSide,
+    /// Localized PackWorstLongSide control.
+    PackWorstLongSide,
+    /// Localized SplitShorterLeftover control.
+    SplitShorterLeftover,
+    /// Localized SplitLongerLeftover control.
+    SplitLongerLeftover,
+    /// Localized SplitMinimizeArea control.
+    SplitMinimizeArea,
+    /// Localized SplitMaximizeArea control.
+    SplitMaximizeArea,
+    /// Localized SplitShorterAxis control.
+    SplitShorterAxis,
+    /// Localized SplitLongerAxis control.
+    SplitLongerAxis,
     /// Localized Content control.
     Content,
     /// Localized ContentScale control.
@@ -444,6 +505,22 @@ pub enum Text {
     Overlay,
     /// Native topmost state.
     OnTop,
+    /// Window movement action.
+    MoveWindow,
+    /// Armed native drag instructions.
+    MoveWindowHint,
+    /// Explicit titlebar reveal.
+    WindowControls,
+    /// Pin choice and its current state.
+    AboveAll,
+    /// Pin to a foreign window.
+    AboveWindow,
+    /// Target selection instructions.
+    PickWindow,
+    /// Restore a maximized window.
+    Restore,
+    /// Borderless fullscreen.
+    Fullscreen,
     /// Import clipboard content.
     PasteImage,
     /// Creates a text note at the cursor.
@@ -857,7 +934,53 @@ mod tests {
             library,
             pinned: false,
             can_pin: false,
+            can_attach: false,
+            target_pin: false,
+            maximized: false,
         }
+    }
+    #[test]
+    fn window_controls_reveal_without_hover_through_keyboard() {
+        let draw = |events| {
+            let ctx = Context::default();
+            theme(&ctx);
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1440., 900.),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    toolbar(ui, status(false), &mut false, &[]);
+                },
+            );
+            output.textures_delta.clear();
+            output
+                .shapes
+                .iter()
+                .filter(|s| !matches!(s.shape, egui::Shape::Noop))
+                .count()
+        };
+        let hidden = draw(vec![]);
+        let approach = draw(vec![egui::Event::PointerMoved(egui::pos2(700., 10.))]);
+        let keyboard = draw(vec![egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        assert!(
+            approach > hidden,
+            "pointer approach must reveal native controls"
+        );
+        assert!(
+            keyboard > hidden,
+            "Tab must reveal controls without a pointer"
+        );
     }
     #[test]
     fn persistence_status_distinguishes_saved_journaled_and_untitled() {
@@ -902,7 +1025,15 @@ mod tests {
             egui::vec2(320., 640.),
             egui::vec2(844., 390.),
         ] {
-            for library in [false, true] {
+            for (library, tab_count) in [(false, 0), (false, 1), (false, 4), (true, 0), (true, 4)] {
+                let tabs: Vec<_> = (0..tab_count)
+                    .map(|slot| Tab {
+                        title: "A reference board with a long title",
+                        dirty: true,
+                        active: slot == 0,
+                        slot,
+                    })
+                    .collect();
                 let ctx = Context::default();
                 theme(&ctx);
                 let mut output = ctx.run_ui(
@@ -911,15 +1042,18 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        toolbar(ui, status(library), &mut false, &[]);
+                        toolbar(ui, status(library), &mut false, &tabs);
                         if library {
                             library::Library::default().show(ui, &[]);
                         } else {
                             egui::CentralPanel::default().show(ui, |ui| {
                                 assert!(
                                     ui.max_rect().height() > size.y / 2.,
-                                    "{size:?}: {:?}",
-                                    ui.max_rect()
+                                    "{size:?}: {:?}; titlebar bottom: {:?}",
+                                    ui.max_rect(),
+                                    ui.ctx()
+                                        .data(|d| d
+                                            .get_temp::<f32>(egui::Id::new("window_bar_bottom")))
                                 );
                                 let actions = empty_board(ui);
                                 assert!(!actions.paste && !actions.open);

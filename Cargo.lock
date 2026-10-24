@@ -1767,7 +1767,7 @@ checksum = "c505b3e17ed6b70a7ed2e67fbb2c560ee327353556120d6e72f5232b6880d536"
 
 [[package]]
 name = "moth-format"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.8"
 dependencies = [
  "blake3",
  "fractional_index",
@@ -1778,7 +1778,7 @@ dependencies = [
 
 [[package]]
 name = "moth-import"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.8"
 dependencies = [
  "moth-format",
  "moth-scene",
@@ -1790,7 +1790,7 @@ dependencies = [
 
 [[package]]
 name = "moth-io"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.8"
 dependencies = [
  "bcdec_rs",
  "blake3",
@@ -1810,7 +1810,7 @@ dependencies = [
 
 [[package]]
 name = "moth-platform"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.8"
 dependencies = [
  "arboard",
  "base64",
@@ -1841,7 +1841,7 @@ dependencies = [
 
 [[package]]
 name = "moth-render"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.8"
 dependencies = [
  "bytemuck",
  "dhat",
@@ -1857,7 +1857,7 @@ dependencies = [
 
 [[package]]
 name = "moth-scene"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.8"
 dependencies = [
  "blake3",
  "fractional_index",
@@ -1869,14 +1869,14 @@ dependencies = [
 
 [[package]]
 name = "moth-ui"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.8"
 dependencies = [
  "egui",
 ]
 
 [[package]]
 name = "mothref"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.8"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -4831,7 +4831,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.8"
 dependencies = [
  "anyhow",
  "moth-format",

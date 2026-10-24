@@ -31,3 +31,11 @@ a rerun of the same workflow.
 Manual workflow dispatch builds downloadable Actions artifacts without creating
 a release. Published binaries are unsigned; signing/notarization, installers and
 package-manager distribution follow the roadmap.
+
+macOS archives contain `MothRef.app`; launch that bundle from Finder. The executable
+for terminal diagnostics is `MothRef.app/Contents/MacOS/mothref`. Windows archives
+contain a GUI-subsystem `mothref.exe`; GPU probes use no-console creation flags.
+Both paths retain rotating logs in the application's recovery root under `logs/`.
+Before release, complete the native launch and window-transition matrix in
+[M3 window validation](M3-WINDOW-VALIDATION.md); packaging assertions alone do not
+qualify Explorer/Finder launches or graphics-driver transitions.

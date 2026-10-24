@@ -3,10 +3,20 @@
 use super::bindings::{ACTIONS, Action, Chord, Registry};
 use moth_ui::{Text, text};
 
+struct Toast {
+    action: Action,
+    started: std::time::Instant,
+    hovered: bool,
+    focused: bool,
+    held: bool,
+}
+
 #[derive(Default)]
 pub(super) struct Shortcuts {
     pub registry: Registry,
     pub palette: bool,
+    sheet: bool,
+    toast: Option<Toast>,
     pub open: bool,
     query: String,
     selected: usize,
@@ -15,10 +25,100 @@ pub(super) struct Shortcuts {
     filter: String,
 }
 impl Shortcuts {
+    pub fn feedback(&mut self, action: Action, now: std::time::Instant) {
+        // One slot also bounds feedback during rapid alternating shortcuts.
+        self.toast = Some(Toast {
+            action,
+            started: now,
+            hovered: false,
+            focused: false,
+            held: false,
+        });
+    }
+    pub fn toast(&mut self, ctx: &egui::Context, enabled: bool, reduced_motion: bool) {
+        if !enabled {
+            self.toast = None;
+        }
+        let Some(toast) = &mut self.toast else {
+            return;
+        };
+        let age = toast.started.elapsed().as_secs_f32();
+        let alpha = if toast.held || toast.hovered || toast.focused || age <= 3.5 {
+            1.
+        } else {
+            ((4. - age) / 0.5).clamp(0., 1.)
+        };
+        if alpha == 0. {
+            self.toast = None;
+            return;
+        }
+        let mut dismiss = false;
+        let mut hovered = false;
+        let mut focused = false;
+        egui::Area::new(egui::Id::new("hotkey_feedback"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_BOTTOM, [0., -16.])
+            .show(ctx, |ui| {
+                ui.set_opacity(if reduced_motion { 1. } else { alpha });
+                let frame = egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_max_width((ctx.content_rect().width() - 40.).clamp(1., 480.));
+                    ui.label(format!(
+                        "{}   {}",
+                        text(toast.action.label()),
+                        self.registry.label(toast.action)
+                    ));
+                    ui.horizontal(|ui| {
+                        let hold = ui
+                            .selectable_label(toast.held, text(Text::ToastHold))
+                            .on_hover_text(text(Text::ToastHint));
+                        focused |= hold.has_focus();
+                        if hold.clicked() {
+                            toast.held = !toast.held;
+                            toast.started = std::time::Instant::now();
+                        }
+                        let close = ui.button(text(Text::ToastDismiss));
+                        focused |= close.has_focus();
+                        dismiss |= close.clicked();
+                    });
+                });
+                hovered = frame.response.contains_pointer();
+            });
+        if focused {
+            toast.started = std::time::Instant::now();
+        }
+        dismiss |= toast.hovered && !hovered && !toast.held && !focused;
+        dismiss |= (focused || toast.held)
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        dismiss |= toast.focused && !focused && !toast.held && !hovered;
+        toast.hovered = hovered;
+        toast.focused = focused;
+        if dismiss {
+            self.toast = None;
+        } else if !hovered && !focused && !toast.held {
+            if age < 3.5 {
+                ctx.request_repaint_after(std::time::Duration::from_secs_f32(3.5 - age));
+            } else if reduced_motion {
+                ctx.request_repaint_after(std::time::Duration::from_secs_f32((4. - age).max(0.)));
+            } else {
+                ctx.request_repaint();
+            }
+        }
+    }
+    pub fn toast_focused(&self) -> bool {
+        self.toast.as_ref().is_some_and(|t| t.focused)
+    }
     pub fn blocked(&self) -> bool {
-        self.open || self.palette
+        self.open || self.palette || self.sheet
+    }
+    pub fn open_cheatsheet(&mut self) {
+        self.sheet = true;
+        self.open = false;
+        self.palette = false;
+        self.filter.clear();
+        self.focus = true;
     }
     pub fn open_palette(&mut self) {
+        self.sheet = false;
         self.palette = true;
         self.open = false;
         self.query.clear();
@@ -26,6 +126,7 @@ impl Shortcuts {
         self.focus = true;
     }
     pub fn open_settings(&mut self) {
+        self.sheet = false;
         self.open = true;
         self.palette = false;
         self.filter.clear();
@@ -77,6 +178,67 @@ impl Shortcuts {
     ) -> (Option<Action>, bool) {
         let mut action = None;
         let mut changed = false;
+        if self.sheet {
+            let response =
+                egui::Modal::new(egui::Id::new("shortcut_cheatsheet")).show(ui.ctx(), |ui| {
+                    ui.set_width((ui.ctx().content_rect().width() - 40.).clamp(1., 650.));
+                    ui.heading(text(Text::CheatSheet));
+                    let input = ui.add(
+                        egui::TextEdit::singleline(&mut self.filter)
+                            .hint_text(text(Text::SearchActions))
+                            .char_limit(128),
+                    );
+                    if self.focus {
+                        input.request_focus();
+                        self.focus = false;
+                    }
+                    let query = self.filter.to_lowercase();
+                    egui::ScrollArea::vertical()
+                        .max_height(ui.ctx().content_rect().height() * 0.65)
+                        .show(ui, |ui| {
+                            for category in [
+                                Text::CategoryBoard,
+                                Text::CategoryView,
+                                Text::CategoryEdit,
+                                Text::CategoryPointer,
+                            ] {
+                                let actions: Vec<_> = ACTIONS
+                                    .iter()
+                                    .filter(|a| {
+                                        a.category() == category
+                                            && (text(a.label()).to_lowercase().contains(&query)
+                                                || a.id().to_lowercase().contains(&query)
+                                                || self
+                                                    .registry
+                                                    .label(**a)
+                                                    .to_lowercase()
+                                                    .contains(&query)
+                                                || text(category).to_lowercase().contains(&query))
+                                    })
+                                    .collect();
+                                if actions.is_empty() {
+                                    continue;
+                                }
+                                ui.heading(text(category));
+                                for action in actions {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(text(action.label()));
+                                        ui.monospace(self.registry.label(*action));
+                                    });
+                                }
+                            }
+                        });
+                    if ui.button(text(Text::Shortcuts)).clicked() {
+                        self.open_settings();
+                    }
+                    if ui.button(text(Text::Cancel)).clicked() {
+                        self.sheet = false;
+                    }
+                });
+            if response.should_close() {
+                self.sheet = false;
+            }
+        }
         if self.palette {
             let response =
                 egui::Modal::new(egui::Id::new("command_palette")).show(ui.ctx(), |ui| {
@@ -272,6 +434,71 @@ impl Shortcuts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn feedback_replaces_repeats_and_expires_or_disables() {
+        let ctx = egui::Context::default();
+        let mut state = Shortcuts::default();
+        let now = std::time::Instant::now();
+        state.feedback(Action::Save, now - std::time::Duration::from_secs(10));
+        state.feedback(Action::Save, now);
+        assert_eq!(state.toast.as_ref().unwrap().started, now);
+        state.feedback(Action::Next, now);
+        assert_eq!(state.toast.as_ref().unwrap().action, Action::Next);
+        state.toast.as_mut().unwrap().started = now - std::time::Duration::from_secs(5);
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            state.toast(ui.ctx(), true, false)
+        })
+        .textures_delta
+        .clear();
+        assert!(state.toast.is_none());
+        state.feedback(Action::Next, now - std::time::Duration::from_secs(10));
+        state.toast.as_mut().unwrap().held = true;
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            state.toast(ui.ctx(), true, false)
+        })
+        .textures_delta
+        .clear();
+        assert!(state.toast.is_some());
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            state.toast(ui.ctx(), false, false)
+        })
+        .textures_delta
+        .clear();
+        assert!(state.toast.is_none());
+    }
+    #[test]
+    fn cheat_sheet_and_image_navigation_use_the_registry() {
+        let mut state = Shortcuts::default();
+        assert_eq!(
+            state.registry.key(egui::Key::Slash, Default::default()),
+            Some(Action::Shortcuts)
+        );
+        assert_eq!(
+            state.registry.key(egui::Key::PageUp, Default::default()),
+            Some(Action::Previous)
+        );
+        assert_eq!(
+            state.registry.key(egui::Key::PageDown, Default::default()),
+            Some(Action::Next)
+        );
+        state.open_cheatsheet();
+        assert!(state.blocked());
+        state.open_settings();
+        assert!(!state.sheet);
+        state.open_palette();
+        assert!(!state.open);
+        for action in ACTIONS {
+            assert!(
+                [
+                    Text::CategoryBoard,
+                    Text::CategoryView,
+                    Text::CategoryEdit,
+                    Text::CategoryPointer
+                ]
+                .contains(&action.category())
+            );
+        }
+    }
     #[test]
     fn palette_arrows_enter_and_escape_are_isolated_from_canvas_actions() {
         let ctx = egui::Context::default();

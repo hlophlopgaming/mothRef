@@ -53,6 +53,12 @@ pub(super) enum Intent {
     Overlay,
     /// Toggle native topmost.
     Pin,
+    /// Choose a pin mode.
+    PinChoice(bool),
+    /// Cancel target selection or an armed window drag.
+    CancelWindowMode,
+    /// Toggle borderless fullscreen.
+    Fullscreen,
     /// Activate an inactive tab.
     Tab(usize),
     /// Request safe closure of a tab (zero is the active board).
@@ -146,6 +152,9 @@ pub(super) fn intents_from_actions(actions: Actions) -> Vec<Intent> {
     }
     if actions.overlay {
         intents.push(Intent::Overlay);
+    }
+    if let Some(target) = actions.pin_choice {
+        intents.push(Intent::PinChoice(target));
     }
     if actions.pin {
         intents.push(Intent::Pin);

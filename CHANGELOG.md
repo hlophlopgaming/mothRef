@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.8 — 2026-10-24
+
+- Skip zero-sized overlay-controller frames, refresh its surface after uncovering or display-scale changes, and retry after surface recovery. Disable click-through controls when the platform reports no support.
+
+- Restore visible arrangement gutters when old settings contain a zero gap: use the default 24 units and require a positive gap for Grid, rows and columns. Optimal remains gapless.
+
+- Grid now packs a compact mosaic with the same gutter on both axes, preserving image sizes and rotations. Short images no longer acquire oversized vertical padding from uniform cells. Horizontal and vertical layouts retain their row/column controls.
+
+- Optimal arrangement now packs the selected images into a compact square without gaps, independently of the viewport or zoom, preserving sizes and proportions. Other layouts keep their configurable gap. Add distinct arrangement icons to the inspector, context menu, import prompt and default-method choices.
+
+- Fix window-control reveal deadlocking egui and keep the canvas usable on narrow screens, including boards with several long tab titles.
+
+- Reveal window controls on pointer approach, keyboard navigation or an explicit touch button; add rebindable pin, window-move and fullscreen actions. Windows can pin above a clicked target window, with cancellation and a visible active mode.
+- Hide Windows GPU-probe console windows, retain rotating diagnostic logs without a terminal, and package macOS releases as Finder-launchable app bundles. Native launch and transition qualification remains pending.
+- Redraw and reconfigure after uncovering the window or changing display scale; keep maximize/restore separate from borderless fullscreen.
+
+- Arrangement controls offer exact row/column sliders: horizontal fills rows left-to-right and vertical fills columns top-to-bottom. Grid uses a compact mosaic with gutters. Sizes stay unchanged and each arrangement is one undo step.
+- Shortcut feedback shows the action and current binding for 3.5 seconds, then fades; hover or keyboard focus holds it, pointer leave dismisses it, and Hold/Dismiss buttons support keyboard and touch. Disable it in Settings.
+- Page Up/Page Down jump to the previous/next image; both bindings can be customized.
+- Open the searchable, categorized shortcut cheat sheet with `/` or Help; it includes current custom bindings and pointer gestures.
+
+- Reimplement rotation snapping and optimal arrangement independently: finite packing
+  spaces, atomic rejection of out-of-range layouts, and overflow-safe angle rounding.
+
+- Fix offset canvas selection and dragging when the interface scale differs from 100%.
+
 - Load boards several times faster in the full-resolution mode: each image is decoded
   once (preview and all tiles from the same decode), coarser levels are built from the
   previous level instead of from the full image, opaque images use a faster BC7

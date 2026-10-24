@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Explicit Apply keeps inspector drafts out of the journal until confirmed.
-use super::{Document, arrange, intent::Intent};
+use super::{Document, arrange, intent::Intent, snap};
 use moth_platform::export::{Geometry, Target};
 use moth_scene::{Command, Rect, Transform, Uuid};
 use moth_ui::{Text, text};
@@ -9,6 +9,8 @@ pub(super) struct Tools {
     draft: Option<(Uuid, Rect, Transform)>,
     observed: Option<(Uuid, Rect, Transform)>,
     pub gap: f32,
+    pub layout_counts: [usize; 2],
+    pub shortcut_feedback: bool,
     pub(super) order: u8,
     last_arrange: Option<(u8, u8, u64)>,
     reversed: bool,
@@ -39,9 +41,12 @@ pub(super) struct Tools {
     pub wheel: u8,
     pub smooth_zoom: bool,
     pub zoom_increment: f32,
+    pub rotation_snap: bool,
     pub scale_with_window: bool,
     pub auto_arrange: bool,
     pub default_arrange: u8,
+    pub arrange_choice: u8,
+    pub arrange_split: u8,
     pub coordinates: bool,
     factor: f32,
     path: String,
@@ -58,6 +63,8 @@ impl Default for Tools {
             draft: None,
             observed: None,
             gap: 24.,
+            layout_counts: [1, 1],
+            shortcut_feedback: true,
             order: 0,
             last_arrange: None,
             reversed: false,
@@ -83,9 +90,12 @@ impl Default for Tools {
             wheel: 0,
             smooth_zoom: true,
             zoom_increment: 10.,
+            rotation_snap: false,
             scale_with_window: false,
             auto_arrange: false,
             default_arrange: 0,
+            arrange_choice: 1,
+            arrange_split: 0,
             coordinates: false,
             factor: 1.,
             path: String::new(),
@@ -170,13 +180,13 @@ impl Tools {
         &mut self,
         items: &mut Vec<&moth_scene::Item>,
         mode: arrange::Arrange,
-        width: f32,
     ) -> Vec<Command> {
         use std::hash::{Hash, Hasher};
         let mut ids: Vec<_> = items.iter().map(|i| i.id).collect();
         ids.sort_unstable();
         let mut hash = std::hash::DefaultHasher::new();
         ids.hash(&mut hash);
+        self.layout_counts.hash(&mut hash);
         let key = (self.order, mode as u8, hash.finish());
         let repeat = self.last_arrange == Some(key);
         self.reversed = repeat && !self.reversed;
@@ -197,7 +207,19 @@ impl Tools {
         if self.reversed {
             items.reverse();
         }
-        arrange::arrange(items, mode, width, self.gap)
+        if matches!(
+            mode,
+            arrange::Arrange::Horizontal | arrange::Arrange::Vertical
+        ) {
+            return arrange::counted(items, mode, self.layout_counts[mode as usize], self.gap);
+        }
+        arrange::arrange(
+            items,
+            mode,
+            self.gap,
+            arrange::FreeRectChoice::from_index(self.arrange_choice),
+            arrange::GuillotineSplit::from_index(self.arrange_split),
+        )
     }
     /// Texture limit in bytes: the user's value, else the detected one (`None` until
     /// detection finishes).
@@ -210,6 +232,7 @@ impl Tools {
     }
     pub fn preferences(&self) -> Vec<(&'static str, String)> {
         vec![
+            ("shortcut_feedback", self.shortcut_feedback.to_string()),
             (
                 moth_platform::settings::REDUCED_MOTION,
                 self.reduced_motion.to_string(),
@@ -220,6 +243,7 @@ impl Tools {
             ("wheel", self.wheel.to_string()),
             ("smooth_zoom", self.smooth_zoom.to_string()),
             ("zoom_increment", self.zoom_increment.to_string()),
+            ("rotation_snap", self.rotation_snap.to_string()),
             ("scale_with_window", self.scale_with_window.to_string()),
             ("undo_limit", self.undo_limit.to_string()),
             ("vram_limit_mib", self.vram_limit_mib.to_string()),
@@ -231,9 +255,15 @@ impl Tools {
             ("arrange_prompt_threshold", self.threshold.to_string()),
             ("auto_arrange", self.auto_arrange.to_string()),
             ("default_arrange", self.default_arrange.to_string()),
+            ("arrange_choice", self.arrange_choice.to_string()),
+            ("arrange_split", self.arrange_split.to_string()),
         ]
     }
     pub fn load(&mut self, values: &std::collections::BTreeMap<String, String>) {
+        self.shortcut_feedback = values
+            .get("shortcut_feedback")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(true);
         // The old 32–512 MiB `cache_limit_mib` is ignored: limits now follow the adapter.
         self.vram_limit_mib = values
             .get("vram_limit_mib")
@@ -279,6 +309,10 @@ impl Tools {
             .and_then(|v| v.parse::<f32>().ok())
             .filter(|v| v.is_finite() && (1.0..=100.0).contains(v))
             .unwrap_or(10.);
+        self.rotation_snap = values
+            .get("rotation_snap")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(false);
         self.scale_with_window = values
             .get("scale_with_window")
             .and_then(|v| v.parse().ok())
@@ -300,7 +334,7 @@ impl Tools {
         self.gap = values
             .get("arrange_gap")
             .and_then(|v| v.parse::<f32>().ok())
-            .filter(|v| v.is_finite() && (0.0..=10000.).contains(v))
+            .filter(|v| v.is_finite() && (1.0..=10000.).contains(v))
             .unwrap_or(24.);
         self.threshold = values
             .get("arrange_prompt_threshold")
@@ -315,6 +349,16 @@ impl Tools {
             .get("default_arrange")
             .and_then(|v| v.parse().ok())
             .filter(|v| *v < 4)
+            .unwrap_or(0);
+        self.arrange_choice = values
+            .get("arrange_choice")
+            .and_then(|v| v.parse().ok())
+            .filter(|v| *v < 6)
+            .unwrap_or(1);
+        self.arrange_split = values
+            .get("arrange_split")
+            .and_then(|v| v.parse().ok())
+            .filter(|v| *v < 6)
             .unwrap_or(0);
     }
     pub fn show(
@@ -454,6 +498,7 @@ impl Tools {
                             self.clear_disk_cache = true;
                         }
                     });
+                    ui.checkbox(&mut self.shortcut_feedback, text(Text::ShortcutFeedback));
                     ui.checkbox(&mut self.reduced_motion, text(Text::ReducedMotion));
                     ui.checkbox(&mut self.show_outlines, text(Text::ShowOutlines));
                     ui.checkbox(&mut self.drag_animation, text(Text::DragAnimation));
@@ -486,6 +531,7 @@ impl Tools {
                         egui::Slider::new(&mut self.zoom_increment, 1.0..=100.0)
                             .text(text(Text::ZoomIncrement)),
                     );
+                    ui.checkbox(&mut self.rotation_snap, text(Text::SnapRotation));
                     let label = preference(Text::UndoLimit, self.undo_limit != defaults.undo_limit);
                     ui.add(egui::Slider::new(&mut self.undo_limit, 0..=4096).text(label));
                     let bytes = board
@@ -509,7 +555,7 @@ impl Tools {
                     ui.add(egui::Slider::new(&mut self.ui_scale, 0.75..=2.).text(label));
                     ui.horizontal(|ui| {
                         ui.label(preference(Text::Gap, self.gap != defaults.gap));
-                        ui.add(egui::DragValue::new(&mut self.gap).range(0.0..=10000.));
+                        ui.add(egui::DragValue::new(&mut self.gap).range(1.0..=10000.));
                     });
                     ui.horizontal(|ui| {
                         ui.label(preference(
@@ -530,10 +576,45 @@ impl Tools {
                         ))
                         .show_ui(ui, |ui| {
                             for i in 0..4 {
+                                let (label, mode) = layout(i);
+                                if moth_ui::icons::labeled_button(
+                                    ui,
+                                    layout_icon(mode),
+                                    text(label),
+                                    self.default_arrange == i,
+                                )
+                                .clicked()
+                                {
+                                    self.default_arrange = i;
+                                    ui.close();
+                                }
+                            }
+                        });
+                    egui::ComboBox::from_id_salt("arrange_choice")
+                        .selected_text(preference(
+                            choice_label(self.arrange_choice),
+                            self.arrange_choice != defaults.arrange_choice,
+                        ))
+                        .show_ui(ui, |ui| {
+                            for i in 0..6 {
                                 ui.selectable_value(
-                                    &mut self.default_arrange,
+                                    &mut self.arrange_choice,
                                     i,
-                                    text(layout(i).0),
+                                    text(choice_label(i)),
+                                );
+                            }
+                        });
+                    egui::ComboBox::from_id_salt("arrange_split")
+                        .selected_text(preference(
+                            split_label(self.arrange_split),
+                            self.arrange_split != defaults.arrange_split,
+                        ))
+                        .show_ui(ui, |ui| {
+                            for i in 0..6 {
+                                ui.selectable_value(
+                                    &mut self.arrange_split,
+                                    i,
+                                    text(split_label(i)),
                                 );
                             }
                         });
@@ -548,9 +629,11 @@ impl Tools {
                             .button(moth_ui::tooltip(ui.ctx(), Text::Defaults))
                             .clicked()
                     {
+                        self.shortcut_feedback = defaults.shortcut_feedback;
                         self.wheel = defaults.wheel;
                         self.smooth_zoom = defaults.smooth_zoom;
                         self.zoom_increment = defaults.zoom_increment;
+                        self.rotation_snap = defaults.rotation_snap;
                         self.scale_with_window = defaults.scale_with_window;
                         self.undo_limit = defaults.undo_limit;
                         self.vram_limit_mib = defaults.vram_limit_mib;
@@ -562,6 +645,8 @@ impl Tools {
                         self.threshold = defaults.threshold;
                         self.auto_arrange = defaults.auto_arrange;
                         self.default_arrange = defaults.default_arrange;
+                        self.arrange_choice = defaults.arrange_choice;
+                        self.arrange_split = defaults.arrange_split;
                         intents.push(Intent::PreferencesDirty);
                     }
                 });
@@ -651,6 +736,7 @@ impl Tools {
                                 self.observed = Some((item.id, item.rect, item.transform));
                                 self.draft = Some((item.id, item.rect, item.transform));
                             }
+                            let rotation_snap = self.rotation_snap;
                             ui.collapsing(text(Text::EditSelection), |ui| {
                                 let Some((id, frame, t)) = &mut self.draft else {
                                     return;
@@ -660,6 +746,10 @@ impl Tools {
                                 let mut degrees = t.rotation.to_degrees();
                                 number(ui, Text::Rotation, &mut degrees, -36000.0..=36000.0);
                                 t.rotation = degrees.to_radians();
+                                if rotation_snap {
+                                    t.rotation =
+                                        snap::snap_angle(t.rotation, 15.0_f32.to_radians());
+                                }
                                 ui.add(
                                     egui::Slider::new(&mut t.opacity, 0.0..=1.0)
                                         .text(text(Text::Opacity)),
@@ -740,7 +830,8 @@ impl Tools {
                         }
                         ui.collapsing(text(Text::Arrange), |ui| {
                             let old_gap = self.gap;
-                            number(ui, Text::Gap, &mut self.gap, 0.0..=10000.);
+                            number(ui, Text::Gap, &mut self.gap, 1.0..=10000.);
+                            ui.small(text(Text::GapHint));
                             egui::ComboBox::from_id_salt("arrange_order")
                                 .selected_text(text(order_label(self.order)))
                                 .show_ui(ui, |ui| {
@@ -754,34 +845,66 @@ impl Tools {
                                 });
                             for i in 0..4 {
                                 let (key, mode) = layout(i);
+                                if i < 2 {
+                                    let count = &mut self.layout_counts[mode as usize];
+                                    *count = (*count).clamp(1, items.len().max(1));
+                                    ui.add(egui::Slider::new(count, 1..=items.len().max(1)).text(
+                                        text(if i == 0 {
+                                            Text::LayoutRows
+                                        } else {
+                                            Text::LayoutColumns
+                                        }),
+                                    ));
+                                    ui.small(text(if i == 0 {
+                                        Text::HorizontalHint
+                                    } else {
+                                        Text::VerticalHint
+                                    }));
+                                }
+                                if i == 2 {
+                                    ui.small(text(Text::GridHint));
+                                }
                                 if ui
-                                    .add_enabled(
-                                        !items.is_empty(),
-                                        egui::Button::new(moth_ui::tooltip(ui.ctx(), key)),
-                                    )
+                                    .add_enabled_ui(!items.is_empty(), |ui| {
+                                        moth_ui::icons::labeled_button(
+                                            ui,
+                                            layout_icon(mode),
+                                            &moth_ui::tooltip(ui.ctx(), key),
+                                            false,
+                                        )
+                                        .on_hover_text(
+                                            text(if i == 3 {
+                                                Text::OptimalHint
+                                            } else {
+                                                Text::GapHint
+                                            }),
+                                        )
+                                    })
+                                    .inner
                                     .clicked()
                                 {
-                                    commands.extend(self.arrange(
-                                        &mut items,
-                                        mode,
-                                        board.view.viewport.width() / board.view.camera.zoom,
-                                    ));
+                                    commands.extend(self.arrange(&mut items, mode));
                                 }
                             }
                             if old_gap != self.gap {
                                 intents.push(Intent::PreferencesDirty);
                             }
-                            if ui
-                                .button(moth_ui::tooltip(ui.ctx(), Text::PackFit))
-                                .clicked()
+                            if moth_ui::icons::labeled_button(
+                                ui,
+                                moth_ui::icons::Icon::ArrangeOptimal,
+                                &moth_ui::tooltip(ui.ctx(), Text::PackFit),
+                                false,
+                            )
+                            .clicked()
                             {
                                 let mut all: Vec<_> = board.scene.items().collect();
                                 all.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
                                 commands.extend(arrange::arrange(
                                     &all,
                                     arrange::Arrange::Optimal,
-                                    board.view.viewport.width() / board.view.camera.zoom,
                                     self.gap,
+                                    arrange::FreeRectChoice::from_index(self.arrange_choice),
+                                    arrange::GuillotineSplit::from_index(self.arrange_split),
                                 ));
                                 intents.push(Intent::NeedsFit);
                             }
@@ -1027,12 +1150,41 @@ pub(super) fn layout(i: u8) -> (Text, arrange::Arrange) {
         _ => (Text::Horizontal, arrange::Arrange::Horizontal),
     }
 }
+pub(super) fn layout_icon(mode: arrange::Arrange) -> moth_ui::icons::Icon {
+    use moth_ui::icons::Icon;
+    match mode {
+        arrange::Arrange::Horizontal => Icon::ArrangeHorizontal,
+        arrange::Arrange::Vertical => Icon::ArrangeVertical,
+        arrange::Arrange::Grid => Icon::ArrangeGrid,
+        arrange::Arrange::Optimal => Icon::ArrangeOptimal,
+    }
+}
 fn order_label(i: u8) -> Text {
     match i {
         1 => Text::ByFilename,
         2 => Text::ByTime,
         3 => Text::Random,
         _ => Text::ByLayer,
+    }
+}
+fn choice_label(i: u8) -> Text {
+    match i {
+        0 => Text::PackBestArea,
+        1 => Text::PackBestShortSide,
+        2 => Text::PackBestLongSide,
+        3 => Text::PackWorstArea,
+        4 => Text::PackWorstShortSide,
+        _ => Text::PackWorstLongSide,
+    }
+}
+fn split_label(i: u8) -> Text {
+    match i {
+        0 => Text::SplitShorterLeftover,
+        1 => Text::SplitLongerLeftover,
+        2 => Text::SplitMinimizeArea,
+        3 => Text::SplitMaximizeArea,
+        4 => Text::SplitShorterAxis,
+        _ => Text::SplitLongerAxis,
     }
 }
 fn scale(items: &[&moth_scene::Item], factor: f32) -> Vec<Command> {
@@ -1067,6 +1219,48 @@ fn scale(items: &[&moth_scene::Item], factor: f32) -> Vec<Command> {
 mod tests {
     use super::*;
     #[test]
+    fn saved_zero_gap_restores_gutters_without_spacing_optimal() {
+        let mut tools = Tools::default();
+        tools.load(&[("arrange_gap".into(), "0".into())].into_iter().collect());
+        let items: Vec<_> = (0..4)
+            .map(|_| {
+                moth_scene::Item::image(
+                    moth_scene::BlobId::from_bytes([0; 32]),
+                    Rect {
+                        x: 0.,
+                        y: 0.,
+                        width: 100.,
+                        height: 100.,
+                    },
+                    None,
+                )
+            })
+            .collect();
+        let mut refs: Vec<_> = items.iter().collect();
+        for mode in [arrange::Arrange::Grid, arrange::Arrange::Optimal] {
+            let mut rects: Vec<_> = tools
+                .arrange(&mut refs, mode)
+                .into_iter()
+                .map(|c| {
+                    let Command::SetRect { rect, .. } = c else {
+                        panic!("expected position command")
+                    };
+                    rect
+                })
+                .collect();
+            assert_eq!(rects.len(), 4);
+            rects.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+            let expected_gap = if matches!(mode, arrange::Arrange::Grid) {
+                24.
+            } else {
+                0.
+            };
+            assert_eq!(rects[2].x - rects[0].x - rects[0].width, expected_gap);
+            assert_eq!(rects[1].y - rects[0].y - rects[0].height, expected_gap);
+        }
+        assert_eq!(tools.gap, 24.);
+    }
+    #[test]
     fn repeated_arrangement_reverses_the_same_order_without_moving_the_anchor() {
         let a = moth_scene::Item::text(
             "a",
@@ -1094,8 +1288,8 @@ mod tests {
                 ..Tools::default()
             };
             let mut items = vec![&a, &b];
-            let first = tools.arrange(&mut items, arrange::Arrange::Horizontal, 100.);
-            let reversed = tools.arrange(&mut items, arrange::Arrange::Horizontal, 100.);
+            let first = tools.arrange(&mut items, arrange::Arrange::Horizontal);
+            let reversed = tools.arrange(&mut items, arrange::Arrange::Horizontal);
             assert!(
                 matches!((&first[0],&reversed[1]),(Command::SetRect{id:a,..},Command::SetRect{id:b,..}) if a==b)
             );
@@ -1144,6 +1338,7 @@ mod tests {
     #[test]
     fn preferences_roundtrip_and_reject_nonfinite_values() {
         let source = Tools {
+            shortcut_feedback: false,
             dark: false,
             ui_scale: 1.5,
             gap: 17.,

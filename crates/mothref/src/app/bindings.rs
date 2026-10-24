@@ -18,7 +18,8 @@ macro_rules! actions {
 }
 actions! {
     Palette, CommandPalette, "Cmd+K";
-    Shortcuts, Shortcuts, "Slash";
+    Shortcuts, CheatSheet, "Slash";
+    BindingSettings, Shortcuts, "";
     New, NewBoard, "Cmd+N";
     Open, Open, "Cmd+O";
     Save, Save, "Cmd+S";
@@ -29,7 +30,9 @@ actions! {
     Undo, Undo, "Cmd+Z";
     Redo, Redo, "Cmd+Y";
     Overlay, Overlay, "Cmd+T";
-    Pin, OnTop, "";
+    Pin, OnTop, "Cmd+Shift+T";
+    MoveWindow, MoveWindow, "Cmd+Shift+M";
+    Fullscreen, Fullscreen, "F11";
     Minimize, Minimize, "";
     Maximize, Maximize, "";
     Tools, Tools, "";
@@ -37,8 +40,8 @@ actions! {
     Hand, Pan, "H";
     Fit, Fit, "Home";
     Focus, FitSelection, "Space";
-    Previous, PreviousImage, "";
-    Next, NextImage, "";
+    Previous, PreviousImage, "PageUp";
+    Next, NextImage, "PageDown";
     ZoomIn, ZoomIn, "Equal";
     ZoomOut, ZoomOut, "Minus";
     ZoomReset, ZoomReset, "";
@@ -90,6 +93,21 @@ actions! {
     PanAltDrag, PanAltDrag, "";
 }
 impl Action {
+    pub fn category(self) -> Text {
+        use Action::*;
+        match self {
+            MoveDrag | ExtendDrag | DuplicateDrag | PanDrag | PanSpaceDrag | PanAltDrag => {
+                Text::CategoryPointer
+            }
+            Select | Hand | Fit | Focus | Previous | Next | ZoomIn | ZoomOut | ZoomReset
+            | ResetCamera | Lock | Grayscale => Text::CategoryView,
+            Palette | BindingSettings | Shortcuts | New | Open | Save | Library | CloseTab
+            | NextTab | Overlay | Pin | Minimize | Maximize | MoveWindow | Fullscreen | Tools => {
+                Text::CategoryBoard
+            }
+            _ => Text::CategoryEdit,
+        }
+    }
     pub fn pointer(self) -> bool {
         matches!(
             self,
@@ -388,6 +406,27 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn window_actions_rebind_and_survive_settings_roundtrip() {
+        let mut registry = Registry::default();
+        for (action, chord) in [
+            (Action::Pin, "Alt+T"),
+            (Action::MoveWindow, "Alt+M"),
+            (Action::Fullscreen, "Alt+F11"),
+        ] {
+            registry.set(action, chord);
+        }
+        let mut restored = Registry::default();
+        assert!(restored.load(&registry.preferences()));
+        assert_eq!(restored, registry);
+        let alt = Mods {
+            alt: true,
+            ..Mods::default()
+        };
+        assert_eq!(restored.key(Key::T, alt), Some(Action::Pin));
+        assert_eq!(restored.key(Key::M, alt), Some(Action::MoveWindow));
+        assert_eq!(restored.key(Key::F11, alt), Some(Action::Fullscreen));
+    }
     #[test]
     fn exact_modifiers_do_not_turn_screenshot_chords_into_other_commands() {
         let registry = Registry::default();

@@ -114,3 +114,43 @@ The five-minute soak completed **2,849 frames in 300 seconds**, with RSS stable 
 **195,984 KiB** (about 191 MiB) from 55 seconds through the final sample. Original-backed
 reset and preference-marker additions made afterward add no retained buffers or caches;
 their regression/formatting/Clippy checks are included in the final check run.
+
+## Square optimal packing
+
+Optimal uses all selected displayed bounds to search a compact square. It preserves
+image sizes, aspect ratios and existing rotations; neither viewport dimensions nor
+camera zoom enters the packing API. It always uses zero spacing. Horizontal,
+vertical and grid retain the configured gap (24 world units by default).
+The bounded greedy search is approximate; unusually shaped sets can leave holes.
+Distinct vector icons precede arrangement names in the inspector, context menu,
+import prompt and default-method choices. Existing grouped commands retain undo,
+journal ordering and save/load behavior.
+
+Regression coverage includes exact square fills for equal and mixed image sizes,
+independence from the flow-gap setting, rotated non-overlap for every heuristic,
+atomic rejection of invalid layouts, undo and checkpoint round-trips.
+
+Validation for this change: `cargo test -p mothref -p moth-ui` passed all 82 tests,
+including the packing property tests and save/load/undo checks.
+`cargo fmt --all --check` and Clippy for both changed crates also passed.
+Manual GUI inspection and packing benchmarks were not run.
+
+Grid uses the square packer with a shared gutter added to each displayed bounding
+box. Unlike Optimal's zero padding, this gives the same edge spacing horizontally
+and vertically, without resizing images or padding short images to uniform cells.
+The maintainer explicitly chose this mosaic behavior over proportional resizing.
+Fixed column controls apply only to horizontal/vertical layouts; Grid chooses its
+shape from the entire selection. The icon and help text reflect this distinction.
+Regression coverage includes a tall image beside two shorter images with exact
+24-unit horizontal and vertical gaps, square fills, rotated gutters and grouped
+undo/checkpoint round-trips.
+
+A saved `arrange_gap=0` from the earlier shared setting now loads as the default
+24-unit gutter. Both settings controls require a positive gap; Optimal continues
+to ignore that setting and packs without spacing. A regression loads the legacy
+zero preference and exercises Grid and Optimal through `Tools::arrange`.
+Existing board positions change only when the user applies an arrangement again.
+
+Mosaic validation: all 84 tests in `mothref` and `moth-ui` passed, including the
+regression for equal horizontal/vertical edge spacing. Formatting and Clippy also
+passed. Manual GUI inspection was not performed.
