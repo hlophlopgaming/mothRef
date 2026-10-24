@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix dragged images drifting away from the cursor when zooming or wheel-panning in the middle of a drag (or while smooth zoom is still settling): the drag is now anchored to the board, so only the board zooms around the cursor and the images stay where you grabbed them. Rubber-band selection keeps its starting corner the same way.
 - Recolor the dark theme with the «Pixel» palette from docs/DESIGN.md: green-grey Screen background, Bone text, Sage accent, Wing for destructive actions. In the light «Album» theme, primary buttons now use dark Graphite text instead of near-white text on sage, idle buttons have an outline, and selected icons use Moss so they stay visible on paper.
 
 ## 0.1.0-alpha.9 — 2026-10-24
