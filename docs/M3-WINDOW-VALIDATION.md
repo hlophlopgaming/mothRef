@@ -191,3 +191,18 @@ sandbox; no tests were ignored. The native manual matrix above remains pending.
 See [the alpha.10 release notes](releases/v0.1.0-alpha.10.md) for corpus, fuzz,
 journal-kill and performance evidence. No completed native qualification or
 completed M3 milestone is claimed.
+
+
+### Alpha.11 cross-platform CI correction
+
+Alpha.10 publication was blocked by Windows Clippy's `chunks_exact(2)` warning
+and a macOS test comparing a canonical recovery destination with an aliased
+`/var` path. The Windows decoder now uses `as_chunks::<2>()`, preserving rejection
+of odd-length UTF-16 data. Its actual functions passed isolated Windows-target
+Clippy without linking a Windows executable on this Linux host.
+
+The recovery regression now saves through a symlink alias on Unix and compares
+against the canonical destination. The aliased fixture reproduced the macOS
+failure on Linux before the expectation was corrected, then passed with all
+original checks for source preservation, journal archival and durable resaving
+still enabled. No recovery behavior or board format changed.

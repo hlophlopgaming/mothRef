@@ -161,8 +161,10 @@ fn decode_path(bytes: &[u8]) -> io::Result<PathBuf> {
         return Err(error("Invalid Windows recovery destination"));
     }
     let wide: Vec<_> = bytes
-        .chunks_exact(2)
-        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u16::from_le_bytes(*pair))
         .collect();
     Ok(std::ffi::OsString::from_wide(&wide).into())
 }
@@ -170,6 +172,13 @@ fn decode_path(bytes: &[u8]) -> io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn windows_destinations_roundtrip_and_reject_partial_utf16_units() {
+        let path = PathBuf::from(r"C:\References\猫.moth");
+        assert_eq!(decode_path(&encode_path(&path)).unwrap(), path);
+        assert!(decode_path(&[1]).is_err());
+    }
     #[test]
     fn destination_is_checksummed_and_discard_rejects_paths_outside_recovery() {
         let storage = DesktopStorage::in_directory(

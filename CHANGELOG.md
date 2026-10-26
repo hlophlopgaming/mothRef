@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.11 — 2026-10-26
+
+- Unblock Windows CI by decoding recovery paths with fixed-size byte chunks. Check canonical save destinations in recovery tests, including symlink aliases, so macOS temporary-directory aliases do not fail a valid restore.
+
 ## 0.1.0-alpha.10 — 2026-10-26
 
 - Switch Collect / View with Tab and Over with Ctrl/Command+T; narrow windows use View. View keeps a sliding window bar, board switcher and context-menu editing. Share image, board and window opacity plus solid/translucent/glass backgrounds between the View popover and Over controller. Remember presentation for the 64 most recently adjusted saved boards; use a translucent glass fallback where native blur is unavailable.

@@ -1078,7 +1078,15 @@ mod tests {
         let mut original = state();
         let root = original.storage.base_directory().unwrap();
         std::fs::create_dir_all(&root).unwrap();
-        let path = root.join("Artist references.moth");
+        #[cfg(unix)]
+        let directory = {
+            let alias = root.join("save-alias");
+            std::os::unix::fs::symlink(&root, &alias).unwrap();
+            alias
+        };
+        #[cfg(not(unix))]
+        let directory = root.clone();
+        let path = directory.join("Artist references.moth");
         original.save(path.clone()).unwrap();
         let before = std::fs::read(&path).unwrap();
         let note = Item::text(
@@ -1108,8 +1116,9 @@ mod tests {
         assert!(journal.is_file());
         drop(original);
         let completion = restored.request(Request::Restore(journal.clone())).unwrap();
+        let canonical = path.canonicalize().unwrap();
         assert!(
-            matches!(completion, Some(Completion::Opened(_, _, true, Some(ref destination))) if destination == &path)
+            matches!(completion, Some(Completion::Opened(_, _, true, Some(ref destination))) if destination == &canonical)
         );
         assert_eq!(
             std::fs::read(&path).unwrap(),
