@@ -158,8 +158,8 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 - [ ] Open image source — the URL or path the image came from (PR); filled automatically by the browser extension
 
 ### Images, files and export
-- [ ] Embed images or link to files on disk (PR) — M1
-- [ ] Relink missing linked images (PR) — M2
+- [ ] Embed images or link to files on disk (PR) — M5
+- [ ] Relink missing linked images (PR) — M5, with Library health
 - [ ] Optional auto-downscale of very large images on import (PR) — M2
 - [x] Export selected images, all images, scene (PR, BR) — M2
 - [ ] Load most recent scene; option to reopen the last scene on start (PR) — M1
