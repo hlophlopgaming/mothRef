@@ -156,7 +156,6 @@ Open:
   - [ ] Arrange by file path (PR)
   - [ ] Setting "bring selected images to front" (PR)
   - [ ] Optional scrollbars and menu bar (BR)
-  - [ ] Embed images or link to files on disk (PR), and relink missing linked images (PR) — a format change
   - [ ] Optional auto-downscale of very large images on import (PR)
   - [ ] Load the most recent scene; option to reopen the last scene on start (PR)
   - [ ] Open files from the command line: the first `.moth` / `.bee` / `.pur` argument opens a board, image paths are added (BR)
@@ -340,7 +339,7 @@ Open:
 - [ ] Animated GIFs with frame stepping: the player sits on the image (scrubber, play/pause, frame counter, speed) and steps 1, 2, 3 or 4 frames at a time
 - [ ] Line/dot grid with snapping; automatic alignment guides and edge/center snapping (BeeRef #129). Images snap by their displayed bounds; make grid visibility and snapping independently toggleable, with a temporary bypass while dragging
 - [ ] Slideshow (incl. random order), embedded ICC profiles
-- [ ] Timed drawing sessions on top of the slideshow: images from the board, a group or a selection; fixed intervals (30 s, 1, 2, 5, 10 min) or a session plan (for example 10 × 30 s, 5 × 2 min); pause, skip, countdown and a sound cue; list of the shown images at the end; runs full screen or in a mini window pinned over other apps that keeps the current image's aspect ratio while resized
+- [ ] **Key feature of 0.7.** Timed drawing sessions (gesture mode) on top of the slideshow: images from the board, a group or a selection; fixed intervals (30 s, 1, 2, 5, 10 min) or a session plan (for example 10 × 30 s, 5 × 2 min); pause, skip, countdown and a sound cue; list of the shown images at the end; runs full screen or in a mini window pinned over other apps that keeps the current image's aspect ratio while resized
 - [ ] All parity- and Milanote-checklist items tagged M4 (presentation mode, note formatting and markdown shortcuts, sketch card, drawing shortcuts, GIF frame tools, drawing details, locked groups, hierarchy tools, note parenting and links)
 
 <details>
@@ -369,6 +368,7 @@ A first slice shipped early ([decision 0004](docs/decisions/0004-reference-works
 - [ ] Library sidebar (All boards, Pinned, Stacks and Smart collections exist): All boards, Recent, Pinned, Trash (boards deleted from the library go to the OS trash and are listed here), Stacks, Smart collections; counts next to each entry; an icon per entry (pin for Pinned); stack colors picked from a palette and repeated as a dot on the board cards
 - [ ] Library view options: sort by last opened, last edited, name, item count or size; grid / list view; tag filter chips above the grid — last opened / name sort and grid / list exist
 - [ ] Board cards show item count, last edited time, file size, pinned state and an "unsaved" badge when a recovery journal is pending; the library header shows totals
+- [ ] Embed images or link to files on disk (PR): a per-image choice, linked images reload when the file changes; a format change (schema bump, migration, corpus files, `docs/FORMAT.md`). Moved from M2 on 2026-10-26
 - [ ] Library health: boards with missing linked files (with relink), duplicate images across boards by content hash, largest boards
 - [ ] All Milanote-checklist items tagged M5 (templates, search inside boards, item trash)
 
