@@ -352,6 +352,82 @@ mod tests {
     use std::io::Read;
 
     #[test]
+    fn reopening_preloads_from_disk_without_originals_or_duplicate_entries() {
+        use moth_format::{Handle, Storage};
+        use moth_io::{CacheMode, DecodePool, ImageFormat, LodCache};
+        use std::sync::Arc;
+
+        struct Source(Option<Vec<u8>>);
+        impl Storage for Source {
+            fn open(&self, _: Handle) -> io::Result<Box<dyn ReadSeek>> {
+                self.0
+                    .clone()
+                    .map(|bytes| Box::new(io::Cursor::new(bytes)) as Box<dyn ReadSeek>)
+                    .ok_or_else(|| io::Error::other("reopening must not read the original"))
+            }
+            fn append(&self, _: Handle) -> io::Result<Box<dyn Write + Send>> {
+                Err(io::ErrorKind::Unsupported.into())
+            }
+            fn sync(&self, _: Handle) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let root = std::env::temp_dir().join(format!("mothref-lod-{}", uuid::Uuid::now_v7()));
+        let bytes = include_bytes!("../../../corpus/images/budget.webp");
+        let hash = blake3::hash(bytes);
+        let original = moth_io::decode(bytes, 256).unwrap().original;
+        let count = 1 + moth_io::tiles::tile_count(
+            original,
+            moth_io::tiles::tiled_levels(original, CacheMode::Full.tile_threshold()),
+        ) as usize;
+        assert!(count > 1, "fixture must exercise tile packs too");
+        let snapshot = || {
+            let mut entries: Vec<_> = fs::read_dir(&root)
+                .unwrap()
+                .map(|entry| {
+                    let path = entry.unwrap().path();
+                    (
+                        path.file_name().unwrap().to_owned(),
+                        fs::read(path).unwrap(),
+                    )
+                })
+                .collect();
+            entries.sort();
+            entries
+        };
+        let mut first = None;
+        let mut files = None;
+        for source in [Some(bytes.to_vec()), None] {
+            let cache = Arc::new(LodCache::new());
+            cache.set_mode(CacheMode::Full);
+            cache.set_store(Arc::new(DiskStore::in_directory(root.clone(), DISK_BUDGET)));
+            let pool =
+                DecodePool::with_cache(Arc::new(Source(source)), Arc::new(|| {}), cache).unwrap();
+            pool.preload(ImageFormat::Rgba8, [(Handle(1), hash)])
+                .unwrap();
+            let mut images = Vec::new();
+            for _ in 0..count {
+                let image = pool
+                    .preloaded()
+                    .recv_timeout(Duration::from_secs(30))
+                    .unwrap();
+                images.push((image.tile, image.original, image.mips[0].bytes.clone()));
+            }
+            images.sort_by_key(|image| image.0);
+            if let Some(first) = &first {
+                assert_eq!(&images, first);
+                assert_eq!(snapshot(), files.unwrap());
+                break;
+            }
+            first = Some(images);
+            files = Some(snapshot());
+            assert_eq!(files.as_ref().unwrap().len(), 2);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn usage_and_clear_only_touch_completed_cache_entries() {
         let root = std::env::temp_dir().join(format!("mothref-lod-{}", uuid::Uuid::now_v7()));
         let store = DiskStore::in_directory(root.clone(), 1024 * 1024);
