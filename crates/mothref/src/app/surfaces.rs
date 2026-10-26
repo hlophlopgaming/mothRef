@@ -70,7 +70,10 @@ pub(super) const EXPORT: &[Slot] = &[
 ];
 const INSERT: &[Slot] = &[A(Images), A(Paste), A(Note)];
 const FILE: &[Slot] = &[A(New), A(Open), A(Save), A(Library)];
+pub(super) const VIEW_WINDOW: &[Action] =
+    &[Pin, Overlay, MoveWindow, Minimize, Maximize, CloseWindow];
 const VIEW: &[Slot] = &[
+    A(ToggleView),
     A(Fit),
     A(Focus),
     A(Lock),
@@ -136,7 +139,7 @@ fn selection_bar(kind: SelectionKind) -> &'static [Slot] {
         SelectionKind::Note => NOTE_BAR,
     }
 }
-fn button(
+pub(super) fn button(
     ui: &mut egui::Ui,
     action: Action,
     enabled: &[bool],

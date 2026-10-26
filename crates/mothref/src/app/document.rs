@@ -5,6 +5,7 @@ pub(super) const MAX_TABS: usize = 4;
 /// Per-tab camera and viewport state, independent of scene and journal identity.
 #[derive(Clone, Copy)]
 pub(super) struct View {
+    pub compact: bool,
     pub camera: Camera,
     pub focus_return: Option<(Uuid, Camera)>,
     pub needs_fit: bool,
@@ -16,6 +17,7 @@ pub(super) struct View {
 impl Default for View {
     fn default() -> Self {
         Self {
+            compact: false,
             camera: Camera::default(),
             focus_return: None,
             needs_fit: false,
@@ -98,6 +100,7 @@ pub(super) struct Added {
 
 pub(super) struct Document {
     pub(super) view: View,
+    pub(super) appearance: super::window_mode::Appearance,
     pub(super) motion: super::item_motion::Items,
     ui_id: Uuid,
     storage: Arc<moth_platform::DesktopStorage>,
@@ -111,6 +114,8 @@ pub(super) struct Document {
     pub(super) loading_bounds: Option<Rect>,
     pub(super) pasting: usize,
     pub(super) path: String,
+    pub(super) conversion: Option<(std::path::PathBuf, usize)>,
+    pub(super) conversion_prompt: bool,
     pub(super) restoring: Option<std::path::PathBuf>,
     pub(super) dirty: bool,
     pub(super) close_after_save: bool,
@@ -203,6 +208,9 @@ impl Document {
         self.ui_id
     }
 
+    pub(super) fn presented(&self, item: &Item) -> bool {
+        self.appearance.presents(self.view.compact, item)
+    }
     pub(super) fn visible(&self, library: bool) -> Vec<&Item> {
         let p = self
             .view
@@ -463,6 +471,7 @@ impl Document {
         };
         Ok(Self {
             view: View::default(),
+            appearance: super::window_mode::Appearance::default(),
             motion: super::item_motion::Items::default(),
             ui_id: Uuid::now_v7(),
             storage,
@@ -476,6 +485,8 @@ impl Document {
             loading_bounds: None,
             pasting: 0,
             path: String::new(),
+            conversion: None,
+            conversion_prompt: false,
             restoring: None,
             dirty: false,
             close_after_save: false,
@@ -516,8 +527,15 @@ impl Document {
             && !self.discarding
     }
     pub(super) fn title(&self) -> &str {
-        std::path::Path::new(&self.path)
-            .file_stem()
+        let path = if self.path.is_empty() {
+            self.conversion
+                .as_ref()
+                .map(|(path, _)| path.as_path())
+                .unwrap_or(std::path::Path::new(&self.path))
+        } else {
+            std::path::Path::new(&self.path)
+        };
+        path.file_stem()
             .and_then(|n| n.to_str())
             .filter(|n| !n.is_empty())
             .unwrap_or(moth_ui::text(moth_ui::Text::Untitled))
@@ -600,7 +618,7 @@ mod tests {
         let mut tools = super::super::tools::Tools::default();
         let enabled = vec![true; super::super::bindings::ACTIONS.len()];
         for size in [egui::vec2(1440., 900.), egui::vec2(900., 600.)] {
-            for _ in 0..3 {
+            for frame in 0..3 {
                 let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
@@ -610,6 +628,11 @@ mod tests {
                         window.show(ui, &mut settings, &mut tools, &board, "", &enabled);
                     },
                 );
+                output.textures_delta.clear();
+                // egui measures a newly opened window before painting its labels.
+                if frame == 0 {
+                    continue;
+                }
                 let position = |label| {
                     output
                         .shapes
@@ -620,7 +643,9 @@ mod tests {
                             }
                             _ => None,
                         })
-                        .expect("settings label is visible")
+                        .unwrap_or_else(|| {
+                            panic!("settings label {label:?} is missing at {size:?}, frame {frame}")
+                        })
                 };
                 let general = position(moth_ui::Text::GeneralSettings);
                 let appearance = position(moth_ui::Text::AppearanceSettings);
@@ -1064,6 +1089,51 @@ mod tests {
         // Decode/clipboard handles keep no files open after their owning sessions are dropped.
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn foreign_conversion_offers_native_save_and_requires_close_confirmation() {
+        for fixture in ["bee/tiny.bee", "pur/v2.1-redbar.pur"] {
+            let root = std::env::temp_dir().join(format!("mothref-conversion-{}", Uuid::now_v7()));
+            let board = Document::with_storage(
+                Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+                Arc::new(|| {}),
+                false,
+            )
+            .unwrap();
+            let mut workspace = workspace::Workspace::new(board, Arc::new(|| {}));
+            let source = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../corpus")
+                .join(fixture);
+            workspace.import_foreign(source.clone());
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while workspace.board.loading {
+                workspace.pump(workspace::Pump {
+                    format: moth_io::ImageFormat::default(),
+                    cursor: None,
+                    fallback: [0., 0.],
+                    upload: &mut |_| {},
+                    events: Vec::new(),
+                });
+                assert!(Instant::now() < deadline, "conversion must finish");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            assert!(workspace.board.conversion_prompt);
+            assert!(workspace.board.dirty);
+            assert!(workspace.board.path.is_empty());
+            assert_eq!(workspace.board.conversion.as_ref().unwrap().0, source);
+            assert_eq!(
+                workspace.board.title(),
+                source.file_stem().unwrap().to_str().unwrap()
+            );
+            // Continuing without saving retains the unsaved close guard.
+            workspace.board.conversion_prompt = false;
+            workspace.request_close(false);
+            assert!(workspace.confirm_close);
+            assert!(!workspace.board.discarding);
+            workspace.board.boards.finish().unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     #[test]
     fn request_close_preserves_an_unsaved_board_until_confirmed() {
         let root = std::env::temp_dir().join(format!("mothref-close-request-{}", Uuid::now_v7()));

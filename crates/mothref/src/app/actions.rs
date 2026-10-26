@@ -6,6 +6,9 @@ impl App {
     pub(super) fn action_enabled(&self, action: Action) -> bool {
         use Action::*;
         match action {
+            ContinueConversion | SaveConversion => {
+                return self.workspace.board.conversion_prompt && self.workspace.board.idle();
+            }
             SaveAndClose => {
                 return self.workspace.confirm_close
                     && self.workspace.board.in_flight == 0
@@ -70,9 +73,25 @@ impl App {
         }
         if matches!(
             action,
-            Fit | Focus | Previous | Next | ZoomIn | ZoomOut | ZoomReset | ResetCamera | Select
+            PanLeft
+                | PanRight
+                | PanUp
+                | PanDown
+                | Fit
+                | Focus
+                | Previous
+                | Next
+                | ZoomIn
+                | ZoomOut
+                | ZoomReset
+                | ResetCamera
+                | Select
+                | ToggleView
         ) {
             return true;
+        }
+        if action == Deselect {
+            return !self.workspace.board.selection.is_empty();
         }
         if matches!(action, Lock | Grayscale | Save) {
             return self.workspace.board.idle();
@@ -235,6 +254,14 @@ impl App {
                 self.shortcuts.open_settings();
                 return;
             }
+            ContinueConversion => {
+                self.workspace.board.conversion_prompt = false;
+                return;
+            }
+            SaveConversion => {
+                self.workspace.board.conversion_prompt = false;
+                Intent::Save
+            }
             SaveAndClose => Intent::SaveAndClose,
             Discard => Intent::Discard,
             KeepOpen => Intent::KeepOpen,
@@ -248,13 +275,7 @@ impl App {
             UndoAdded => Intent::Undo,
             AddedHorizontal | AddedVertical | AddedGrid | AddedOptimal => return,
             CancelArrange => Intent::DismissArrangePrompt,
-            SavePath => {
-                let mut path = std::path::PathBuf::from(&self.modal.dialog_path);
-                if path.extension().is_none() {
-                    path.set_extension("moth");
-                }
-                Intent::SaveAs(path)
-            }
+            SavePath => Intent::SaveAs(std::path::PathBuf::from(&self.modal.dialog_path)),
             Settings => {
                 self.cancel_drag();
                 self.settings_window.open = !self.settings_window.open;
@@ -442,6 +463,12 @@ impl App {
             Paste => Intent::Paste,
             Undo => Intent::Undo,
             Redo => Intent::Redo,
+            ToggleView => {
+                self.workspace.board.appearance.view = !self.workspace.board.appearance.view;
+                self.workspace.board.appearance.over = false;
+                self.remember_appearance();
+                return;
+            }
             Overlay => Intent::Overlay,
             Pin => Intent::Pin,
             MoveWindow => {
@@ -455,6 +482,10 @@ impl App {
             Minimize => Intent::Minimize,
             Maximize => Intent::Maximize,
             Select => return,
+            Deselect => {
+                self.workspace.board.selection.clear();
+                return;
+            }
             Fit => Intent::Fit,
             Focus => Intent::FitSelection,
             Previous => Intent::Focus(-1),
@@ -462,6 +493,10 @@ impl App {
             ZoomIn => Intent::Zoom(1. + self.settings.zoom_increment / 100.),
             ZoomOut => Intent::Zoom(1. / (1. + self.settings.zoom_increment / 100.)),
             ZoomReset => Intent::ZoomTo(1.),
+            PanLeft => Intent::Pan([-self.settings.keyboard_pan_step, 0.]),
+            PanRight => Intent::Pan([self.settings.keyboard_pan_step, 0.]),
+            PanUp => Intent::Pan([0., -self.settings.keyboard_pan_step]),
+            PanDown => Intent::Pan([0., self.settings.keyboard_pan_step]),
             ResetCamera => Intent::ResetCamera,
             Note => Intent::AddNote(self.workspace.board.view.camera.world([
                 self.workspace.board.view.viewport.center().x,

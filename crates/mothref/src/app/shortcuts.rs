@@ -691,6 +691,9 @@ mod tests {
         assert_eq!(frame(&mut state, &[egui::Key::Enter], true), Some(expected));
         assert!(!state.palette);
         state.open_palette();
+        state.query = Action::RotateCw.id().to_owned();
+        assert_eq!(state.results(), vec![Action::RotateCw]);
+        assert!(state.settings_results().is_empty());
         frame(&mut state, &[], true);
         assert_eq!(frame(&mut state, &[egui::Key::Enter], false), None);
         assert!(state.palette);

@@ -75,6 +75,13 @@ pub enum NativeEvent {
     Pointer(Pointer),
     /// Hands a local path to the existing background import worker.
     Drop(std::path::PathBuf),
+    /// Keeps archive reads on the existing background import workers.
+    ZipDrop {
+        /// Local archive; never fetched from the network.
+        archive: std::path::PathBuf,
+        /// Exact ZIP entry name, decoded from the drag URL.
+        member: String,
+    },
     /// Surfaces native backend and transfer failures to the user.
     Error(String),
 }
@@ -84,7 +91,7 @@ pub struct Adapter {
     position: [f32; 2],
     pan: bool,
     button: Option<MouseButton>,
-    /// Wheel preference: 0 zoom, 1 pan, 2 disabled. Pinch remains available.
+    /// Wheel preference: 0 zoom, 1 pan, 2 disabled. Trackpad pan and pinch remain available.
     pub wheel: u8,
     /// Percent zoom per wheel notch (40 logical points); zero uses the legacy default.
     pub zoom_increment: f32,
@@ -178,13 +185,21 @@ impl Adapter {
                     },
                 }
             }
+            WindowEvent::PinchGesture { delta, .. } => {
+                let factor = delta.exp() as f32;
+                return (factor.is_finite() && factor > 0.).then_some(Input::Zoom {
+                    position: self.position,
+                    factor,
+                    continuous: true,
+                });
+            }
             WindowEvent::MouseWheel { delta, phase, .. } => {
                 let continuous = matches!(delta, MouseScrollDelta::PixelDelta(_));
                 let delta = match delta {
                     MouseScrollDelta::LineDelta(x, y) => [*x * 40., *y * 40.],
                     MouseScrollDelta::PixelDelta(p) => [(p.x / scale) as f32, (p.y / scale) as f32],
                 };
-                if self.shift || self.wheel == 1 {
+                if self.shift || (continuous && !self.control) || self.wheel == 1 {
                     return Some(Input::Pan {
                         continuous,
                         finished: matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled),
@@ -196,7 +211,7 @@ impl Adapter {
                         },
                     });
                 }
-                if self.wheel == 2 {
+                if self.wheel == 2 && !continuous {
                     return None;
                 }
                 let sensitivity = if self.zoom_increment.is_finite()
@@ -382,6 +397,7 @@ mod tests {
                 1.25f32.sqrt(),
             ),
         ] {
+            adapter.control = matches!(delta, MouseScrollDelta::PixelDelta(_));
             let event = WindowEvent::MouseWheel {
                 device_id: winit::event::DeviceId::dummy(),
                 delta,
@@ -394,7 +410,32 @@ mod tests {
         }
     }
     #[test]
-    fn continuous_wheel_input_preserves_device_intent() {
+    fn native_pinch_ignores_invalid_deltas_and_preserves_anchor() {
+        let mut adapter = Adapter {
+            position: [120., 80.],
+            wheel: 2,
+            ..Default::default()
+        };
+        for delta in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(
+                adapter
+                    .event(
+                        &WindowEvent::PinchGesture {
+                            device_id: winit::event::DeviceId::dummy(),
+                            delta,
+                            phase: TouchPhase::Moved
+                        },
+                        1.
+                    )
+                    .is_none()
+            );
+        }
+        assert!(
+            matches!(adapter.event(&WindowEvent::PinchGesture { device_id: winit::event::DeviceId::dummy(), delta: 2f64.ln(), phase: TouchPhase::Moved }, 1.), Some(Input::Zoom { position: [120., 80.], factor, continuous: true }) if (factor - 2.).abs() < f32::EPSILON)
+        );
+    }
+    #[test]
+    fn trackpad_pans_and_control_trackpad_zooms() {
         let mut adapter = Adapter::default();
         let event = WindowEvent::MouseWheel {
             device_id: winit::event::DeviceId::dummy(),
@@ -403,11 +444,20 @@ mod tests {
         };
         assert!(matches!(
             adapter.event(&event, 1.),
+            Some(Input::Pan {
+                continuous: true,
+                ..
+            })
+        ));
+        adapter.control = true;
+        assert!(matches!(
+            adapter.event(&event, 1.),
             Some(Input::Zoom {
                 continuous: true,
                 ..
             })
         ));
+        adapter.control = false;
         adapter.wheel = 1;
         let event = WindowEvent::MouseWheel {
             device_id: winit::event::DeviceId::dummy(),

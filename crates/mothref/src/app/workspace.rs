@@ -12,6 +12,7 @@ pub(super) enum TabChange {
 pub(super) enum Event {
     TabChanged,
     Opened,
+    Saved,
     Preferences(std::collections::BTreeMap<String, String>),
     Language(moth_ui::Locale),
 }
@@ -259,6 +260,8 @@ impl Workspace {
             && self.board.waiting.is_empty()
             && !self.board.discarding
         {
+            self.board.conversion = None;
+            self.board.conversion_prompt = false;
             self.board.path = path.to_string_lossy().into_owned();
             self.persist(moth_platform::boards::Request::Open(path));
         } else {
@@ -279,6 +282,7 @@ impl Workspace {
         self.library = false;
         self.board.path = String::new();
         if self.board.idle() {
+            self.board.conversion = Some((path.clone(), 0));
             let request = if path
                 .extension()
                 .is_some_and(|e| e.eq_ignore_ascii_case("pur"))
@@ -294,6 +298,22 @@ impl Workspace {
     pub(super) fn import(
         &mut self,
         path: std::path::PathBuf,
+        format: moth_io::ImageFormat,
+    ) -> TabChange {
+        self.import_source(path, None, format)
+    }
+    pub(super) fn import_zip(
+        &mut self,
+        path: std::path::PathBuf,
+        member: String,
+        format: moth_io::ImageFormat,
+    ) -> TabChange {
+        self.import_source(path, Some(member), format)
+    }
+    fn import_source(
+        &mut self,
+        path: std::path::PathBuf,
+        member: Option<String>,
         format: moth_io::ImageFormat,
     ) -> TabChange {
         if self.board.locked || self.board.loading {
@@ -331,7 +351,11 @@ impl Workspace {
             self.board.message = moth_ui::Text::ImportBusy.into();
             return TabChange::None;
         }
-        match self.board.storage().register(path) {
+        let source = match member {
+            Some(member) => self.board.storage().register_zip(path, member),
+            None => self.board.storage().register(path),
+        };
+        match source {
             Ok(h) => self.board.waiting.push(h),
             Err(e) => self.board.message = e.to_string().into(),
         }
@@ -587,6 +611,10 @@ impl Workspace {
                             }
                         }
                         Completion::Imported(commands, sources, skipped) => {
+                            if let Some((_, count)) = &mut self.board.conversion {
+                                *count = skipped;
+                            }
+                            self.board.conversion_prompt = true;
                             self.board.loading = false;
                             self.board.loading_bounds = None;
                             self.board.motion.clear();
@@ -621,6 +649,9 @@ impl Workspace {
                             self.board.export_message = Some(self.board.message.clone());
                         }
                         Completion::Saved => {
+                            if active {
+                                pump.events.push(Event::Saved);
+                            }
                             self.board.dirty = false;
                             let path = std::path::PathBuf::from(&self.board.path);
                             self.recent_paths.retain(|p| p != &path);

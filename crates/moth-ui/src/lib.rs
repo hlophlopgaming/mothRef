@@ -5,6 +5,26 @@ use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Toggle board presentation chrome.
+    ToggleView,
+    /// View appearance popover.
+    ViewAppearance,
+    /// Image presentation opacity.
+    ImageOpacity,
+    /// Canvas presentation opacity.
+    BoardOpacity,
+    /// Whole window presentation opacity.
+    WindowOpacity,
+    /// Opaque canvas background.
+    BackgroundSolid,
+    /// Translucent canvas background.
+    BackgroundTranslucent,
+    /// Native blurred canvas background.
+    BackgroundGlass,
+    /// Blur unavailable on this backend.
+    GlassFallback,
+    /// Hide non-image content without editing it.
+    ImagesOnly,
     /// Export destination, distinct from the native board save path.
     ExportPath,
     /// Short heading for color and coordinate tools.
@@ -156,6 +176,56 @@ pub enum Text {
     NextTab,
     /// Localized shortcut control.
     ZoomReset,
+    /// Keyboard canvas navigation.
+    /// Keyboard camera navigation preference.
+    KeyboardPanMode,
+    /// Canvas navigator visibility preference.
+    ShowMinimap,
+    /// Canvas navigator maximum side length preference.
+    MinimapSize,
+    /// Canvas navigator opacity preference.
+    MinimapOpacity,
+    /// Canvas navigator distance from center preference.
+    MinimapDistance,
+    /// Canvas navigator placement.
+    MinimapPosition,
+    /// Canvas navigator placement.
+    PositionTopLeft,
+    /// Canvas navigator placement.
+    PositionTopCenter,
+    /// Canvas navigator placement.
+    PositionTopRight,
+    /// Canvas navigator placement.
+    PositionMiddleLeft,
+    /// Canvas navigator placement.
+    PositionCenter,
+    /// Canvas navigator placement.
+    PositionMiddleRight,
+    /// Canvas navigator placement.
+    PositionBottomLeft,
+    /// Canvas navigator placement.
+    PositionBottomCenter,
+    /// Canvas navigator placement.
+    PositionBottomRight,
+
+    /// Keyboard camera navigation preference.
+    PanStepped,
+    /// Keyboard camera navigation preference.
+    PanFlying,
+    /// Keyboard camera navigation preference.
+    KeyboardPanStep,
+    /// Keyboard camera navigation preference.
+    KeyboardPanSpeed,
+    /// Keyboard camera navigation preference.
+    Deselect,
+    PanLeft,
+    /// Keyboard canvas navigation.
+    PanRight,
+    /// Keyboard canvas navigation.
+    PanUp,
+    /// Keyboard canvas navigation.
+    PanDown,
+
     /// Localized shortcut control.
     NudgeLeftFast,
     /// Localized shortcut control.
@@ -660,6 +730,18 @@ pub enum Text {
     SourceChanged,
     /// Confirms that a foreign board was imported.
     Imported,
+    /// Offers a native working copy after foreign-board import.
+    ConversionTitle,
+    /// Explains original preservation and supported conversion.
+    ConversionRetained,
+    /// Lists PureRef conversion limitations.
+    ConversionPur,
+    /// Lists BeeRef conversion limitations.
+    ConversionBee,
+    /// Saves an imported working copy.
+    SaveAsMoth,
+    /// Dismisses the conversion offer without discarding edits.
+    ContinueConversion,
     /// Explains that some imported items could not be represented.
     ImportSkipped,
 }
@@ -854,6 +936,12 @@ mod tests {
     #[test]
     fn every_text_key_has_a_non_empty_translation_and_switches_locale() {
         let keys = [
+            Text::ConversionTitle,
+            Text::ConversionRetained,
+            Text::ConversionPur,
+            Text::ConversionBee,
+            Text::SaveAsMoth,
+            Text::ContinueConversion,
             Text::Settings,
             Text::GeneralSettings,
             Text::AppearanceSettings,
@@ -1297,6 +1385,13 @@ mod tests {
                             ui.ctx(),
                             viewport,
                             &[],
+                            egui::vec2(1., 1.),
+                            canvas::Minimap {
+                                size: Tokens::DARK.minimap_max,
+                                alignment: egui::Align2::LEFT_BOTTOM,
+                                opacity: 1.,
+                                distance: 1.,
+                            },
                             egui::Rect::from_min_max(egui::pos2(0.1, 0.1), egui::pos2(0.9, 0.9)),
                         );
                     });

@@ -75,10 +75,30 @@ impl Modal {
             });
         }
 
+        if board.conversion_prompt && self.dialog.is_none() && !workspace.confirm_close {
+            egui::Modal::new(egui::Id::new("conversion")).show(ui.ctx(), |ui| {
+                ui.heading(moth_ui::text(moth_ui::Text::ConversionTitle));
+                conversion_report(ui, board);
+                ui.horizontal_wrapped(|ui| {
+                    for (label, action) in [
+                        (moth_ui::Text::SaveAsMoth, Action::SaveConversion),
+                        (
+                            moth_ui::Text::ContinueConversion,
+                            Action::ContinueConversion,
+                        ),
+                    ] {
+                        if ui.button(moth_ui::text(label)).clicked() {
+                            intents.push(Intent::Action(action));
+                        }
+                    }
+                });
+            });
+        }
         if self.dialog.is_some() {
             egui::Modal::new(egui::Id::new("board_path")).show(ui.ctx(), |ui| {
                 ui.set_width(ui.ctx().content_rect().width().min(460.) - 40.);
                 ui.heading(moth_ui::text(moth_ui::Text::PathDialog));
+                conversion_report(ui, board);
                 ui.label(moth_ui::text(moth_ui::Text::Path));
                 let input = ui.add(
                     egui::TextEdit::singleline(&mut self.dialog_path)
@@ -203,5 +223,26 @@ impl Modal {
             ));
         }
         intents
+    }
+}
+
+fn conversion_report(ui: &mut egui::Ui, board: &super::document::Document) {
+    if let Some((source, skipped)) = &board.conversion {
+        ui.label(moth_ui::text(moth_ui::Text::ConversionRetained));
+        ui.label(source.to_string_lossy());
+        ui.label(moth_ui::text(
+            if source
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("pur"))
+            {
+                moth_ui::Text::ConversionPur
+            } else {
+                moth_ui::Text::ConversionBee
+            },
+        ));
+        ui.label(
+            moth_ui::Message::Count(moth_ui::Text::ImportSkippedCount, *skipped)
+                .render(moth_ui::locale()),
+        );
     }
 }

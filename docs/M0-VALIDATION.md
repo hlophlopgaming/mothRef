@@ -1,5 +1,27 @@
 # M0 validation — 2026-10-16
 
+## ZIP drops — 2026-10-26
+
+Wayland now accepts KDE `zip:/absolute/archive.zip/folder/image.png` URLs,
+including percent-encoded names, alongside ordinary local file drops. Selected
+entries use the existing background decode and journal path; no archive contents
+are extracted onto user paths. ZIP sources reject writes. Stored and Deflate
+compression are supported, with a 1 GiB archive limit and the existing 64 MiB
+image-input limit. The first `.zip/` separates the archive from the entry;
+nested archives and directories whose names end in `.zip` are unsupported.
+KDE's archive URL convention is documented by
+[KProtocolManager](https://api.kde.org/kprotocolmanager.html).
+
+Formatting and Clippy for `moth-platform` and `mothref` passed, as did `cargo deny
+check` (warnings remain). Added regression tests cover mixed local/ZIP drops,
+encoded names, invalid URLs, Deflate reads, input limits and read-only sources;
+tests were not executed under the agent check policy.
+
+Manual validation pending: in a rebuilt Linux Wayland app, drag multiple images
+from a ZIP opened in Gwenview to a new board, then save/reopen and undo. Gwenview's
+actual drag payload has not been captured. Windows/macOS native validation was
+not run; archive URL support here is specific to the Wayland adapter.
+
 Environment: Linux x86_64, Rust 1.99 stable, AMD Radeon RX 5700 XT (RADV),
 Mesa 26.2.2. These are development measurements, not universal hardware promises.
 
@@ -408,3 +430,38 @@ after warm-up, with 28 threads. The full 30-minute soak was **not completed**;
 this does not close that qualification gate. The interactive build was retained
 throughout; final UI cancellation and shutdown refinements were checked separately
 by protocol/UI tests and isolated final-build launch/shutdown smokes.
+
+
+### Foreign-board conversion (2026-10-26)
+
+- `.bee` / `.pur` open as individually editable scene items with no working save
+  destination. The conversion modal offers Save As .moth and Continue without
+  saving; the save-path modal repeats the preservation and limitations report.
+  Close uses the existing save/discard confirmation for dirty boards.
+- The storage worker rejects non-`.moth` save destinations before opening them.
+  Source files are read-only inputs; originals are streamed into the private
+  journal and copied unchanged into native saves.
+- Board admission does not use `moth_io::MAX_INPUT_BYTES`: PureRef and BeeRef
+  accept at most 4 GiB, with 8 MiB / 8192-item import metadata budgets. SQLite
+  records remain limited to 32 MiB. Native desktop board admission is 8 GiB;
+  native record allocations remain bounded by `board::MAX_RECORD` (256 MiB).
+  Existing checksums, geometry validation and decoder budgets remain active.
+- Added persistence regressions cover both formats' source-byte preservation,
+  native save/reopen, rejection of foreign save destinations, and recovery after
+  killing an importer subprocess following durable import and a subsequent edit. A sparse BeeRef board
+  above the individual-image cap imports successfully; oversized BeeRef/native
+  boards are rejected before parsing.
+- Passed: formatting and workspace Clippy with warnings denied; 19 platform
+  persistence tests; 13 importer tests; the targeted workspace
+  conversion-state test; corpus validation (29 fixtures, including PureRef native
+  round-trips); a 90-second BeeRef fuzz run (2,190,344 inputs). The first sandboxed
+  fuzz run completed its inputs but LeakSanitizer could not finish under ptrace
+  restrictions; the unrestricted rerun exited successfully with sanitizers active.
+- Wider suites are not green: the UI count assertion expects a zero-image count
+  even though the implementation and an earlier assertion omit it. The serial
+  application run also failed `note_commit_at_35_percent_preserves_editor_text_height`
+  and aborted at `settings_columns_stack_their_controls_after_resize` (missing
+  visible label, followed by an unapplied egui texture delta during unwinding).
+  The conversion-state, unsaved-close and save-before-discard tests passed in
+  that run. Interactive dialog validation on Linux, Windows and macOS remains
+  manual work; tier-3 checks were not run.

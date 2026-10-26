@@ -124,6 +124,14 @@ schema! {
             .and_then(|v| v.parse::<f32>().ok())
             .filter(|v| v.is_finite() && (1.0..=100.0).contains(v))
             .unwrap_or(10.);
+    show_minimap: bool = true, "show_minimap", Canvas, ShowMinimap, Kind::Toggle, |s| s.show_minimap.to_string(), |values: &BTreeMap<String,String>| values.get("show_minimap").and_then(|v| v.parse().ok()).unwrap_or(true);
+    minimap_opacity: f32 = 100., "minimap_opacity", Canvas, MinimapOpacity, Kind::Number(0.,100., "%"), |s| s.minimap_opacity.to_string(), |values: &BTreeMap<String,String>| values.get("minimap_opacity").and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite() && (0.0..=100.0).contains(v)).unwrap_or(100.);
+    minimap_distance: f32 = 100., "minimap_distance", Canvas, MinimapDistance, Kind::Number(0.,100., "%"), |s| s.minimap_distance.to_string(), |values: &BTreeMap<String,String>| values.get("minimap_distance").and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite() && (0.0..=100.0).contains(v)).unwrap_or(100.);
+    minimap_position: u8 = 6, "minimap_position", Canvas, MinimapPosition, Kind::Choice(&[Text::PositionTopLeft, Text::PositionTopCenter, Text::PositionTopRight, Text::PositionMiddleLeft, Text::PositionCenter, Text::PositionMiddleRight, Text::PositionBottomLeft, Text::PositionBottomCenter, Text::PositionBottomRight]), |s| s.minimap_position.to_string(), |values: &BTreeMap<String,String>| values.get("minimap_position").and_then(|v| v.parse().ok()).filter(|v| *v < 9).unwrap_or(6);
+    minimap_size: f32 = moth_ui::Tokens::LIGHT.minimap_max, "minimap_size", Canvas, MinimapSize, Kind::Number(120.,600., ""), |s| s.minimap_size.to_string(), |values: &BTreeMap<String,String>| values.get("minimap_size").and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite() && (120.0..=600.0).contains(v)).unwrap_or(moth_ui::Tokens::LIGHT.minimap_max);
+    keyboard_pan_mode: u8 = 1, "keyboard_pan_mode", Canvas, KeyboardPanMode, Kind::Choice(&[Text::PanStepped, Text::PanFlying]), |s| s.keyboard_pan_mode.to_string(), |values: &BTreeMap<String,String>| values.get("keyboard_pan_mode").and_then(|v| v.parse().ok()).filter(|v| *v < 2).unwrap_or(1);
+    keyboard_pan_step: f32 = 200., "keyboard_pan_step", Canvas, KeyboardPanStep, Kind::Number(1.,2000., ""), |s| s.keyboard_pan_step.to_string(), |values: &BTreeMap<String,String>| values.get("keyboard_pan_step").and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite() && (1.0..=2000.0).contains(v)).unwrap_or(200.);
+    keyboard_pan_speed: f32 = 800., "keyboard_pan_speed", Canvas, KeyboardPanSpeed, Kind::Number(10.,5000., ""), |s| s.keyboard_pan_speed.to_string(), |values: &BTreeMap<String,String>| values.get("keyboard_pan_speed").and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite() && (10.0..=5000.0).contains(v)).unwrap_or(800.);
     rotation_snap: bool = false, "rotation_snap", Canvas, SnapRotation, Kind::Toggle, |s| s.rotation_snap.to_string(), |values: &BTreeMap<String,String>| values
             .get("rotation_snap")
             .and_then(|v| v.parse().ok())
@@ -195,6 +203,20 @@ impl Settings {
             .iter()
             .map(|entry| (entry.key, (entry.get)(self)))
             .collect()
+    }
+    pub fn minimap_alignment(&self) -> egui::Align2 {
+        use egui::Align2;
+        match self.minimap_position {
+            0 => Align2::LEFT_TOP,
+            1 => Align2::CENTER_TOP,
+            2 => Align2::RIGHT_TOP,
+            3 => Align2::LEFT_CENTER,
+            4 => Align2::CENTER_CENTER,
+            5 => Align2::RIGHT_CENTER,
+            7 => Align2::CENTER_BOTTOM,
+            8 => Align2::RIGHT_BOTTOM,
+            _ => Align2::LEFT_BOTTOM,
+        }
     }
     pub fn load(&mut self, values: &BTreeMap<String, String>) {
         for entry in SCHEMA {
@@ -574,6 +596,113 @@ impl SettingsWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn minimap_opacity_and_distance_persist_with_validated_percentages() {
+        for value in [0., 35., 100.] {
+            let mut settings = Settings::default();
+            settings.load(&BTreeMap::from([
+                ("minimap_opacity".into(), value.to_string()),
+                ("minimap_distance".into(), value.to_string()),
+            ]));
+            let mut restored = Settings::default();
+            restored.load(
+                &settings
+                    .preferences()
+                    .into_iter()
+                    .map(|(key, value)| (key.to_owned(), value))
+                    .collect(),
+            );
+            assert_eq!(restored.minimap_opacity, value);
+            assert_eq!(restored.minimap_distance, value);
+        }
+        for invalid in ["NaN", "inf", "-1", "101"] {
+            let mut settings = Settings::default();
+            settings.load(&BTreeMap::from([
+                ("minimap_opacity".into(), invalid.into()),
+                ("minimap_distance".into(), invalid.into()),
+            ]));
+            assert_eq!(settings.minimap_opacity, 100.);
+            assert_eq!(settings.minimap_distance, 100.);
+        }
+    }
+    #[test]
+    fn minimap_positions_persist_and_cover_all_nine_anchors() {
+        let mut anchors = Vec::new();
+        for position in 0..9 {
+            let mut settings = Settings::default();
+            settings.load(&BTreeMap::from([(
+                "minimap_position".into(),
+                position.to_string(),
+            )]));
+            let mut restored = Settings::default();
+            restored.load(
+                &settings
+                    .preferences()
+                    .into_iter()
+                    .map(|(key, value)| (key.to_owned(), value))
+                    .collect(),
+            );
+            assert_eq!(restored.minimap_position, position);
+            let anchor = restored.minimap_alignment();
+            assert!(!anchors.contains(&anchor));
+            anchors.push(anchor);
+        }
+        let mut settings = Settings::default();
+        settings.load(&BTreeMap::from([("minimap_position".into(), "9".into())]));
+        assert_eq!(settings.minimap_alignment(), egui::Align2::LEFT_BOTTOM);
+    }
+    #[test]
+    fn minimap_preferences_persist_and_reject_invalid_sizes() {
+        let mut settings = Settings::default();
+        settings.load(&BTreeMap::from([
+            ("show_minimap".into(), "false".into()),
+            ("minimap_size".into(), "320".into()),
+        ]));
+        let mut restored = Settings::default();
+        restored.load(
+            &settings
+                .preferences()
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value))
+                .collect(),
+        );
+        assert!(!restored.show_minimap);
+        assert_eq!(restored.minimap_size, 320.);
+        for invalid in ["NaN", "inf", "-1", "0", "601"] {
+            restored.load(&BTreeMap::from([("minimap_size".into(), invalid.into())]));
+            assert_eq!(restored.minimap_size, moth_ui::Tokens::LIGHT.minimap_max);
+        }
+    }
+    #[test]
+    fn keyboard_pan_preferences_roundtrip_and_reject_invalid_values() {
+        let mut settings = Settings::default();
+        settings.load(&BTreeMap::from([
+            ("keyboard_pan_mode".into(), "0".into()),
+            ("keyboard_pan_step".into(), "400".into()),
+            ("keyboard_pan_speed".into(), "1200".into()),
+        ]));
+        let mut restored = Settings::default();
+        restored.load(
+            &settings
+                .preferences()
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value))
+                .collect(),
+        );
+        assert_eq!(restored.keyboard_pan_mode, 0);
+        assert_eq!(restored.keyboard_pan_step, 400.);
+        assert_eq!(restored.keyboard_pan_speed, 1200.);
+        for invalid in ["NaN", "inf", "-1", "0", "999999"] {
+            restored.load(&BTreeMap::from([
+                ("keyboard_pan_mode".into(), "2".into()),
+                ("keyboard_pan_step".into(), invalid.into()),
+                ("keyboard_pan_speed".into(), invalid.into()),
+            ]));
+            assert_eq!(restored.keyboard_pan_mode, 1);
+            assert_eq!(restored.keyboard_pan_step, 200.);
+            assert_eq!(restored.keyboard_pan_speed, 800.);
+        }
+    }
     #[test]
     fn sampling_preference_roundtrips_and_rejects_unknown_modes() {
         for code in 0..3 {

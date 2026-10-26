@@ -455,7 +455,7 @@ dependencies = [
 
 [[package]]
 name = "moth-format"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.10"
 dependencies = [
  "blake3",
  "fractional_index",
@@ -465,7 +465,7 @@ dependencies = [
 
 [[package]]
 name = "moth-import"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.10"
 dependencies = [
  "moth-format",
  "moth-scene",
@@ -476,7 +476,7 @@ dependencies = [
 
 [[package]]
 name = "moth-io"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.10"
 dependencies = [
  "blake3",
  "crossbeam-channel",
@@ -494,7 +494,7 @@ dependencies = [
 
 [[package]]
 name = "moth-scene"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.10"
 dependencies = [
  "blake3",
  "fractional_index",

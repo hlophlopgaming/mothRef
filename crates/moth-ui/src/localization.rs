@@ -84,9 +84,14 @@ mod tests {
             (24, "изображения"),
             (111, "изображений"),
         ] {
-            assert!(
-                item_counts(Locale::RU, count, 1)
-                    .starts_with(&format!("{count} {noun} · 1 заметка"))
+            assert_eq!(item_counts(Locale::RU, count, 0), format!("{count} {noun}"));
+            assert_eq!(
+                item_counts(Locale::RU, count, 1),
+                if count == 0 {
+                    "1 заметка".to_owned()
+                } else {
+                    format!("{count} {noun} · 1 заметка")
+                }
             );
         }
         let message = Message::Count(Text::ImportSkippedCount, 3);

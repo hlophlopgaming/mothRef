@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.10 — 2026-10-26
+
+- Switch Collect / View with Tab and Over with Ctrl/Command+T; narrow windows use View. View keeps a sliding window bar, board switcher and context-menu editing. Share image, board and window opacity plus solid/translucent/glass backgrounds between the View popover and Over controller. Remember presentation for the 64 most recently adjusted saved boards; use a translucent glass fallback where native blur is unavailable.
+
+- Open BeeRef and PureRef boards as editable, unsaved conversions; offer Save As .moth or Continue without saving, explain retained content and conversion limitations, and preserve the original source. Restrict working-board saves to .moth and keep unsaved conversions recoverable.
+- Admit board files independently of individual image limits: BeeRef/PureRef boards use a 4 GiB file limit and bounded metadata/payload streaming; MothRef boards use an 8 GiB desktop admission limit with existing record and checksum protections.
+
+- Adjust minimap opacity and distance from the canvas center in Settings › Canvas; keep the selected corner or edge as the direction.
+
+- Configure minimap visibility, maximum size and placement in any of nine positions in Settings › Canvas; preserve adaptive board proportions and viewport limits.
+
+- Accept images dragged from local ZIP archives in Gwenview on Wayland; read selected entries in background workers through the normal image import and journal path.
+
+- Choose continuous keyboard camera flight or stepped panning in Settings › Canvas; configure flight speed and step distance in screen pixels. Flight follows rebound keys, keeps diagonal speed constant, and stops during text entry or dialogs.
+- Escape clears the canvas selection after active drags, menus and tool windows have been dismissed; also offer Deselect in the command palette.
+
+- Add rebindable WASD canvas panning, blocked while typing; use trackpad scrolling to pan, Control-scroll and native pinch to zoom. Keep existing visible zoom and fit controls.
+- Move the minimap to the bottom left and adapt its proportions to the board, bounded to 30% of the viewport and a compact maximum size.
+
 - Choose smooth, sharp-pixel or automatic image sampling in Settings › Canvas, with per-image overrides in the selection/context menus and item editor. Automatic switches to sharp pixels at 200% of original pixel size.
 - Auto-size notes to their text, or wrap at a manually resized width while preserving text size. The item editor controls wrapping and font size; grouped scaling scales text with its frame. Export preserves fixed note fonts and wraps text.
 - Save sampling and note layout in schema 5; continue reading schemas 1–4 and upgrade older boards through atomic compaction. Older MothRef builds cannot open newly saved schema-5 boards.

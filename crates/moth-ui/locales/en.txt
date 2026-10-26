@@ -345,3 +345,49 @@ SamplingNearest = Sharp pixels (nearest neighbor)
 SamplingAutomatic = Automatic: sharp pixels at 200% and above
 NoteWrap = Wrap text to frame width
 NoteFontSize = Text size
+
+PanLeft = Pan left
+PanRight = Pan right
+PanUp = Pan up
+PanDown = Pan down
+
+KeyboardPanMode = Keyboard panning
+PanStepped = Stepped
+PanFlying = Flying
+KeyboardPanStep = Pan step (screen pixels)
+KeyboardPanSpeed = Pan speed (screen pixels/second)
+Deselect = Deselect
+
+ShowMinimap = Show minimap
+MinimapSize = Minimap maximum size (screen pixels)
+
+MinimapPosition = Minimap position
+PositionTopLeft = Top left
+PositionTopCenter = Top center
+PositionTopRight = Top right
+PositionMiddleLeft = Middle left
+PositionCenter = Center
+PositionMiddleRight = Middle right
+PositionBottomLeft = Bottom left
+PositionBottomCenter = Bottom center
+PositionBottomRight = Bottom right
+
+MinimapOpacity = Minimap opacity
+MinimapDistance = Minimap distance from center
+ConversionTitle = Save as .moth to continue working in MothRef
+ConversionRetained = The original board stays untouched and available at the path below. The .moth copy retains original image bytes, supported layout and edits, and plain notes.
+ConversionPur = Unsupported: groups and their children, drawings, links without embedded images, rich or fixed-size notes, opacity, and unsupported transforms or image flags. These items are skipped.
+ConversionBee = Unsupported: unknown items, missing images and invalid geometry. Opacity, grayscale, note formatting and crop offsets are not retained.
+SaveAsMoth = Save As .moth…
+ContinueConversion = Continue without saving
+
+ToggleView = Collect / View
+ViewAppearance = View
+ImageOpacity = Image opacity
+BoardOpacity = Board opacity
+WindowOpacity = Window opacity
+BackgroundSolid = Solid
+BackgroundTranslucent = Translucent
+BackgroundGlass = Glass
+GlassFallback = Glass uses a translucent tint here; native blur is unavailable.
+ImagesOnly = Images only

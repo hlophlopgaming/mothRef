@@ -24,7 +24,7 @@ url = "2"
 rustls-native-certs = "0.8"
 
 base64 = "0.23"
-zip = { version = "9", default-features = false }
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 resvg = { version = "0.48", default-features = false, features = ["text", "raster-images"] }
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 

@@ -368,6 +368,12 @@ impl State {
         }
     }
     fn save(&mut self, path: PathBuf) -> io::Result<Completion> {
+        if !path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("moth"))
+        {
+            return Err(error("Working boards must be saved as .moth"));
+        }
         self.claim(&path, false)?;
         let mut file = match OpenOptions::new().read(true).append(true).open(&path) {
             Ok(file) => file,
@@ -466,6 +472,9 @@ impl State {
             self.destination = None;
         }
         let mut file = File::open(&path)?;
+        if file.metadata()?.len() > 8 * 1024 * 1024 * 1024 {
+            return Err(error("MothRef board exceeds 8 GiB file limit"));
+        }
         let loaded = {
             let _span = tracing::info_span!("parse_moth").entered();
             board::read(&mut file).map_err(error)?
@@ -1383,6 +1392,177 @@ mod tests {
             state.journal_guard = None;
             state.storage.discard().unwrap();
             std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn conversion_crash_writer() {
+        let Some(root) = std::env::var_os("MOTHREF_CONVERSION_CRASH_ROOT") else {
+            return;
+        };
+        let source = PathBuf::from(std::env::var_os("MOTHREF_CONVERSION_SOURCE").unwrap());
+        let mut state = state();
+        state.storage = Arc::new(DesktopStorage::in_directory(PathBuf::from(&root)));
+        let request = if source.extension().unwrap() == "bee" {
+            Request::ImportBee(source)
+        } else {
+            Request::ImportPur(source)
+        };
+        state.request(request).unwrap();
+        let item = state.scene.items().next().unwrap().clone();
+        state
+            .request(Request::Apply(
+                Command::SetRect {
+                    id: item.id,
+                    rect: Rect {
+                        x: 123.,
+                        ..item.rect
+                    },
+                },
+                None,
+            ))
+            .unwrap();
+        std::fs::write(PathBuf::from(root).join("ready"), b"durable").unwrap();
+        loop {
+            std::thread::park();
+        }
+    }
+
+    #[test]
+    fn conversion_recovers_after_process_is_killed() {
+        for fixture in ["bee/tiny.bee", "pur/v2.1-redbar.pur"] {
+            let mut restored = state();
+            let root = restored.storage.base_directory().unwrap();
+            let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../corpus")
+                .join(fixture);
+            let before = std::fs::read(&source).unwrap();
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "boards::tests::conversion_crash_writer",
+                    "--nocapture",
+                ])
+                .env("MOTHREF_CONVERSION_CRASH_ROOT", &root)
+                .env("MOTHREF_CONVERSION_SOURCE", &source)
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !root.join("ready").exists() && std::time::Instant::now() < deadline {
+                if child.try_wait().unwrap().is_some() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let ready = root.join("ready").exists();
+            let _ = child.kill();
+            child.wait().unwrap();
+            assert!(
+                ready,
+                "child must finish durable import before being killed"
+            );
+            let recovery = recovery::discover(&restored.storage).unwrap();
+            assert_eq!(recovery.len(), 1);
+            restored
+                .request(Request::Restore(recovery[0].journal.clone()))
+                .unwrap();
+            assert!(restored.destination.is_none());
+            assert!(restored.scene.items().any(|item| item.rect.x == 123.));
+            for (hash, handle) in &restored.sources {
+                assert_eq!(
+                    blake3::hash(&restored.original(*hash, *handle).unwrap()),
+                    *hash
+                );
+            }
+            restored.save(root.join("recovered.moth")).unwrap();
+            assert_eq!(std::fs::read(source).unwrap(), before);
+            restored.journal = None;
+            restored.journal_guard = None;
+            restored.storage.discard().unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn board_admission_is_independent_of_image_limits() {
+        let mut imported = state();
+        let directory = imported.storage.base_directory().unwrap();
+        std::fs::create_dir_all(&directory).unwrap();
+        let source = directory.join("large.bee");
+        std::fs::write(&source, include_bytes!("../../../corpus/bee/tiny.bee")).unwrap();
+        let file = OpenOptions::new().write(true).open(&source).unwrap();
+        file.set_len(moth_io::MAX_INPUT_BYTES + 4096).unwrap();
+        drop(file);
+        imported
+            .request(Request::ImportBee(source.clone()))
+            .unwrap();
+        assert!(!imported.scene.is_empty());
+        let mut oversized = state();
+        std::fs::create_dir_all(oversized.storage.base_directory().unwrap()).unwrap();
+        let file = OpenOptions::new().write(true).open(&source).unwrap();
+        file.set_len(4 * 1024 * 1024 * 1024 + 1).unwrap();
+        drop(file);
+        assert!(oversized.request(Request::ImportBee(source)).is_err());
+        let source = directory.join("large.moth");
+        let file = File::create(&source).unwrap();
+        file.set_len(8 * 1024 * 1024 * 1024 + 1).unwrap();
+        drop(file);
+        assert!(oversized.open(source).is_err());
+        for mut state in [oversized, imported] {
+            state.journal = None;
+            state.journal_guard = None;
+            state.storage.discard().unwrap();
+            std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn conversion_saves_reopens_and_never_changes_the_source() {
+        for fixture in ["bee/tiny.bee", "pur/v2.1-redbar.pur"] {
+            let mut imported = state();
+            let directory = imported.storage.base_directory().unwrap();
+            std::fs::create_dir_all(&directory).unwrap();
+            let source = directory.join(std::path::Path::new(fixture).file_name().unwrap());
+            let bytes = std::fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../corpus")
+                    .join(fixture),
+            )
+            .unwrap();
+            std::fs::write(&source, &bytes).unwrap();
+            let request = if fixture.ends_with("bee") {
+                Request::ImportBee(source.clone())
+            } else {
+                Request::ImportPur(source.clone())
+            };
+            imported.request(request).unwrap();
+            assert!(imported.destination.is_none());
+            assert!(imported.save(source.clone()).is_err());
+            assert_eq!(std::fs::read(&source).unwrap(), bytes);
+            let mut expected: Vec<_> = imported.scene.items().cloned().collect();
+            expected.sort_by_key(|item| item.id);
+            let saved = directory.join("converted.moth");
+            imported.save(saved.clone()).unwrap();
+            imported.destination = None;
+            let mut reopened = state();
+            reopened.open(saved).unwrap();
+            let mut actual: Vec<_> = reopened.scene.items().cloned().collect();
+            actual.sort_by_key(|item| item.id);
+            assert_eq!(actual, expected);
+            for (hash, handle) in &reopened.sources {
+                assert_eq!(
+                    reopened.original(*hash, *handle).unwrap(),
+                    imported.original(*hash, imported.sources[hash]).unwrap()
+                );
+            }
+            assert_eq!(std::fs::read(source).unwrap(), bytes);
+            for mut state in [reopened, imported] {
+                state.journal = None;
+                state.journal_guard = None;
+                state.storage.discard().unwrap();
+                std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
+            }
         }
     }
 

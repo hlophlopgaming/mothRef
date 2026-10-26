@@ -49,6 +49,7 @@ M10–M16 (artist tools, review workflow, note-app interop, CLI and automation, 
 - [x] Decode pool, JPEG DCT downscaling, LOD pyramid generation
 - [x] Pan, zoom, rubber-band selection, file drag-and-drop (X11 / Windows / macOS), paste from clipboard
 - [x] Native Wayland file drag-and-drop (TD-09; native protocol tests and Dolphin two-file drop validated)
+- [x] Accept local ZIP-entry drops from KDE viewers on Wayland through background image import (native Gwenview validation pending).
 - [x] Benchmark boards and measurement harness
 - [x] UI skeleton on egui: custom theme, color tokens, transition animations
 - [x] Portability: storage behind a byte-stream trait (no `std::fs::Path` in core crates)
@@ -215,15 +216,12 @@ before the browser extension and advanced window integration.
 - [x] In-app shortcut cheat sheet: all actions and their current bindings (including custom bindings), grouped by category and searchable; open with `/` or from Help
 - [x] Command Palette (Omnibar / Quick Search): search and run application actions, show their current shortcuts; open with Ctrl/⌘+K or a visible menu button, navigate with arrows, Enter to run, Esc to close
 - [x] Navigation without pressing the middle mouse button: Space + left-drag and rebindable pan gestures; middle-click remains optional. Select stays active; the separate Hand/Pan mode was removed by maintainer request.
-- [ ] Pan the canvas with WASD as an alternative to middle-button dragging; allow rebinding and disable canvas shortcuts while typing in text fields
-- [ ] Navigation without a working wheel: visible and keyboard zoom controls, fit board / fit selection, keyboard panning, trackpad two-finger pan and pinch zoom; keep touch and pen paths available
-- [ ] Open `.bee` / `.pur` boards for editing in MothRef, keeping the source file untouched; `.moth` is the only working-board save format
-- [ ] After opening a foreign board, offer “Save as .moth to continue working in MothRef” with Save As and Continue without saving; the first Save opens the `.moth` destination chooser, and closing an unsaved conversion prompts to save or discard
-- [ ] Explain conversion before saving: retain original image bytes and supported layout/edits, list unsupported content, and keep the original `.bee` / `.pur` available; test import → `.moth` save → reopen and crash recovery
-- [ ] Separate board-file admission from individual-image limits: `.pur`, `.moth` and `.bee` must not inherit the image-import byte cap; use bounded streaming and explicit board-specific limits, retaining checksum, dimension, decoded-memory and corrupt-file protections
-- [ ] Opening a board keeps images and other supported entities individually editable; never introduce an uneditable wrapper group or flatten the board. Preserve supported source groups with a clear enter/ungroup path (M4); report unsupported hierarchy
-- [ ] Zoom-out memory qualification: measure RAM and VRAM separately while zooming out/in on a large board; promptly evict unnecessary high-resolution decoded data/textures, retain useful low mips within budgets, and avoid decode thrashing on zoom-in. Reuse cached mip levels before decoding again; evaluate a short bounded retention of recently used detail to avoid oscillation when zooming back and forth, with immediate eviction under budget pressure. Keep original image bytes unchanged and decoding/compression off the UI thread. Record time to reclaim memory and frame latency before setting numeric acceptance targets
-- [ ] Explain `.moth` storage benefits with measured evidence (original-byte retention, deduplication and incremental saves); show “more compact” only where measurements support it, without promising a smaller file for every board
+- [x] Pan the canvas with WASD as an alternative to middle-button dragging; allow rebinding and disable canvas shortcuts while typing in text fields; configurable flying speed or fixed screen-pixel steps in Settings › Canvas
+- [x] Navigation without a working wheel: visible and keyboard zoom controls, fit board / fit selection, keyboard panning, trackpad two-finger pan and pinch zoom; keep touch and pen paths available (native pinch where supplied by the backend, Control + continuous scroll otherwise)
+- [x] Open `.bee` / `.pur` boards for editing in MothRef, keeping the source file untouched; `.moth` is the only working-board save format
+- [x] After opening a foreign board, offer “Save as .moth to continue working in MothRef” with Save As and Continue without saving; the first Save opens the `.moth` destination chooser, and closing an unsaved conversion prompts to save or discard
+- [x] Explain conversion before saving: retain original image bytes and supported layout/edits, list unsupported content, and keep the original `.bee` / `.pur` available; test import → `.moth` save → reopen and crash recovery
+- [x] Separate board-file admission from individual-image limits: `.pur`, `.moth` and `.bee` must not inherit the image-import byte cap; use bounded streaming and explicit board-specific limits, retaining checksum, dimension, decoded-memory and corrupt-file protections
 
 **Foreign-format policy:** `.pur` writing/export and save-back are out of scope.
 A `.bee` export exception may be considered separately; it is not an M3 commitment
@@ -235,6 +233,9 @@ before writing and preserve the original file.
 - [x] Always-on-top, frameless window, move window by hotkey
 - [x] Auto-reveal window bar: minimize, maximize/restore, close and pin controls appear on pointer approach; also reveal through keyboard focus and an explicit touch action
 - [ ] Window modes (DESIGN.md §4, screens 15–17): Collect (full chrome) ⇄ View (images only, PureRef-like) with `Tab`; Over with `Ctrl/⌘+T`; a group can be viewed on its own; narrow windows switch to View; mode remembered per board. Opacity and board background (solid / translucent / glass with platform blur) live in the View popover and the Over panel
+  - [x] Collect/View action, automatic narrow-window View, sliding bar and touch reveal, shared appearance controls, per-board local presentation history, and Over controller integration
+  - [ ] Group-only viewing: blocked on the scene group model and group-title selection
+  - [ ] Native qualification of mode transitions, opacity and blur on Linux, Windows and macOS; see [M3 window validation](docs/M3-WINDOW-VALIDATION.md#window-modes-and-appearance)
 - [x] Pin button and rebindable shortcut: choose above all windows or above a chosen window; for the latter, let the user click the target, with cancel and visible active mode. A shortcut toggles the mode off/on using the last choice; respect platform capability flags
 - [ ] Desktop GUI launch without a terminal: investigate the reported extra cmd window on Windows and ensure packaged GUI launches do not open a console; check normal Finder launch on macOS for the same symptom. Preserve diagnostic logging and intentional CLI output; qualify both launch paths
 - [ ] Windows maximize/restore/fullscreen reliability: exercise repeated transitions, resize and surface recreation without losing the scene. Field report: PureRef crashed on Windows when expanded to fill the screen; maximize versus fullscreen is unconfirmed, and this is not yet a reproduced MothRef bug

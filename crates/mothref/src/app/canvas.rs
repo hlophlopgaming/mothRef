@@ -20,6 +20,7 @@ pub(super) struct Canvas<'a> {
     pub motion: &'a super::motion::DragMotion,
     pub duplicate: bool,
     pub gpu: &'a Gpu,
+    pub compact: bool,
     pub overlay: bool,
     pub secondary_gesture: bool,
     pub activate: bool,
@@ -43,12 +44,13 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
         motion,
         duplicate,
         gpu,
+        compact,
         overlay,
         secondary_gesture,
         activate,
     } = ctx;
     let mut view = board.view;
-    if !overlay {
+    if !compact {
         intents.extend(tools.show(ui, board, settings, enabled, registry));
     }
     egui::CentralPanel::default()
@@ -68,7 +70,10 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                         })
                         .into_iter()
                         .rev()
-                        .find(|item| item.rect.contains_rotated(item.transform.rotation, world))
+                        .find(|item| {
+                            board.presented(item)
+                                && item.rect.contains_rotated(item.transform.rotation, world)
+                        })
                         .map(|item| item.id)
                 });
             let over_canvas =
@@ -104,7 +109,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
             let hover_id = ui.ctx().data(|data| data.get_temp::<Uuid>(hover_key));
             let previous = view.viewport;
             view.viewport = ui.max_rect();
-            if !overlay {
+            if !compact {
                 intents.extend(super::surfaces::toolbar(
                     ui.ctx(),
                     view.viewport,
@@ -114,9 +119,9 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                 ));
             }
             view.safe_area = view.viewport;
-            view.selection_bar_visible = !overlay && !board.selection.is_empty();
+            view.selection_bar_visible = !compact && !board.selection.is_empty();
             view.selection_bar_height = 0.;
-            if !overlay {
+            if !compact {
                 let bar_bottom = ui
                     .ctx()
                     .data(|data| data.get_temp::<f32>(egui::Id::new("window_bar_bottom")));
@@ -199,7 +204,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     }
                 }
             }
-            for item in visible {
+            for item in visible.into_iter().filter(|item| board.presented(item)) {
                 let mut presented = board
                     .motion
                     .get(item.id, motion.now())
@@ -273,7 +278,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     );
                 }
             }
-            for ghost in returning.values() {
+            for ghost in returning.values().filter(|item| board.presented(item)) {
                 if ghost.blob().is_none() && board.scene.get(ghost.id).is_none() {
                     draw_note(ui, &view.camera, ghost);
                 }
@@ -281,7 +286,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     outline(ui, &view.camera, ghost, true, 0., settings.show_outlines);
                 }
             }
-            for ghost in transitions {
+            for ghost in transitions.into_iter().filter(|item| board.presented(item)) {
                 if ghost.blob().is_none() && board.scene.get(ghost.id).is_none() {
                     draw_note(ui, &view.camera, &ghost);
                 }
@@ -301,7 +306,12 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                         });
                 let mut bounds = egui::Rect::NOTHING;
                 let mut count = 0;
-                for item in board.selection.iter().filter_map(|id| board.scene.get(*id)) {
+                for item in board
+                    .selection
+                    .iter()
+                    .filter_map(|id| board.scene.get(*id))
+                    .filter(|i| board.presented(i))
+                {
                     let presented = if moving.is_some() && !tools.locked && !board.loading {
                         Some(motion.preview(item, drag, view.camera.zoom, settings.reduced_motion))
                     } else {
@@ -330,7 +340,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                 }
                 if bounds.is_finite() {
                     moth_ui::canvas::selection_badge(ui.ctx(), view.viewport, count, bounds.size());
-                    if marquee.is_none() && !board.selection.is_empty() {
+                    if !compact && marquee.is_none() && !board.selection.is_empty() {
                         let screen = |p: egui::Pos2| {
                             let p = view.camera.screen([p.x, p.y]);
                             egui::pos2(p[0], p[1])
@@ -404,7 +414,10 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                         })
                         .into_iter()
                         .rev()
-                        .find(|i| i.rect.contains_rotated(i.transform.rotation, world));
+                        .find(|i| {
+                            board.presented(i)
+                                && i.rect.contains_rotated(i.transform.rotation, world)
+                        });
                     match hit {
                         Some(item) if item.note().is_some() => {
                             intents.push(Intent::EditNote(item.id))
@@ -431,7 +444,10 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                         });
                 }
             }
-            if !overlay && let Some(bounds) = board.scene.bounds() {
+            if !compact
+                && settings.show_minimap
+                && let Some(bounds) = board.scene.bounds()
+            {
                 let normalize = |x: f32, y: f32| {
                     egui::pos2(
                         (x - bounds.x) / bounds.width,
@@ -461,8 +477,15 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     .world([view.viewport.right(), view.viewport.bottom()]);
                 if let Some(p) = moth_ui::canvas::minimap(
                     ui.ctx(),
-                    view.viewport,
+                    view.safe_area,
                     &samples,
+                    egui::vec2(bounds.width, bounds.height),
+                    moth_ui::canvas::Minimap {
+                        size: settings.minimap_size,
+                        alignment: settings.minimap_alignment(),
+                        opacity: settings.minimap_opacity / 100.,
+                        distance: settings.minimap_distance / 100.,
+                    },
                     egui::Rect::from_min_max(
                         normalize(world_min[0], world_min[1]),
                         normalize(world_max[0], world_max[1]),
@@ -788,12 +811,13 @@ mod tests {
         let zoom = 0.35;
         let rect = new_note_rect([20., 30.], zoom);
         let mut item = Item::text("", rect, None);
+        item.transform.note_font_size = note_font_size(rect, "");
         let mut editing = Editing {
             id: item.id,
             original: String::new(),
             draft: "Reference\nSecond line".to_owned(),
             anchor: [rect.x, rect.y],
-            font_size: note_font_size(rect, ""),
+            font_size: item.note_font_size(),
             width: rect.width,
             wrap: false,
             focus: false,
@@ -821,9 +845,7 @@ mod tests {
                 },
                 &item,
             );
-            assert!(
-                (note_font_size(item.rect, item.note().unwrap()) - editing.font_size).abs() < 0.001
-            );
+            assert!((item.note_font_size() - editing.font_size).abs() < 0.001);
         });
         let drawn: Vec<_> = output
             .shapes
@@ -835,7 +857,12 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(drawn.len(), 1);
+        output.textures_delta.clear();
+        assert_eq!(
+            drawn.len(),
+            2,
+            "both the editor and committed note are painted"
+        );
         for height in drawn {
             assert!((height - editor_height).abs() < 0.01);
         }

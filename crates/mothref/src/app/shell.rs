@@ -15,6 +15,8 @@ pub(super) struct Frame {
     pub grid: bool,
     /// Global viewing opacity (overlay mode).
     pub opacity: f32,
+    /// Apply whole-window opacity to every UI mesh, including floating areas.
+    pub ui_opacity: f32,
     /// Clear colour for the canvas attachment.
     pub clear: wgpu::Color,
     /// Canvas viewport in logical pixels, for the clip rectangle.
@@ -174,7 +176,16 @@ impl Shell {
         let size = texture.texture.size();
         gpu.registry.grayscale = frame.grayscale;
         gpu.registry.sampling = frame.sampling;
-        let jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);
+        let mut jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);
+        if frame.ui_opacity < 1. {
+            for job in &mut jobs {
+                if let egui::epaint::Primitive::Mesh(mesh) = &mut job.primitive {
+                    for vertex in &mut mesh.vertices {
+                        vertex.color = vertex.color.gamma_multiply(frame.ui_opacity);
+                    }
+                }
+            }
+        }
         let screen = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [size.width, size.height],
             pixels_per_point: output.pixels_per_point,

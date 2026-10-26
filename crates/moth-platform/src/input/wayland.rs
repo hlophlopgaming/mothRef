@@ -219,7 +219,7 @@ impl State {
                                 offer.finish();
                             }
                             for path in paths {
-                                if output.send(Event::Drop(path)).is_err() {
+                                if output.send(path).is_err() {
                                     break;
                                 }
                                 notify();
@@ -318,7 +318,7 @@ impl Drop for State {
         }
     }
 }
-fn read_uris(mut stream: UnixStream) -> io::Result<Vec<PathBuf>> {
+fn read_uris(mut stream: UnixStream) -> io::Result<Vec<Event>> {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut bytes = Vec::new();
     loop {
@@ -366,13 +366,21 @@ fn read_uris(mut stream: UnixStream) -> io::Result<Vec<PathBuf>> {
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
     {
         let url = url::Url::parse(line).map_err(io::Error::other)?;
-        if url.scheme() != "file"
+        if paths.len() == 1024 {
+            return Err(io::Error::other("Wayland drop exceeds 1024 files"));
+        }
+        if !matches!(url.scheme(), "file" | "zip")
             || url.query().is_some()
             || url.fragment().is_some()
             || !url.username().is_empty()
             || url.password().is_some()
+            || url.port().is_some()
         {
             return Err(io::Error::other("Drop requires plain local file URLs"));
+        }
+        if url.scheme() == "zip" {
+            paths.push(zip_drop(url)?);
+            continue;
         }
         let path = url
             .to_file_path()
@@ -381,12 +389,45 @@ fn read_uris(mut stream: UnixStream) -> io::Result<Vec<PathBuf>> {
         if path.as_os_str().as_bytes().contains(&0) {
             return Err(io::Error::other("Drop path contains NUL"));
         }
-        if paths.len() == 1024 {
-            return Err(io::Error::other("Wayland drop exceeds 1024 files"));
-        }
-        paths.push(path);
+        paths.push(Event::Drop(path));
     }
     Ok(paths)
+}
+
+fn zip_drop(mut url: url::Url) -> io::Result<Event> {
+    if url.host_str().is_some_and(|host| host != "localhost") {
+        return Err(io::Error::other("Drop requires a local ZIP archive"));
+    }
+    // Decode percent escapes once, using the same local-path rules as ordinary drops.
+    let local = format!("file://{}", url.path());
+    url = url::Url::parse(&local).map_err(io::Error::other)?;
+    let path = url
+        .to_file_path()
+        .map_err(|_| io::Error::other("Invalid ZIP path"))?;
+    let text = path
+        .to_str()
+        .ok_or_else(|| io::Error::other("Invalid ZIP path"))?;
+    if text.contains('\0') {
+        return Err(io::Error::other("Drop path contains NUL"));
+    }
+    // shortcut: split at the first .zip/; resolve real archive boundaries when supporting nested archives.
+    let split = text
+        .to_ascii_lowercase()
+        .find(".zip/")
+        .ok_or_else(|| io::Error::other("Drop requires a ZIP archive entry"))?
+        + 4;
+    let member = &text[split + 1..];
+    if member.is_empty()
+        || member
+            .split('/')
+            .any(|part| matches!(part, ".." | "." | ""))
+    {
+        return Err(io::Error::other("Invalid ZIP entry path"));
+    }
+    Ok(Event::ZipDrop {
+        archive: PathBuf::from(&text[..split]),
+        member: member.into(),
+    })
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
@@ -740,7 +781,13 @@ mod tests {
             let (read, mut write) = UnixStream::pair()?;
             write.write_all(bytes)?;
             drop(write);
-            read_uris(read)
+            read_uris(read)?
+                .into_iter()
+                .map(|event| match event {
+                    Event::Drop(path) => Ok(path),
+                    _ => Err(io::Error::other("Expected local file")),
+                })
+                .collect()
         }
         assert_eq!(
             decode(b"# files\r\nfile:///tmp/a%20b.png\r\nfile://localhost/tmp/c.png\r\n").unwrap(),
@@ -755,6 +802,30 @@ mod tests {
             b"not a URL",
         ] {
             assert!(decode(input).is_err(), "{input:?}");
+        }
+    }
+    #[test]
+    fn zip_drop_decodes_kde_urls_and_rejects_remote_and_traversal_paths() {
+        let (read, mut write) = UnixStream::pair().unwrap();
+        write.write_all(b"zip:/tmp/refs%20art.ZIP/folder/%D0%BA%D0%BE%D1%82%23.png\r\nfile:///tmp/local.png\r\n").unwrap();
+        drop(write);
+        let events = read_uris(read).unwrap();
+        assert!(matches!(&events[0], Event::ZipDrop { archive, member }
+            if archive == &PathBuf::from("/tmp/refs art.ZIP") && member == "folder/кот#.png"));
+        assert!(
+            matches!(&events[1], Event::Drop(path) if path == &PathBuf::from("/tmp/local.png"))
+        );
+        for input in [
+            "zip://remote/tmp/a.zip/image.png",
+            "zip:/tmp/a.zip/%2e%2e%2fimage.png",
+            "zip:/tmp/a.zip/%00.png",
+            "zip:/tmp/a.zip/",
+            "zip:/tmp/a.tar/image.png",
+        ] {
+            assert!(
+                zip_drop(url::Url::parse(input).unwrap()).is_err(),
+                "{input}"
+            );
         }
     }
     #[test]

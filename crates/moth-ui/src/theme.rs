@@ -38,6 +38,10 @@ pub struct Tokens {
     pub sidebar: Color32,
     /// Semantic minimap item color.
     pub minimap_item: Color32,
+    /// Maximum minimap side before adapting to the viewport.
+    pub minimap_max: f32,
+    /// Minimum aspect ratio of the minimap short side to its long side.
+    pub minimap_aspect_min: f32,
     /// Semantic danger color.
     pub danger: Color32,
     /// Semantic note fill color.
@@ -120,6 +124,8 @@ impl Tokens {
         empty_border: Color32::from_rgb(70, 81, 74),
         empty_icon: Color32::from_rgb(138, 146, 137),
         sidebar: Color32::from_rgb(24, 29, 26),
+        minimap_max: 188.,
+        minimap_aspect_min: 0.35,
         minimap_item: Color32::from_rgb(74, 86, 77),
         danger: Color32::from_rgb(229, 143, 174),
         note_fill: Color32::from_rgb(42, 50, 44),
@@ -168,6 +174,8 @@ impl Tokens {
         empty_border: Color32::from_rgb(182, 184, 166),
         empty_icon: Color32::from_rgb(85, 112, 47),
         sidebar: Color32::from_rgb(235, 232, 220),
+        minimap_max: 188.,
+        minimap_aspect_min: 0.35,
         minimap_item: Color32::from_rgb(177, 181, 162),
         danger: Color32::from_rgb(156, 64, 50),
         note_fill: Color32::from_rgb(249, 247, 240),

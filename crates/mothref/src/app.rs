@@ -64,6 +64,7 @@ mod shortcuts;
 mod snap;
 mod surfaces;
 mod tools;
+mod window_mode;
 mod workspace;
 use document::Document;
 use intent::Intent;
@@ -80,6 +81,9 @@ pub struct App {
     settings_window: settings::SettingsWindow,
     shortcuts: shortcuts::Shortcuts,
     overlay: Option<overlay::Overlay>,
+    window_preferences: std::collections::BTreeMap<String, String>,
+    applied_background: Option<(WindowId, bool, bool)>,
+    window_preferences_dirty: bool,
     pinned: bool,
     target_pin: bool,
     picking_window: bool,
@@ -142,6 +146,9 @@ impl App {
             settings_window: settings::SettingsWindow::default(),
             shortcuts: shortcuts::Shortcuts::default(),
             overlay: None,
+            window_preferences: Default::default(),
+            applied_background: None,
+            window_preferences_dirty: false,
             pinned: false,
             target_pin: false,
             picking_window: false,
@@ -171,6 +178,7 @@ impl App {
         })
     }
     fn pick_window(&mut self) {
+        self.applied_background = None;
         let Some(window) = &self.shell.window else {
             return;
         };
@@ -200,6 +208,7 @@ impl App {
         }
     }
     fn apply_pin(&mut self, enabled: bool) {
+        self.applied_background = None;
         let Some(window) = &self.shell.window else {
             return;
         };
@@ -222,6 +231,7 @@ impl App {
         }
     }
     fn toggle_overlay(&mut self, event_loop: &ActiveEventLoop) {
+        self.applied_background = None;
         let Some(window) = self.shell.window.clone() else {
             return;
         };
@@ -236,6 +246,7 @@ impl App {
                 self.workspace.board.message = error.into();
             } else {
                 self.overlay = None;
+                self.workspace.board.appearance.over = false;
             }
         } else if self.shell.gpu.as_ref().is_some_and(|gpu| gpu.transparent) {
             match overlay::Overlay::new(
@@ -244,7 +255,12 @@ impl App {
                 self.shell.software(),
                 moth_platform::Desktop.window_capabilities(&window).on_top,
             ) {
-                Ok(overlay) => {
+                Ok(mut overlay) => {
+                    if self.workspace.board.appearance.background == 0 {
+                        self.workspace.board.appearance.background = 2;
+                    }
+                    self.workspace.board.appearance.over = true;
+                    overlay.appearance = self.workspace.board.appearance;
                     if let Err(error) =
                         moth_platform::Desktop.window_effects(&window, true, overlay.on_top, false)
                     {
@@ -265,6 +281,7 @@ impl App {
         } else {
             self.workspace.board.message = moth_ui::Text::OverlayUnsupported.into();
         }
+        self.remember_appearance();
         if self.overlay.is_none() {
             self.apply_pin(self.pinned);
         }
@@ -272,6 +289,9 @@ impl App {
     }
 
     fn reset_board_ui(&mut self) {
+        if !self.workspace.board.loading {
+            self.remember_appearance();
+        }
         self.tools = tools::Tools::default();
         self.tools.locked = self.workspace.board.locked;
         self.tools.grayscale = self.workspace.board.grayscale;
@@ -286,6 +306,8 @@ impl App {
         self.resizing = None;
         self.drag_pointer = None;
         self.input.pending_focus = None;
+        self.input.held.clear();
+        self.input.pan_time = None;
         self.input.pointer_action = None;
         self.input.gestures.cancel();
         if let Some(gpu) = &mut self.shell.gpu {
@@ -336,6 +358,17 @@ impl App {
         self.settings.performance_mode == moth_io::CacheMode::Full
             && !self.workspace.library
             && !self.workspace.board.preload_ready
+    }
+    fn canvas_keys_blocked(&self) -> bool {
+        self.modal.dialog.is_some()
+            || self.workspace.board.conversion_prompt
+            || self.workspace.confirm_close
+            || self.workspace.board.arrange_prompt.is_some()
+            || self.shortcuts.blocked()
+            || self.editing.is_some()
+            || self.shortcuts.toast_focused()
+            || self.shell.context().text_edit_focused()
+            || egui::Popup::is_any_open(self.shell.context())
     }
     fn redraw(&self) {
         if let Some(w) = &self.shell.window {
@@ -656,12 +689,23 @@ impl App {
         for event in events {
             match event {
                 workspace::Event::TabChanged => self.reset_board_ui(),
-                workspace::Event::Opened => self.editing = None,
+                workspace::Event::Saved => self.remember_appearance(),
+                workspace::Event::Opened => {
+                    self.editing = None;
+                    self.restore_appearance();
+                }
                 workspace::Event::Language(language) => {
                     self.settings.language = language;
                     moth_ui::set_locale(language);
                 }
                 workspace::Event::Preferences(values) => {
+                    self.window_preferences = values
+                        .iter()
+                        .filter(|(k, _)| k.starts_with("board_window_"))
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+                    moth_platform::settings::trim_board_windows(&mut self.window_preferences);
+                    self.restore_appearance();
                     self.settings.load(&values);
                     if !self.shortcuts.registry.load(&values) {
                         self.workspace.board.message = moth_ui::Text::InvalidBinding.into();
@@ -813,6 +857,13 @@ impl App {
                 self.fit();
                 self.redraw();
             }
+            Intent::Pan(delta) => {
+                self.camera_motion.stop();
+                let camera = &mut self.workspace.board.view.camera;
+                camera.origin[0] += delta[0] / camera.zoom;
+                camera.origin[1] += delta[1] / camera.zoom;
+                self.redraw();
+            }
             Intent::Zoom(mut factor) | Intent::ZoomTo(mut factor) => {
                 if matches!(intent, Intent::ZoomTo(_)) {
                     self.camera_motion.stop();
@@ -838,6 +889,7 @@ impl App {
             Intent::Open => self.open_files(false),
             Intent::Images => self.open_files(true),
             Intent::Save => {
+                self.workspace.board.conversion_prompt = false;
                 if self.workspace.board.path.is_empty() {
                     self.modal.dialog = Some(());
                     self.modal.dialog_focus = true;
@@ -849,6 +901,10 @@ impl App {
             Intent::Undo => self.workspace.persist(moth_platform::boards::Request::Undo),
             Intent::Redo => self.workspace.persist(moth_platform::boards::Request::Redo),
             Intent::Overlay => self.toggle_overlay(event_loop),
+            Intent::Appearance(value) => {
+                self.workspace.board.appearance = value;
+                self.remember_appearance();
+            }
             Intent::PinChoice(target) => {
                 if self.shell.window.as_ref().is_some_and(|w| {
                     if target {
@@ -938,13 +994,18 @@ impl App {
                     self.import(path);
                 }
             }
-            Intent::SaveAs(path) => {
+            Intent::SaveAs(mut path) => {
+                path.set_extension("moth");
                 self.modal.dialog = None;
                 self.workspace.board.path = path.to_string_lossy().into_owned();
                 self.workspace.board.save();
             }
-            Intent::CancelDialog => self.modal.dialog = None,
+            Intent::CancelDialog => {
+                self.modal.dialog = None;
+                self.workspace.board.close_after_save = false;
+            }
             Intent::SaveAndClose => {
+                self.workspace.board.conversion_prompt = false;
                 self.workspace.board.close_after_save = true;
                 if self.workspace.board.path.is_empty() {
                     self.modal.dialog_path.clear();
@@ -1133,6 +1194,12 @@ impl App {
                     self.redraw();
                 }
                 NativeEvent::Drop(path) => self.import(path),
+                NativeEvent::ZipDrop { archive, member } => {
+                    let change = self
+                        .workspace
+                        .import_zip(archive, member, self.image_format());
+                    self.tab_change(change);
+                }
                 NativeEvent::Error(error) => {
                     tracing::warn!(%error, "native input failed");
                     self.workspace.board.message = error.into();
@@ -1165,6 +1232,7 @@ impl App {
             Input::Pointer(p) => p.position,
         });
         if self.workspace.confirm_close
+            || self.workspace.board.conversion_prompt
             || self.workspace.library
             || self.modal.dialog.is_some()
             || self.workspace.board.arrange_prompt.is_some()
@@ -1448,7 +1516,10 @@ impl App {
                                 // The index only guarantees the rotated envelope, so the
                                 // click must still land inside the frame itself.
                                 .find(|item| {
-                                    item.rect.contains_rotated(item.transform.rotation, world)
+                                    self.workspace.board.presented(item)
+                                        && item
+                                            .rect
+                                            .contains_rotated(item.transform.rotation, world)
                                 })
                             {
                                 if !selection::click(
@@ -1566,9 +1637,17 @@ impl App {
                                     .abs()
                                     .max(1. / self.workspace.board.view.camera.zoom),
                             };
+                            let images_only = self.workspace.board.view.compact
+                                && self.workspace.board.appearance.images_only;
                             selection::area(
                                 &mut self.workspace.board.selection,
-                                self.workspace.board.scene.query(rect).iter().map(|i| i.id),
+                                self.workspace
+                                    .board
+                                    .scene
+                                    .query(rect)
+                                    .iter()
+                                    .filter(|i| !images_only || i.blob().is_some())
+                                    .map(|i| i.id),
                                 self.input.pointer_action,
                             );
                         }
@@ -1615,6 +1694,8 @@ impl App {
         self.resizing = None;
         self.drag_pointer = None;
         self.input.pending_focus = None;
+        self.input.held.clear();
+        self.input.pan_time = None;
         self.input.pointer_action = None;
         self.camera_motion.stop();
         self.redraw();
@@ -1628,6 +1709,42 @@ impl App {
         let Some(window) = self.shell.window.clone() else {
             return Ok(());
         };
+        let over = self.workspace.board.appearance.over && !self.workspace.library;
+        if over != self.overlay.is_some() {
+            if self.workspace.library {
+                let appearance = self.workspace.board.appearance;
+                self.toggle_overlay(event_loop);
+                self.workspace.board.appearance = appearance;
+                self.remember_appearance();
+            } else {
+                self.toggle_overlay(event_loop);
+                // Unsupported windows must not retry creating an overlay on every frame.
+                self.workspace.board.appearance.over = self.overlay.is_some();
+            }
+        }
+        if let Some(overlay) = &mut self.overlay {
+            overlay.appearance = self.workspace.board.appearance;
+        }
+        self.workspace.board.view.compact = self.compact();
+        if self.workspace.board.view.compact && self.workspace.board.appearance.images_only {
+            let board = &mut self.workspace.board;
+            board.selection.retain(|id| {
+                board
+                    .scene
+                    .get(*id)
+                    .is_some_and(|item| item.blob().is_some())
+            });
+        }
+        let appearance = self.workspace.board.appearance;
+        let background = (
+            window.id(),
+            !self.workspace.library && (appearance.background != 0 || appearance.window < 1.),
+            !self.workspace.library && appearance.background == 2,
+        );
+        if self.applied_background != Some(background) {
+            moth_platform::Desktop.window_background(&window, background.1, background.2);
+            self.applied_background = Some(background);
+        }
         if self.picking_window {
             match moth_platform::Desktop.pick_pin_target(&mut self.pin, &window) {
                 Some(true) => {
@@ -1680,6 +1797,30 @@ impl App {
             Instant::now(),
             self.settings.reduced_motion,
         );
+        if self.settings.keyboard_pan_mode == 1 {
+            let blocked = self.canvas_keys_blocked()
+                || self.workspace.library
+                || self.tools.blocked()
+                || self.settings_window.open
+                || self.drag.is_some()
+                || self.resizing.is_some()
+                || self.moving_window
+                || self.picking_window;
+            if let Some(delta) = self.input.flying_pan(
+                &self.shortcuts.registry,
+                Instant::now(),
+                self.settings.keyboard_pan_speed,
+                blocked,
+            ) {
+                self.camera_motion.stop();
+                let camera = &mut self.workspace.board.view.camera;
+                camera.origin[0] += delta[0] / camera.zoom;
+                camera.origin[1] += delta[1] / camera.zoom;
+                self.camera_active = true;
+            }
+        } else {
+            self.input.pan_time = None;
+        }
         self.rebase_drag();
         self.motion
             .configure(self.settings.drag_animation, self.settings.drag_opacity);
@@ -1707,6 +1848,7 @@ impl App {
         self.render(output)
     }
     fn run_ui(&mut self, window: &Window) -> Option<(egui::FullOutput, Vec<Intent>)> {
+        let compact_mode = self.compact();
         let mut intents: Vec<Intent> = Vec::new();
         let ctx = self.shell.context().clone();
         ctx.all_styles_mut(|style| {
@@ -1758,6 +1900,7 @@ impl App {
                     chrome::chrome(
                         ui,
                         chrome::Chrome {
+                            compact: compact_mode,
                             zoom_increment: self.settings.zoom_increment,
                             board: &mut self.workspace.board,
                             tabs: &self.workspace.tabs,
@@ -1792,6 +1935,7 @@ impl App {
                             motion: &self.motion,
                             duplicate: self.drag_duplicate,
                             gpu,
+                            compact: compact_mode,
                             overlay: self.overlay.is_some(),
                             activate: self.moving.is_none()
                                 && self.drag.is_none()
@@ -1811,6 +1955,7 @@ impl App {
                 }
                 intents.extend(chrome);
                 if self.modal.dialog.is_none()
+                    && !self.workspace.board.conversion_prompt
                     && !self.workspace.confirm_close
                     && self.workspace.board.arrange_prompt.is_none()
                 {
@@ -1863,16 +2008,30 @@ impl App {
         };
         let frame = shell::Frame {
             grid: false,
-            opacity: self.overlay.as_ref().map_or(1., |overlay| overlay.opacity),
-            clear: if self.overlay.is_some() {
-                wgpu::Color::TRANSPARENT
+            ui_opacity: if self.workspace.library {
+                1.
             } else {
+                self.workspace.board.appearance.window
+            },
+            opacity: self.workspace.board.appearance.images
+                * self.workspace.board.appearance.window,
+            clear: {
                 let [r, g, b, _] = canvas_color.to_array();
+                let appearance = if self.workspace.library {
+                    window_mode::Appearance::default()
+                } else {
+                    self.workspace.board.appearance
+                };
+                let alpha = if appearance.background == 0 {
+                    1.
+                } else {
+                    appearance.canvas as f64
+                } * appearance.window as f64;
                 wgpu::Color {
-                    r: r as f64 / 255.,
-                    g: g as f64 / 255.,
-                    b: b as f64 / 255.,
-                    a: 1.,
+                    r: r as f64 / 255. * alpha,
+                    g: g as f64 / 255. * alpha,
+                    b: b as f64 / 255. * alpha,
+                    a: alpha,
                 }
             },
             viewport: self.workspace.board.view.viewport,
@@ -1920,6 +2079,9 @@ impl App {
         }
         let preview_ids: HashSet<_> = previews.iter().map(|item| item.id).collect();
         let mut visible = self.workspace.board.visible(self.workspace.library);
+        if self.workspace.board.view.compact && self.workspace.board.appearance.images_only {
+            visible.retain(|item| item.blob().is_some());
+        }
         if !previews.is_empty() {
             visible.retain(|item| {
                 !preview_ids.contains(&item.id)
@@ -2050,6 +2212,7 @@ impl ApplicationHandler<Wake> for App {
                     overlay.event(&event);
                 }
                 if overlay.applied != (overlay.on_top, overlay.click_through) {
+                    self.applied_background = None;
                     if let Some(window) = &self.shell.window
                         && let Err(error) = moth_platform::Desktop.window_effects(
                             window,
@@ -2063,6 +2226,13 @@ impl ApplicationHandler<Wake> for App {
                     } else {
                         overlay.applied = (overlay.on_top, overlay.click_through);
                     }
+                }
+            }
+            if let Some(overlay) = &self.overlay {
+                let appearance = overlay.appearance;
+                if appearance != self.workspace.board.appearance {
+                    self.workspace.board.appearance = appearance;
+                    self.remember_appearance();
                 }
             }
             if self.overlay.as_ref().is_some_and(|overlay| overlay.exit) {
@@ -2156,6 +2326,7 @@ impl ApplicationHandler<Wake> for App {
                 self.input.modifiers = egui::Modifiers::NONE;
                 self.input.super_key = false;
                 self.input.held.clear();
+                self.input.pan_time = None;
                 self.input.pending_focus = None;
             }
             WindowEvent::DroppedFile(path) => self.import(path),
@@ -2164,14 +2335,7 @@ impl ApplicationHandler<Wake> for App {
                     return;
                 };
                 let pressed = event.state == ElementState::Pressed;
-                let blocked = self.modal.dialog.is_some()
-                    || self.workspace.confirm_close
-                    || self.workspace.board.arrange_prompt.is_some()
-                    || self.shortcuts.blocked()
-                    || self.editing.is_some()
-                    || self.shortcuts.toast_focused()
-                    || self.shell.context().text_edit_focused()
-                    || egui::Popup::is_any_open(self.shell.context());
+                let blocked = self.canvas_keys_blocked();
                 let action = self.input.key_action(
                     &self.shortcuts.registry,
                     key,
@@ -2188,7 +2352,23 @@ impl ApplicationHandler<Wake> for App {
                     return;
                 }
                 if pressed && key == egui::Key::Escape {
+                    let closing_surface = self.tools.blocked()
+                        || self.tools.picking
+                        || self.tools.coordinates
+                        || self.tools.picker_open
+                        || self.settings_window.open
+                        || self.moving_window
+                        || self.picking_window;
                     self.cancel_window_mode();
+                    if !blocked
+                        && !event.repeat
+                        && !closing_surface
+                        && self.action_enabled(bindings::Action::Deselect)
+                    {
+                        self.run_action(bindings::Action::Deselect, event_loop);
+                        self.redraw();
+                        return;
+                    }
                     if !blocked {
                         self.tools.picking = false;
                         self.tools.coordinates = false;
@@ -2205,6 +2385,10 @@ impl ApplicationHandler<Wake> for App {
                     return;
                 }
                 if let Some(action) = action {
+                    if self.settings.keyboard_pan_mode == 1 && action.pan_direction().is_some() {
+                        self.redraw();
+                        return;
+                    }
                     if let Some(state) = &mut self.shell.egui {
                         state.egui_input_mut().events.truncate(egui_events_before);
                     }
@@ -2221,6 +2405,7 @@ impl ApplicationHandler<Wake> for App {
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.flush_appearance();
         if let Some(deadline) = self.shell.deadline {
             if deadline <= Instant::now() {
                 self.shell.deadline = None;

@@ -36,28 +36,62 @@ pub fn selection(ui: &egui::Ui, corners: [egui::Pos2; 4]) {
         }
     }
 }
+/// Persisted presentation choices supplied by the application's settings model.
+pub struct Minimap {
+    /// Maximum side length before viewport limits apply.
+    pub size: f32,
+    /// Edge or corner toward which the navigator moves.
+    pub alignment: egui::Align2,
+    /// Visibility of the complete navigator, from zero to one.
+    pub opacity: f32,
+    /// Fraction of the way from the viewport center to the selected placement.
+    pub distance: f32,
+}
 /// Draws bounded metadata samples and returns a normalized click for camera navigation.
 pub fn minimap(
     ctx: &Context,
     viewport: egui::Rect,
     items: &[egui::Rect],
+    board_size: egui::Vec2,
+    options: Minimap,
     camera: egui::Rect,
 ) -> Option<egui::Pos2> {
     let mut click = None;
     if viewport.width() < 600. || viewport.height() < 300. {
         return None;
     }
-    let size = egui::vec2(188., 120.);
+    let tokens = crate::tokens(ctx);
+    let size = minimap_size(viewport.size(), board_size, options.size, &tokens);
+    let gap = f32::from(tokens.space_m);
+    let inset = f32::from(tokens.space_badge);
+    let bottom = ctx.memory(|memory| {
+        ["bottom_toolbar", "selection_badge"]
+            .into_iter()
+            .filter_map(|id| memory.area_rect(egui::Id::new(id)))
+            .map(|rect| rect.top())
+            .fold(viewport.bottom(), f32::min)
+    });
+    let mut placement = viewport.shrink(gap);
+    if options.alignment.y() == egui::Align::Max {
+        placement.max.y = placement.max.y.min(bottom - gap);
+    }
+    let target = options
+        .alignment
+        .anchor_size(options.alignment.pos_in_rect(&placement), size);
+    let center = viewport.center().lerp(target.center(), options.distance);
     egui::Area::new(egui::Id::new("minimap"))
-        .fixed_pos(viewport.right_bottom() - size - egui::vec2(16., 16.))
+        .fixed_pos(center)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .constrain_to(viewport)
         .show(ctx, |ui| {
+            ui.set_opacity(options.opacity);
             egui::Frame::new()
                 .fill(ui.visuals().panel_fill)
                 .corner_radius(crate::tokens(ui.ctx()).radius_card)
                 .inner_margin(crate::tokens(ui.ctx()).space_badge as i8)
                 .show(ui, |ui| {
                     let (r, response) = ui.allocate_exact_size(
-                        size - egui::vec2(20., 20.),
+                        size - egui::Vec2::splat(2. * inset),
                         egui::Sense::click_and_drag(),
                     );
                     let transform =
@@ -88,6 +122,25 @@ pub fn minimap(
                 });
         });
     click
+}
+
+fn minimap_size(
+    viewport: egui::Vec2,
+    board: egui::Vec2,
+    max_side: f32,
+    tokens: &crate::Tokens,
+) -> egui::Vec2 {
+    let side = max_side.min(viewport.x * 0.3).min(viewport.y * 0.3);
+    let aspect = if board.x.is_finite() && board.y.is_finite() && board.x > 0. && board.y > 0. {
+        (board.x / board.y).clamp(tokens.minimap_aspect_min, 1. / tokens.minimap_aspect_min)
+    } else {
+        1.
+    };
+    if aspect >= 1. {
+        egui::vec2(side, side / aspect)
+    } else {
+        egui::vec2(side * aspect, side)
+    }
 }
 
 /// Keeps selection measurements visible without retaining scene metadata.
@@ -133,6 +186,147 @@ pub fn selection_badge(ctx: &Context, viewport: egui::Rect, count: usize, size: 
 mod tests {
     use super::*;
 
+    #[test]
+    fn minimap_placement_keeps_every_anchor_inside_the_viewport() {
+        use egui::Align2;
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200., 800.));
+        for alignment in [
+            Align2::LEFT_TOP,
+            Align2::CENTER_TOP,
+            Align2::RIGHT_TOP,
+            Align2::LEFT_CENTER,
+            Align2::CENTER_CENTER,
+            Align2::RIGHT_CENTER,
+            Align2::LEFT_BOTTOM,
+            Align2::CENTER_BOTTOM,
+            Align2::RIGHT_BOTTOM,
+        ] {
+            let ctx = Context::default();
+            crate::theme(&ctx, &crate::Tokens::LIGHT);
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(viewport),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        minimap(
+                            ui.ctx(),
+                            viewport,
+                            &[],
+                            egui::vec2(100., 200.),
+                            Minimap {
+                                size: crate::Tokens::LIGHT.minimap_max,
+                                alignment,
+                                opacity: 1.,
+                                distance: 1.,
+                            },
+                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1., 1.)),
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            let rect = ctx
+                .memory(|memory| memory.area_rect(egui::Id::new("minimap")))
+                .unwrap();
+            assert!(viewport.contains_rect(rect), "{alignment:?}: {rect:?}");
+            let expected =
+                alignment.pos_in_rect(&viewport.shrink(f32::from(crate::Tokens::LIGHT.space_m)));
+            assert!(
+                alignment.pos_in_rect(&rect).distance(expected) < 2.,
+                "{alignment:?}: {rect:?}"
+            );
+        }
+    }
+    #[test]
+    fn minimap_distance_interpolates_its_center_toward_the_selected_corner() {
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200., 800.));
+        let board = egui::vec2(100., 200.);
+        let tokens = crate::Tokens::LIGHT;
+        let size = minimap_size(viewport.size(), board, tokens.minimap_max, &tokens);
+        let corner = egui::Align2::LEFT_BOTTOM
+            .anchor_size(
+                egui::Align2::LEFT_BOTTOM.pos_in_rect(&viewport.shrink(f32::from(tokens.space_m))),
+                size,
+            )
+            .center();
+        for distance in [0., 0.5, 1.] {
+            let ctx = Context::default();
+            crate::theme(&ctx, &tokens);
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(viewport),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        minimap(
+                            ui.ctx(),
+                            viewport,
+                            &[],
+                            board,
+                            Minimap {
+                                size: tokens.minimap_max,
+                                alignment: egui::Align2::LEFT_BOTTOM,
+                                opacity: 0.5,
+                                distance,
+                            },
+                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1., 1.)),
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            let rect = ctx
+                .memory(|memory| memory.area_rect(egui::Id::new("minimap")))
+                .unwrap();
+            assert!(
+                rect.center()
+                    .distance(viewport.center().lerp(corner, distance))
+                    < 2.
+            );
+            assert!(viewport.contains_rect(rect));
+        }
+    }
+    #[test]
+    fn minimap_size_preference_respects_viewport_limit() {
+        let viewport = egui::vec2(1600., 1000.);
+        let board = egui::vec2(100., 200.);
+        let small = minimap_size(viewport, board, 120., &crate::Tokens::LIGHT);
+        let large = minimap_size(viewport, board, 600., &crate::Tokens::LIGHT);
+        assert_eq!(small, egui::vec2(60., 120.));
+        assert_eq!(large, egui::vec2(150., 300.));
+    }
+    #[test]
+    fn minimap_adapts_to_board_and_stays_bounded() {
+        let viewport = egui::vec2(800., 600.);
+        for board in [
+            egui::vec2(100., 1000.),
+            egui::vec2(1000., 100.),
+            egui::vec2(100., 100.),
+            egui::Vec2::ZERO,
+        ] {
+            let size = minimap_size(
+                viewport,
+                board,
+                crate::Tokens::LIGHT.minimap_max,
+                &crate::Tokens::LIGHT,
+            );
+            assert!(size.x > 0. && size.y > 0.);
+            assert!(size.x <= viewport.x * 0.3 && size.y <= viewport.y * 0.3);
+            if board.x < board.y {
+                assert!(size.x < size.y);
+            }
+            if board.x > board.y {
+                assert!(size.x > size.y);
+            }
+            assert!(
+                size.min_elem() / size.max_elem()
+                    >= crate::Tokens::LIGHT.minimap_aspect_min - f32::EPSILON
+            );
+        }
+    }
     #[test]
     fn badge_remains_one_line_inside_a_narrow_viewport() {
         let ctx = Context::default();

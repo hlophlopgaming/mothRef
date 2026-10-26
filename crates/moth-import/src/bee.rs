@@ -122,9 +122,13 @@ struct Meta {
 /// memory. Ordering by z is the caller's job because only it knows how inserts
 /// become durable.
 pub fn read<S: ReadSeek>(
-    source: S,
+    mut source: S,
     emit: &mut impl FnMut(Item<'_>) -> Result<(), Error>,
 ) -> Result<Summary, Error> {
+    // Board admission is independent of the encoded-image budget.
+    if source.seek(std::io::SeekFrom::End(0))? > 4 * 1024 * 1024 * 1024 {
+        return Err(std::io::Error::other("BeeRef board exceeds 4 GiB file limit").into());
+    }
     let mut database = Database::open(source)?;
     let items_root = database
         .root_page("items")?
@@ -136,7 +140,19 @@ pub fn read<S: ReadSeek>(
     let mut summary = Summary::default();
     let mut expected_images = 0usize;
     let mut meta: HashMap<i64, Meta> = HashMap::new();
+    let mut metadata_bytes = 0usize;
     database.walk_table(items_root, &mut |rowid, values| -> Result<(), Error> {
+        metadata_bytes += values
+            .iter()
+            .filter_map(Value::text)
+            .map(str::len)
+            .sum::<usize>()
+            + 256;
+        if meta.len() >= 8192 || metadata_bytes > 8 * 1024 * 1024 {
+            return Err(
+                std::io::Error::other("BeeRef metadata exceeds 8 MiB / 8192-item budget").into(),
+            );
+        }
         let kind = match values.get(1).and_then(Value::text) {
             Some("pixmap") => Kind::Pixmap,
             Some("text") => Kind::Text,

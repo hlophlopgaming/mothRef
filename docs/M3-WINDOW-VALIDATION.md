@@ -138,3 +138,56 @@ surfaces do not configure or spin; uncovering and DPI changes must request a fre
 frame. Record any renderer recreation and whether image residency reloads without
 changing the scene. A failed or unperformed run keeps the reliability roadmap
 checkbox open. Release stress/soak and CI tier-3 evidence remain release gates.
+
+
+## Window modes and appearance
+
+The View popover in the revealed window bar and the independent Over controller
+share presentation controls. There are no new Settings rows: these are per-board
+view state, stored by the preference worker without changing the board format.
+Saved-board identities use a hash of the local path; the preference store retains
+64 recently adjusted boards. Unsaved tabs retain their state in memory and acquire
+persistent presentation when first saved. Moving a file to a new path starts with
+default presentation. Returning from Over restores the previous Collect/View choice.
+
+Native blur is enabled through winit on macOS. X11, Windows and unqualified
+Wayland compositors show a translucent tint and an explicit fallback message.
+No platform-specific code or dependency is added to the application crate.
+
+Pending manual checks (not performed in this agent session):
+
+- Linux/X11 and Wayland: check Tab in empty, populated and locked boards; Tab
+  inside note editors, dialogs and text fields must retain normal text behavior.
+- Linux, Windows and macOS: resize across 600 logical pixels, switch tabs with
+  different modes, save an unnamed board and reopen it, and check Ctrl/Command+T
+  and controller Close/Escape. Enter the library from Over and reopen the board.
+- Check the sliding bar with mouse, keyboard focus and its persistent corner
+  button with touch. Test narrow widths, board switching, pin and window controls.
+- View must keep context-menu and pointer editing. Images only must hide notes
+  without deleting them; hidden notes must not intercept image clicks or rectangle
+  selection. Collect must show them again. Check that undo/save content is unchanged.
+- Adjust all three opacities in both surfaces. Check overlapping images, notes,
+  popovers and outlines, and verify settings are independent for two open boards.
+- macOS: check native Glass blur. Other backends: check the stated translucent
+  fallback. Confirm solid background and returning to the library restore opacity.
+- Over: enable click-through, move the controller, change appearance and exit
+  through the controller without a global shortcut. Minimize and restore both windows.
+
+Group-only viewing remains pending: the scene currently represents images and
+text only, with no group identity, membership or selectable group title.
+Regression tests were added for presentation decoding, narrow-window selection,
+and bounded preference history. Per AGENTS.md §3 they were compiled by Clippy,
+but not executed. Native GUI checks, golden-image validation, benchmarks and soak
+checks remain for an explicit test request or release preparation.
+
+
+### Alpha.10 release preparation — 2026-10-26
+
+The release test run supersedes the earlier deferred-test note above: all 328
+workspace tests passed, including presentation decoding/filtering and bounded
+presentation-history coverage. Headless render goldens and allocation checks
+also passed. Local socket/Wayland tests used isolated `/tmp` data outside the
+sandbox; no tests were ignored. The native manual matrix above remains pending.
+See [the alpha.10 release notes](releases/v0.1.0-alpha.10.md) for corpus, fuzz,
+journal-kill and performance evidence. No completed native qualification or
+completed M3 milestone is claimed.

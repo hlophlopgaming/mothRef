@@ -9,7 +9,7 @@ pub(super) struct Overlay {
     state: egui_winit::State,
     wake: Arc<dyn Fn() + Send + Sync>,
     software: bool,
-    pub(super) opacity: f32,
+    pub(super) appearance: super::window_mode::Appearance,
     pub(super) click_through: bool,
     pub(super) on_top: bool,
     pub(super) exit: bool,
@@ -28,7 +28,7 @@ impl Overlay {
                     .with_title(moth_ui::text(moth_ui::Text::Overlay))
                     .with_decorations(false)
                     .with_resizable(true)
-                    .with_inner_size(winit::dpi::LogicalSize::new(530., 64.)),
+                    .with_inner_size(winit::dpi::LogicalSize::new(530., 220.)),
             )?,
         );
         let ctx = egui::Context::default();
@@ -54,7 +54,7 @@ impl Overlay {
             state,
             wake,
             software,
-            opacity: 0.55,
+            appearance: super::window_mode::Appearance::default(),
             click_through: false,
             on_top,
             exit: false,
@@ -134,18 +134,13 @@ impl Overlay {
                             if icons::button(ui, Icon::Pan, text(Text::Pan), false).drag_started() {
                                 let _ = self.window.drag_window();
                             }
-                            ui.vertical(|ui| {
-                                ui.label(
-                                    egui::RichText::new(text(Text::Opacity))
-                                        .size(10.)
-                                        .color(moth_ui::tokens(&self.ctx).text_muted),
-                                );
-                                ui.add(
-                                    egui::Slider::new(&mut self.opacity, 0.1..=1.)
-                                        .show_value(false),
-                                );
-                            });
-                            ui.monospace(format!("{:.0}%", self.opacity * 100.));
+                            super::window_mode::controls(
+                                ui,
+                                &mut self.appearance,
+                                moth_platform::Desktop
+                                    .window_capabilities(&self.window)
+                                    .blur,
+                            );
                             let caps = moth_platform::Desktop.window_capabilities(&self.window);
                             ui.add_enabled_ui(caps.click_through, |ui| {
                                 ui.toggle_value(&mut self.click_through, text(Text::ClickThrough));

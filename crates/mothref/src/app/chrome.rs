@@ -8,6 +8,7 @@ use super::{Document, Intent};
 
 /// Read-only inputs the chrome draws from; bundled to keep the call small.
 pub(super) struct Chrome<'a> {
+    pub compact: bool,
     pub board: &'a mut Document,
     pub tabs: &'a [Document],
     pub gpu: &'a Gpu,
@@ -48,6 +49,107 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
     }));
     ordered.sort_unstable_by_key(|(id, _)| *id);
     let tab_labels: Vec<_> = ordered.into_iter().map(|(_, tab)| tab).collect();
+    if ctx.compact {
+        use super::bindings::Action;
+        use moth_ui::{Text, text};
+        let context = ui.ctx().clone();
+        let tokens = moth_ui::tokens(&context);
+        let id = egui::Id::new("view_window_bar");
+        let mut explicit = context.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
+        let handle = egui::Area::new(id.with("handle"))
+            .fixed_pos(context.content_rect().left_top())
+            .order(egui::Order::Foreground)
+            .show(&context, |ui| {
+                egui::Frame::new()
+                    .fill(tokens.surface)
+                    .inner_margin(tokens.space_s as i8)
+                    .show(ui, |ui| {
+                        if moth_ui::icons::button(
+                            ui,
+                            moth_ui::icons::Icon::Maximize,
+                            text(Text::WindowControls),
+                            explicit,
+                        )
+                        .clicked()
+                        {
+                            explicit = !explicit;
+                        }
+                    });
+            });
+        let show = explicit
+            || egui::Popup::is_any_open(&context)
+            || context.memory(|m| m.focused().is_some())
+            || context.input(|i| {
+                i.pointer
+                    .hover_pos()
+                    .is_some_and(|p| p.y < tokens.space_header as f32 * 2.)
+            });
+        let reveal = context.animate_bool(id.with("reveal"), show);
+        if reveal > 0. {
+            let height = context
+                .data(|d| d.get_temp::<f32>(id.with("height")))
+                .unwrap_or(tokens.space_header as f32 * 2.);
+            let position = context.content_rect().left_top()
+                + egui::vec2(handle.response.rect.width(), -height * (1. - reveal));
+            let bar = egui::Area::new(id)
+                .fixed_pos(position)
+                .order(egui::Order::Foreground)
+                .show(&context, |ui| {
+                    ui.set_max_width(
+                        (context.content_rect().width() - handle.response.rect.width())
+                            .max(ui.spacing().interact_size.x),
+                    );
+                    egui::Frame::new()
+                        .fill(tokens.surface)
+                        .inner_margin(tokens.space_s as i8)
+                        .show(ui, |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.menu_button(ctx.board.title(), |ui| {
+                                    for tab in &tab_labels {
+                                        if ui.selectable_label(tab.active, tab.title).clicked() {
+                                            intents.push(Intent::Tab(tab.slot));
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                                let mut appearance = ctx.board.appearance;
+                                ui.menu_button(text(Text::ViewAppearance), |ui| {
+                                    super::window_mode::controls(
+                                        ui,
+                                        &mut appearance,
+                                        moth_platform::Desktop.window_capabilities(ctx.window).blur,
+                                    );
+                                    super::surfaces::menu(
+                                        ui,
+                                        &[super::surfaces::Slot::Action(Action::ToggleView)],
+                                        ctx.enabled,
+                                        ctx.registry,
+                                        &mut intents,
+                                    );
+                                });
+                                if appearance != ctx.board.appearance {
+                                    intents.push(Intent::Appearance(appearance));
+                                }
+                                for action in super::surfaces::VIEW_WINDOW {
+                                    if super::surfaces::button(
+                                        ui,
+                                        *action,
+                                        ctx.enabled,
+                                        ctx.registry,
+                                        true,
+                                        *action == Action::Pin && ctx.pinned,
+                                    ) {
+                                        intents.push(Intent::Action(*action));
+                                    }
+                                }
+                            });
+                        });
+                });
+            context.data_mut(|d| d.insert_temp(id.with("height"), bar.response.rect.height()));
+        }
+        context.data_mut(|d| d.insert_temp(id, explicit));
+        return intents;
+    }
     let mut actions = moth_ui::toolbar(
         ui,
         moth_ui::Status {

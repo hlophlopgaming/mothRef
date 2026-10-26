@@ -345,3 +345,49 @@ SamplingNearest = Чёткие пиксели (ближайший сосед)
 SamplingAutomatic = Автоматически: чёткие пиксели от 200%
 NoteWrap = Переносить текст по ширине рамки
 NoteFontSize = Размер текста
+
+PanLeft = Сдвинуть вид влево
+PanRight = Сдвинуть вид вправо
+PanUp = Сдвинуть вид вверх
+PanDown = Сдвинуть вид вниз
+
+KeyboardPanMode = Перемещение клавишами
+PanStepped = Пошаговое
+PanFlying = Полёт
+KeyboardPanStep = Шаг перемещения (пиксели экрана)
+KeyboardPanSpeed = Скорость полёта (пиксели экрана/с)
+Deselect = Снять выделение
+
+ShowMinimap = Показывать миникарту
+MinimapSize = Максимальный размер миникарты (пиксели экрана)
+
+MinimapPosition = Расположение миникарты
+PositionTopLeft = Слева сверху
+PositionTopCenter = Сверху по центру
+PositionTopRight = Справа сверху
+PositionMiddleLeft = Слева посередине
+PositionCenter = По центру
+PositionMiddleRight = Справа посередине
+PositionBottomLeft = Слева снизу
+PositionBottomCenter = Снизу по центру
+PositionBottomRight = Справа снизу
+
+MinimapOpacity = Непрозрачность миникарты
+MinimapDistance = Удалённость миникарты от центра
+ConversionTitle = Сохраните как .moth для работы в MothRef
+ConversionRetained = Исходная доска остаётся нетронутой и доступной по указанному пути. Копия .moth сохраняет исходные байты изображений, поддерживаемую компоновку и правки, а также простой текст заметок.
+ConversionPur = Не поддерживаются: группы и их содержимое, рисунки, ссылки без встроенных изображений, форматированные заметки и заметки фиксированного размера, прозрачность, неподдерживаемые преобразования и флаги изображений. Эти элементы пропускаются.
+ConversionBee = Не поддерживаются: неизвестные элементы, отсутствующие изображения и неверная геометрия. Прозрачность, оттенки серого, форматирование заметок и смещение обрезки не сохраняются.
+SaveAsMoth = Сохранить как .moth…
+ContinueConversion = Продолжить без сохранения
+
+ToggleView = Сбор / Просмотр
+ViewAppearance = Вид
+ImageOpacity = Непрозрачность изображений
+BoardOpacity = Непрозрачность доски
+WindowOpacity = Непрозрачность окна
+BackgroundSolid = Сплошной
+BackgroundTranslucent = Полупрозрачный
+BackgroundGlass = Стекло
+GlassFallback = Размытие недоступно; стекло использует полупрозрачную заливку.
+ImagesOnly = Только изображения

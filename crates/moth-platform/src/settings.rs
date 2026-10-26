@@ -11,6 +11,33 @@ pub const REDUCED_MOTION: &str = "reduced_motion";
 /// All preferences and registered shortcuts fit one validated update; the file still has a 64 KiB limit.
 pub const MAX_ENTRIES: usize = 256;
 
+/// Stable opaque identity for a board's local presentation preference, independent of Rust's hasher.
+pub fn board_window_key(path: &str) -> Option<String> {
+    (!path.is_empty()).then(|| format!("board_window_{}", blake3::hash(path.as_bytes()).to_hex()))
+}
+
+/// Keep presentation history for the 64 most recently used boards within the preference budget.
+pub fn trim_board_windows(values: &mut BTreeMap<String, String>) {
+    let mut keys: Vec<_> = values
+        .iter()
+        .filter(|(key, _)| key.starts_with("board_window_"))
+        .map(|(key, value)| {
+            (
+                value
+                    .split_once('|')
+                    .and_then(|(time, _)| time.parse::<u128>().ok())
+                    .unwrap_or(0),
+                key.clone(),
+            )
+        })
+        .collect();
+    keys.sort_unstable();
+    let excess = keys.len().saturating_sub(64);
+    for (_, key) in keys.into_iter().take(excess) {
+        values.remove(&key);
+    }
+}
+
 /// Reads `settings.txt` into a `key=value` map; missing files read as empty.
 pub fn load(directory: &Path) -> io::Result<BTreeMap<String, String>> {
     std::fs::create_dir_all(directory)?;
@@ -62,6 +89,7 @@ pub fn save_all(directory: &Path, values: &BTreeMap<String, String>) -> io::Resu
         .map_err(|_| io::Error::other("Preference writer unavailable"))?;
     let mut settings = load(directory)?;
     settings.extend(values.iter().map(|(k, v)| (k.clone(), v.clone())));
+    trim_board_windows(&mut settings);
     let text = settings
         .iter()
         .map(|(key, value)| format!("{key}={value}"))
@@ -76,6 +104,26 @@ pub fn save_all(directory: &Path, values: &BTreeMap<String, String>) -> io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn board_window_history_evicts_the_least_recent_without_touching_settings() {
+        let mut values = BTreeMap::from([("theme".into(), "dark".into())]);
+        for index in 0..70 {
+            values.insert(
+                format!("board_window_{index}"),
+                format!("{index}|appearance"),
+            );
+        }
+        trim_board_windows(&mut values);
+        assert_eq!(values.len(), 65);
+        assert_eq!(values.get("theme").map(String::as_str), Some("dark"));
+        assert!(!values.contains_key("board_window_5"));
+        assert!(values.contains_key("board_window_6"));
+        assert!(values.contains_key("board_window_69"));
+        assert!(board_window_key("").is_none());
+        assert_eq!(board_window_key("a"), board_window_key("a"));
+        assert_ne!(board_window_key("a"), board_window_key("b"));
+    }
+
     #[test]
     fn entry_budget_accepts_the_full_registry_and_still_rejects_oversized_updates() {
         let root =

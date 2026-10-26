@@ -18,6 +18,7 @@ pub(super) enum Intent {
     Action(super::bindings::Action),
     /// Commit the locally laid-out canvas before applying its user actions.
     View(super::document::View),
+    Appearance(super::window_mode::Appearance),
     /// Acknowledge the inline editor focus request.
     NoteFocused,
     /// Acknowledge the save-path widget focus request.
@@ -33,6 +34,8 @@ pub(super) enum Intent {
     Zoom(f32),
     /// Exact scale replaces any pending animated zoom target.
     ZoomTo(f32),
+    /// Move the viewport in screen points, independent of zoom.
+    Pan([f32; 2]),
     /// Return to the catalog without closing the board.
     Home,
     /// Create a bounded new board.

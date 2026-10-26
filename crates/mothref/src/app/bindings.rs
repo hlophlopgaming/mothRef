@@ -31,6 +31,7 @@ actions! {
     Paste, Paste, "Cmd+V", Some(moth_ui::icons::Icon::Paste);
     Undo, Undo, "Cmd+Z", Some(moth_ui::icons::Icon::Undo);
     Redo, Redo, "Cmd+Y", Some(moth_ui::icons::Icon::Redo);
+    ToggleView, ToggleView, "Tab", Some(moth_ui::icons::Icon::Image);
     Overlay, Overlay, "Cmd+T", Some(moth_ui::icons::Icon::Overlay);
     Pin, OnTop, "Cmd+Shift+T", Some(moth_ui::icons::Icon::Pin);
     MoveWindow, MoveWindow, "Cmd+Shift+M", None;
@@ -38,6 +39,7 @@ actions! {
     Minimize, Minimize, "", Some(moth_ui::icons::Icon::Minus);
     Maximize, Maximize, "", Some(moth_ui::icons::Icon::Maximize);
     Settings, Settings, "Cmd+Comma", Some(moth_ui::icons::Icon::Settings);
+    Deselect, Deselect, "", None;
     Select, Select, "V", Some(moth_ui::icons::Icon::Select);
     Fit, Fit, "Home", Some(moth_ui::icons::Icon::Fit);
     Focus, FitSelection, "Space", Some(moth_ui::icons::Icon::Fit);
@@ -46,6 +48,11 @@ actions! {
     ZoomIn, ZoomIn, "Equal", Some(moth_ui::icons::Icon::Plus);
     ZoomOut, ZoomOut, "Minus", Some(moth_ui::icons::Icon::Minus);
     ZoomReset, ZoomReset, "", None;
+    PanLeft, PanLeft, "A", None;
+    PanRight, PanRight, "D", None;
+    PanUp, PanUp, "W", None;
+    PanDown, PanDown, "S", None;
+
     ResetCamera, ResetCamera, "", None;
     Note, AddNote, "", Some(moth_ui::icons::Icon::Plus);
     Delete, Delete, "Delete", Some(moth_ui::icons::Icon::Trash);
@@ -97,6 +104,8 @@ actions! {
     Discard, Close, "", Some(moth_ui::icons::Icon::Close);
     KeepOpen, Keep, "", None;
     CancelDialog, Cancel, "", None;
+    ContinueConversion, ContinueConversion, "", None;
+    SaveConversion, SaveAsMoth, "", Some(moth_ui::icons::Icon::Save);
     SavePath, Save, "", Some(moth_ui::icons::Icon::Save);
     DismissRecovery, DiscardRecovery, "", None;
     RestoreRecovery, RestoreRecovery, "", None;
@@ -138,13 +147,24 @@ actions! {
 
 }
 impl Action {
+    pub fn pan_direction(self) -> Option<[f32; 2]> {
+        match self {
+            Self::PanLeft => Some([-1., 0.]),
+            Self::PanRight => Some([1., 0.]),
+            Self::PanUp => Some([0., -1.]),
+            Self::PanDown => Some([0., 1.]),
+            _ => None,
+        }
+    }
     pub fn category(self) -> Text {
         use Action::*;
         match self {
             MoveDrag | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag | PanSpaceDrag
             | PanAltDrag => Text::CategoryPointer,
-            Select | Fit | Focus | Previous | Next | ZoomIn | ZoomOut | ZoomReset | ResetCamera
-            | Lock | Grayscale => Text::CategoryView,
+            PanLeft | PanRight | PanUp | PanDown | Select | Fit | Focus | Previous | Next
+            | ToggleView | ZoomIn | ZoomOut | ZoomReset | ResetCamera | Lock | Grayscale => {
+                Text::CategoryView
+            }
             Palette | BindingSettings | Shortcuts | New | Open | Images | Save | Library
             | CloseTab | NextTab | Overlay | Pin | Minimize | Maximize | MoveWindow
             | Fullscreen | Settings | CloseWindow => Text::CategoryBoard,
@@ -166,7 +186,11 @@ impl Action {
     pub fn repeat(self) -> bool {
         matches!(
             self,
-            Self::NudgeLeft
+            Self::PanLeft
+                | Self::PanRight
+                | Self::PanUp
+                | Self::PanDown
+                | Self::NudgeLeft
                 | Self::NudgeRight
                 | Self::NudgeUp
                 | Self::NudgeDown

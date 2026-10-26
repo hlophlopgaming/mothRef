@@ -113,12 +113,25 @@ impl DesktopStorage {
     }
     /// Registering an OS-provided path performs no filesystem access.
     pub fn register(&self, path: PathBuf) -> io::Result<Handle> {
-        self.register_source(source::Source { path, range: None })
+        self.register_source(source::Source {
+            path,
+            range: None,
+            member: None,
+        })
+    }
+    /// Registers a read-only ZIP entry without doing I/O on the caller.
+    pub fn register_zip(&self, path: PathBuf, member: String) -> io::Result<Handle> {
+        self.register_source(source::Source {
+            path,
+            range: None,
+            member: Some(member),
+        })
     }
     fn register_range(&self, path: PathBuf, range: moth_format::board::Blob) -> io::Result<Handle> {
         self.register_source(source::Source {
             path,
             range: Some(range),
+            member: None,
         })
     }
     fn register_source(&self, source: source::Source) -> io::Result<Handle> {
@@ -145,7 +158,14 @@ impl DesktopStorage {
                 paths
                     .get(&handle)
                     .filter(|source| source.range.is_none())
-                    .and_then(|source| source.path.file_name())
+                    .and_then(|source| {
+                        source
+                            .member
+                            .as_ref()
+                            .map(std::path::Path::new)
+                            .unwrap_or(&source.path)
+                            .file_name()
+                    })
                     .map(|name| name.to_string_lossy().chars().take(256).collect())
             })
             .unwrap_or_default()
@@ -307,7 +327,7 @@ impl DesktopStorage {
     }
     fn path(&self, handle: Handle) -> io::Result<PathBuf> {
         let source = self.source(handle)?;
-        if source.range.is_some() {
+        if source.range.is_some() || source.member.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "original ranges are read-only",
@@ -405,6 +425,8 @@ pub trait Platform {
         pin.pick(window)
     }
     /// Applies reversible window effects through one platform boundary.
+    /// Apply canvas transparency and optional background blur without changing stacking.
+    fn window_background(&self, window: &winit::window::Window, transparent: bool, blur: bool);
     fn window_effects(
         &self,
         window: &winit::window::Window,
@@ -416,6 +438,8 @@ pub trait Platform {
 /// Native window affordances are independent of GPU alpha support.
 #[derive(Clone, Copy)]
 pub struct WindowCapabilities {
+    /// The native backend implements background blur.
+    pub blur: bool,
     /// Wayland compositors control stacking, so the app cannot promise topmost behavior.
     pub on_top: bool,
     /// Selecting a foreign window is supported by this backend.
@@ -445,10 +469,15 @@ impl Platform for Desktop {
             .window_handle()
             .is_ok_and(|h| matches!(h.as_raw(), RawWindowHandle::Wayland(_)));
         WindowCapabilities {
+            blur: cfg!(target_os = "macos"),
             on_top: !wayland,
             above_window: cfg!(target_os = "windows"),
             click_through: true,
         }
+    }
+    fn window_background(&self, window: &winit::window::Window, transparent: bool, blur: bool) {
+        window.set_transparent(transparent);
+        window.set_blur(blur && self.window_capabilities(window).blur);
     }
     fn window_effects(
         &self,

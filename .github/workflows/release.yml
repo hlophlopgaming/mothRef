@@ -50,7 +50,7 @@ jobs:
         run: |
           mkdir package
           cp target/${{ matrix.target }}/release/mothref package/
-          cp LICENSE THIRD_PARTY.md crates/moth-ui/fonts/LICENSE-Hack.txt package/
+          cp LICENSE THIRD_PARTY.md crates/moth-ui/fonts/LICENSE-*.txt package/
           tar -czf mothref-${{ matrix.name }}.tar.gz -C package .
       - name: Package Finder application
         if: runner.os == 'macOS'
@@ -58,7 +58,7 @@ jobs:
         run: |
           mkdir -p package/MothRef.app/Contents/MacOS
           cp target/${{ matrix.target }}/release/mothref package/MothRef.app/Contents/MacOS/
-          cp LICENSE THIRD_PARTY.md crates/moth-ui/fonts/LICENSE-Hack.txt package/
+          cp LICENSE THIRD_PARTY.md crates/moth-ui/fonts/LICENSE-*.txt package/
           python3 - <<'PYTHON'
           import json, plistlib, subprocess
           from pathlib import Path
@@ -82,7 +82,7 @@ jobs:
           python -c "import pathlib,struct; p=pathlib.Path('target/${{ matrix.target }}/release/mothref.exe').read_bytes(); pe=struct.unpack_from('<I',p,0x3c)[0]; assert p[pe:pe+4]==b'PE\0\0'; assert struct.unpack_from('<H',p,pe+24+68)[0]==2, 'Expected GUI subsystem'"
           New-Item -ItemType Directory package
           Copy-Item target/${{ matrix.target }}/release/mothref.exe package/
-          Copy-Item LICENSE, THIRD_PARTY.md, crates/moth-ui/fonts/LICENSE-Hack.txt package/
+          Copy-Item LICENSE, THIRD_PARTY.md, crates/moth-ui/fonts/LICENSE-*.txt package/
           Compress-Archive package/* mothref-${{ matrix.name }}.zip
       - uses: actions/upload-artifact@v4
         with:

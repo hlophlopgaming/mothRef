@@ -11,6 +11,7 @@ pub(super) struct InputState {
     pub modifiers: egui::Modifiers,
     pub super_key: bool,
     pub held: std::collections::HashSet<egui::Key>,
+    pub pan_time: Option<std::time::Instant>,
     pub pending_focus: Option<egui::Key>,
     pub pointer_action: Option<super::bindings::Action>,
     pub native_pressed: Option<(Kind, u64)>,
@@ -112,6 +113,36 @@ impl InputState {
             self.pending_focus = Some(key);
         }
         Some(action)
+    }
+    /// Integrates held navigation keys independently of OS key-repeat timing.
+    pub fn flying_pan(
+        &mut self,
+        registry: &super::bindings::Registry,
+        now: std::time::Instant,
+        speed: f32,
+        blocked: bool,
+    ) -> Option<[f32; 2]> {
+        if blocked {
+            self.held.clear();
+        }
+        let direction = self
+            .held
+            .iter()
+            .filter_map(|key| registry.key(*key, self.mods()))
+            .filter_map(|action| action.pan_direction())
+            .fold([0., 0.], |a, b| [a[0] + b[0], a[1] + b[1]]);
+        let length = direction[0].hypot(direction[1]);
+        if length == 0. {
+            self.pan_time = None;
+            return None;
+        }
+        let dt = self.pan_time.replace(now).map_or(0., |last| {
+            now.saturating_duration_since(last).as_secs_f32().min(0.05)
+        });
+        Some([
+            direction[0] / length * speed * dt,
+            direction[1] / length * speed * dt,
+        ])
     }
     /// The threshold is in screen points, independent of zoom or input device.
     pub fn focus_drag(&mut self, start: [f32; 2], position: [f32; 2]) -> bool {
@@ -268,6 +299,91 @@ mod tests {
             input.key_action(&registry, Key::Space, false, false, false, false),
             None
         );
+    }
+    #[test]
+    fn flying_pan_uses_elapsed_time_and_normalizes_diagonals() {
+        use std::time::{Duration, Instant};
+        let registry = Registry::default();
+        let mut input = InputState::default();
+        let now = Instant::now();
+        input.key_action(&registry, Key::D, true, false, false, false);
+        assert_eq!(
+            input.flying_pan(&registry, now, 800., false),
+            Some([0., 0.])
+        );
+        let delta = input
+            .flying_pan(&registry, now + Duration::from_millis(25), 800., false)
+            .unwrap();
+        assert!((delta[0] - 20.).abs() < 0.001);
+        assert_eq!(delta[1], 0.);
+        input.key_action(&registry, Key::W, true, false, false, false);
+        let delta = input
+            .flying_pan(&registry, now + Duration::from_millis(50), 800., false)
+            .unwrap();
+        assert!((delta[0].hypot(delta[1]) - 20.).abs() < 0.001);
+        assert!(delta[0] > 0. && delta[1] < 0.);
+        input.key_action(&registry, Key::D, false, false, false, false);
+        input.key_action(&registry, Key::W, false, false, false, false);
+        assert_eq!(
+            input.flying_pan(&registry, now + Duration::from_millis(75), 800., false),
+            None
+        );
+        assert!(input.pan_time.is_none());
+    }
+    #[test]
+    fn flying_pan_respects_rebinding_focus_and_stalled_frames() {
+        use std::time::{Duration, Instant};
+        let mut registry = Registry::default();
+        registry.set(Action::PanRight, "8");
+        let mut input = InputState::default();
+        let now = Instant::now();
+        input.key_action(&registry, Key::D, true, false, false, false);
+        assert_eq!(input.flying_pan(&registry, now, 800., false), None);
+        input.key_action(&registry, Key::Num8, true, false, false, false);
+        assert!(input.flying_pan(&registry, now, 800., false).is_some());
+        let delta = input
+            .flying_pan(&registry, now + Duration::from_secs(10), 800., false)
+            .unwrap();
+        assert!((delta[0] - 40.).abs() < 0.001);
+        assert_eq!(
+            input.flying_pan(&registry, now + Duration::from_secs(11), 800., true),
+            None
+        );
+        assert!(input.held.is_empty());
+        assert_eq!(
+            input.flying_pan(&registry, now + Duration::from_secs(12), 800., false),
+            None
+        );
+    }
+    #[test]
+    fn canvas_pan_repeats_rebinds_and_stops_at_text_fields() {
+        let mut registry = Registry::default();
+        let mut input = InputState::default();
+        for (key, action) in [
+            (Key::W, Action::PanUp),
+            (Key::A, Action::PanLeft),
+            (Key::S, Action::PanDown),
+            (Key::D, Action::PanRight),
+        ] {
+            assert_eq!(
+                input.key_action(&registry, key, true, false, false, false),
+                Some(action)
+            );
+            assert_eq!(
+                input.key_action(&registry, key, true, true, false, false),
+                Some(action)
+            );
+            assert_eq!(
+                input.key_action(&registry, key, true, true, true, false),
+                None
+            );
+            assert!(!input.held.contains(&key));
+        }
+        registry.set(Action::PanUp, "Alt+W");
+        assert_eq!(registry.key(Key::W, Default::default()), None);
+        let mut restored = Registry::default();
+        assert!(restored.load(&registry.preferences()));
+        assert_eq!(restored, registry);
     }
     #[test]
     fn space_while_typing_cannot_arm_pan_or_fit() {
