@@ -54,6 +54,8 @@ pub enum Target {
         /// Image whose original bytes should be preserved.
         id: Uuid,
     },
+    /// Open a bounded, verified copy in the system image viewer.
+    Viewer(Uuid),
     /// Copy an image as RGBA through the native clipboard backend.
     Clipboard(Uuid),
     /// Write deduplicated original images into a new subdirectory.
@@ -81,6 +83,40 @@ pub enum Target {
         /// World position before the frame/content transforms are undone.
         point: [f32; 2],
     },
+}
+/// A single slot bounds viewer copies to one original across boards (MAX_RECORD bytes).
+fn viewer_image(
+    storage: &DesktopStorage,
+    sources: &HashMap<BlobId, Handle>,
+    item: &Item,
+) -> io::Result<PathBuf> {
+    let hash = item.blob().ok_or_else(|| error("Select an image"))?;
+    let handle = sources
+        .get(&hash)
+        .ok_or_else(|| error("Image source unavailable"))?;
+    let mut header = [0u8; 16];
+    let count = storage.open(*handle)?.read(&mut header)?;
+    let extension = extension(&header[..count]);
+    if extension == "mothrgba" {
+        return Err(error(
+            "This original cannot be opened in a system viewer; export it as PNG",
+        ));
+    }
+    let directory = storage.base_directory()?.join("viewer");
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join(format!("{hash}.{extension}"));
+    // Recreate the slot so a viewer's edits can never masquerade as the board original.
+    for entry in std::fs::read_dir(&directory)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    if let Err(error) = copy_original(storage, sources, item, &path) {
+        let _ = std::fs::remove_file(&path);
+        return Err(error);
+    }
+    Ok(path)
 }
 fn color(p: [u8; 3]) -> (String, String, String) {
     let hex = format!("#{:02X}{:02X}{:02X}", p[0], p[1], p[2]);
@@ -257,6 +293,15 @@ pub(super) fn run(
     clipboard: &mut Option<arboard::Clipboard>,
 ) -> io::Result<String> {
     match target {
+        Target::Viewer(id) => {
+            use crate::Platform;
+            let item = scene
+                .get(id)
+                .ok_or_else(|| error("Image no longer exists"))?;
+            let path = viewer_image(storage, sources, item)?;
+            crate::Desktop.open_image(&path)?;
+            return Ok("Image opened in system viewer".into());
+        }
         Target::Archive { path, ids } => {
             let file = std::fs::OpenOptions::new()
                 .write(true)
@@ -614,6 +659,60 @@ fn svg(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn viewer_copy_preserves_original_replaces_edited_copy_and_bounds_slot() {
+        let root = std::env::temp_dir().join(format!("moth-viewer-{}", Uuid::now_v7()));
+        let storage = DesktopStorage::in_directory(root.clone());
+        let handle = storage.stage_rgba(2, 1, &[255; 8]).unwrap();
+        let mut bytes = Vec::new();
+        storage
+            .open(handle)
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+        let hash = blake3::hash(&bytes);
+        let item = Item::image(
+            hash,
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 2.,
+                height: 1.,
+            },
+            None,
+        );
+        let sources = HashMap::from([(hash, handle)]);
+        let path = viewer_image(&storage, &sources, &item).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        std::fs::write(&path, b"viewer edits").unwrap();
+        assert_eq!(viewer_image(&storage, &sources, &item).unwrap(), path);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        let mut original = Vec::new();
+        storage
+            .open(handle)
+            .unwrap()
+            .read_to_end(&mut original)
+            .unwrap();
+        assert_eq!(original, bytes);
+        assert_eq!(
+            std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
+            1
+        );
+        let wrong = Item::image(blake3::hash(b"wrong"), item.rect, None);
+        assert!(
+            viewer_image(
+                &storage,
+                &HashMap::from([(wrong.blob().unwrap(), handle)]),
+                &wrong
+            )
+            .is_err()
+        );
+        assert_eq!(
+            std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
+            0
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn color_formats_cover_hue_gray_and_black() {
         assert_eq!(

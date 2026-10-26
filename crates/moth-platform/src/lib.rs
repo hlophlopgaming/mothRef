@@ -20,6 +20,7 @@ pub mod memory;
 /// Plain-text app preferences.
 pub mod settings;
 mod source;
+mod viewer;
 use moth_format::{Handle, ReadSeek, Storage};
 #[cfg(unix)]
 use std::fs::File;
@@ -378,6 +379,8 @@ pub struct Capabilities {
 }
 /// Native operations have one boundary instead of platform cfgs in the app.
 pub trait Platform {
+    /// Opens a prepared image using the OS association; called only on a worker.
+    fn open_image(&self, path: &std::path::Path) -> io::Result<()>;
     /// Queries physical RAM off the main thread; unknown systems use a fixed fallback.
     fn available_memory(&self) -> Option<u64>;
     /// Lets callers adapt controls to available native operations.
@@ -423,6 +426,9 @@ pub struct WindowCapabilities {
 /// M0 native clipboard backend; overlay capabilities are added with M3.
 pub struct Desktop;
 impl Platform for Desktop {
+    fn open_image(&self, path: &std::path::Path) -> io::Result<()> {
+        viewer::open(path)
+    }
     fn available_memory(&self) -> Option<u64> {
         let mut system = sysinfo::System::new();
         system.refresh_memory_specifics(sysinfo::MemoryRefreshKind::nothing().with_ram());

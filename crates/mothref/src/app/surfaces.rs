@@ -60,6 +60,7 @@ pub(super) const EXPORT: &[Slot] = &[
     A(ExportOriginals),
     A(ExportZip),
     A(CopyImage),
+    A(OpenOriginal),
 ];
 const INSERT: &[Slot] = &[A(Images), A(Paste), A(Note)];
 const FILE: &[Slot] = &[A(New), A(Open), A(Save), A(Library)];
@@ -82,6 +83,7 @@ pub(super) const CONTEXT_MENU: &[Slot] = &[
     S,
     A(Duplicate),
     A(CopyImage),
+    A(OpenOriginal),
     A(SampleColor),
     A(CoordinatePicker),
     A(Export),

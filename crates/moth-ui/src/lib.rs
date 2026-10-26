@@ -434,6 +434,10 @@ pub enum Text {
     ExportOriginals,
     /// Localized CopyImage control.
     CopyImage,
+    /// Open the embedded original with the system image viewer.
+    OpenOriginal,
+    /// Confirmation after the system viewer accepts an image.
+    ViewerOpened,
     /// Localized SampleColor control.
     SampleColor,
     /// Localized ExportSide control.

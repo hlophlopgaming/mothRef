@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Open a selected original in the system image viewer from the context menu, export window or command palette. Viewer copies are bounded and never replace board originals.
+
 - Remove the separate Hand/Pan canvas mode, its toolbar button and H binding. Keep Select active with Space-drag, middle-drag and two-contact touch panning.
 
 - Fix Ctrl/Command, Shift and Alt pointer gestures being rejected after physical modifier key presses; keep modifiers separate from held-key gestures such as Space-drag.

@@ -611,7 +611,9 @@ impl Workspace {
                         }
                         Completion::Exported(value) => {
                             self.board.exporting = false;
-                            self.board.message = if value.is_empty() {
+                            self.board.message = if value == "Image opened in system viewer" {
+                                moth_ui::Text::ViewerOpened.into()
+                            } else if value.is_empty() {
                                 moth_ui::Text::Exported.into()
                             } else {
                                 value.into()

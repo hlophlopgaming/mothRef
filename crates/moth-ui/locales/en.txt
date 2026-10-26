@@ -335,3 +335,6 @@ PickCoordinatesHint = Click an image to see pixel coordinates and source informa
 ExportPath = Destination file or folder
 
 ToggleDrag = Toggle selection (click or rectangle)
+
+OpenOriginal = Open original in viewer
+ViewerOpened = Image opened in system viewer

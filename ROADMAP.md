@@ -651,7 +651,7 @@ Inventory of [Milanote](https://milanote.com) features from its [help center](ht
 - [ ] **Heading** card — big text without a card background (M4)
 - [ ] **To-do card** as its own element, besides checklists inside notes (M6)
 - [ ] **Image caption** — select an image and start typing; toggle caption visibility (M6)
-- [ ] Image actions: download original, open in the system viewer (M2)
+- [x] Image actions: download original, open in the system viewer (M2)
 - [ ] **Link card** with three toggleable parts: preview image, URL, description; preview fetched only on user action (M6)
 - [ ] Custom link thumbnail — drop an image onto the link card's preview (M6)
 - [ ] Pasting a board link (`.moth` path or `mothref://` link) creates a **board shortcut card** (M6)

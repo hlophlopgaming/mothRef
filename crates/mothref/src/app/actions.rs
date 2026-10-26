@@ -91,7 +91,7 @@ impl App {
         if action == ExportSelection {
             return self.workspace.board.idle() && !self.workspace.board.selection.is_empty();
         }
-        if matches!(action, ExportOriginal | CopyImage) {
+        if matches!(action, ExportOriginal | CopyImage | OpenOriginal) {
             return self.workspace.board.idle()
                 && self.workspace.board.selection.len() == 1
                 && self.workspace.board.selection.iter().any(|id| {
@@ -339,11 +339,17 @@ impl App {
                     moth_platform::export::Geometry::Normalize
                 },
             ),
-            CopyImage | ExportScene | ExportSelection | ExportOriginal | ExportOriginals
-            | ExportZip => {
+            OpenOriginal | CopyImage | ExportScene | ExportSelection | ExportOriginal
+            | ExportOriginals | ExportZip => {
                 use moth_platform::export::Target;
                 let path = std::path::PathBuf::from(&self.tools.path);
                 let target = match action {
+                    OpenOriginal => {
+                        let [item] = items.as_slice() else {
+                            return;
+                        };
+                        Target::Viewer(item.id)
+                    }
                     CopyImage => {
                         let [item] = items.as_slice() else {
                             return;
