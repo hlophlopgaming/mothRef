@@ -69,6 +69,8 @@ pub struct Status<'a> {
     pub adapter: &'a str,
     /// Live item count.
     pub count: usize,
+    /// Image count excludes notes.
+    pub images: usize,
     /// Selected item count.
     pub selected: usize,
     /// Camera scale.
@@ -99,7 +101,12 @@ pub struct Status<'a> {
     pub maximized: bool,
 }
 /// Draws a custom titlebar and the active workspace's toolbar.
-pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, tabs: &[Tab<'_>]) -> Actions {
+pub fn toolbar(
+    ui: &mut egui::Ui,
+    status: Status<'_>,
+    tabs: &[Tab<'_>],
+    menus: impl FnOnce(&mut egui::Ui),
+) -> Actions {
     let compact = ui.ctx().content_rect().width() < 600.;
     if compact {
         ui.spacing_mut().interact_size = egui::vec2(44., 44.);
@@ -122,7 +129,10 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, tabs: &[Tab<'_>]) -> Actio
                         ui.allocate_exact_size(egui::vec2(14., 20.), egui::Sense::hover());
                     ui.painter()
                         .circle_filled(logo.center(), 6., crate::tokens(ui.ctx()).accent);
-                    ui.label(egui::RichText::new(text(Text::Title)).monospace());
+                    ui.label(
+                        egui::RichText::new(text(Text::Title))
+                            .family(egui::FontFamily::Name("Bricolage Grotesque".into())),
+                    );
                     ui.add_space(crate::tokens(ui.ctx()).space_header as f32);
                     if status.library {
                         ui.label(
@@ -132,6 +142,32 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, tabs: &[Tab<'_>]) -> Actio
                         );
                     }
                 }
+                menus(ui);
+                let summary = format!(
+                    "{} · {}",
+                    text(if status.dirty || status.path.is_empty() {
+                        Text::UnsavedChip
+                    } else {
+                        Text::SaveState
+                    }),
+                    item_counts(
+                        locale(),
+                        status.images,
+                        status.count.saturating_sub(status.images)
+                    )
+                );
+                let mut status_font = egui::TextStyle::Body.resolve(ui.style());
+                let color = crate::tokens(ui.ctx()).text;
+                let status_width = ui
+                    .fonts_mut(|fonts| {
+                        fonts.layout_no_wrap(summary.clone(), status_font.clone(), color)
+                    })
+                    .size()
+                    .x;
+                let available =
+                    (ui.max_rect().width() - f32::from(crate::tokens(ui.ctx()).space_xl)).max(1.);
+                status_font.size *= (available / status_width).min(1.);
+                let status_width = status_width.min(available);
                 if !tabs.is_empty()
                     && (!status.library
                         || status.dirty
@@ -140,6 +176,11 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, tabs: &[Tab<'_>]) -> Actio
                         || tabs.len() > 1)
                 {
                     let tab_width = (ui.available_size_before_wrap().x
+                        - if status.library {
+                            0.
+                        } else {
+                            status_width + ui.spacing().item_spacing.x
+                        }
                         - if compact {
                             160.
                         } else {
@@ -191,9 +232,20 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, tabs: &[Tab<'_>]) -> Actio
                             });
                         });
                 }
-                a.settings = icons::button(ui, Icon::List, text(Text::Settings), false).clicked();
-                a.new = icons::button(ui, Icon::Plus, &tooltip(ui.ctx(), Text::NewBoard), false)
-                    .clicked();
+                if !status.library {
+                    let response = ui
+                        .add(
+                            egui::Label::new(egui::RichText::new(summary).font(status_font))
+                                .extend()
+                                .sense(egui::Sense::click()),
+                        )
+                        .on_hover_text(status.message);
+                    if !status.message.is_empty() {
+                        egui::Popup::menu(&response).show(|ui| {
+                            ui.label(status.message);
+                        });
+                    }
+                }
                 if compact {
                     ui.end_row();
                 }
@@ -319,30 +371,6 @@ pub fn toolbar(ui: &mut egui::Ui, status: Status<'_>, tabs: &[Tab<'_>]) -> Actio
             brand.response.rect.bottom(),
         )
     });
-    if !status.library {
-        egui::Area::new(egui::Id::new("save_chip"))
-            .fixed_pos(egui::pos2(
-                ui.max_rect().left() + 12.,
-                ui.max_rect().top() + 12.,
-            ))
-            .show(ui.ctx(), |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.label(format!(
-                        "{} · {} {}",
-                        text(if status.dirty || status.path.is_empty() {
-                            Text::UnsavedChip
-                        } else {
-                            Text::SaveState
-                        }),
-                        status.count,
-                        text(Text::Images)
-                    ));
-                    if !status.message.is_empty() {
-                        ui.label(status.message);
-                    }
-                });
-            });
-    }
 
     a
 }

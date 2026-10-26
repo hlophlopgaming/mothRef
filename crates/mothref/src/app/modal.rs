@@ -9,6 +9,7 @@ pub(super) struct Modal {
     pub(super) dialog: Option<()>,
     pub(super) dialog_path: String,
     pub(super) dialog_focus: bool,
+    pub(super) recovery: usize,
 }
 
 impl Modal {
@@ -17,30 +18,63 @@ impl Modal {
         &mut self,
         ui: &mut egui::Ui,
         workspace: &Workspace,
-        auto_arrange: bool,
-        default_arrange: u8,
+        settings: &super::settings::Settings,
+        enabled: &[bool],
+        registry: &super::bindings::Registry,
     ) -> Vec<Intent> {
         let mut intents = Vec::new();
         let board = &workspace.board;
         let recovery_paths = workspace.recovery_paths();
-        if !recovery_paths.is_empty() && board.scene.is_empty() {
-            egui::Window::new(moth_ui::text(moth_ui::Text::Recovery)).show(ui.ctx(), |ui| {
-                for path in recovery_paths {
-                    if ui
-                        .add_enabled(
-                            board.in_flight == 0,
-                            egui::Button::new(path.display().to_string()),
-                        )
-                        .clicked()
-                    {
-                        intents.push(Intent::OpenPath(path.clone()));
-                    }
-                }
-                if ui.button(moth_ui::text(moth_ui::Text::Keep)).clicked() {
-                    intents.push(Intent::Action(Action::DismissRecovery));
-                }
+        if workspace.library && !recovery_paths.is_empty() && board.scene.is_empty() {
+            self.recovery = self.recovery.min(recovery_paths.len() - 1);
+            egui::Modal::new(egui::Id::new("recovery")).show(ui.ctx(), |ui| {
+                ui.heading(moth_ui::text(moth_ui::Text::Recovery));
+                egui::ScrollArea::vertical()
+                    .max_height(ui.ctx().content_rect().height() / 2.)
+                    .show(ui, |ui| {
+                        for (index, entry) in recovery_paths.iter().enumerate() {
+                            let age = entry.modified.elapsed().unwrap_or_default().as_secs();
+                            let (key, count) = if age < 60 {
+                                (moth_ui::Text::ChangedNow, 0)
+                            } else if age < 3600 {
+                                (moth_ui::Text::ChangedMinutes, age / 60)
+                            } else if age < 86400 {
+                                (moth_ui::Text::ChangedHours, age / 3600)
+                            } else {
+                                (moth_ui::Text::ChangedDays, age / 86400)
+                            };
+                            let changed = moth_ui::Message::Count(key, count as usize)
+                                .render(moth_ui::locale());
+                            let label = format!(
+                                "{} · {}",
+                                entry
+                                    .title
+                                    .as_deref()
+                                    .unwrap_or(moth_ui::text(moth_ui::Text::Untitled)),
+                                changed
+                            );
+                            ui.selectable_value(&mut self.recovery, index, label);
+                        }
+                    });
+                ui.add_enabled_ui(board.idle(), |ui| {
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(moth_ui::text(moth_ui::Text::RestoreRecovery))
+                            .clicked()
+                        {
+                            intents.push(Intent::Action(Action::RestoreRecovery));
+                        }
+                        if ui
+                            .button(moth_ui::text(moth_ui::Text::DiscardRecovery))
+                            .clicked()
+                        {
+                            intents.push(Intent::Action(Action::DismissRecovery));
+                        }
+                    });
+                });
             });
         }
+
         if self.dialog.is_some() {
             egui::Modal::new(egui::Id::new("board_path")).show(ui.ctx(), |ui| {
                 ui.set_width(ui.ctx().content_rect().width().min(460.) - 40.);
@@ -117,9 +151,9 @@ impl Modal {
             });
         }
         if let Some(ids) = board.arrange_prompt.clone() {
-            if auto_arrange {
+            if settings.auto_arrange || ids.len() <= settings.threshold {
                 intents.push(Intent::Arrange(
-                    super::tools::layout(default_arrange).1,
+                    super::tools::layout(settings.default_arrange).1,
                     ids.clone(),
                 ));
                 intents.push(Intent::DismissArrangePrompt);
@@ -158,6 +192,15 @@ impl Modal {
                     });
                 });
             }
+        }
+        if let Some(added) = &board.added {
+            intents.extend(super::surfaces::added(
+                ui.ctx(),
+                board.view.viewport,
+                added,
+                enabled,
+                registry,
+            ));
         }
         intents
     }

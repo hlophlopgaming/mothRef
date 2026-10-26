@@ -63,6 +63,8 @@ every token needs a light and a dark value.
 
 ### Logo and icon
 
+Final mark, app icon and README logo are on hold (maintainer, 2026-10-25).
+
 - **Mark:** the maintainer's hand-drawn moth (big black eyes, ω smile, folded
   paws holding a pencil, feathered antennae) in graphite line. The first round of
   vector redraws was rejected; the final mark is still open (section 6).
@@ -77,7 +79,7 @@ every token needs a light and a dark value.
 
 | # | Screen | Decision | Milestone |
 | --- | --- | --- | --- |
-| 1 | Board | One floating bottom toolbar: tool group, Insert ▾, undo/redo, fit, zoom "− 25% +". A small "Saved · 9 images" chip replaces the status bar. Minimap with thumbnails | M2 |
+| 1 | Board | One floating bottom toolbar: tool group, Insert ▾, undo/redo, fit, zoom "− 25% +". A small "Saved · 9 images" chip replaces the status bar. Minimap with silhouettes | M2 |
 | 2 | Adding images | No modal question: arrange with the last method, fit the camera, toast "Added 9 images · Packed ▾ · Undo" | M2 |
 | 3 | Selection | One bounding box with four handles; selection bar above it; grouped context menu with right-aligned shortcuts | M2–M3 |
 | 4 | Library | One primary "New board" and "Open file…"; stack colors picked from a palette; pin icon on pinned boards and in the sidebar; import tile for `.pur`/`.bee` | M5 |
@@ -150,22 +152,20 @@ every token needs a light and a dark value.
 - Command palette: field not focused, window jumps while filtering, "Slash" label,
   no Settings command.
 - Empty board says "PNG / JPEG" although WebP, GIF and BMP are supported.
-- Minimap draws grey boxes instead of thumbnails; zoom buttons read "+ 100% −";
+- Minimap silhouettes are retained by maintainer decision on 2026-10-25; zoom buttons read "+ 100% −";
   handles drawn on every selected image.
 - The two-item "Commands" menu and "Help" take about 90 px at the top.
-- Double-clicking an image to focus it does nothing while the Hand tool is
-  active, and Hand is the default tool: `activate` in `app.rs` requires the
-  move-drag pointer action and `!view.pan`. Focus on double-click should work
-  with any navigation tool; making Select the default (section 1) also fixes it
-  for most users.
+- The separate Hand/Pan tool has been removed by maintainer request. Select stays
+  active; Space-drag, middle-drag and two-contact touch pan move the camera.
 
 ---
 
 ## 6. Open questions
 
-- Many images added at once: the default here is "arrange and show a toast with
-  Undo", with "ask above N" as a setting. ROADMAP M2 currently records the prompt
-  (`arrange_prompt_threshold`, default 5) as done — keep or change the default?
+- Many images added at once: maintainer confirmed on 2026-10-25 that the default
+  remains "ask above 5 images". Automatic arrangement is opt-in; its feedback
+  should provide the method and Undo. This supersedes the no-question default
+  pictured in screen 2.
 - Performance modes: the mock-up shows four; decision 0014 and M2.5 have five.
   Merge "Cache on disk" and "No cache" into "Least memory", or keep all five?
 - The Shapes button in the bottom toolbar is not recognisable: labels under the

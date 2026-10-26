@@ -55,9 +55,19 @@ impl Shortcuts {
         let mut dismiss = false;
         let mut hovered = false;
         let mut focused = false;
+        let gap = moth_ui::tokens(ctx).space_m as f32;
+        let viewport = ctx.content_rect();
+        let bottom = ctx.memory(|memory| {
+            ["bottom_toolbar", "selection_badge", "added_feedback"]
+                .into_iter()
+                .filter_map(|id| memory.area_rect(egui::Id::new(id)))
+                .map(|rect| rect.top())
+                .fold(viewport.bottom(), f32::min)
+        });
         egui::Area::new(egui::Id::new("hotkey_feedback"))
             .order(egui::Order::Foreground)
-            .anchor(egui::Align2::CENTER_BOTTOM, [0., -16.])
+            .pivot(egui::Align2::CENTER_BOTTOM)
+            .fixed_pos(egui::pos2(ctx.content_rect().center().x, bottom - gap))
             .show(ctx, |ui| {
                 ui.set_opacity(if reduced_motion { 1. } else { alpha });
                 let frame = egui::Frame::popup(ui.style()).show(ui, |ui| {
@@ -163,7 +173,16 @@ impl Shortcuts {
             .copied()
             .filter(|a| {
                 !a.pointer()
-                    && *a != Action::Palette
+                    && !matches!(
+                        a,
+                        Action::Palette
+                            | Action::AddedHorizontal
+                            | Action::AddedVertical
+                            | Action::AddedGrid
+                            | Action::AddedOptimal
+                            | Action::UndoAdded
+                            | Action::DismissAdded
+                    )
                     && (text(a.label()).to_lowercase().contains(&query)
                         || a.id().to_lowercase().contains(&query)
                         || self.registry.label(*a).to_lowercase().contains(&query))
@@ -281,16 +300,35 @@ impl Shortcuts {
                     let results = self.results();
                     let settings = self.settings_results();
                     let total = results.len() + settings.len();
-                    self.selected = self.selected.min(total.saturating_sub(1));
+                    let available: Vec<_> = results
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, action)| enabled(**action))
+                        .map(|(index, _)| index)
+                        .chain(results.len()..total)
+                        .collect();
+                    if !available.contains(&self.selected) {
+                        self.selected = available.first().copied().unwrap_or(0);
+                    }
+                    let cursor = available
+                        .iter()
+                        .position(|index| *index == self.selected)
+                        .unwrap_or(0);
                     let navigate = ui.input(|i| {
                         i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::ArrowUp)
                     });
                     if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown))
                     {
-                        self.selected = (self.selected + 1).min(total.saturating_sub(1));
+                        self.selected = available
+                            .get((cursor + 1).min(available.len().saturating_sub(1)))
+                            .copied()
+                            .unwrap_or(0);
                     }
                     if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)) {
-                        self.selected = self.selected.saturating_sub(1);
+                        self.selected = available
+                            .get(cursor.saturating_sub(1))
+                            .copied()
+                            .unwrap_or(0);
                     }
                     if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
                         action = results.get(self.selected).copied().filter(|a| enabled(*a));
@@ -342,6 +380,7 @@ impl Shortcuts {
                                 let response = ui.add_sized(
                                     [ui.available_width(), ui.spacing().interact_size.y],
                                     egui::Button::new(label)
+                                        .shortcut_text("")
                                         .selected(self.selected == results.len() + offset),
                                 );
                                 if response.clicked() {
@@ -492,6 +531,40 @@ impl Shortcuts {
 mod tests {
     use super::*;
     #[test]
+    fn shortcut_feedback_stacks_above_the_bottom_toolbar() {
+        let ctx = egui::Context::default();
+        moth_ui::theme(&ctx, &moth_ui::Tokens::DARK);
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900., 600.));
+        let mut state = Shortcuts::default();
+        let enabled = vec![true; ACTIONS.len()];
+        state.feedback(Action::Next, std::time::Instant::now());
+        for _ in 0..3 {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(viewport),
+                    ..Default::default()
+                },
+                |ui| {
+                    super::super::surfaces::toolbar(
+                        ui.ctx(),
+                        viewport,
+                        &enabled,
+                        &state.registry,
+                        1.,
+                    );
+                    state.toast(ui.ctx(), true, true);
+                },
+            )
+            .textures_delta
+            .clear();
+        }
+        ctx.memory(|memory| {
+            let toolbar = memory.area_rect(egui::Id::new("bottom_toolbar")).unwrap();
+            let toast = memory.area_rect(egui::Id::new("hotkey_feedback")).unwrap();
+            assert!(toast.bottom() < toolbar.top());
+        });
+    }
+    #[test]
     fn settings_search_finds_sections_and_rows() {
         let mut state = Shortcuts::default();
         for query in ["settings", "memory", "zoom"] {
@@ -565,6 +638,20 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn palette_selects_an_enabled_match_before_enter() {
+        let ctx = egui::Context::default();
+        moth_ui::theme(&ctx, &moth_ui::Tokens::LIGHT);
+        let mut state = Shortcuts::default();
+        state.open_palette();
+        state.query.clear();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            state.show(ui, &|action| action == Action::EditItem);
+        });
+        assert_eq!(state.results()[state.selected], Action::EditItem);
+        output.textures_delta.clear();
+    }
+
     #[test]
     fn palette_arrows_enter_and_escape_are_isolated_from_canvas_actions() {
         let ctx = egui::Context::default();

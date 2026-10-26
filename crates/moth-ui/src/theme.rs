@@ -155,7 +155,7 @@ impl Tokens {
         dark: false,
         canvas: Color32::from_rgb(243, 239, 228),
         accent: Color32::from_rgb(166, 196, 122),
-        accent_text: Color32::from_rgb(85, 112, 47),
+        accent_text: Color32::from_rgb(65, 90, 30),
         on_accent: Color32::from_rgb(35, 36, 31),
         surface: Color32::from_rgb(249, 247, 240),
         text_muted: Color32::from_rgb(105, 107, 97),
@@ -225,7 +225,11 @@ pub fn apply(ctx: &Context, tokens: &Tokens) {
     style.visuals.widgets.inactive.weak_bg_fill = tokens.surface_raised;
     style.visuals.widgets.hovered.weak_bg_fill = tokens.hover;
     style.visuals.selection.bg_fill = tokens.selection;
-    style.visuals.selection.stroke = egui::Stroke::new(1., tokens.accent);
+    style.visuals.selection.stroke = egui::Stroke::new(1., tokens.text);
+    style.visuals.widgets.inactive.bg_fill = tokens.surface_raised;
+    style.visuals.widgets.hovered.bg_fill = tokens.hover;
+    style.visuals.widgets.active.bg_fill = tokens.selection;
+    style.visuals.widgets.active.fg_stroke.color = tokens.text;
     style.spacing.button_padding = egui::vec2(tokens.space_m as f32, tokens.space_s as f32);
     style.spacing.item_spacing = egui::Vec2::splat(tokens.space_s as f32);
     style.spacing.interact_size = egui::vec2(36., 36.);
@@ -242,6 +246,10 @@ pub fn apply(ctx: &Context, tokens: &Tokens) {
     ] {
         widget.corner_radius = egui::CornerRadius::same(tokens.radius_m);
     }
+    style.text_styles.insert(
+        egui::TextStyle::Heading,
+        egui::FontId::new(24., egui::FontFamily::Name("Bricolage Grotesque".into())),
+    );
     style.animation_time = 0.12;
     ctx.data_mut(|data| data.insert_temp(egui::Id::new("house_tokens"), *tokens));
     ctx.set_style_of(theme, style);
@@ -288,6 +296,36 @@ mod tests {
             assert!(contrast(palette.on_accent, palette.accent) >= 4.5);
             assert!(contrast(palette.accent_text, palette.canvas) >= 4.5);
             assert!(contrast(palette.danger, palette.surface) >= 4.5);
+        }
+    }
+    #[test]
+    fn light_text_and_accent_controls_meet_contrast() {
+        let luminance = |color: Color32| {
+            let linear = |value: u8| {
+                let value = f64::from(value) / 255.;
+                if value <= 0.04045 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * linear(color.r()) + 0.7152 * linear(color.g()) + 0.0722 * linear(color.b())
+        };
+        let palette = Tokens::LIGHT;
+        for (foreground, background) in [
+            (palette.on_accent, palette.accent),
+            (palette.text, palette.surface),
+            (palette.text_muted, palette.surface),
+            (palette.text, palette.selection),
+            (palette.text, palette.surface_raised),
+            (palette.accent_text, palette.surface),
+        ] {
+            let (a, b) = (luminance(foreground), luminance(background));
+            let contrast = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+            assert!(
+                contrast >= 4.5,
+                "{foreground:?} on {background:?}: {contrast}"
+            );
         }
     }
     #[test]

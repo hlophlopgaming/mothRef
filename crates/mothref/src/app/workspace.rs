@@ -19,8 +19,6 @@ pub(super) struct Pump<'a> {
     pub format: moth_io::ImageFormat,
     pub cursor: Option<[f32; 2]>,
     pub fallback: [f32; 2],
-    pub auto_arrange: bool,
-    pub threshold: usize,
     pub upload: &'a mut dyn FnMut(&moth_io::Decoded),
     pub events: Vec<Event>,
 }
@@ -28,7 +26,7 @@ pub(super) struct Workspace {
     pub(super) board: Document,
     pub(super) tabs: Vec<Document>,
     pub(super) library: bool,
-    recovery_paths: Vec<std::path::PathBuf>,
+    recovery_paths: Vec<moth_platform::boards::Recovery>,
     recent_paths: Vec<std::path::PathBuf>,
     pub(super) refresh_library: bool,
     pub(super) confirm_close: bool,
@@ -39,11 +37,28 @@ impl Workspace {
     pub(super) fn recent_paths(&self) -> &[std::path::PathBuf] {
         &self.recent_paths
     }
-    pub(super) fn recovery_paths(&self) -> &[std::path::PathBuf] {
+    pub(super) fn recovery_paths(&self) -> &[moth_platform::boards::Recovery] {
         &self.recovery_paths
     }
-    pub(super) fn dismiss_recovery(&mut self) {
-        self.recovery_paths.clear();
+    pub(super) fn dismiss_recovery(&mut self, index: usize) {
+        if let Some(entry) = self.recovery_paths.get(index) {
+            self.persist(moth_platform::boards::Request::DiscardRecovery(
+                entry.journal.clone(),
+            ));
+        }
+    }
+    pub(super) fn restore_recovery(&mut self, index: usize) {
+        if self.board.scene.is_empty()
+            && self.board.idle()
+            && let Some(entry) = self.recovery_paths.get(index)
+        {
+            let journal = entry.journal.clone();
+            self.library = false;
+            self.persist(moth_platform::boards::Request::Restore(journal.clone()));
+            if self.board.loading {
+                self.board.restoring = Some(journal);
+            }
+        }
     }
 
     pub(super) fn new(board: Document, wake: Arc<dyn Fn() + Send + Sync>) -> Self {
@@ -106,7 +121,7 @@ impl Workspace {
             return self.activate(0);
         }
         if self.tabs.len() + 1 >= MAX_TABS {
-            self.board.message = moth_ui::text(moth_ui::Text::TabLimit).into();
+            self.board.message = moth_ui::Text::TabLimit.into();
             return TabChange::None;
         }
         match Document::new(self.wake.clone(), false) {
@@ -117,7 +132,7 @@ impl Workspace {
                 self.library = false;
                 return TabChange::Switched;
             }
-            Err(error) => self.board.message = error.to_string(),
+            Err(error) => self.board.message = error.to_string().into(),
         }
         TabChange::None
     }
@@ -151,12 +166,20 @@ impl Workspace {
         if self.board.loading
             && !matches!(&request, Request::Preferences(_) | Request::SaveSettings(_))
         {
-            self.board.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
+            self.board.message = moth_ui::Text::StorageBusy.into();
+            return;
+        }
+        if !matches!(
+            &request,
+            Request::Preferences(_) | Request::SaveSettings(_) | Request::Export(_)
+        ) && !self.finish_added()
+        {
+            self.board.message = moth_ui::Text::StorageBusy.into();
             return;
         }
         let loading = matches!(
             &request,
-            Request::Open(_) | Request::ImportBee(_) | Request::ImportPur(_)
+            Request::Open(_) | Request::Restore(_) | Request::ImportBee(_) | Request::ImportPur(_)
         );
         if self.board.locked
             && matches!(
@@ -172,19 +195,34 @@ impl Workspace {
         {
             return;
         }
+        let exporting = matches!(&request, Request::Export(_));
         match self.board.boards().requests.try_send(request) {
             Ok(()) => {
+                if exporting {
+                    self.board.exporting = true;
+                    self.board.export_message = None;
+                }
                 self.board.in_flight += 1;
                 self.board.loading |= loading;
             }
-            Err(_) => self.board.message = moth_ui::text(moth_ui::Text::StorageBusy).into(),
+            Err(_) => self.board.message = moth_ui::Text::StorageBusy.into(),
         }
     }
     pub(super) fn persist_batch(&mut self, commands: Vec<(Command, Option<Handle>)>) {
         self.persist(moth_platform::boards::Request::ApplyBatch(commands));
     }
+    pub(super) fn finish_added(&mut self) -> bool {
+        if self.board.added.is_some() {
+            self.end_batch();
+            if self.board.batching {
+                return false;
+            }
+            self.board.added = None;
+        }
+        true
+    }
     pub(super) fn begin_batch(&mut self) {
-        if self.board.loading {
+        if self.board.loading || !self.finish_added() {
             return;
         }
         if !self.board.batching
@@ -224,7 +262,7 @@ impl Workspace {
             self.board.path = path.to_string_lossy().into_owned();
             self.persist(moth_platform::boards::Request::Open(path));
         } else {
-            self.board.message = moth_ui::text(moth_ui::Text::OpenEmpty).into();
+            self.board.message = moth_ui::Text::OpenEmpty.into();
         }
     }
     pub(super) fn import_foreign(&mut self, path: std::path::PathBuf) -> TabChange {
@@ -264,6 +302,9 @@ impl Workspace {
         if self.board.discarding {
             return TabChange::None;
         }
+        if !self.finish_added() {
+            return TabChange::None;
+        }
         // A new drop supersedes a pending arrangement prompt.
         self.board.arrange_prompt = None;
         if path
@@ -283,16 +324,16 @@ impl Workspace {
         }
         if self.board.scene.len() + self.board.waiting.len() + self.board.pending.len() >= 1_000_000
         {
-            self.board.message = moth_ui::text(moth_ui::Text::BoardFull).into();
+            self.board.message = moth_ui::Text::BoardFull.into();
             return TabChange::None;
         }
         if self.board.waiting.len() >= 1024 {
-            self.board.message = moth_ui::text(moth_ui::Text::ImportBusy).into();
+            self.board.message = moth_ui::Text::ImportBusy.into();
             return TabChange::None;
         }
         match self.board.storage().register(path) {
             Ok(h) => self.board.waiting.push(h),
-            Err(e) => self.board.message = e.to_string(),
+            Err(e) => self.board.message = e.to_string().into(),
         }
         self.queue_decodes(format);
         TabChange::None
@@ -330,11 +371,11 @@ impl Workspace {
                 Ok(image) if image.hash == hash => (pump.upload)(&image),
                 Ok(_) => {
                     self.board.failed.insert(done.request.handle);
-                    self.board.message = moth_ui::text(moth_ui::Text::SourceChanged).into();
+                    self.board.message = moth_ui::Text::SourceChanged.into();
                 }
                 Err(error) => {
                     self.board.failed.insert(done.request.handle);
-                    self.board.message = error.to_string();
+                    self.board.message = error.to_string().into();
                 }
             }
             return;
@@ -403,7 +444,7 @@ impl Workspace {
                     ));
                 }
                 self.board.failed.insert(done.request.handle);
-                self.board.message = e.to_string();
+                self.board.message = e.to_string().into();
                 tracing::warn!(error=%e,"image load failed");
             }
         }
@@ -424,7 +465,7 @@ impl Workspace {
                     }
                     for command in commands {
                         if let Err(error) = self.board.apply_visual(command) {
-                            self.board.message = error.to_string();
+                            self.board.message = error.to_string().into();
                         }
                     }
                     self.board.sources.extend(sources);
@@ -441,7 +482,7 @@ impl Workspace {
                             pump.events.push(Event::Opened);
                         }
                     }
-                    self.board.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
+                    self.board.message = moth_ui::Text::StorageBusy.into();
                 }
                 Completion::Recovery(paths) => self.recovery_paths = paths,
                 Completion::Recent(paths) => {
@@ -461,6 +502,9 @@ impl Workspace {
                 done => {
                     self.board.in_flight = self.board.in_flight.saturating_sub(1);
                     match done {
+                        Completion::RecoveryDiscarded(path) => {
+                            self.recovery_paths.retain(|entry| entry.journal != path)
+                        }
                         Completion::Applied(command, source) => {
                             match self.board.apply_visual(command) {
                                 Ok(_) => {
@@ -469,7 +513,7 @@ impl Workspace {
                                     }
                                     self.board.dirty = true;
                                 }
-                                Err(e) => self.board.message = e.to_string(),
+                                Err(e) => self.board.message = e.to_string().into(),
                             }
                             self.board
                                 .selection
@@ -499,7 +543,7 @@ impl Workspace {
                                 .collect();
                             for command in commands {
                                 if let Err(e) = self.board.apply_visual(command) {
-                                    self.board.message = e.to_string();
+                                    self.board.message = e.to_string().into();
                                 }
                             }
                             for (hash, handle) in sources {
@@ -515,7 +559,13 @@ impl Workspace {
                                 .selection
                                 .retain(|id| self.board.scene.get(*id).is_some());
                         }
-                        Completion::Opened(scene, sources, recovered) => {
+                        Completion::Opened(scene, sources, recovered, destination) => {
+                            if let Some(journal) = self.board.restoring.take() {
+                                self.recovery_paths.retain(|entry| entry.journal != journal);
+                            }
+                            self.board.path = destination.map_or_else(String::new, |path| {
+                                path.to_string_lossy().into_owned()
+                            });
                             let progressed = self.board.loading_bounds.take().is_some();
                             self.board.loading = false;
                             self.board.motion.clear();
@@ -524,9 +574,9 @@ impl Workspace {
                             if active {
                                 pump.events.push(Event::Opened);
                             }
-                            self.recovery_paths.clear();
+
                             self.board.dirty = recovered;
-                            self.board.message = moth_ui::text(if recovered {
+                            self.board.message = (if recovered {
                                 moth_ui::Text::Recovered
                             } else {
                                 moth_ui::Text::Opened
@@ -546,26 +596,27 @@ impl Workspace {
                             }
                             for command in commands {
                                 if let Err(e) = self.board.apply_visual(command) {
-                                    self.board.message = e.to_string();
+                                    self.board.message = e.to_string().into();
                                 }
                             }
                             self.board.sources = sources;
                             self.board.path = String::new();
                             self.board.dirty = true;
-                            self.board.message = moth_ui::text(if skipped == 0 {
-                                moth_ui::Text::Imported
+                            self.board.message = if skipped == 0 {
+                                moth_ui::Text::Imported.into()
                             } else {
-                                moth_ui::Text::ImportSkipped
-                            })
-                            .into();
+                                moth_ui::Message::Count(moth_ui::Text::ImportSkippedCount, skipped)
+                            };
                             self.board.fit();
                         }
                         Completion::Exported(value) => {
+                            self.board.exporting = false;
                             self.board.message = if value.is_empty() {
-                                moth_ui::text(moth_ui::Text::Exported).into()
+                                moth_ui::Text::Exported.into()
                             } else {
-                                value
+                                value.into()
                             };
+                            self.board.export_message = Some(self.board.message.clone());
                         }
                         Completion::Saved => {
                             self.board.dirty = false;
@@ -575,19 +626,25 @@ impl Workspace {
                             self.recent_paths
                                 .truncate(moth_platform::library::MAX_BOARDS);
                             self.refresh_library = true;
-                            self.board.message = moth_ui::text(moth_ui::Text::Saved).into();
+                            self.board.message = moth_ui::Text::Saved.into();
                             if self.board.close_after_save {
                                 self.discard();
                             }
                         }
                         Completion::Failed(e) => {
+                            if self.board.exporting {
+                                self.board.exporting = false;
+                                self.board.export_message = Some(e.clone().into());
+                            }
+                            self.finish_added();
+                            self.board.restoring = None;
                             if self.board.loading {
                                 self.board.loading = false;
                                 self.board.loading_bounds = None;
                                 self.board.path.clear();
                                 self.board.dirty = !self.board.scene.is_empty();
                             }
-                            self.board.message = e;
+                            self.board.message = e.into();
                             self.board.close_after_save = false;
                         }
                         _ => {}
@@ -604,7 +661,7 @@ impl Workspace {
                     Ok(()) => self.board.discarded = true,
                     Err(error) => {
                         self.board.discarding = false;
-                        self.board.message = error.to_string();
+                        self.board.message = error.to_string().into();
                     }
                 },
                 moth_platform::ClipboardCompletion::Pasted(Ok((handle, image))) => {
@@ -630,7 +687,7 @@ impl Workspace {
                             pump,
                         );
                     } else {
-                        self.board.message = moth_ui::text(moth_ui::Text::BoardFull).into();
+                        self.board.message = moth_ui::Text::BoardFull.into();
                     }
                 }
                 moth_platform::ClipboardCompletion::Files(paths) => {
@@ -646,23 +703,28 @@ impl Workspace {
                     moth_platform::PlatformError::EmptyClipboard,
                 )) => {
                     self.board.pasting = self.board.pasting.saturating_sub(1);
-                    self.board.message = moth_ui::text(moth_ui::Text::ClipboardEmpty).into();
+                    self.board.message = moth_ui::Text::ClipboardEmpty.into();
                 }
                 moth_platform::ClipboardCompletion::Pasted(Err(e)) => {
                     self.board.pasting = self.board.pasting.saturating_sub(1);
-                    self.board.message = e.to_string();
+                    self.board.message = e.to_string().into();
                 }
             }
         }
         self.queue_decodes(pump.format);
-        if self.board.batching && self.board.idle() && self.board.arrange_prompt.is_none() {
-            if !self.board.burst.is_empty()
-                && (pump.auto_arrange || self.board.burst.len() > pump.threshold)
-            {
-                self.board.arrange_prompt = Some(std::mem::take(&mut self.board.burst));
-            } else {
-                self.board.burst.clear();
-                self.end_batch();
+        if self.board.idle() {
+            if let Some(added) = &mut self.board.added {
+                if added.needs_fit {
+                    let ids = added.ids.iter().copied().collect();
+                    self.board.view.fit_selection(&self.board.scene, &ids);
+                    added.needs_fit = false;
+                }
+            } else if self.board.batching && self.board.arrange_prompt.is_none() {
+                if self.board.burst.is_empty() {
+                    self.end_batch();
+                } else {
+                    self.board.arrange_prompt = Some(std::mem::take(&mut self.board.burst));
+                }
             }
         }
     }

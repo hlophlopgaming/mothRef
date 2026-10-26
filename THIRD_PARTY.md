@@ -12,6 +12,13 @@
   copied unchanged from the Arch Linux `noto-fonts` package (font version 2.015). SIL Open Font License 1.1,
   reproduced in `crates/moth-ui/fonts/LICENSE-Noto.txt`.
 
+- `crates/moth-ui/fonts/BricolageGrotesque-Bold.ttf`: Copyright 2022 The
+  Bricolage Grotesque Project Authors (https://github.com/ateliertriay/bricolage).
+  SIL Open Font License 1.1, reproduced in `crates/moth-ui/fonts/LICENSE-Bricolage.txt`.
+  Static instance generated using FontTools 4.67.0 (`wght=700 wdth=100 opsz=48`)
+  from Google Fonts `ofl/bricolagegrotesque/BricolageGrotesque[opsz,wdth,wght].ttf`,
+  revision `e7db6ca603fd4862010383ff17ffd6cc4ffac1c0`.
+
 Rust dependencies and their license expressions are recorded in `Cargo.lock`
 and checked with `cargo deny check`.
 

@@ -71,7 +71,7 @@ CoordinatePicker = Координаты и сведения об изображ�
 ExportZip = Экспорт оригиналов в ZIP
 ChangedSetting = * отличается от значения по умолчанию
 ByLayer = По порядку слоёв
-SaveState = сохранено
+SaveState = Сохранено
 Journaled = в журнале
 RecoveryOn = восстановление включено
 ZoomIn = Приблизить
@@ -102,12 +102,12 @@ ByFilename = По имени файла
 ScaleSelection = Масштаб выделения
 Export = Экспорт
 Exported = Экспорт завершён
-ExportScene = Доска PNG / SVG
-ExportSelection = Выделение PNG / SVG
+ExportScene = Доска PNG / SVG / PDF
+ExportSelection = Выделение PNG / SVG / PDF
 ExportOriginal = Оригинал изображения в файл
 ExportOriginals = Все оригиналы в новую папку
 CopyImage = Копировать изображение
-SampleColor = Взять цвет → HEX
+SampleColor = Взять цвет
 ExportSide = Длинная сторона (пиксели)
 ExportLimit = Доска: .png, .svg или .pdf; оригиналы: .zip. Для доски, буфера и пипетки — превью до 2048 пкс. Существующие файлы не заменяются.
 CropRegion = Обрезать экспорт по области
@@ -136,7 +136,7 @@ Paste = Вставить
 Fit = Уместить доску
 Pan = Перемещение
 Select = Выбор
-Empty = Перетащите изображения сюда или вставьте изображение.
+Empty = Перетащите изображения сюда
 Volatile = PNG / JPEG / WebP / GIF / BMP
 Close = Отменить и закрыть
 Keep = Продолжить работу
@@ -221,7 +221,7 @@ NudgeDownFast = Сдвиг вниз (10)
 ArrangeName = Разместить по имени
 ArrangeTime = Разместить по добавлению
 MoveDrag = Перетаскивание / выбор
-ExtendDrag = Добавление к выделению
+ExtendDrag = Добавить к выделению (клик или рамка)
 DuplicateDrag = Дублирование перетаскиванием
 PanDrag = Панорамирование
 PanSpaceDrag = Панорамирование (вариант 1)
@@ -296,3 +296,42 @@ Language = Язык
 UnsavedChip = Не сохранено
 EditNote = Изменить заметку
 KeysSettings = Клавиши и мышь
+
+FileMenu = Файл
+AlignGroup = Выравнивание
+OrderGroup = Порядок
+InsertImages = Изображения…
+OpenFile = Открыть файл…
+RestoreRecovery = Восстановить
+DiscardRecovery = Отбросить
+ImageOne = изображение
+ImageFew = изображения
+ImageMany = изображений
+NoteOne = заметка
+NoteFew = заметки
+NoteMany = заметок
+NewImageLayout = Расположение новых изображений
+ImageGap = Отступ между изображениями
+ManyImages = Когда добавлено много изображений (количество)
+PackingChoice = Метод упаковки
+PackingSplit = Правило разделения при упаковке
+ImportSkippedCount = Импортировано; пропущено элементов: {count}
+
+ChangedNow = только что
+ChangedMinutes = {count} мин назад
+ChangedHours = {count} ч назад
+ChangedDays = {count} дн назад
+
+AddedImages = Добавлено изображений: {count}
+
+ChooseFiles = Выбрать файлы…
+
+ImagePickers = Пипетки изображения
+
+PickColorHint = Нажмите на изображение, чтобы скопировать цвет. Esc — отмена.
+
+PickCoordinatesHint = Нажмите на изображение, чтобы узнать координаты пикселя и данные источника. Esc — отмена.
+
+ExportPath = Файл или папка назначения
+
+ToggleDrag = Переключить выделение (клик или рамка)

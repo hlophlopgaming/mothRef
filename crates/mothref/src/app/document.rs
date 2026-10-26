@@ -8,8 +8,10 @@ pub(super) struct View {
     pub camera: Camera,
     pub focus_return: Option<(Uuid, Camera)>,
     pub needs_fit: bool,
-    pub pan: bool,
     pub viewport: egui::Rect,
+    pub safe_area: egui::Rect,
+    pub selection_bar_height: f32,
+    pub selection_bar_visible: bool,
 }
 impl Default for View {
     fn default() -> Self {
@@ -17,8 +19,10 @@ impl Default for View {
             camera: Camera::default(),
             focus_return: None,
             needs_fit: false,
-            pan: true,
             viewport: egui::Rect::NOTHING,
+            safe_area: egui::Rect::NOTHING,
+            selection_bar_height: 0.,
+            selection_bar_visible: false,
         }
     }
 }
@@ -37,6 +41,8 @@ impl View {
                 ))
             },
         );
+        let visible = self.selection_bar_visible;
+        self.selection_bar_visible = !selection.is_empty();
         self.fit_bounds(if bounds.is_positive() {
             Some(Rect {
                 x: bounds.min.x,
@@ -47,19 +53,28 @@ impl View {
         } else {
             scene.bounds()
         });
+        self.selection_bar_visible = visible;
     }
     pub(super) fn fit_bounds(&mut self, bounds: Option<Rect>) {
         self.needs_fit = true;
         if !self.viewport.is_finite() || !self.viewport.is_positive() {
             return;
         }
+        let mut area = if self.safe_area.is_positive() {
+            self.safe_area
+        } else {
+            self.viewport
+        };
+        if self.selection_bar_visible {
+            area.min.y += self.selection_bar_height;
+        }
         if let Some(bounds) = bounds {
-            self.camera.zoom = ((self.viewport.width() - 48.) / bounds.width)
-                .min((self.viewport.height() - 48.) / bounds.height)
+            self.camera.zoom = ((area.width() - 48.) / bounds.width)
+                .min((area.height() - 48.) / bounds.height)
                 .clamp(0.01, 64.);
             self.camera.origin = [
-                bounds.x + bounds.width / 2. - self.viewport.center().x / self.camera.zoom,
-                bounds.y + bounds.height / 2. - self.viewport.center().y / self.camera.zoom,
+                bounds.x + bounds.width / 2. - area.center().x / self.camera.zoom,
+                bounds.y + bounds.height / 2. - area.center().y / self.camera.zoom,
             ];
         }
         self.needs_fit = false;
@@ -75,6 +90,12 @@ fn request_priority(
         .then(a.0.tile.cmp(&b.0.tile))
         .then(a.0.side.cmp(&b.0.side))
 }
+pub(super) struct Added {
+    pub ids: Vec<Uuid>,
+    pub mode: super::arrange::Arrange,
+    pub needs_fit: bool,
+}
+
 pub(super) struct Document {
     pub(super) view: View,
     pub(super) motion: super::item_motion::Items,
@@ -90,6 +111,7 @@ pub(super) struct Document {
     pub(super) loading_bounds: Option<Rect>,
     pub(super) pasting: usize,
     pub(super) path: String,
+    pub(super) restoring: Option<std::path::PathBuf>,
     pub(super) dirty: bool,
     pub(super) close_after_save: bool,
     pub(super) locked: bool,
@@ -107,7 +129,9 @@ pub(super) struct Document {
     pub(super) pending: HashMap<Handle, Pending>,
     pub(super) failed: HashSet<Handle>,
     pub(super) waiting: Vec<Handle>,
-    pub(super) message: String,
+    pub(super) message: moth_ui::Message,
+    pub(super) export_message: Option<moth_ui::Message>,
+    pub(super) exporting: bool,
     pub(super) discarding: bool,
     pub(super) discarded: bool,
     pub(super) batching: bool,
@@ -115,6 +139,8 @@ pub(super) struct Document {
     pub(super) burst: Vec<Uuid>,
     /// Ids of a finished burst awaiting an arrangement choice while the prompt is shown.
     pub(super) arrange_prompt: Option<Vec<Uuid>>,
+    /// One import notification; its layouts share the insertion undo group until dismissed.
+    pub(super) added: Option<Added>,
 }
 impl Document {
     /// Opening a scene recounts once; normal edits maintain the count incrementally.
@@ -218,7 +244,7 @@ impl Document {
             format,
             self.sources.iter().map(|(&hash, &handle)| (handle, hash)),
         ) {
-            self.message = error.to_string();
+            self.message = error.to_string().into();
         }
     }
     /// Whether a full-resolution preload was offered since the last reset.
@@ -248,7 +274,7 @@ impl Document {
         self.preload_overflow = true;
         self.preload_ready = true;
         self.decode.cancel_preload();
-        self.message = moth_ui::text(moth_ui::Text::PreloadOverflow).into();
+        self.message = moth_ui::Text::PreloadOverflow.into();
     }
     /// Images of the current preload pass prepared so far.
     pub(super) fn preload_progress(&self) -> moth_io::PreloadProgress {
@@ -450,6 +476,7 @@ impl Document {
             loading_bounds: None,
             pasting: 0,
             path: String::new(),
+            restoring: None,
             dirty: false,
             close_after_save: false,
             locked: false,
@@ -463,12 +490,15 @@ impl Document {
             pending: HashMap::new(),
             failed: HashSet::new(),
             waiting: Vec::new(),
-            message: String::new(),
+            message: moth_ui::Message::default(),
+            export_message: None,
+            exporting: false,
             discarding: false,
             discarded: false,
             batching: false,
             burst: Vec::new(),
             arrange_prompt: None,
+            added: None,
         })
     }
     pub(super) fn fit(&mut self) {
@@ -495,7 +525,7 @@ impl Document {
     /// Enqueue a journaled save; the caller resolves the path first.
     pub(super) fn save(&mut self) {
         if self.loading {
-            self.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
+            self.message = moth_ui::Text::StorageBusy.into();
             return;
         }
         match self
@@ -505,7 +535,7 @@ impl Document {
                 std::path::PathBuf::from(&self.path),
             )) {
             Ok(()) => self.in_flight += 1,
-            Err(_) => self.message = moth_ui::text(moth_ui::Text::StorageBusy).into(),
+            Err(_) => self.message = moth_ui::Text::StorageBusy.into(),
         }
     }
     /// Begin discarding staged originals and the journal; guarded by in-flight
@@ -516,7 +546,7 @@ impl Document {
             || !self.pending.is_empty()
             || !self.waiting.is_empty()
         {
-            self.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
+            self.message = moth_ui::Text::StorageBusy.into();
             return;
         }
         if !self.discarding {
@@ -526,7 +556,7 @@ impl Document {
                 .try_send(moth_platform::ClipboardRequest::Discard)
             {
                 Ok(()) => self.discarding = true,
-                Err(_) => self.message = moth_ui::text(moth_ui::Text::ClipboardBusy).into(),
+                Err(_) => self.message = moth_ui::Text::ClipboardBusy.into(),
             }
         }
     }
@@ -551,6 +581,80 @@ mod tests {
         ];
         candidates.sort_by(request_priority);
         assert_eq!(candidates.map(|entry| entry.0.handle.0), [3, 4, 2, 1]);
+    }
+    #[test]
+    fn settings_columns_stack_their_controls_after_resize() {
+        use super::super::settings::{Settings, SettingsWindow};
+        let root = std::env::temp_dir().join(format!("mothref-settings-{}", Uuid::now_v7()));
+        let board = Document::with_storage(
+            Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+            Arc::new(|| {}),
+            false,
+        )
+        .unwrap();
+        let ctx = egui::Context::default();
+        moth_ui::theme(&ctx, &moth_ui::Tokens::LIGHT);
+        let mut window = SettingsWindow::default();
+        window.open = true;
+        let mut settings = Settings::default();
+        let mut tools = super::super::tools::Tools::default();
+        let enabled = vec![true; super::super::bindings::ACTIONS.len()];
+        for size in [egui::vec2(1440., 900.), egui::vec2(900., 600.)] {
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        window.show(ui, &mut settings, &mut tools, &board, "", &enabled);
+                    },
+                );
+                let position = |label| {
+                    output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(t) if t.galley.text() == moth_ui::text(label) => {
+                                Some(t.pos)
+                            }
+                            _ => None,
+                        })
+                        .expect("settings label is visible")
+                };
+                let general = position(moth_ui::Text::GeneralSettings);
+                let appearance = position(moth_ui::Text::AppearanceSettings);
+                assert!((general.x - appearance.x).abs() < 1.);
+                assert!(appearance.y > general.y);
+                let language = position(moth_ui::Text::Language);
+                let reset = position(moth_ui::Text::ResetSection);
+                assert!(reset.y > language.y);
+                output.textures_delta.clear();
+            }
+        }
+        board.boards.finish().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn frames_inside_chrome() {
+        let mut view = super::View {
+            viewport: egui::Rect::from_min_max(egui::pos2(0., 0.), egui::pos2(900., 600.)),
+            safe_area: egui::Rect::from_min_max(egui::pos2(0., 60.), egui::pos2(900., 520.)),
+            selection_bar_height: 48.,
+            selection_bar_visible: true,
+            ..super::View::default()
+        };
+        view.fit_bounds(Some(super::Rect {
+            x: 0.,
+            y: 0.,
+            width: 800.,
+            height: 600.,
+        }));
+        let top = view.camera.screen([0., 0.]);
+        let bottom = view.camera.screen([800., 600.]);
+        assert!(top[1] >= 108. && bottom[1] <= 520.);
+        assert!((view.camera.screen([400., 300.])[1] - 314.).abs() < 0.001);
     }
     #[test]
     fn selection_fit_uses_rotated_bounds_and_empty_selection_fits_board() {
@@ -596,7 +700,136 @@ mod tests {
     }
     use super::*;
     #[test]
-    fn batch_edits_show_affected_items_and_undo_together() {
+    fn import_layout_choices_share_one_undo_and_fit_only_after_acknowledgment() {
+        let root = std::env::temp_dir().join(format!("mothref-import-feedback-{}", Uuid::now_v7()));
+        let board = Document::with_storage(
+            Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+            Arc::new(|| {}),
+            false,
+        )
+        .unwrap();
+        let mut workspace = workspace::Workspace::new(board, Arc::new(|| {}));
+        workspace.board.view.viewport =
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900., 600.));
+        fn drain(workspace: &mut workspace::Workspace) {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                workspace.pump(workspace::Pump {
+                    format: moth_io::ImageFormat::Rgba8,
+                    cursor: None,
+                    fallback: [0.; 2],
+                    upload: &mut |_| {},
+                    events: Vec::new(),
+                });
+                if workspace.board.idle() {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "journal acknowledgment must arrive"
+                );
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+        let base = Item::text(
+            "existing",
+            Rect {
+                x: -100.,
+                y: -100.,
+                width: 50.,
+                height: 50.,
+            },
+            None,
+        );
+        workspace.persist_batch(vec![(Command::Insert(base.clone()), None)]);
+        drain(&mut workspace);
+        let a = Item::text(
+            "a",
+            Rect {
+                x: 200.,
+                y: 200.,
+                width: 200.,
+                height: 100.,
+            },
+            Some(&base.z),
+        );
+        let b = Item::text(
+            "b",
+            Rect {
+                x: 220.,
+                y: 220.,
+                width: 100.,
+                height: 200.,
+            },
+            Some(&a.z),
+        );
+        let ids = vec![a.id, b.id];
+        workspace.begin_batch();
+        workspace.persist_batch(vec![
+            (Command::Insert(a.clone()), None),
+            (Command::Insert(b.clone()), None),
+        ]);
+        workspace.board.added = Some(Added {
+            ids: ids.clone(),
+            mode: arrange::Arrange::Horizontal,
+            needs_fit: true,
+        });
+        drain(&mut workspace);
+        for mode in [arrange::Arrange::Horizontal, arrange::Arrange::Vertical] {
+            let items: Vec<_> = ids
+                .iter()
+                .map(|id| workspace.board.scene.get(*id).unwrap())
+                .collect();
+            let commands = arrange::counted(&items, mode, 1, 24.);
+            let camera = workspace.board.view.camera;
+            workspace.board.added = None;
+            workspace.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+            workspace.board.added = Some(Added {
+                ids: ids.clone(),
+                mode,
+                needs_fit: true,
+            });
+            assert!(workspace.board.added.as_ref().unwrap().needs_fit);
+            assert_eq!(workspace.board.view.camera.origin, camera.origin);
+            drain(&mut workspace);
+            assert!(!workspace.board.added.as_ref().unwrap().needs_fit);
+            let mut expected = workspace.board.view;
+            expected.fit_selection(&workspace.board.scene, &ids.iter().copied().collect());
+            assert_eq!(workspace.board.view.camera.origin, expected.camera.origin);
+            assert_eq!(workspace.board.view.camera.zoom, expected.camera.zoom);
+        }
+        let final_a = workspace.board.scene.get(a.id).unwrap().clone();
+        let moved = Rect {
+            x: -150.,
+            ..base.rect
+        };
+        workspace.persist_batch(vec![(
+            Command::SetRect {
+                id: base.id,
+                rect: moved,
+            },
+            None,
+        )]);
+        assert!(workspace.board.added.is_none());
+        drain(&mut workspace);
+        workspace.persist(moth_platform::boards::Request::Undo);
+        drain(&mut workspace);
+        assert_eq!(workspace.board.scene.get(base.id), Some(&base));
+        assert!(workspace.board.scene.get(a.id).is_some());
+        workspace.persist(moth_platform::boards::Request::Undo);
+        drain(&mut workspace);
+        assert_eq!(workspace.board.scene.len(), 1);
+        assert_eq!(workspace.board.scene.get(base.id), Some(&base));
+        workspace.persist(moth_platform::boards::Request::Redo);
+        drain(&mut workspace);
+        assert_eq!(workspace.board.scene.get(a.id), Some(&final_a));
+        assert_eq!(workspace.board.scene.len(), 3);
+        workspace.board.boards.finish().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_edits_and_layout_preserve_camera() {
         let root = std::env::temp_dir().join(format!("mothref-batch-{}", Uuid::now_v7()));
         let board = Document::with_storage(
             Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
@@ -605,6 +838,13 @@ mod tests {
         )
         .unwrap();
         let mut workspace = workspace::Workspace::new(board, Arc::new(|| {}));
+        workspace.board.view.viewport =
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.));
+        workspace.board.view.camera = Camera {
+            origin: [-123., 45.],
+            zoom: 0.75,
+        };
+        let camera = workspace.board.view.camera;
         let items: Vec<_> = (0..3)
             .map(|n| {
                 Item::text(
@@ -626,8 +866,6 @@ mod tests {
                     format: moth_io::ImageFormat::default(),
                     cursor: None,
                     fallback: [0.; 2],
-                    auto_arrange: false,
-                    threshold: 10,
                     upload: &mut |_| {},
                     events: Vec::new(),
                 });
@@ -664,17 +902,30 @@ mod tests {
             workspace.board.selection,
             items.iter().take(2).map(|i| i.id).collect()
         );
+        assert_eq!(workspace.board.view.camera.origin, camera.origin);
+        assert_eq!(workspace.board.view.camera.zoom, camera.zoom);
         assert_eq!(workspace.board.scene.get(items[2].id), Some(&items[2]));
         workspace.persist(moth_platform::boards::Request::Undo);
         drain(&mut workspace);
+        assert_eq!(workspace.board.view.camera.origin, camera.origin);
+        assert_eq!(workspace.board.view.camera.zoom, camera.zoom);
         for item in &items {
             assert_eq!(workspace.board.scene.get(item.id), Some(item));
         }
         workspace.persist(moth_platform::boards::Request::Redo);
         drain(&mut workspace);
+        assert_eq!(workspace.board.view.camera.origin, camera.origin);
+        assert_eq!(workspace.board.view.camera.zoom, camera.zoom);
         for item in &items[..2] {
             assert_eq!(workspace.board.scene.get(item.id).unwrap().rect.y, 50.);
         }
+        let arranged: Vec<_> = workspace.board.scene.items().collect();
+        let commands = arrange::counted(&arranged, arrange::Arrange::Horizontal, 1, 12.);
+        assert!(!commands.is_empty());
+        workspace.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+        drain(&mut workspace);
+        assert_eq!(workspace.board.view.camera.zoom, camera.zoom);
+        assert_eq!(workspace.board.view.camera.origin, camera.origin);
         workspace.board.boards.finish().unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -795,8 +1046,6 @@ mod tests {
                 format: moth_io::ImageFormat::default(),
                 cursor: None,
                 fallback: [0., 0.],
-                auto_arrange: false,
-                threshold: 10,
                 upload: &mut |_| panic!("parked tab must not upload"),
                 events: Vec::new(),
             });
@@ -877,7 +1126,7 @@ mod tests {
         session.discard();
         assert!(!session.discarding);
         assert!(!session.discarded);
-        assert!(!session.message.is_empty());
+        assert!(!session.message.render(moth_ui::locale()).is_empty());
 
         // Route the actual save acknowledgment through the workspace, including discard.
         let mut workspace = workspace::Workspace::new(session, Arc::new(|| {}));
@@ -887,8 +1136,6 @@ mod tests {
                 format: moth_io::ImageFormat::default(),
                 cursor: None,
                 fallback: [0., 0.],
-                auto_arrange: false,
-                threshold: 10,
                 upload: &mut |_| panic!("empty board has no images"),
                 events: Vec::new(),
             });

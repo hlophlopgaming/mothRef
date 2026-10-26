@@ -37,6 +37,8 @@ struct Editing {
     draft: String,
     /// World anchor where the editor floats, independent of scene timing.
     anchor: [f32; 2],
+    font_size: f32,
+    width: f32,
     focus: bool,
 }
 mod actions;
@@ -53,6 +55,8 @@ mod library;
 mod modal;
 mod motion;
 mod overlay;
+mod resize;
+mod selection;
 mod settings;
 mod shell;
 mod shortcuts;
@@ -87,6 +91,7 @@ pub struct App {
     items_active: bool,
     motion: motion::DragMotion,
     moving: Option<(Uuid, Rect)>,
+    resizing: Option<resize::Resize>,
     drag_duplicate: bool,
     editing: Option<Editing>,
     pub startup_error: Option<anyhow::Error>,
@@ -148,6 +153,7 @@ impl App {
             items_active: false,
             motion: motion::DragMotion::default(),
             moving: None,
+            resizing: None,
             drag_duplicate: false,
             editing: None,
             startup_error: None,
@@ -182,7 +188,7 @@ impl App {
                 self.moving_window = false;
                 self.picking_window = true;
             }
-            Err(error) => self.workspace.board.message = error,
+            Err(error) => self.workspace.board.message = error.into(),
         }
     }
     fn cancel_window_mode(&mut self) {
@@ -210,7 +216,7 @@ impl App {
             Ok(()) => self.pinned = enabled,
             Err(error) => {
                 self.pinned = false;
-                self.workspace.board.message = error;
+                self.workspace.board.message = error.into();
             }
         }
     }
@@ -226,7 +232,7 @@ impl App {
                 self.pinned && !self.target_pin,
                 false,
             ) {
-                self.workspace.board.message = error;
+                self.workspace.board.message = error.into();
             } else {
                 self.overlay = None;
             }
@@ -241,22 +247,22 @@ impl App {
                     if let Err(error) =
                         moth_platform::Desktop.window_effects(&window, true, overlay.on_top, false)
                     {
-                        self.workspace.board.message = error;
+                        self.workspace.board.message = error.into();
                     }
                     if let Err(error) =
                         moth_platform::Desktop.pin_target(&mut self.pin, &window, false)
                     {
-                        self.workspace.board.message = error;
+                        self.workspace.board.message = error.into();
                     }
                     self.overlay = Some(overlay);
                     self.workspace.library = false;
                     self.library_screen.cards.clear();
                     self.library_screen.catalog.dismiss_editor();
                 }
-                Err(error) => self.workspace.board.message = error.to_string(),
+                Err(error) => self.workspace.board.message = error.to_string().into(),
             }
         } else {
-            self.workspace.board.message = moth_ui::text(moth_ui::Text::OverlayUnsupported).into();
+            self.workspace.board.message = moth_ui::Text::OverlayUnsupported.into();
         }
         if self.overlay.is_none() {
             self.apply_pin(self.pinned);
@@ -276,6 +282,7 @@ impl App {
         self.camera_motion.stop();
         self.drag = None;
         self.moving = None;
+        self.resizing = None;
         self.drag_pointer = None;
         self.input.pending_focus = None;
         self.input.pointer_action = None;
@@ -353,6 +360,9 @@ impl App {
         if self.workspace.board.discarding {
             return;
         }
+        if !self.workspace.finish_added() {
+            return;
+        }
         // A new paste supersedes a pending arrangement prompt.
         self.workspace.board.arrange_prompt = None;
         match self
@@ -363,20 +373,28 @@ impl App {
             .try_send(moth_platform::ClipboardRequest::Paste)
         {
             Ok(()) => self.workspace.board.pasting += 1,
-            Err(_) => {
-                self.workspace.board.message = moth_ui::text(moth_ui::Text::ClipboardBusy).into()
-            }
+            Err(_) => self.workspace.board.message = moth_ui::Text::ClipboardBusy.into(),
         }
     }
 
-    fn open_files(&mut self) {
+    fn open_files(&mut self, images: bool) {
         if self.workspace.confirm_close {
             return;
         }
-        let files = rfd::FileDialog::new()
-            .set_title(moth_ui::text(moth_ui::Text::Open))
-            .pick_files()
-            .unwrap_or_default();
+        let dialog = rfd::FileDialog::new().set_title(moth_ui::text(if images {
+            moth_ui::Text::InsertImages
+        } else {
+            moth_ui::Text::Open
+        }));
+        let dialog = if images {
+            dialog.add_filter(
+                moth_ui::text(moth_ui::Text::Images),
+                &["png", "jpg", "jpeg", "webp", "gif", "bmp"],
+            )
+        } else {
+            dialog
+        };
+        let files = dialog.pick_files().unwrap_or_default();
         for path in files {
             if path
                 .extension()
@@ -401,17 +419,10 @@ impl App {
         if self.workspace.board.discarding || !self.workspace.board.idle() {
             return;
         }
-        let [width, height] = moth_scene::note_size("");
-        let item = Item::text(
-            "",
-            Rect {
-                x: world[0],
-                y: world[1],
-                width,
-                height,
-            },
-            self.workspace.board.scene.top(),
-        );
+        let rect = canvas::new_note_rect(world, self.workspace.board.view.camera.zoom);
+        let font_size = canvas::note_font_size(rect, "");
+        let width = rect.width;
+        let item = Item::text("", rect, self.workspace.board.scene.top());
         let id = item.id;
         self.workspace
             .persist(moth_platform::boards::Request::Apply(
@@ -423,6 +434,8 @@ impl App {
             original: String::new(),
             draft: String::new(),
             anchor: world,
+            font_size,
+            width,
             focus: true,
         });
     }
@@ -442,6 +455,8 @@ impl App {
             original: text.to_owned(),
             draft: text.to_owned(),
             anchor: [item.rect.x, item.rect.y],
+            font_size: canvas::note_font_size(item.rect, text),
+            width: item.rect.width,
             focus: true,
         });
     }
@@ -457,7 +472,8 @@ impl App {
         if editing.draft.trim().is_empty() {
             commands.push(Command::Remove(editing.id));
         } else {
-            let [width, height] = canvas::measure_note(self.shell.context(), &editing.draft);
+            let [width, height] =
+                canvas::measure_note(self.shell.context(), &editing.draft, editing.font_size);
             commands.push(Command::SetText {
                 id: editing.id,
                 text: editing.draft,
@@ -614,8 +630,6 @@ impl App {
             format,
             cursor,
             fallback,
-            auto_arrange: self.settings.auto_arrange,
-            threshold: self.settings.threshold,
             upload: &mut |image| self.shell.upload(image, self.settings.reduced_motion),
             events: Vec::new(),
         });
@@ -631,8 +645,7 @@ impl App {
                 workspace::Event::Preferences(values) => {
                     self.settings.load(&values);
                     if !self.shortcuts.registry.load(&values) {
-                        self.workspace.board.message =
-                            moth_ui::text(moth_ui::Text::InvalidBinding).into();
+                        self.workspace.board.message = moth_ui::Text::InvalidBinding.into();
                     }
                     moth_ui::theme::apply(
                         self.shell.context(),
@@ -716,7 +729,7 @@ impl App {
                         self.library_screen.cards.push(card);
                     }
                 }
-                Err(error) => self.workspace.board.message = error,
+                Err(error) => self.workspace.board.message = error.into(),
                 _ => {}
             }
         }
@@ -747,7 +760,7 @@ impl App {
                 Intent::Save | Intent::SaveAs(_) | Intent::SaveAndClose
             )
         {
-            self.workspace.board.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
+            self.workspace.board.message = moth_ui::Text::StorageBusy.into();
             return;
         }
         let before = self.workspace.board.view.camera;
@@ -768,7 +781,7 @@ impl App {
                     .try_send(request)
                     .is_err()
                 {
-                    self.workspace.board.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
+                    self.workspace.board.message = moth_ui::Text::StorageBusy.into();
                 }
             }
 
@@ -803,7 +816,8 @@ impl App {
                 self.workspace.board.view.viewport = egui::Rect::NOTHING;
             }
             Intent::New => self.new_board(),
-            Intent::Open => self.open_files(),
+            Intent::Open => self.open_files(false),
+            Intent::Images => self.open_files(true),
             Intent::Save => {
                 if self.workspace.board.path.is_empty() {
                     self.modal.dialog = Some(());
@@ -867,7 +881,7 @@ impl App {
                 if let Some(window) = &self.shell.window
                     && let Err(error) = window.drag_window()
                 {
-                    self.workspace.board.message = error.to_string();
+                    self.workspace.board.message = error.to_string().into();
                 }
             }
             Intent::Minimize => {
@@ -957,10 +971,24 @@ impl App {
                         self.settings.gap,
                     )
                 };
+                // Layout changes belong to the still-open insertion group.
+                let previous = self.workspace.board.added.take();
                 if !commands.is_empty() {
+                    let pending = self.workspace.board.in_flight;
                     self.workspace
                         .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+                    if self.workspace.board.in_flight == pending {
+                        self.workspace.board.added = previous;
+                        return;
+                    }
                 }
+                self.workspace.board.added = Some(document::Added {
+                    ids,
+                    mode,
+                    needs_fit: true,
+                });
+                self.settings.default_arrange = mode as u8;
+                self.apply(Intent::PreferencesDirty, event_loop);
             }
             Intent::FitSelection => self.fit_selection(),
             Intent::Export(target) => self
@@ -1012,7 +1040,7 @@ impl App {
                     {
                         tab.in_flight += 1;
                     } else {
-                        tab.message = moth_ui::text(moth_ui::Text::StorageBusy).into();
+                        tab.message = moth_ui::Text::StorageBusy.into();
                     }
                 }
                 self.workspace
@@ -1050,7 +1078,8 @@ impl App {
                 }
             }
 
-            Intent::DismissRecovery => self.workspace.dismiss_recovery(),
+            Intent::DismissRecovery => self.workspace.dismiss_recovery(self.modal.recovery),
+            Intent::RestoreRecovery => self.workspace.restore_recovery(self.modal.recovery),
         }
         self.animate_camera(before);
     }
@@ -1087,7 +1116,7 @@ impl App {
                 NativeEvent::Drop(path) => self.import(path),
                 NativeEvent::Error(error) => {
                     tracing::warn!(%error, "native input failed");
-                    self.workspace.board.message = error;
+                    self.workspace.board.message = error.into();
                     self.redraw();
                 }
             }
@@ -1104,7 +1133,7 @@ impl App {
                 if let Some(window) = &self.shell.window
                     && let Err(error) = window.drag_window()
                 {
-                    self.workspace.board.message = error.to_string();
+                    self.workspace.board.message = error.to_string().into();
                 }
             }
             return;
@@ -1187,7 +1216,7 @@ impl App {
                         &self.input.held,
                     );
                     self.input.pointer_action = action;
-                    if action.is_none() && !self.workspace.board.view.pan {
+                    if action.is_none() {
                         return;
                     }
                 }
@@ -1264,6 +1293,83 @@ impl App {
                     self.tools.coordinates = false;
                     return;
                 }
+                if self
+                    .resizing
+                    .as_ref()
+                    .is_some_and(|resize| !resize.released)
+                {
+                    if self.drag_pointer != Some((p.kind, p.id)) {
+                        self.resizing = None;
+                        self.drag_pointer = None;
+                    } else {
+                        let _ = self.input.gestures.update(p);
+                        match p.phase {
+                            Phase::Move => {
+                                let point = self.workspace.board.view.camera.world(p.position);
+                                if let Some(resize) = &mut self.resizing {
+                                    resize.update(point);
+                                }
+                            }
+                            Phase::Up => {
+                                let mut resize = self
+                                    .resizing
+                                    .take()
+                                    .expect("active resize owns the pointer");
+                                resize.update(self.workspace.board.view.camera.world(p.position));
+                                let commands = resize.commands();
+                                if !commands.is_empty() {
+                                    let pending = self.workspace.board.in_flight;
+                                    self.workspace.persist_batch(
+                                        commands.into_iter().map(|c| (c, None)).collect(),
+                                    );
+                                    if self.workspace.board.in_flight > pending {
+                                        resize.released = true;
+                                        self.resizing = Some(resize);
+                                    }
+                                }
+                                self.drag_pointer = None;
+                            }
+                            Phase::Cancel => {
+                                self.resizing = None;
+                                self.drag_pointer = None;
+                            }
+                            _ => {}
+                        }
+                        return;
+                    }
+                }
+                if p.phase == Phase::Down
+                    && p.button == 1
+                    && !p.pan
+                    && !self.tools.locked
+                    && !self.tools.blocked()
+                    && !self.settings_window.open
+                    && self.settings.show_outlines
+                    && self.workspace.board.idle()
+                    && self.input.pointer_action == Some(bindings::Action::MoveDrag)
+                {
+                    let items = self
+                        .workspace
+                        .board
+                        .selection
+                        .iter()
+                        .filter_map(|id| self.workspace.board.scene.get(*id).cloned())
+                        .collect();
+                    self.resizing = resize::Resize::start(
+                        items,
+                        self.workspace.board.view.camera,
+                        p.position,
+                        moth_ui::tokens(self.shell.context()).space_m as f32,
+                    );
+                    if self.resizing.is_some() {
+                        let _ = self.input.gestures.update(p);
+                        self.camera_motion.stop();
+                        self.motion
+                            .start(self.workspace.board.view.camera.world(p.position), 0.);
+                        self.drag_pointer = Some((p.kind, p.id));
+                        return;
+                    }
+                }
                 if let Some(g) = self.input.gestures.update(p) {
                     self.camera_motion.stop();
                     self.camera_motion.pan_sample(g.pan, Instant::now());
@@ -1304,7 +1410,7 @@ impl App {
                     {
                         self.camera_motion.stop();
                         self.camera_motion.clear_samples();
-                        if !p.pan && !self.workspace.board.view.pan && self.workspace.board.idle() {
+                        if !p.pan && self.workspace.board.idle() {
                             let world = self.workspace.board.view.camera.world(p.position);
                             if let Some(item) = self
                                 .workspace
@@ -1324,17 +1430,16 @@ impl App {
                                     item.rect.contains_rotated(item.transform.rotation, world)
                                 })
                             {
+                                if !selection::click(
+                                    &mut self.workspace.board.selection,
+                                    item.id,
+                                    self.input.pointer_action,
+                                ) {
+                                    return;
+                                }
                                 self.moving = Some((item.id, item.rect));
                                 self.drag_duplicate = self.input.pointer_action
                                     == Some(bindings::Action::DuplicateDrag);
-                                if !self.workspace.board.selection.contains(&item.id) {
-                                    if self.input.pointer_action
-                                        != Some(bindings::Action::ExtendDrag)
-                                    {
-                                        self.workspace.board.selection.clear();
-                                    }
-                                    self.workspace.board.selection.insert(item.id);
-                                }
                             }
                         }
                         if self.moving.is_some() {
@@ -1358,11 +1463,7 @@ impl App {
                             );
                             self.motion.sample(p.position[0], Instant::now());
                         }
-                        self.drag = Some((
-                            p.position,
-                            p.position,
-                            p.pan || self.workspace.board.view.pan,
-                        ));
+                        self.drag = Some((p.position, p.position, p.pan));
                         self.drag_anchor = Some(self.workspace.board.view.camera.world(p.position));
                         self.drag_pointer = Some((p.kind, p.id));
                     }
@@ -1444,14 +1545,11 @@ impl App {
                                     .abs()
                                     .max(1. / self.workspace.board.view.camera.zoom),
                             };
-                            self.workspace.board.selection = self
-                                .workspace
-                                .board
-                                .scene
-                                .query(rect)
-                                .iter()
-                                .map(|i| i.id)
-                                .collect();
+                            selection::area(
+                                &mut self.workspace.board.selection,
+                                self.workspace.board.scene.query(rect).iter().map(|i| i.id),
+                                self.input.pointer_action,
+                            );
                         }
                     }
                     Phase::Cancel => self.cancel_drag(),
@@ -1470,6 +1568,7 @@ impl App {
         }
     }
     fn cancel_drag(&mut self) {
+        self.resizing = None;
         if self.moving.is_some()
             && let Some((a, b, false)) = self.drag
         {
@@ -1492,6 +1591,7 @@ impl App {
         }
         self.drag = None;
         self.moving = None;
+        self.resizing = None;
         self.drag_pointer = None;
         self.input.pending_focus = None;
         self.input.pointer_action = None;
@@ -1541,6 +1641,14 @@ impl App {
             &mut self.workspace.board.motion,
             self.workspace.board.in_flight == 0,
         );
+        if self.workspace.board.idle()
+            && self.resizing.as_ref().is_some_and(|resize| resize.released)
+            && let Some(resize) = self.resizing.take()
+        {
+            for item in resize.previews() {
+                self.workspace.board.motion.remove(item.id);
+            }
+        }
         self.items_active = self
             .workspace
             .board
@@ -1639,6 +1747,8 @@ impl App {
                             catalog: &mut self.library_screen.catalog,
                             cards: &self.library_screen.cards,
                             window,
+                            enabled: &enabled,
+                            registry: &self.shortcuts.registry,
                         },
                     )
                 } else {
@@ -1656,13 +1766,15 @@ impl App {
                             editing: &mut self.editing,
                             drag: self.drag,
                             moving: self.moving,
+                            resizing: self.resizing.as_ref(),
                             pointer: self.input.cursor.filter(|_| self.input.hover),
                             motion: &self.motion,
                             duplicate: self.drag_duplicate,
                             gpu,
                             overlay: self.overlay.is_some(),
-                            activate: self.input.pointer_action == Some(bindings::Action::MoveDrag)
-                                && !self.workspace.board.view.pan,
+                            activate: self.moving.is_none()
+                                && self.drag.is_none()
+                                && self.resizing.is_none(),
                             secondary_gesture: self
                                 .input
                                 .pointer_action
@@ -1714,8 +1826,9 @@ impl App {
                 intents.extend(self.modal.show(
                     ui,
                     &self.workspace,
-                    self.settings.auto_arrange,
-                    self.settings.default_arrange,
+                    &self.settings,
+                    &enabled,
+                    &self.shortcuts.registry,
                 ));
             })
         };
@@ -1728,9 +1841,7 @@ impl App {
             return Ok(());
         };
         let frame = shell::Frame {
-            grid: !self.workspace.library
-                && !self.workspace.board.scene.is_empty()
-                && self.overlay.is_none(),
+            grid: false,
             opacity: self.overlay.as_ref().map_or(1., |overlay| overlay.opacity),
             clear: if self.overlay.is_some() {
                 wgpu::Color::TRANSPARENT
@@ -1769,6 +1880,9 @@ impl App {
             self.motion
                 .returning(self.motion.now(), self.settings.reduced_motion),
         );
+        if let Some(resizing) = &self.resizing {
+            previews.extend(resizing.previews());
+        }
         let drag_ids: HashSet<_> = previews.iter().map(|item| item.id).collect();
         previews.extend(
             self.workspace
@@ -1841,11 +1955,11 @@ impl ApplicationHandler<Wake> for App {
             )
         {
             tracing::warn!(%error, "native input startup failed");
-            self.workspace.board.message = error.to_string();
+            self.workspace.board.message = error.to_string().into();
         }
         if let Err(e) = self.recover() {
             tracing::error!(%e,"renderer creation failed");
-            self.workspace.board.message = e.to_string();
+            self.workspace.board.message = e.to_string().into();
             self.startup_error = Some(e);
             event_loop.exit();
         }
@@ -1863,6 +1977,7 @@ impl ApplicationHandler<Wake> for App {
         self.input.native_pressed = None;
         self.drag = None;
         self.moving = None;
+        self.resizing = None;
         self.drag_pointer = None;
         self.input.gestures.cancel();
         self.input.modifiers = egui::Modifiers::NONE;
@@ -1882,7 +1997,7 @@ impl ApplicationHandler<Wake> for App {
                 if self.workspace.board.discarded
                     && let Err(error) = self.finish_close(event_loop)
                 {
-                    self.workspace.board.message = error.to_string();
+                    self.workspace.board.message = error.to_string().into();
                 }
                 self.redraw();
             }
@@ -1905,7 +2020,7 @@ impl ApplicationHandler<Wake> for App {
             if let Some(overlay) = &mut self.overlay {
                 if matches!(event, WindowEvent::RedrawRequested) {
                     if let Err(error) = overlay.frame() {
-                        self.workspace.board.message = error.to_string();
+                        self.workspace.board.message = error.to_string().into();
                         overlay.exit = true;
                     }
                 } else {
@@ -1920,7 +2035,7 @@ impl ApplicationHandler<Wake> for App {
                             overlay.click_through,
                         )
                     {
-                        self.workspace.board.message = error;
+                        self.workspace.board.message = error.into();
                         overlay.click_through = false;
                     } else {
                         overlay.applied = (overlay.on_top, overlay.click_through);
@@ -1973,7 +2088,7 @@ impl ApplicationHandler<Wake> for App {
             WindowEvent::RedrawRequested => {
                 if let Err(e) = self.frame(event_loop) {
                     tracing::error!(%e,"frame failed");
-                    self.workspace.board.message = e.to_string();
+                    self.workspace.board.message = e.to_string().into();
                     if self.overlay.is_some() {
                         self.toggle_overlay(event_loop);
                     }
@@ -2040,16 +2155,18 @@ impl ApplicationHandler<Wake> for App {
                     pressed,
                     event.repeat,
                     blocked,
-                    self.drag.is_some(),
+                    self.drag.is_some() || self.resizing.is_some(),
                 );
-                if pressed && key == egui::Key::Escape && self.drag.is_some() {
+                if pressed
+                    && key == egui::Key::Escape
+                    && (self.drag.is_some() || self.resizing.is_some())
+                {
                     self.cancel_drag();
                     return;
                 }
                 if pressed && key == egui::Key::Escape {
                     self.cancel_window_mode();
                     if !blocked {
-                        self.workspace.board.view.pan = false;
                         self.tools.picking = false;
                         self.tools.coordinates = false;
                         self.tools.picker_open = false;

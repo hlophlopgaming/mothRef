@@ -106,7 +106,7 @@ fn measure(
                 Completion::Loading { sources, .. } => {
                     sources.into_iter().map(|(_, handle)| handle).collect()
                 }
-                Completion::Opened(_, sources, _) | Completion::Imported(_, sources, _) => {
+                Completion::Opened(_, sources, _, _) | Completion::Imported(_, sources, _) => {
                     loaded = true;
                     durable = storage_start.map_or(Duration::ZERO, |start| start.elapsed());
                     sources.into_values().collect()

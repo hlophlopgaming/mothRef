@@ -23,6 +23,7 @@ actions! {
     BindingSettings, Shortcuts, "", None;
     New, NewBoard, "Cmd+N", Some(moth_ui::icons::Icon::Plus);
     Open, Open, "Cmd+O", Some(moth_ui::icons::Icon::Folder);
+    Images, InsertImages, "", Some(moth_ui::icons::Icon::ImagePlus);
     Save, Save, "Cmd+S", Some(moth_ui::icons::Icon::Save);
     Library, Library, "Cmd+L", Some(moth_ui::icons::Icon::Home);
     CloseTab, CloseTab, "Cmd+W", Some(moth_ui::icons::Icon::Close);
@@ -36,9 +37,8 @@ actions! {
     Fullscreen, Fullscreen, "F11", None;
     Minimize, Minimize, "", Some(moth_ui::icons::Icon::Minus);
     Maximize, Maximize, "", Some(moth_ui::icons::Icon::Maximize);
-    Settings, Settings, "Cmd+Comma", Some(moth_ui::icons::Icon::List);
+    Settings, Settings, "Cmd+Comma", Some(moth_ui::icons::Icon::Settings);
     Select, Select, "V", Some(moth_ui::icons::Icon::Select);
-    Hand, Pan, "H", Some(moth_ui::icons::Icon::Pan);
     Fit, Fit, "Home", Some(moth_ui::icons::Icon::Fit);
     Focus, FitSelection, "Space", Some(moth_ui::icons::Icon::Fit);
     Previous, PreviousImage, "PageUp", None;
@@ -48,12 +48,12 @@ actions! {
     ZoomReset, ZoomReset, "", None;
     ResetCamera, ResetCamera, "", None;
     Note, AddNote, "", Some(moth_ui::icons::Icon::Plus);
-    Delete, Delete, "Delete", None;
-    Duplicate, Duplicate, "Cmd+D", None;
-    RotateCw, RotateCw, "R", None;
-    RotateCcw, RotateCcw, "Shift+R", None;
-    FlipHorizontal, FlipHorizontal, "Shift+H", None;
-    FlipVertical, FlipVertical, "Shift+V", None;
+    Delete, Delete, "Delete", Some(moth_ui::icons::Icon::Trash);
+    Duplicate, Duplicate, "Cmd+D", Some(moth_ui::icons::Icon::Duplicate);
+    RotateCw, RotateCw, "R", Some(moth_ui::icons::Icon::RotateCw);
+    RotateCcw, RotateCcw, "Shift+R", Some(moth_ui::icons::Icon::RotateCcw);
+    FlipHorizontal, FlipHorizontal, "Shift+H", Some(moth_ui::icons::Icon::FlipHorizontal);
+    FlipVertical, FlipVertical, "Shift+V", Some(moth_ui::icons::Icon::FlipVertical);
     ResetTransform, ResetTransform, "Shift+0", None;
     ResetCrop, ResetCrop, "", None;
     NudgeLeft, NudgeLeft, "ArrowLeft", None;
@@ -88,6 +88,7 @@ actions! {
     Grayscale, CanvasGrayscale, "", None;
     MoveDrag, MoveDrag, "Mouse1", None;
     ExtendDrag, ExtendDrag, "Shift+Mouse1", None;
+    ToggleDrag, ToggleDrag, "Cmd+Mouse1", None;
     DuplicateDrag, DuplicateDrag, "Alt+Mouse1", None;
     PanDrag, PanDrag, "Mouse3", None;
     PanSpaceDrag, PanSpaceDrag, "Space+Mouse1", None;
@@ -97,11 +98,18 @@ actions! {
     KeepOpen, Keep, "", None;
     CancelDialog, Cancel, "", None;
     SavePath, Save, "", Some(moth_ui::icons::Icon::Save);
-    DismissRecovery, Keep, "", None;
+    DismissRecovery, DiscardRecovery, "", None;
+    RestoreRecovery, RestoreRecovery, "", None;
     CancelArrange, Cancel, "", None;
+    AddedHorizontal, Horizontal, "", Some(moth_ui::icons::Icon::ArrangeHorizontal);
+    AddedVertical, Vertical, "", Some(moth_ui::icons::Icon::ArrangeVertical);
+    AddedGrid, Grid, "", Some(moth_ui::icons::Icon::ArrangeGrid);
+    AddedOptimal, Optimal, "", Some(moth_ui::icons::Icon::ArrangeOptimal);
+    UndoAdded, Undo, "", Some(moth_ui::icons::Icon::Undo);
+    DismissAdded, ToastDismiss, "", Some(moth_ui::icons::Icon::Close);
     CloseWindow, CloseWindow, "", Some(moth_ui::icons::Icon::Close);
     EditNote, EditNote, "", Some(moth_ui::icons::Icon::List);
-    EditItem, EditItem, "", Some(moth_ui::icons::Icon::List);
+    EditItem, EditItem, "", Some(moth_ui::icons::Icon::Crop);
     ApplyItem, ApplyItem, "", None;
     CancelItem, CancelItem, "", None;
     ArrangeOptions, ArrangeOptions, "", Some(moth_ui::icons::Icon::ArrangeOptimal);
@@ -128,14 +136,13 @@ impl Action {
     pub fn category(self) -> Text {
         use Action::*;
         match self {
-            MoveDrag | ExtendDrag | DuplicateDrag | PanDrag | PanSpaceDrag | PanAltDrag => {
-                Text::CategoryPointer
-            }
-            Select | Hand | Fit | Focus | Previous | Next | ZoomIn | ZoomOut | ZoomReset
-            | ResetCamera | Lock | Grayscale => Text::CategoryView,
-            Palette | BindingSettings | Shortcuts | New | Open | Save | Library | CloseTab
-            | NextTab | Overlay | Pin | Minimize | Maximize | MoveWindow | Fullscreen
-            | Settings | CloseWindow => Text::CategoryBoard,
+            MoveDrag | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag | PanSpaceDrag
+            | PanAltDrag => Text::CategoryPointer,
+            Select | Fit | Focus | Previous | Next | ZoomIn | ZoomOut | ZoomReset | ResetCamera
+            | Lock | Grayscale => Text::CategoryView,
+            Palette | BindingSettings | Shortcuts | New | Open | Images | Save | Library
+            | CloseTab | NextTab | Overlay | Pin | Minimize | Maximize | MoveWindow
+            | Fullscreen | Settings | CloseWindow => Text::CategoryBoard,
             _ => Text::CategoryEdit,
         }
     }
@@ -144,6 +151,7 @@ impl Action {
             self,
             Self::MoveDrag
                 | Self::ExtendDrag
+                | Self::ToggleDrag
                 | Self::DuplicateDrag
                 | Self::PanDrag
                 | Self::PanSpaceDrag
@@ -298,8 +306,14 @@ impl Registry {
         self.entries[action as usize] = Chord::parse(value);
     }
     pub fn label(&self, action: Action) -> String {
-        self.get(action)
-            .map_or_else(String::new, |chord| chord.display().replace("Slash", "/"))
+        self.get(action).map_or_else(String::new, |chord| {
+            chord
+                .display()
+                .replace("Slash", "/")
+                .replace("Equals", "=")
+                .replace("Minus", "−")
+                .replace("Comma", ",")
+        })
     }
     pub fn conflicts(&self) -> Vec<(Action, Action)> {
         let mut conflicts = Vec::new();
@@ -336,15 +350,32 @@ impl Registry {
         })
     }
     pub fn pointer(&self, button: u8, mods: Mods, held: &HashSet<Key>) -> Option<Action> {
-        ACTIONS.iter().copied().find(|a| {
-            self.get(*a).is_some_and(|chord| {
+        ACTIONS
+            .iter()
+            .copied()
+            .find(|a| {
+                self.get(*a).is_some_and(|chord| {
                 chord.mods == mods
                     && matches!(chord.trigger, Trigger::Drag(b, key) if b == button && match key {
                         Some(key) => held.len() == 1 && held.contains(&key),
                         None => held.is_empty(),
                     })
             })
-        })
+            })
+            .or_else(|| {
+                // Shift keeps toggle semantics unless an exact custom chord owns it.
+                let chord = self.get(Action::ToggleDrag)?;
+                (mods.shift
+                    && !chord.mods.shift
+                    && chord.mods
+                        == Mods {
+                            shift: false,
+                            ..mods
+                        }
+                    && matches!(chord.trigger, Trigger::Drag(b, None) if b == button)
+                    && held.is_empty())
+                .then_some(Action::ToggleDrag)
+            })
     }
     pub fn preferences(&self) -> BTreeMap<String, String> {
         ACTIONS
@@ -439,6 +470,20 @@ impl Registry {
 mod tests {
     use super::*;
     #[test]
+    fn shortcut_labels_use_symbols_without_changing_persisted_chords() {
+        let mut registry = Registry::default();
+        for (action, chord, suffix) in [
+            (Action::ZoomIn, "Equals", "="),
+            (Action::ZoomOut, "Minus", "−"),
+            (Action::Settings, "Cmd+Comma", ","),
+            (Action::Shortcuts, "Slash", "/"),
+        ] {
+            registry.set(action, chord);
+            assert!(registry.label(action).ends_with(suffix));
+            assert_eq!(registry.get(action).unwrap().encode(), chord);
+        }
+    }
+    #[test]
     fn window_actions_rebind_and_survive_settings_roundtrip() {
         let mut registry = Registry::default();
         for (action, chord) in [
@@ -458,6 +503,59 @@ mod tests {
         assert_eq!(restored.key(Key::T, alt), Some(Action::Pin));
         assert_eq!(restored.key(Key::M, alt), Some(Action::MoveWindow));
         assert_eq!(restored.key(Key::F11, alt), Some(Action::Fullscreen));
+    }
+    #[test]
+    fn retired_hand_binding_does_not_restore_a_mode_or_break_pan_gestures() {
+        let mut registry = Registry::default();
+        let mut preferences = registry.preferences();
+        preferences.insert("binding_Hand".into(), "H".into());
+        assert!(registry.load(&preferences));
+        assert_eq!(registry.key(Key::H, Mods::default()), None);
+        assert!(!registry.preferences().contains_key("binding_Hand"));
+        assert_eq!(
+            registry.pointer(1, Mods::default(), &HashSet::new()),
+            Some(Action::MoveDrag)
+        );
+        assert_eq!(
+            registry.pointer(1, Mods::default(), &HashSet::from([Key::Space])),
+            Some(Action::PanSpaceDrag)
+        );
+        assert_eq!(
+            registry.pointer(3, Mods::default(), &HashSet::new()),
+            Some(Action::PanDrag)
+        );
+    }
+    #[test]
+    fn selection_pointer_chords_are_exact_and_respect_custom_bindings() {
+        let mut registry = Registry::default();
+        let held = HashSet::new();
+        let cmd = Mods {
+            command: true,
+            ..Mods::default()
+        };
+        let both = Mods { shift: true, ..cmd };
+        assert_eq!(registry.pointer(1, cmd, &held), Some(Action::ToggleDrag));
+        assert_eq!(registry.pointer(1, both, &held), Some(Action::ToggleDrag));
+        assert_eq!(
+            registry.pointer(
+                1,
+                Mods {
+                    shift: true,
+                    ..Mods::default()
+                },
+                &held
+            ),
+            Some(Action::ExtendDrag)
+        );
+        assert_eq!(registry.pointer(1, Mods { alt: true, ..cmd }, &held), None);
+        assert_eq!(registry.pointer(1, cmd, &HashSet::from([Key::Space])), None);
+        registry.set(Action::DuplicateDrag, "Cmd+Shift+Mouse1");
+        assert_eq!(
+            registry.pointer(1, both, &held),
+            Some(Action::DuplicateDrag)
+        );
+        registry.set(Action::ToggleDrag, "");
+        assert_eq!(registry.pointer(1, cmd, &held), None);
     }
     #[test]
     fn exact_modifiers_do_not_turn_screenshot_chords_into_other_commands() {

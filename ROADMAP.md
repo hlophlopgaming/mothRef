@@ -98,25 +98,26 @@ qualification move to 1.2+ and do not block earlier releases; they remain unveri
 
 ### M2 — BeeRef parity (+ PureRef import)
 
-**Tooling status (maintainer feedback, 2026-10-18):** the current editing and
-Board tools UI is an unfinished first pass. Checked feature entries record initial
-implementation, not usability acceptance or finished parity. Automated tests and
-the tool-rail sizing fix do not close this work.
+**Tooling status:** the initial 2026-10-18 implementation was not usability
+acceptance. The editing-polish follow-up below was explicitly accepted by the
+maintainer on 2026-10-25; remaining M2 parity items are tracked separately.
 
-- [ ] Rework and polish the editing tools before accepting M2: validate actual
+- [x] Rework and polish the editing tools before accepting M2: validate actual
   workflows for selection, transforms/cropping, arrangement, pickers and export;
   improve discoverability, control layout and feedback; fix interaction and resize
   issues found during native manual use. Confirm usability with the maintainer
   before marking this task complete.
   Target layout agreed on 2026-10-24: [docs/DESIGN.md](docs/DESIGN.md) (screens 1–7, 13).
-  - [ ] One floating bottom toolbar (tool group, Insert ▾, undo/redo, fit, zoom "− % +") replaces the top toolbar and the left tool rail; Select is the default tool and Esc returns to it
-  - [ ] Selection bar above the selection and a grouped context menu with right-aligned shortcuts; one bounding box with four handles for multi-selection
-  - [ ] Settings in their own window (Ctrl/⌘+,) with sections, icons and search; language picker moves there from the title bar
-  - [ ] Status bar replaced by a "Saved · N images" chip; adapter, journal and budgets only in Settings › For developers
-  - [ ] Adding many images arranges them at once, fits the camera and shows a toast with method ▾ and Undo; "ask above N" becomes an option (maintainer to confirm the default, see DESIGN.md §6)
-  - [ ] Empty board: plain wording, every supported format listed, "Choose files…" and "Paste"
-  - [ ] Fix defects from the 2026-10-24 alpha review (DESIGN.md §5): missing "→"/"▸" glyphs, palette focus and position, minimap thumbnails, zoom button order, top menu height
-- [ ] Apply the «Album» identity (DESIGN.md §2): light paper theme by default, dark theme in the «Pixel» palette (screen, ink, bone, sage, wing), sage/moss accents, Bricolage Grotesque for the logo and large headings; new app icon and README logo once the final mark is drawn
+  Maintainer accepted usability on 2026-10-25. Native validation: [alpha review notes](docs/plans/alpha9-review/README.md#native-follow-up--2026-10-25).
+  - [x] One floating bottom toolbar (tool group, Insert ▾, undo/redo, fit, zoom "− % +") replaces the top toolbar and the left tool rail; Select is the default tool and Esc returns to it
+  - [x] Selection bar above the selection and a grouped context menu with right-aligned shortcuts; one bounding box with four handles for multi-selection
+  - [x] Settings in their own window (Ctrl/⌘+,) with sections, icons and search; language picker moves there from the title bar
+  - [x] Status bar replaced by a "Saved · N images" chip; adapter, journal and budgets only in Settings › For developers
+  - [x] Adding many images arranges them at once, fits the camera and shows a toast with method ▾ and Undo; "ask above N" remains an option (maintainer confirmed the default of 5, see DESIGN.md §6)
+  - [x] Empty board: plain wording, every supported format listed, "Choose files…" and "Paste"
+  - [x] Fix defects from the 2026-10-24 alpha review (DESIGN.md §5): missing "→"/"▸" glyphs, palette focus and position, minimap silhouettes (maintainer-approved), zoom button order, top menu height
+- [x] Apply the «Album» identity (DESIGN.md §2): light paper theme by default, dark theme in the «Pixel» palette (screen, ink, bone, sage, wing), sage/moss accents, Bricolage Grotesque for the logo and large headings
+- [ ] New app icon and README logo — **on hold** until the final mark is drawn (maintainer, 2026-10-25)
 
 **Current priority (maintainer, 2026-10-18):** accelerate bulk image import and
 board opening. Other feature work waits until this performance task is complete.
@@ -185,7 +186,7 @@ otherwise, and leaves the app shippable.
 - [x] **Step 3 — Settings model and window.** Move every persisted preference out of `Tools` into one `Settings` struct with a schema (section, label, kind, default, range); persistence, a settings window opened by Ctrl/⌘+, and settings search in the palette are built from the schema. The settings part of Board tools is removed. Sections: General, Appearance, Canvas and navigation, Adding images, Window and overlay, Performance and memory, Keys and mouse, Integrations, For developers.
 - [x] **Step 4 — Surfaces as lists.** A bottom toolbar (tool group, Insert menu, undo/redo, fit, zoom), a selection bar with a list per item type, and the canvas context menu are built from ordered action lists; diagnostics leave the status bar for Settings › For developers.
 - [x] **Step 5 — Remove Board tools.** Delete the window and `Intent::ToggleTools`; every former control is reachable from a surface list, the palette and a touch path.
-- [ ] **Step 6 — Fixes from the alpha.9 review.** Select by default and fits that respect the floating chrome; notes keep their size after editing; save chip in the window bar with plurals and live translation; menus with an icon column, named submenus and no "More actions" drawer; settings dialog, light-theme contrast and a recovery dialog without raw paths. Plan and findings: [alpha.9 review](docs/plans/alpha9-review/README.md).
+- [x] **Step 6 — Fixes from the alpha.9 review.** Select by default and fits that respect the floating chrome; notes keep their size after editing; save chip in the window bar with plurals and live translation; menus with an icon column, named submenus and no "More actions" drawer; settings dialog, light-theme contrast and a recovery dialog without raw paths. Plan and findings: [alpha.9 review](docs/plans/alpha9-review/README.md).
 
 **Exit criteria:** no `Command` is built in UI code; no `Color32` literal outside the theme module; moving a button between surfaces is a one-line list change; the Board tools window is gone with no lost capability; headless UI screenshots of the board, library, settings and selection states are compared in CI.
 
@@ -200,6 +201,7 @@ discoverable shortcuts and navigation without a working middle mouse button come
 before the browser extension and advanced window integration.
 
 - [x] Consistent multi-selection editing: move, scale, rotate, flip, duplicate, delete, reorder and arrange selected items together; show the affected selection and make each batch action one undo step
+- [x] Canvas multi-selection: Ctrl/Command-click and rectangle toggle, Shift-click and rectangle add; preserve group moves and expose bindings in the shortcut cheat sheet. Touch multi-select mode is planned in [SHORTCUTS.md](docs/SHORTCUTS.md).
 - [x] Configurable keyboard and mouse bindings: conflict detection, reset to defaults, and familiar BeeRef/PureRef-style navigation presets; show active bindings in tooltips and menus
   - Use the [screenshot shortcut comparison](docs/SHORTCUTS.md) as a command/gesture inventory; an existing Tools action does not imply that its PureRef binding is implemented
   - One action/binding registry for dispatch, tooltips, cheat sheet and palette; exact modifiers, text/modal focus isolation, and explicit conflict preview for optional presets
@@ -212,7 +214,7 @@ before the browser extension and advanced window integration.
 - [x] Hotkey to jump between images (BeeRef #116)
 - [x] In-app shortcut cheat sheet: all actions and their current bindings (including custom bindings), grouped by category and searchable; open with `/` or from Help
 - [x] Command Palette (Omnibar / Quick Search): search and run application actions, show their current shortcuts; open with Ctrl/⌘+K or a visible menu button, navigate with arrows, Enter to run, Esc to close
-- [ ] Full navigation without pressing the middle mouse button: Space + left-drag to pan, a visible Hand tool with left-drag, and rebindable pan controls; middle-click remains optional
+- [x] Navigation without pressing the middle mouse button: Space + left-drag and rebindable pan gestures; middle-click remains optional. Select stays active; the separate Hand/Pan mode was removed by maintainer request.
 - [ ] Pan the canvas with WASD as an alternative to middle-button dragging; allow rebinding and disable canvas shortcuts while typing in text fields
 - [ ] Navigation without a working wheel: visible and keyboard zoom controls, fit board / fit selection, keyboard panning, trackpad two-finger pan and pinch zoom; keep touch and pen paths available
 - [ ] Open `.bee` / `.pur` boards for editing in MothRef, keeping the source file untouched; `.moth` is the only working-board save format

@@ -39,6 +39,8 @@ pub(super) enum Intent {
     New,
     /// Open the platform file dialog.
     Open,
+    /// Browse for images to insert into the current board.
+    Images,
     /// Save the active board, prompting for a path first if needed.
     Save,
     /// Journal undo.
@@ -111,6 +113,8 @@ pub(super) enum Intent {
     FocusItem(Uuid),
     /// Dismiss the recovery browser without opening a board.
     DismissRecovery,
+    /// Restore the selected recovery entry through its storage worker.
+    RestoreRecovery,
 }
 
 /// Converts the shared chrome action set into intents in application order.

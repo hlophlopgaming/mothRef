@@ -15,6 +15,7 @@ pub(super) struct Canvas<'a> {
     pub editing: &'a mut Option<Editing>,
     pub drag: Option<([f32; 2], [f32; 2], bool)>,
     pub moving: Option<(Uuid, Rect)>,
+    pub resizing: Option<&'a super::resize::Resize>,
     pub pointer: Option<[f32; 2]>,
     pub motion: &'a super::motion::DragMotion,
     pub duplicate: bool,
@@ -37,6 +38,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
         editing,
         drag,
         moving,
+        resizing,
         pointer,
         motion,
         duplicate,
@@ -72,20 +74,19 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
             let over_canvas =
                 pointer.is_some_and(|p| view.viewport.contains(egui::pos2(p[0], p[1])));
             if over_canvas || drag.is_some() {
-                ui.ctx()
-                    .set_cursor_icon(if tools.picking || tools.coordinates {
-                        egui::CursorIcon::Crosshair
-                    } else if drag.is_some_and(|(_, _, pan)| pan) || moving.is_some() {
-                        egui::CursorIcon::Grabbing
-                    } else if view.pan {
-                        egui::CursorIcon::Grab
-                    } else if hover.is_some_and(|id| board.selection.contains(&id)) {
-                        egui::CursorIcon::Move
-                    } else if hover.is_some() {
-                        egui::CursorIcon::Grab
-                    } else {
-                        egui::CursorIcon::Default
-                    });
+                ui.ctx().set_cursor_icon(if resizing.is_some() {
+                    egui::CursorIcon::ResizeNwSe
+                } else if tools.picking || tools.coordinates {
+                    egui::CursorIcon::Crosshair
+                } else if drag.is_some_and(|(_, _, pan)| pan) || moving.is_some() {
+                    egui::CursorIcon::Grabbing
+                } else if hover.is_some_and(|id| board.selection.contains(&id)) {
+                    egui::CursorIcon::Move
+                } else if hover.is_some() {
+                    egui::CursorIcon::Grab
+                } else {
+                    egui::CursorIcon::Default
+                });
             }
             let hover_key = egui::Id::new("canvas_hover_item");
             if let Some(id) = hover {
@@ -103,6 +104,38 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
             let hover_id = ui.ctx().data(|data| data.get_temp::<Uuid>(hover_key));
             let previous = view.viewport;
             view.viewport = ui.max_rect();
+            if !overlay {
+                intents.extend(super::surfaces::toolbar(
+                    ui.ctx(),
+                    view.viewport,
+                    enabled,
+                    registry,
+                    view.camera.zoom,
+                ));
+            }
+            view.safe_area = view.viewport;
+            view.selection_bar_visible = !overlay && !board.selection.is_empty();
+            view.selection_bar_height = 0.;
+            if !overlay {
+                let bar_bottom = ui
+                    .ctx()
+                    .data(|data| data.get_temp::<f32>(egui::Id::new("window_bar_bottom")));
+                let (toolbar, selection) = ui.ctx().memory(|memory| {
+                    (
+                        memory.area_rect(egui::Id::new("bottom_toolbar")),
+                        memory.area_rect(egui::Id::new("selection_bar")),
+                    )
+                });
+                view.safe_area.min.y = bar_bottom
+                    .unwrap_or(view.viewport.top())
+                    .max(view.viewport.top());
+                if let Some(toolbar) = toolbar {
+                    view.safe_area.max.y = toolbar.top().min(view.viewport.bottom());
+                }
+                view.selection_bar_height =
+                    selection.map_or(ui.spacing().interact_size.y, |rect| rect.height());
+            }
+
             if settings.scale_with_window
                 && previous.is_positive()
                 && previous.size() != view.viewport.size()
@@ -125,16 +158,21 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
             if board.scene.is_empty() {
                 let empty = moth_ui::empty_board(ui);
                 actions.paste |= empty.paste;
-                actions.open |= empty.open;
+                if empty.open {
+                    intents.push(Intent::Action(super::bindings::Action::Images));
+                }
             }
             let origin = view
                 .camera
                 .world([view.viewport.min.x, view.viewport.min.y]);
-            let returning: std::collections::HashMap<_, _> = motion
+            let mut returning: std::collections::HashMap<_, _> = motion
                 .returning(motion.now(), settings.reduced_motion)
                 .into_iter()
                 .map(|item| (item.id, item))
                 .collect();
+            if let Some(resizing) = resizing {
+                returning.extend(resizing.previews().into_iter().map(|item| (item.id, item)));
+            }
             let mut visible = board.scene.query(Rect {
                 x: origin[0],
                 y: origin[1],
@@ -267,7 +305,11 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     let presented = if moving.is_some() && !tools.locked && !board.loading {
                         Some(motion.preview(item, drag, view.camera.zoom, settings.reduced_motion))
                     } else {
-                        board.motion.get(item.id, motion.now())
+                        selection_presentation(
+                            item,
+                            board.motion.get(item.id, motion.now()),
+                            &returning,
+                        )
                     };
                     let item = presented.as_ref().unwrap_or(item);
                     let envelope = item.rect.rotated_envelope(item.transform.rotation);
@@ -306,7 +348,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                                 ],
                             );
                         }
-                        let kind = if board.selection.len() > 1 && settings.show_outlines {
+                        let kind = if board.selection.len() > 1 {
                             super::surfaces::SelectionKind::Several
                         } else if board
                             .selection
@@ -378,10 +420,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     egui::Area::new(egui::Id::new("note_editor"))
                         .fixed_pos(egui::pos2(anchor[0], anchor[1]))
                         .show(ui.ctx(), |ui| {
-                            let response = egui::TextEdit::multiline(&mut editing.draft)
-                                .desired_width((200. * zoom).max(120.))
-                                .desired_rows(3)
-                                .show(ui);
+                            let response = note_editor(ui, editing, zoom);
                             if editing.focus {
                                 response.response.request_focus();
                                 intents.push(Intent::NoteFocused);
@@ -392,60 +431,48 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                         });
                 }
             }
-            if !overlay {
-                intents.extend(super::surfaces::toolbar(
+            if !overlay && let Some(bounds) = board.scene.bounds() {
+                let normalize = |x: f32, y: f32| {
+                    egui::pos2(
+                        (x - bounds.x) / bounds.width,
+                        (y - bounds.y) / bounds.height,
+                    )
+                };
+                // The minimap samples at most 128 items; the indexed bounds still include every item.
+                let samples: Vec<_> = board
+                    .scene
+                    .items()
+                    .take(128)
+                    .map(|item| {
+                        let envelope = item.rect.rotated_envelope(item.transform.rotation);
+                        let lower = envelope.lower();
+                        let upper = envelope.upper();
+                        egui::Rect::from_min_max(
+                            normalize(lower[0], lower[1]),
+                            normalize(upper[0], upper[1]),
+                        )
+                    })
+                    .collect();
+                let world_min = view
+                    .camera
+                    .world([view.viewport.left(), view.viewport.top()]);
+                let world_max = view
+                    .camera
+                    .world([view.viewport.right(), view.viewport.bottom()]);
+                if let Some(p) = moth_ui::canvas::minimap(
                     ui.ctx(),
                     view.viewport,
-                    enabled,
-                    registry,
-                    view.camera.zoom,
-                    view.pan,
-                ));
-
-                if let Some(bounds) = board.scene.bounds() {
-                    let normalize = |x: f32, y: f32| {
-                        egui::pos2(
-                            (x - bounds.x) / bounds.width,
-                            (y - bounds.y) / bounds.height,
-                        )
-                    };
-                    // The minimap samples at most 128 items; the indexed bounds still include every item.
-                    let samples: Vec<_> = board
-                        .scene
-                        .items()
-                        .take(128)
-                        .map(|item| {
-                            let envelope = item.rect.rotated_envelope(item.transform.rotation);
-                            let lower = envelope.lower();
-                            let upper = envelope.upper();
-                            egui::Rect::from_min_max(
-                                normalize(lower[0], lower[1]),
-                                normalize(upper[0], upper[1]),
-                            )
-                        })
-                        .collect();
-                    let world_min = view
-                        .camera
-                        .world([view.viewport.left(), view.viewport.top()]);
-                    let world_max = view
-                        .camera
-                        .world([view.viewport.right(), view.viewport.bottom()]);
-                    if let Some(p) = moth_ui::canvas::minimap(
-                        ui.ctx(),
-                        view.viewport,
-                        &samples,
-                        egui::Rect::from_min_max(
-                            normalize(world_min[0], world_min[1]),
-                            normalize(world_max[0], world_max[1]),
-                        ),
-                    ) {
-                        view.camera.origin = [
-                            bounds.x + p.x * bounds.width
-                                - view.viewport.center().x / view.camera.zoom,
-                            bounds.y + p.y * bounds.height
-                                - view.viewport.center().y / view.camera.zoom,
-                        ];
-                    }
+                    &samples,
+                    egui::Rect::from_min_max(
+                        normalize(world_min[0], world_min[1]),
+                        normalize(world_max[0], world_max[1]),
+                    ),
+                ) {
+                    view.camera.origin = [
+                        bounds.x + p.x * bounds.width - view.viewport.center().x / view.camera.zoom,
+                        bounds.y + p.y * bounds.height
+                            - view.viewport.center().y / view.camera.zoom,
+                    ];
                 }
             }
             if let Some((a, b, false)) = drag
@@ -514,7 +541,7 @@ fn draw_note(ui: &egui::Ui, camera: &Camera, item: &Item) {
     let rows = text.lines().count().max(1) as f32;
     // The frame is the note's text bounds; recover the font size from its height
     // so an imported note scaled by BeeRef's `scale` renders at that size.
-    let font_size = (item.rect.height / (rows * 1.3)).max(4.0) * zoom;
+    let font_size = note_font_size(item.rect, text) * zoom;
     let font = egui::FontId::proportional(font_size);
     let color = moth_ui::tokens(ui.ctx())
         .text
@@ -582,22 +609,57 @@ fn draw_note(ui: &egui::Ui, camera: &Camera, item: &Item) {
     }
 }
 
+pub(super) fn new_note_rect(anchor: [f32; 2], zoom: f32) -> Rect {
+    Rect {
+        x: anchor[0],
+        y: anchor[1],
+        width: 200. / zoom,
+        height: moth_scene::NOTE_FONT_SIZE * 1.3 / zoom,
+    }
+}
+
+pub(super) fn note_font_size(rect: Rect, text: &str) -> f32 {
+    rect.height / (text.lines().count().max(1) as f32 * 1.3)
+}
+
+fn note_editor(
+    ui: &mut egui::Ui,
+    editing: &mut Editing,
+    zoom: f32,
+) -> egui::text_edit::TextEditOutput {
+    let font_size = editing.font_size * zoom;
+    let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _: f32| {
+        let job = egui::text::LayoutJob::simple_format(
+            text.as_str().to_owned(),
+            egui::TextFormat {
+                font_id: egui::FontId::proportional(font_size),
+                color: moth_ui::tokens(ui.ctx()).text,
+                line_height: Some(font_size * 1.3),
+                ..Default::default()
+            },
+        );
+        ui.fonts_mut(|fonts| fonts.layout_job(job))
+    };
+    egui::TextEdit::multiline(&mut editing.draft)
+        .font(egui::FontId::proportional(font_size))
+        .layouter(&mut layouter)
+        .desired_width(editing.width * zoom)
+        .desired_rows(1)
+        .margin(egui::Margin::ZERO)
+        .show(ui)
+}
+
 /// Measures a note's auto-sized frame in world units, using egui's bundled font.
-pub(super) fn measure_note(ctx: &egui::Context, text: &str) -> [f32; 2] {
-    let font_size = moth_scene::NOTE_FONT_SIZE;
+pub(super) fn measure_note(ctx: &egui::Context, text: &str, font_size: f32) -> [f32; 2] {
     let font = egui::FontId::proportional(font_size);
     let color = moth_ui::tokens(ctx).text;
     let mut width = 0.0f32;
-    let mut lines = 0usize;
+    let lines = text.lines().count().max(1);
     for line in text.lines() {
         let galley = ctx.fonts_mut(|f| f.layout_no_wrap(line.to_owned(), font.clone(), color));
         width = width.max(galley.size().x);
-        lines += 1;
     }
-    if text.is_empty() || !text.ends_with('\n') {
-        lines = lines.max(1);
-    }
-    [width, lines as f32 * font_size * 1.3]
+    [width.max(font_size * 0.6), lines as f32 * font_size * 1.3]
 }
 
 /// The canvas viewport as a clip rectangle in physical pixels.
@@ -651,6 +713,15 @@ pub(super) fn canvas_clip(viewport: egui::Rect, scale: f32, size: [u32; 2]) -> [
     [min[0], min[1], max[0] - min[0], max[1] - min[1]]
 }
 
+// Released previews remain authoritative until the journal acknowledges the move.
+fn selection_presentation(
+    item: &Item,
+    transition: Option<Item>,
+    returning: &std::collections::HashMap<Uuid, Item>,
+) -> Option<Item> {
+    returning.get(&item.id).cloned().or(transition)
+}
+
 /// The same logical displacement is used for preview and the eventual command.
 pub(super) fn preview_rect(
     rect: Rect,
@@ -671,6 +742,118 @@ pub(super) fn preview_rect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn note_commit_at_35_percent_preserves_editor_text_height() {
+        let ctx = egui::Context::default();
+        moth_ui::theme(&ctx, &moth_ui::Tokens::DARK);
+        let zoom = 0.35;
+        let rect = new_note_rect([20., 30.], zoom);
+        let mut item = Item::text("", rect, None);
+        let mut editing = Editing {
+            id: item.id,
+            original: String::new(),
+            draft: "Reference\nSecond line".to_owned(),
+            anchor: [rect.x, rect.y],
+            font_size: note_font_size(rect, ""),
+            width: rect.width,
+            focus: false,
+        };
+        let mut editor_height = 0.;
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            let editor = note_editor(ui, &mut editing, zoom);
+            assert_eq!(
+                editor.galley.text(),
+                editing.draft,
+                "the editor must lay out its actual draft"
+            );
+            editor_height = editor.galley.rows[0].glyphs[0].font_height;
+            assert!((editing.font_size * zoom - moth_scene::NOTE_FONT_SIZE).abs() < 0.001);
+            let [width, height] = measure_note(ui.ctx(), &editing.draft, editing.font_size);
+            item.rect.width = width;
+            item.rect.height = height;
+            item.content = moth_scene::Content::Text(editing.draft.clone());
+            draw_note(
+                ui,
+                &Camera {
+                    origin: [0., 0.],
+                    zoom,
+                },
+                &item,
+            );
+            assert!(
+                (note_font_size(item.rect, item.note().unwrap()) - editing.font_size).abs() < 0.001
+            );
+        });
+        let drawn: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text)
+                    if text.galley.text() == "Reference" || text.galley.text() == "Second line" =>
+                {
+                    Some(text.galley.rows[0].glyphs[0].font_height)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(drawn.len(), 2);
+        for height in drawn {
+            assert!((height - editor_height).abs() < 0.01);
+        }
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn selection_keeps_released_positions_until_storage_acknowledges() {
+        for reduced in [false, true] {
+            let mut scene = moth_scene::Scene::default();
+            let items: Vec<_> = [10., 90.]
+                .into_iter()
+                .map(|x| {
+                    Item::text(
+                        "reference",
+                        Rect {
+                            x,
+                            y: 20.,
+                            width: 40.,
+                            height: 60.,
+                        },
+                        None,
+                    )
+                })
+                .collect();
+            for item in &items {
+                scene
+                    .apply(moth_scene::Command::Insert(item.clone()))
+                    .unwrap();
+            }
+            let commands = super::super::arrange::translate(
+                &items.iter().collect::<Vec<_>>(),
+                [100., 50.],
+                false,
+                scene.top(),
+            );
+            let mut motion = super::super::motion::DragMotion::default();
+            motion.start([10., 20.], 140.);
+            motion.release(&commands, &scene, [100., 50.], reduced);
+            let now = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            motion.step(now, reduced, false);
+            let returning = motion
+                .returning(now, reduced)
+                .into_iter()
+                .map(|item| (item.id, item))
+                .collect();
+            for source in &items {
+                // Both stale scene geometry and an old transition must lose to the release preview.
+                let presented =
+                    selection_presentation(source, Some(source.clone()), &returning).unwrap();
+                assert_eq!(presented.rect.x, source.rect.x + 100.);
+                assert_eq!(presented.rect.y, source.rect.y + 50.);
+                assert_eq!(scene.get(source.id).unwrap().rect, source.rect);
+            }
+        }
+    }
+
     #[test]
     fn hidden_outlines_paint_neither_selection_handles_nor_hover() {
         let item = Item::text(

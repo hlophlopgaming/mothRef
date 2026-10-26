@@ -18,6 +18,8 @@ pub(super) struct Chrome<'a> {
     pub catalog: &'a mut moth_ui::library::Library,
     pub cards: &'a [moth_ui::library::Card],
     pub window: &'a Window,
+    pub enabled: &'a [bool],
+    pub registry: &'a super::bindings::Registry,
 }
 
 /// Draws the titlebar, tab strip, status bar and (in library mode) the catalog.
@@ -52,12 +54,13 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
             path: &ctx.board.path,
             adapter: &ctx.gpu.adapter,
             count: ctx.board.scene.len(),
+            images: ctx.board.image_count,
             selected: ctx.board.selection.len(),
             zoom: ctx.board.view.camera.zoom,
             zoom_increment: ctx.zoom_increment,
             texture_bytes: ctx.gpu.registry.allocated_bytes(),
             texture_budget: ctx.gpu.registry.budget_bytes(),
-            message: &ctx.board.message,
+            message: &ctx.board.message.render(moth_ui::locale()),
             idle: ctx.board.idle(),
             dirty: ctx.board.dirty,
             library: ctx.library,
@@ -72,6 +75,7 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
                 .on_top,
         },
         &tab_labels,
+        |ui| super::surfaces::window_menu(ui, ctx.enabled, ctx.registry, &mut intents),
     );
     let opacity = ui.ctx().animate_bool_with_time(
         egui::Id::new("library_visibility"),

@@ -157,7 +157,6 @@ impl Library {
                         }
                     }
                     ui.add_space(crate::tokens(ui.ctx()).space_l as f32);
-                    intent.browse = ui.button(text(Text::Open)).clicked();
                 });
         }
         egui::CentralPanel::default()
@@ -180,6 +179,7 @@ impl Library {
                         },
                     ));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        intent.browse = ui.button(text(Text::OpenFile)).clicked();
                         intent.new = ui
                             .add(
                                 egui::Button::new(
@@ -242,7 +242,6 @@ impl Library {
                             self.pinned = true;
                             self.stack = None;
                         }
-                        intent.browse = ui.button(text(Text::Open)).clicked();
                     });
                 }
                 ui.horizontal_wrapped(|ui| {
@@ -287,7 +286,6 @@ impl Library {
                         } else {
                             Text::NoMatches
                         }));
-                        intent.browse |= ui.button(text(Text::Open)).clicked();
                     });
                 }
                 egui::ScrollArea::vertical().show(ui, |ui| {

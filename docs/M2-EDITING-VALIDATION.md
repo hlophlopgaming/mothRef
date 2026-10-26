@@ -1,5 +1,15 @@
 # M2 editing and export validation — 2026-10-18
 
+## Accepted editing polish — 2026-10-25
+
+The maintainer accepted the editing-polish follow-up. Board tools is replaced by
+shared action surfaces: the bottom toolbar, selection bar, grouped context menu,
+command palette and focused editor/arrangement/picker/export windows. Corner
+handles now scale single or multiple items proportionally. See the
+[native review and limits](plans/alpha9-review/README.md#native-follow-up--2026-10-25)
+for this pass. The older notes below describe the initial implementation.
+
+
 Scope: the first five M2 roadmap entries and the parity follow-up below. Existing notes, rotate/flip commands,
 normalization, basic arrangement, and the empty-board drop zone are reused.
 

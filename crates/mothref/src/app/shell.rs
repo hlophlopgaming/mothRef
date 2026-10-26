@@ -53,7 +53,7 @@ impl Shell {
         software: bool,
     ) -> Self {
         let ctx = egui::Context::default();
-        moth_ui::theme(&ctx, &moth_ui::Tokens::DARK);
+        moth_ui::theme(&ctx, &moth_ui::Tokens::LIGHT);
         let repaint = proxy.clone();
         ctx.set_request_repaint_callback(move |info| {
             let _ = repaint.send_event(Wake::Repaint(info.delay));
@@ -169,6 +169,8 @@ impl Shell {
             }
             _ => return Err(anyhow::anyhow!("Surface validation failed")),
         };
+        // Resize events can lag window.inner_size(); clip to the acquired attachment.
+        let size = texture.texture.size();
         gpu.registry.grayscale = frame.grayscale;
         let jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);
         let screen = egui_wgpu::ScreenDescriptor {

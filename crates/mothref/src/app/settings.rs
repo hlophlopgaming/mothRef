@@ -45,15 +45,15 @@ impl Section {
     fn icon(self) -> moth_ui::icons::Icon {
         use moth_ui::icons::Icon;
         match self {
-            Self::General => Icon::Home,
-            Self::Appearance => Icon::Image,
+            Self::General => Icon::Settings,
+            Self::Appearance => Icon::Palette,
             Self::Canvas => Icon::Pan,
-            Self::Adding => Icon::Plus,
+            Self::Adding => Icon::ImagePlus,
             Self::Window => Icon::Maximize,
-            Self::Performance => Icon::Grid,
-            Self::Keys => Icon::Pointer,
-            Self::Integrations => Icon::Folder,
-            Self::Developers => Icon::List,
+            Self::Performance => Icon::Gauge,
+            Self::Keys => Icon::Keyboard,
+            Self::Integrations => Icon::Plug,
+            Self::Developers => Icon::Code,
         }
     }
 }
@@ -149,21 +149,21 @@ schema! {
             .get("bake_mode")
             .and_then(|v| moth_io::BakeMode::from_code(v.as_str()))
             .unwrap_or_default();
-    dark: bool = true, "dark", Appearance, DarkTheme, Kind::Toggle, |s| s.dark.to_string(), |values: &BTreeMap<String,String>| values
+    dark: bool = false, "dark", Appearance, DarkTheme, Kind::Toggle, |s| s.dark.to_string(), |values: &BTreeMap<String,String>| values
             .get("dark")
             .and_then(|v| v.parse().ok())
-            .unwrap_or(true);
+            .unwrap_or(false);
     ui_scale: f32 = 1., "ui_scale", Appearance, UiScale, Kind::Number(0.75,2., ""), |s| s.ui_scale.to_string(), |values: &BTreeMap<String,String>| values
             .get("ui_scale")
             .and_then(|v| v.parse::<f32>().ok())
             .filter(|v| v.is_finite() && (0.75..=2.).contains(v))
             .unwrap_or(1.);
-    gap: f32 = 24., "arrange_gap", Adding, Gap, Kind::Number(1.,10000., ""), |s| s.gap.to_string(), |values: &BTreeMap<String,String>| values
+    gap: f32 = 24., "arrange_gap", Adding, ImageGap, Kind::Number(1.,10000., ""), |s| s.gap.to_string(), |values: &BTreeMap<String,String>| values
             .get("arrange_gap")
             .and_then(|v| v.parse::<f32>().ok())
             .filter(|v| v.is_finite() && (1.0..=10000.).contains(v))
             .unwrap_or(24.);
-    threshold: usize = 5, "arrange_prompt_threshold", Adding, ArrangeThreshold, Kind::Count(0,10000), |s| s.threshold.to_string(), |values: &BTreeMap<String,String>| values
+    threshold: usize = 5, "arrange_prompt_threshold", Adding, ManyImages, Kind::Count(0,10000), |s| s.threshold.to_string(), |values: &BTreeMap<String,String>| values
             .get("arrange_prompt_threshold")
             .and_then(|v| v.parse().ok())
             .filter(|v| *v <= 10000)
@@ -172,17 +172,17 @@ schema! {
             .get("auto_arrange")
             .and_then(|v| v.parse().ok())
             .unwrap_or(false);
-    default_arrange: u8 = 0, "default_arrange", Adding, Arrange, Kind::Choice(&[Text::Horizontal,Text::Vertical,Text::Grid,Text::Optimal]), |s| s.default_arrange.to_string(), |values: &BTreeMap<String,String>| values
+    default_arrange: u8 = 0, "default_arrange", Adding, NewImageLayout, Kind::Choice(&[Text::Horizontal,Text::Vertical,Text::Grid,Text::Optimal]), |s| s.default_arrange.to_string(), |values: &BTreeMap<String,String>| values
             .get("default_arrange")
             .and_then(|v| v.parse().ok())
             .filter(|v| *v < 4)
             .unwrap_or(0);
-    arrange_choice: u8 = 1, "arrange_choice", Adding, PackBestArea, Kind::Choice(&[Text::PackBestArea,Text::PackBestShortSide,Text::PackBestLongSide,Text::PackWorstArea,Text::PackWorstShortSide,Text::PackWorstLongSide]), |s| s.arrange_choice.to_string(), |values: &BTreeMap<String,String>| values
+    arrange_choice: u8 = 1, "arrange_choice", Developers, PackingChoice, Kind::Choice(&[Text::PackBestArea,Text::PackBestShortSide,Text::PackBestLongSide,Text::PackWorstArea,Text::PackWorstShortSide,Text::PackWorstLongSide]), |s| s.arrange_choice.to_string(), |values: &BTreeMap<String,String>| values
             .get("arrange_choice")
             .and_then(|v| v.parse().ok())
             .filter(|v| *v < 6)
             .unwrap_or(1);
-    arrange_split: u8 = 0, "arrange_split", Adding, SplitShorterLeftover, Kind::Choice(&[Text::SplitShorterLeftover,Text::SplitLongerLeftover,Text::SplitMinimizeArea,Text::SplitMaximizeArea,Text::SplitShorterAxis,Text::SplitLongerAxis]), |s| s.arrange_split.to_string(), |values: &BTreeMap<String,String>| values
+    arrange_split: u8 = 0, "arrange_split", Developers, PackingSplit, Kind::Choice(&[Text::SplitShorterLeftover,Text::SplitLongerLeftover,Text::SplitMinimizeArea,Text::SplitMaximizeArea,Text::SplitShorterAxis,Text::SplitLongerAxis]), |s| s.arrange_split.to_string(), |values: &BTreeMap<String,String>| values
             .get("arrange_split")
             .and_then(|v| v.parse().ok())
             .filter(|v| *v < 6)
@@ -234,15 +234,22 @@ impl SettingsWindow {
         let language = settings.language;
         let defaults = Settings::default();
         let mut open = self.open;
+        let size = (ui.ctx().content_rect().size()
+            - egui::Vec2::splat(moth_ui::tokens(ui.ctx()).space_xl as f32))
+        .min(egui::vec2(760., 620.))
+        .max(egui::Vec2::splat(1.));
         egui::Window::new(text(Text::Settings))
             .open(&mut open)
-            .default_width(680.)
-            .max_width(ui.content_rect().width())
-            .max_height(ui.content_rect().height())
-            .vscroll(true)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .fixed_size(size)
+            .movable(false)
+            .resizable(false)
+            .collapsible(false)
+            .vscroll(false)
             .show(ui.ctx(), |ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.query)
+                        .desired_width(f32::INFINITY)
                         .hint_text(text(Text::Search))
                         .char_limit(128),
                 );
@@ -254,270 +261,302 @@ impl SettingsWindow {
                         egui::Layout::left_to_right(egui::Align::Min)
                     },
                     |ui| {
-                        ui.vertical(|ui| {
-                            if !narrow {
-                                ui.set_width(190.);
-                            }
-                            for section in Section::ALL {
-                                if moth_ui::icons::labeled_button(
-                                    ui,
-                                    section.icon(),
-                                    text(section.label()),
-                                    self.section.unwrap_or(Section::General) == section,
-                                )
-                                .clicked()
-                                {
-                                    self.section = Some(section);
-                                    self.query.clear();
-                                }
-                            }
-                        });
-                        ui.separator();
-                        ui.vertical(|ui| {
-                            let section = self.section.unwrap_or(Section::General);
-                            let query = self.query.to_lowercase();
-                            for (index, entry) in SCHEMA.iter().enumerate().filter(|(_, e)| {
-                                if query.is_empty() {
-                                    e.section == section
-                                } else {
-                                    text(e.label).to_lowercase().contains(&query)
-                                        || e.key.contains(&query)
-                                }
-                            }) {
-                                let value = (entry.get)(settings);
-                                let default = (entry.get)(&defaults);
-                                let label = format!(
-                                    "{}{}",
-                                    text(entry.label),
-                                    if value != default { " *" } else { "" }
-                                );
-                                let row = ui.push_id(entry.key, |ui| {
-                                    let mut next = value.clone();
-                                    match entry.kind {
-                                        Kind::VideoLimit => {
-                                            ui.label(label);
-                                            let mut auto = settings.vram_limit_mib == 0;
-                                            let max = tools
-                                                .video
-                                                .as_ref()
-                                                .and_then(|v| v.dedicated.or(v.system))
-                                                .map_or(64 * 1024, |bytes| {
-                                                    (bytes / (1024 * 1024)) as u32
-                                                })
-                                                .clamp(1024, MAX_VRAM_MIB);
-                                            if ui
-                                                .checkbox(&mut auto, text(Text::VideoLimitAuto))
-                                                .changed()
-                                            {
-                                                next = if auto {
-                                                    "0".into()
-                                                } else {
-                                                    tools
-                                                        .video
-                                                        .as_ref()
-                                                        .map_or(4096, |v| {
-                                                            (v.limit / (1024 * 1024)) as u32
-                                                        })
-                                                        .clamp(MIN_VRAM_MIB, max)
-                                                        .to_string()
-                                                };
-                                            }
-                                            if !auto {
-                                                let mut limit = next
-                                                    .parse::<u32>()
-                                                    .unwrap_or(MIN_VRAM_MIB)
-                                                    .clamp(MIN_VRAM_MIB, max);
-                                                if ui
-                                                    .add(
-                                                        egui::Slider::new(
-                                                            &mut limit,
-                                                            MIN_VRAM_MIB..=max,
-                                                        )
-                                                        .logarithmic(true)
-                                                        .suffix(" MiB"),
-                                                    )
-                                                    .changed()
-                                                {
-                                                    next = limit.to_string();
-                                                }
-                                            }
-                                            ui.small(text(Text::CacheHint));
-                                        }
-
-                                        Kind::Language => {
-                                            ui.label(label);
-                                            let mut language = settings.language;
-                                            egui::ComboBox::from_id_salt("language")
-                                                .selected_text(language.name())
-                                                .show_ui(ui, |ui| {
-                                                    for candidate in moth_ui::Locale::ALL {
-                                                        ui.selectable_value(
-                                                            &mut language,
-                                                            candidate,
-                                                            candidate.name(),
-                                                        );
-                                                    }
-                                                });
-                                            next = language.code().to_owned();
-                                        }
-                                        Kind::Toggle => {
-                                            let mut v = value == "true";
-                                            if ui.checkbox(&mut v, label).changed() {
-                                                next = v.to_string();
-                                            }
-                                        }
-                                        Kind::Count(min, max) => {
-                                            let mut count = value.parse::<u64>().unwrap_or(min);
-                                            ui.horizontal(|ui| {
-                                                ui.label(label);
-                                                if ui
-                                                    .add(
-                                                        egui::DragValue::new(&mut count)
-                                                            .range(min..=max),
-                                                    )
-                                                    .changed()
-                                                {
-                                                    next = count.to_string();
-                                                }
-                                            });
-                                        }
-                                        Kind::Number(min, max, unit) => {
-                                            let mut v = value.parse::<f64>().unwrap_or(min);
-                                            ui.horizontal(|ui| {
-                                                ui.label(label);
-                                                if ui
-                                                    .add(
-                                                        egui::DragValue::new(&mut v)
-                                                            .range(min..=max)
-                                                            .suffix(unit),
-                                                    )
-                                                    .changed()
-                                                {
-                                                    next = v.to_string();
-                                                }
-                                            });
-                                        }
-                                        Kind::Choice(options) => {
-                                            ui.label(label);
-                                            let codes: Vec<String> = match entry.key {
-                                                "performance_mode" => moth_io::CacheMode::ALL
-                                                    .iter()
-                                                    .map(|v| v.code().to_owned())
-                                                    .collect(),
-                                                "bake_mode" => moth_io::BakeMode::ALL
-                                                    .iter()
-                                                    .map(|v| v.code().to_owned())
-                                                    .collect(),
-                                                _ => (0..options.len())
-                                                    .map(|i| i.to_string())
-                                                    .collect(),
-                                            };
-                                            let selected = codes
-                                                .iter()
-                                                .position(|code| code == &value)
-                                                .unwrap_or(0);
-                                            egui::ComboBox::from_id_salt("choice")
-                                                .selected_text(text(options[selected]))
-                                                .show_ui(ui, |ui| {
-                                                    for (option, code) in options.iter().zip(codes)
-                                                    {
-                                                        ui.selectable_value(
-                                                            &mut next,
-                                                            code,
-                                                            text(*option),
-                                                        );
-                                                    }
-                                                });
-                                        }
+                        egui::ScrollArea::vertical()
+                            .id_salt("settings_navigation")
+                            .max_width(if narrow { ui.available_width() } else { 190. })
+                            .max_height(if narrow {
+                                ui.spacing().interact_size.y * 2.
+                            } else {
+                                ui.available_height()
+                            })
+                            .show(ui, |ui| {
+                                ui.vertical(|ui| {
+                                    if !narrow {
+                                        ui.set_width(190.);
                                     }
-                                    if let Some(hint) = entry.hint {
-                                        ui.small(text(hint));
-                                    }
-                                    if next != value {
-                                        (entry.set)(
-                                            settings,
-                                            &BTreeMap::from([(entry.key.to_owned(), next)]),
-                                        );
-                                    }
-                                });
-                                if self.focus_row == Some(index) {
-                                    row.response.scroll_to_me(Some(egui::Align::Center));
-                                    self.focus_row = None;
-                                }
-                            }
-                            if self.query.is_empty() {
-                                if section == Section::Keys
-                                    && ui.button(text(Text::Shortcuts)).clicked()
-                                {
-                                    intents.push(Intent::Action(Action::BindingSettings));
-                                }
-                                if section == Section::Window {
-                                    for action in [Action::Overlay, Action::Pin, Action::Fullscreen]
-                                    {
-                                        if ui
-                                            .add_enabled(
-                                                enabled[action as usize],
-                                                egui::Button::new(text(action.label())),
-                                            )
-                                            .clicked()
-                                        {
-                                            intents.push(Intent::Action(action));
-                                        }
-                                    }
-                                }
-                                if section == Section::Performance {
-                                    if let Some(usage) = &tools.disk_cache_usage {
-                                        ui.label(format!(
-                                            "{}: {}",
-                                            text(Text::DiskCacheUsage),
-                                            match usage {
-                                                Ok(bytes) =>
-                                                    format!("{:.1} MiB", *bytes as f64 / 1048576.),
-                                                Err(e) => e.clone(),
-                                            }
-                                        ));
-                                    }
-                                    if ui
-                                        .add_enabled(
-                                            !tools.disk_cache_busy,
-                                            egui::Button::new(text(Text::ClearDiskCache)),
+                                    for section in Section::ALL {
+                                        if moth_ui::icons::labeled_button(
+                                            ui,
+                                            section.icon(),
+                                            text(section.label()),
+                                            self.section.unwrap_or(Section::General) == section,
                                         )
                                         .clicked()
+                                        {
+                                            self.section = Some(section);
+                                            self.query.clear();
+                                        }
+                                    }
+                                });
+                            });
+                        ui.separator();
+                        egui::ScrollArea::vertical()
+                            .id_salt("settings_content")
+                            .max_height(ui.available_height())
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.vertical(|ui| {
+                                    ui.set_width(ui.available_width());
+                                    let section = self.section.unwrap_or(Section::General);
+                                    let query = self.query.to_lowercase();
+                                    for (index, entry) in
+                                        SCHEMA.iter().enumerate().filter(|(_, e)| {
+                                            if query.is_empty() {
+                                                e.section == section
+                                            } else {
+                                                text(e.label).to_lowercase().contains(&query)
+                                                    || e.key.contains(&query)
+                                            }
+                                        })
                                     {
-                                        intents.push(Intent::Action(Action::ClearDiskCache));
-                                    }
-                                }
-                                if section == Section::Developers {
-                                    ui.label(adapter);
-                                    let cache = board.decode().cache();
-                                    ui.label(format!(
-                                        "{}: {} / {}",
-                                        text(Text::RamCacheUsage),
-                                        cache.memory_bytes(),
-                                        cache.memory_budget()
-                                    ));
-                                    ui.label(format!(
-                                        "{}: {}",
-                                        text(Text::Journaled),
-                                        board.in_flight
-                                    ));
-                                    if let Some(video) = &tools.video {
-                                        ui.label(super::tools::video_summary(video));
-                                    }
-                                }
-                                if ui.button(text(Text::ResetSection)).clicked() {
-                                    for entry in SCHEMA.iter().filter(|e| e.section == section) {
-                                        (entry.set)(
-                                            settings,
-                                            &BTreeMap::from([(
-                                                entry.key.to_owned(),
-                                                (entry.get)(&defaults),
-                                            )]),
+                                        let value = (entry.get)(settings);
+                                        let default = (entry.get)(&defaults);
+                                        let label = format!(
+                                            "{}{}",
+                                            text(entry.label),
+                                            if value != default { " *" } else { "" }
                                         );
+                                        let row = ui.push_id(entry.key, |ui| {
+                                            let mut next = value.clone();
+                                            match entry.kind {
+                                                Kind::VideoLimit => {
+                                                    ui.label(label);
+                                                    let mut auto = settings.vram_limit_mib == 0;
+                                                    let max = tools
+                                                        .video
+                                                        .as_ref()
+                                                        .and_then(|v| v.dedicated.or(v.system))
+                                                        .map_or(64 * 1024, |bytes| {
+                                                            (bytes / (1024 * 1024)) as u32
+                                                        })
+                                                        .clamp(1024, MAX_VRAM_MIB);
+                                                    if ui
+                                                        .checkbox(
+                                                            &mut auto,
+                                                            text(Text::VideoLimitAuto),
+                                                        )
+                                                        .changed()
+                                                    {
+                                                        next = if auto {
+                                                            "0".into()
+                                                        } else {
+                                                            tools
+                                                                .video
+                                                                .as_ref()
+                                                                .map_or(4096, |v| {
+                                                                    (v.limit / (1024 * 1024)) as u32
+                                                                })
+                                                                .clamp(MIN_VRAM_MIB, max)
+                                                                .to_string()
+                                                        };
+                                                    }
+                                                    if !auto {
+                                                        let mut limit = next
+                                                            .parse::<u32>()
+                                                            .unwrap_or(MIN_VRAM_MIB)
+                                                            .clamp(MIN_VRAM_MIB, max);
+                                                        if ui
+                                                            .add(
+                                                                egui::Slider::new(
+                                                                    &mut limit,
+                                                                    MIN_VRAM_MIB..=max,
+                                                                )
+                                                                .logarithmic(true)
+                                                                .suffix(" MiB"),
+                                                            )
+                                                            .changed()
+                                                        {
+                                                            next = limit.to_string();
+                                                        }
+                                                    }
+                                                    ui.small(text(Text::CacheHint));
+                                                }
+
+                                                Kind::Language => {
+                                                    ui.label(label);
+                                                    let mut language = settings.language;
+                                                    egui::ComboBox::from_id_salt("language")
+                                                        .selected_text(language.name())
+                                                        .show_ui(ui, |ui| {
+                                                            for candidate in moth_ui::Locale::ALL {
+                                                                ui.selectable_value(
+                                                                    &mut language,
+                                                                    candidate,
+                                                                    candidate.name(),
+                                                                );
+                                                            }
+                                                        });
+                                                    next = language.code().to_owned();
+                                                }
+                                                Kind::Toggle => {
+                                                    let mut v = value == "true";
+                                                    if ui.checkbox(&mut v, label).changed() {
+                                                        next = v.to_string();
+                                                    }
+                                                }
+                                                Kind::Count(min, max) => {
+                                                    let mut count =
+                                                        value.parse::<u64>().unwrap_or(min);
+                                                    ui.horizontal(|ui| {
+                                                        ui.label(label);
+                                                        if ui
+                                                            .add(
+                                                                egui::DragValue::new(&mut count)
+                                                                    .range(min..=max),
+                                                            )
+                                                            .changed()
+                                                        {
+                                                            next = count.to_string();
+                                                        }
+                                                    });
+                                                }
+                                                Kind::Number(min, max, unit) => {
+                                                    let mut v = value.parse::<f64>().unwrap_or(min);
+                                                    ui.horizontal(|ui| {
+                                                        ui.label(label);
+                                                        if ui
+                                                            .add(
+                                                                egui::DragValue::new(&mut v)
+                                                                    .range(min..=max)
+                                                                    .suffix(unit),
+                                                            )
+                                                            .changed()
+                                                        {
+                                                            next = v.to_string();
+                                                        }
+                                                    });
+                                                }
+                                                Kind::Choice(options) => {
+                                                    ui.label(label);
+                                                    let codes: Vec<String> = match entry.key {
+                                                        "performance_mode" => {
+                                                            moth_io::CacheMode::ALL
+                                                                .iter()
+                                                                .map(|v| v.code().to_owned())
+                                                                .collect()
+                                                        }
+                                                        "bake_mode" => moth_io::BakeMode::ALL
+                                                            .iter()
+                                                            .map(|v| v.code().to_owned())
+                                                            .collect(),
+                                                        _ => (0..options.len())
+                                                            .map(|i| i.to_string())
+                                                            .collect(),
+                                                    };
+                                                    let selected = codes
+                                                        .iter()
+                                                        .position(|code| code == &value)
+                                                        .unwrap_or(0);
+                                                    egui::ComboBox::from_id_salt("choice")
+                                                        .selected_text(text(options[selected]))
+                                                        .show_ui(ui, |ui| {
+                                                            for (option, code) in
+                                                                options.iter().zip(codes)
+                                                            {
+                                                                ui.selectable_value(
+                                                                    &mut next,
+                                                                    code,
+                                                                    text(*option),
+                                                                );
+                                                            }
+                                                        });
+                                                }
+                                            }
+                                            if let Some(hint) = entry.hint {
+                                                ui.small(text(hint));
+                                            }
+                                            if next != value {
+                                                (entry.set)(
+                                                    settings,
+                                                    &BTreeMap::from([(entry.key.to_owned(), next)]),
+                                                );
+                                            }
+                                        });
+                                        if self.focus_row == Some(index) {
+                                            row.response.scroll_to_me(Some(egui::Align::Center));
+                                            self.focus_row = None;
+                                        }
                                     }
-                                }
-                            }
-                        });
+                                    if self.query.is_empty() {
+                                        if section == Section::Keys
+                                            && ui.button(text(Text::Shortcuts)).clicked()
+                                        {
+                                            intents.push(Intent::Action(Action::BindingSettings));
+                                        }
+                                        if section == Section::Window {
+                                            for action in
+                                                [Action::Overlay, Action::Pin, Action::Fullscreen]
+                                            {
+                                                if ui
+                                                    .add_enabled(
+                                                        enabled[action as usize],
+                                                        egui::Button::new(text(action.label())),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    intents.push(Intent::Action(action));
+                                                }
+                                            }
+                                        }
+                                        if section == Section::Performance {
+                                            if let Some(usage) = &tools.disk_cache_usage {
+                                                ui.label(format!(
+                                                    "{}: {}",
+                                                    text(Text::DiskCacheUsage),
+                                                    match usage {
+                                                        Ok(bytes) => format!(
+                                                            "{:.1} MiB",
+                                                            *bytes as f64 / 1048576.
+                                                        ),
+                                                        Err(e) => e.clone(),
+                                                    }
+                                                ));
+                                            }
+                                            if ui
+                                                .add_enabled(
+                                                    !tools.disk_cache_busy,
+                                                    egui::Button::new(text(Text::ClearDiskCache)),
+                                                )
+                                                .clicked()
+                                            {
+                                                intents
+                                                    .push(Intent::Action(Action::ClearDiskCache));
+                                            }
+                                        }
+                                        if section == Section::Developers {
+                                            ui.label(adapter);
+                                            let cache = board.decode().cache();
+                                            ui.label(format!(
+                                                "{}: {} / {}",
+                                                text(Text::RamCacheUsage),
+                                                cache.memory_bytes(),
+                                                cache.memory_budget()
+                                            ));
+                                            ui.label(format!(
+                                                "{}: {}",
+                                                text(Text::Journaled),
+                                                board.in_flight
+                                            ));
+                                            if let Some(video) = &tools.video {
+                                                ui.label(super::tools::video_summary(video));
+                                            }
+                                        }
+                                        if ui.button(text(Text::ResetSection)).clicked() {
+                                            for entry in
+                                                SCHEMA.iter().filter(|e| e.section == section)
+                                            {
+                                                (entry.set)(
+                                                    settings,
+                                                    &BTreeMap::from([(
+                                                        entry.key.to_owned(),
+                                                        (entry.get)(&defaults),
+                                                    )]),
+                                                );
+                                            }
+                                        }
+                                    }
+                                });
+                            });
                     },
                 );
             });
@@ -535,11 +574,56 @@ impl SettingsWindow {
 mod tests {
     use super::*;
     #[test]
+    fn paper_default_preserves_an_explicit_theme_preference() {
+        let mut settings = Settings::default();
+        assert!(!settings.dark);
+        settings.load(&BTreeMap::new());
+        assert!(!settings.dark);
+        assert_eq!(settings.threshold, 5);
+        assert!(!settings.auto_arrange);
+        settings.load(&BTreeMap::from([("dark".into(), "true".into())]));
+        assert!(settings.dark);
+    }
+
+    #[test]
+    fn adding_preferences_hide_packing_details_in_developers() {
+        for key in ["arrange_choice", "arrange_split"] {
+            let entry = SCHEMA.iter().find(|entry| entry.key == key).unwrap();
+            assert!(entry.section == Section::Developers);
+        }
+        for (key, label) in [
+            ("arrange_gap", Text::ImageGap),
+            ("default_arrange", Text::NewImageLayout),
+            ("arrange_prompt_threshold", Text::ManyImages),
+        ] {
+            let entry = SCHEMA.iter().find(|entry| entry.key == key).unwrap();
+            assert!(entry.section == Section::Adding);
+            assert_eq!(entry.label, label);
+        }
+    }
+
+    #[test]
+    fn all_settings_and_bindings_persist_together() {
+        let root =
+            std::env::temp_dir().join(format!("moth-preferences-{}", moth_scene::Uuid::now_v7()));
+        let mut values: BTreeMap<_, _> = Settings::default()
+            .preferences()
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect();
+        values.extend(super::super::bindings::Registry::default().preferences());
+        moth_platform::settings::save_all(&root, &values).unwrap();
+        assert_eq!(moth_platform::settings::load(&root).unwrap(), values);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn schema_roundtrips_and_rejects_invalid_values() {
         let mut settings = Settings::default();
         let original = settings.preferences();
         assert!(
-            original.len() + super::super::bindings::ACTIONS.len() <= 128,
+            original.len() + super::super::bindings::ACTIONS.len()
+                <= moth_platform::settings::MAX_ENTRIES,
             "preferences must fit the existing storage request budget"
         );
         settings.load(

@@ -4,6 +4,37 @@ use egui::{Color32, Pos2, Rect, Response, Stroke, Ui, Vec2};
 /// House icons use one stroke weight across touch and desktop controls.
 #[derive(Clone, Copy)]
 pub enum Icon {
+    /// Rotate an item clockwise.
+    RotateCw,
+    /// Rotate an item counterclockwise.
+    RotateCcw,
+    /// Mirror an item across its vertical axis.
+    FlipHorizontal,
+    /// Mirror an item across its horizontal axis.
+    FlipVertical,
+    /// Edit a crop frame.
+    Crop,
+    /// Duplicate a selection.
+    Duplicate,
+    /// Delete selected items.
+    Trash,
+    /// Settings control.
+    Settings,
+    /// Palette control.
+    Palette,
+    /// ImagePlus control.
+    ImagePlus,
+    /// Gauge control.
+    Gauge,
+    /// Keyboard control.
+    Keyboard,
+    /// Plug control.
+    Plug,
+    /// Code control.
+    Code,
+    /// ChevronRight control.
+    ChevronRight,
+
     /// Return to the board catalog.
     Home,
     /// Select canvas items.
@@ -67,6 +98,133 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
         ));
     };
     match icon {
+        Icon::RotateCw | Icon::RotateCcw => {
+            let points = [
+                (4., 4.),
+                (9., 2.),
+                (14., 5.),
+                (15., 11.),
+                (11., 15.),
+                (5., 14.),
+                (2., 10.),
+            ];
+            if matches!(icon, Icon::RotateCw) {
+                line(&points);
+                line(&[(1., 13.), (2., 10.), (5., 11.)]);
+            } else {
+                line(&points.map(|(x, y)| (18. - x, y)));
+                line(&[(17., 13.), (16., 10.), (13., 11.)]);
+            }
+        }
+        Icon::FlipHorizontal => {
+            line(&[(9., 1.), (9., 17.)]);
+            line(&[(6., 4.), (1., 14.), (6., 14.), (6., 4.)]);
+            line(&[(12., 4.), (17., 14.), (12., 14.), (12., 4.)]);
+        }
+        Icon::FlipVertical => {
+            line(&[(1., 9.), (17., 9.)]);
+            line(&[(4., 6.), (14., 1.), (14., 6.), (4., 6.)]);
+            line(&[(4., 12.), (14., 17.), (14., 12.), (4., 12.)]);
+        }
+        Icon::Crop => {
+            line(&[(5., 1.), (5., 13.), (17., 13.)]);
+            line(&[(1., 5.), (13., 5.), (13., 17.)]);
+        }
+        Icon::Duplicate => {
+            line(&[(4., 12.), (2., 12.), (2., 2.), (12., 2.), (12., 4.)]);
+            line(&[(6., 6.), (16., 6.), (16., 16.), (6., 16.), (6., 6.)]);
+        }
+        Icon::Trash => {
+            line(&[(2., 5.), (16., 5.)]);
+            line(&[(6., 5.), (6., 2.), (12., 2.), (12., 5.)]);
+            line(&[(4., 5.), (5., 16.), (13., 16.), (14., 5.)]);
+            line(&[(7., 8.), (7., 13.)]);
+            line(&[(11., 8.), (11., 13.)]);
+        }
+        Icon::Settings => {
+            ui.painter().circle_stroke(p(9., 9.), 5., stroke);
+            ui.painter().circle_stroke(p(9., 9.), 2., stroke);
+            for (a, b) in [
+                ((9., 0.), (9., 4.)),
+                ((9., 14.), (9., 18.)),
+                ((0., 9.), (4., 9.)),
+                ((14., 9.), (18., 9.)),
+                ((2., 2.), (5., 5.)),
+                ((13., 13.), (16., 16.)),
+                ((2., 16.), (5., 13.)),
+                ((13., 5.), (16., 2.)),
+            ] {
+                line(&[a, b]);
+            }
+        }
+        Icon::Palette => {
+            line(&[
+                (16., 12.),
+                (11., 16.),
+                (4., 15.),
+                (1., 10.),
+                (3., 4.),
+                (9., 1.),
+                (15., 4.),
+                (16., 8.),
+                (11., 8.),
+                (11., 11.),
+                (16., 12.),
+            ]);
+            for (x, y) in [(5., 6.), (9., 4.), (5., 10.)] {
+                ui.painter().circle_filled(p(x, y), 1., color);
+            }
+        }
+        Icon::ImagePlus => {
+            line(&[
+                (2., 3.),
+                (12., 3.),
+                (12., 8.),
+                (8., 8.),
+                (2., 14.),
+                (2., 3.),
+            ]);
+            line(&[(13., 10.), (13., 17.)]);
+            line(&[(10., 13.), (17., 13.)]);
+        }
+        Icon::Gauge => {
+            line(&[
+                (2., 14.),
+                (1., 9.),
+                (3., 4.),
+                (9., 1.),
+                (15., 4.),
+                (17., 9.),
+                (16., 14.),
+            ]);
+            line(&[(9., 11.), (13., 5.)]);
+            line(&[(5., 15.), (13., 15.)]);
+        }
+        Icon::Keyboard => {
+            line(&[(1., 4.), (17., 4.), (17., 15.), (1., 15.), (1., 4.)]);
+            for x in [4., 7., 10., 13.] {
+                line(&[(x, 7.), (x, 9.)]);
+            }
+            line(&[(5., 12.), (13., 12.)]);
+        }
+        Icon::Plug => {
+            line(&[(5., 1.), (5., 6.), (13., 6.), (13., 1.)]);
+            line(&[
+                (3., 6.),
+                (15., 6.),
+                (14., 11.),
+                (9., 14.),
+                (4., 11.),
+                (3., 6.),
+            ]);
+            line(&[(9., 14.), (9., 18.)]);
+        }
+        Icon::Code => {
+            line(&[(6., 4.), (1., 9.), (6., 14.)]);
+            line(&[(12., 4.), (17., 9.), (12., 14.)]);
+            line(&[(10., 2.), (8., 16.)]);
+        }
+        Icon::ChevronRight => line(&[(6., 3.), (12., 9.), (6., 15.)]),
         Icon::Home => {
             line(&[
                 (2., 8.),

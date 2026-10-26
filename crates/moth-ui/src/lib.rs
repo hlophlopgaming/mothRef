@@ -5,6 +5,65 @@ use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Export destination, distinct from the native board save path.
+    ExportPath,
+    /// Short heading for color and coordinate tools.
+    ImagePickers,
+    /// Explains the armed color picker.
+    PickColorHint,
+    /// Explains the armed coordinate picker.
+    PickCoordinatesHint,
+    /// Native image picker entry point on an empty board.
+    ChooseFiles,
+    /// Import feedback count; translated when drawn.
+    AddedImages,
+    /// Recovery timestamp.
+    ChangedNow,
+    /// Recovery timestamp.
+    ChangedMinutes,
+    /// Recovery timestamp.
+    ChangedHours,
+    /// Recovery timestamp.
+    ChangedDays,
+    /// Localized UI control.
+    FileMenu,
+    /// Localized UI control.
+    AlignGroup,
+    /// Localized UI control.
+    OrderGroup,
+    /// Localized UI control.
+    InsertImages,
+    /// Localized UI control.
+    OpenFile,
+    /// Localized UI control.
+    RestoreRecovery,
+    /// Localized UI control.
+    DiscardRecovery,
+    /// Localized UI control.
+    ImageOne,
+    /// Localized UI control.
+    ImageFew,
+    /// Localized UI control.
+    ImageMany,
+    /// Localized UI control.
+    NoteOne,
+    /// Localized UI control.
+    NoteFew,
+    /// Localized UI control.
+    NoteMany,
+    /// Localized UI control.
+    NewImageLayout,
+    /// Localized UI control.
+    ImageGap,
+    /// Localized UI control.
+    ManyImages,
+    /// Localized UI control.
+    PackingChoice,
+    /// Localized UI control.
+    PackingSplit,
+    /// Localized UI control.
+    ImportSkippedCount,
+
     /// Settings section for bindings and input.
     KeysSettings,
     /// Localized UI control.
@@ -113,6 +172,7 @@ pub enum Text {
     MoveDrag,
     /// Localized shortcut control.
     ExtendDrag,
+    ToggleDrag,
     /// Localized shortcut control.
     DuplicateDrag,
     /// Localized shortcut control.
@@ -584,7 +644,7 @@ pub enum Text {
     ImportSkipped,
 }
 mod localization;
-pub use localization::{Locale, locale, set_locale, text};
+pub use localization::{Locale, Message, item_counts, locale, set_locale, text, translated};
 
 /// House theme tokens and application.
 pub mod theme;
@@ -603,6 +663,20 @@ pub fn theme(ctx: &Context, tokens: &Tokens) {
         std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
             "../fonts/NotoSans-Regular.ttf"
         ))),
+    );
+    fonts.font_data.insert(
+        "Bricolage Grotesque".into(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../fonts/BricolageGrotesque-Bold.ttf"
+        ))),
+    );
+    fonts.families.insert(
+        egui::FontFamily::Name("Bricolage Grotesque".into()),
+        vec![
+            "Bricolage Grotesque".into(),
+            "Noto Sans".into(),
+            "Hack".into(),
+        ],
     );
     fonts.families.insert(
         egui::FontFamily::Proportional,
@@ -671,11 +745,11 @@ pub fn empty_board(ui: &mut egui::Ui) -> Actions {
             ui.add_space(crate::tokens(ui.ctx()).space_content as f32);
             ui.horizontal(|ui| {
                 ui.add_space(((ui.available_width() - 230.) / 2.).max(0.));
+                actions.open = ui
+                    .add_sized([125., 36.], egui::Button::new(text(Text::ChooseFiles)))
+                    .clicked();
                 actions.paste = ui
                     .add_sized([105., 36.], egui::Button::new(text(Text::Paste)))
-                    .clicked();
-                actions.open = ui
-                    .add_sized([105., 36.], egui::Button::new(text(Text::Open)))
                     .clicked();
             });
         });
@@ -739,7 +813,7 @@ mod tests {
                     ([right - left, bottom - top], pixels)
                 };
                 let replacement = raster('\u{10ffff}');
-                for character in "→▸▾›".chars() {
+                for character in "→▸▾›−=,/…".chars() {
                     let glyph = raster(character);
                     assert!(!glyph.1.is_empty());
                     assert_ne!(glyph, replacement, "replacement rendered for {character}");
@@ -993,6 +1067,7 @@ mod tests {
             path: "",
             adapter: "Test adapter",
             count: 3,
+            images: 2,
             selected: 0,
             zoom: 1.,
             zoom_increment: 10.,
@@ -1024,7 +1099,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    toolbar(ui, status(false), &[]);
+                    toolbar(ui, status(false), &[], |_| {});
                 },
             );
             output.textures_delta.clear();
@@ -1055,7 +1130,7 @@ mod tests {
     #[test]
     fn persistence_chip_distinguishes_saved_and_unsaved_documents() {
         for (path, dirty, expected) in [
-            ("board.moth", false, ["saved", "сохранено"]),
+            ("board.moth", false, ["Saved", "Сохранено"]),
             ("board.moth", true, ["Not saved", "Не сохранено"]),
             ("", false, ["Not saved", "Не сохранено"]),
         ] {
@@ -1066,7 +1141,7 @@ mod tests {
                     let mut state = status(false);
                     state.path = path;
                     state.dirty = dirty;
-                    toolbar(ui, state, &[]);
+                    toolbar(ui, state, &[], |_| {});
                 })
                 .textures_delta
                 .clear();
@@ -1075,12 +1150,29 @@ mod tests {
                 let mut state = status(false);
                 state.path = path;
                 state.dirty = dirty;
-                toolbar(ui, state, &[]);
+                toolbar(ui, state, &[], |_| {});
             });
             output.textures_delta.clear();
-            assert!(output.shapes.iter().any(|shape| {
-                matches!(&shape.shape, egui::Shape::Text(t) if expected.iter().any(|prefix|t.galley.text().starts_with(prefix)))
-            }));
+            let status = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text)
+                        if expected
+                            .iter()
+                            .any(|prefix| text.galley.text().starts_with(prefix)) =>
+                    {
+                        Some(text)
+                    }
+                    _ => None,
+                })
+                .expect("the window bar reports saved or unsaved state");
+            assert_eq!(status.galley.rows.len(), 1);
+            assert!(
+                ["2 images · 1 note", "2 изображения · 1 заметка"]
+                    .iter()
+                    .any(|counts| status.galley.text().contains(counts))
+            );
         }
     }
     #[test]
@@ -1091,13 +1183,25 @@ mod tests {
             let mut output = ctx.run_ui(Default::default(), |ui| {
                 let mut state = status(false);
                 state.idle = idle;
-                toolbar(ui, state, &[]);
+                toolbar(ui, state, &[], |_| {});
             });
             output.textures_delta.clear();
             format!("{:?}", output.shapes)
         };
         assert_eq!(draw(true), draw(false));
     }
+    #[test]
+    fn empty_library_has_one_open_file_button() {
+        let ctx = Context::default();
+        theme(&ctx, &Tokens::LIGHT);
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            library::Library::default().show(ui, &[]);
+        });
+        let count = output.shapes.iter().filter(|shape| matches!(&shape.shape, egui::Shape::Text(text_shape) if text_shape.galley.text() == text(Text::OpenFile))).count();
+        assert_eq!(count, 1);
+        output.textures_delta.clear();
+    }
+
     #[test]
     fn chrome_and_library_keep_a_usable_canvas_on_small_screens() {
         for size in [
@@ -1123,7 +1227,7 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        toolbar(ui, status(library), &tabs);
+                        toolbar(ui, status(library), &tabs, |_| {});
                         if library {
                             library::Library::default().show(ui, &[]);
                         } else {
@@ -1166,7 +1270,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    toolbar(ui, status(false), &[]);
+                    toolbar(ui, status(false), &[], |_| {});
                     egui::CentralPanel::default().show(ui, |ui| {
                         let viewport = ui.max_rect();
                         canvas::minimap(

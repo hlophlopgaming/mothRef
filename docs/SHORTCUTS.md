@@ -17,15 +17,17 @@ An action being present in a menu does not mean its PureRef binding is implement
 
 | Task | Current control |
 | --- | --- |
-| Select / Hand tool | `V` / `H`; bottom-toolbar buttons |
-| Pan | MMB-drag, Space+LMB-drag, or LMB-drag with Hand selected; two-contact touch pan |
+| Select | Always active; `V` and the bottom-toolbar Select button |
+| Pan | MMB-drag or Space+LMB-drag; two-contact touch pan |
 | Zoom | Wheel at cursor, bottom-toolbar `−` / percentage / `+`; pinch / continuous trackpad zoom |
 | Fit entire board | `Home`, Fit board button |
 | Fit selected group | Tap Space over the selection, or select images, double-click any selected image: fit the combined rotated bounds in both viewport dimensions with padding; double-click the same image again to return |
 | Focus one image | Double-click an image outside the selection |
 | Previous / next image | `PageUp` / `PageDown`; cycles in layer order and wraps, ignoring notes |
 | Move / duplicate selection | LMB-drag / Alt+LMB-drag; selected images move as a group |
-| Add to selection | Shift+click; drag empty canvas for a selection rectangle |
+| Add to selection | Shift+click; Shift+drag empty canvas adds the rectangle’s items |
+| Toggle selection | Ctrl+click (Cmd on macOS); Ctrl+drag empty canvas toggles each item in the final rectangle once on release; Ctrl+Shift has the same effect unless assigned an exact custom binding |
+| Replace selection | Drag empty canvas without modifiers; clicking empty canvas clears it |
 | Nudge selection | Arrow keys: 1 scene unit; Shift+arrows: 10 |
 | Rotate / flip | `R` / `Shift+R`: ±90°; `Shift+H` / `Shift+V`: horizontal / vertical flip |
 | Reset all selected transforms | `Shift+0` |
@@ -34,8 +36,8 @@ An action being present in a menu does not mean its PureRef binding is implement
 | New / open / save board | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` |
 | Paste / undo / redo | `Ctrl+V` / `Ctrl+Z` / `Ctrl+Y` |
 | Duplicate / delete selection | `Ctrl+D` / `Delete`; selection-bar and context-menu controls |
-| Command palette | `Ctrl+K` or More actions → View → Command palette; arrows, Enter, Esc |
-| Searchable shortcut cheat sheet | `/` or More actions → View → Shortcut cheat sheet; all actions grouped by category, with current custom bindings |
+| Command palette | `Ctrl+K` or View → Command palette; arrows, Enter, Esc |
+| Searchable shortcut cheat sheet | `/` or View → Shortcut cheat sheet; all actions grouped by category, with current custom bindings |
 | Edit bindings | Settings → Keys and mouse → Keyboard and mouse bindings, or the button in the cheat sheet |
 | Settings | `Ctrl+,` / `Cmd+,`, or the visible Settings button; palette search also finds individual settings rows |
 | Zoom / 100% | `=` / `−`; bind Zoom to 100% in the editor |
@@ -46,7 +48,7 @@ modals and active drags. Single-shot actions do not repeat while held; nudges an
 zoom may repeat. A Space tap focuses the hovered item or the selected group;
 moving at least four logical screen points while Space is held commits to pan
 and suppresses focus on release. Escape and loss of window focus cancel the gesture.
-Visible Hand, zoom, fit, previous/next and menu controls remain pen/touch alternatives.
+Two-contact pan and visible zoom, fit, previous/next and menu controls remain pen/touch alternatives.
 
 ## Configure and preview bindings
 
@@ -141,9 +143,9 @@ categorized Help cheat sheet uses the same registry and includes pointer gesture
 | Send to back | Down | Tools layer actions; **conflict:** Down nudges selected items |
 | Focus previous image | Left | Tools Previous image; **conflict:** Left nudges selected items |
 | Focus next image | Right | Tools Next image; **conflict:** Right nudges selected items |
-| Pan | LMB + Alt / MMB | MMB and Hand+LMB exist; default Alt+LMB duplicates selection; optional PureRef-style preset explicitly reassigns it to pan |
-| Pan while locked | LMB | Use Hand+LMB or MMB; automatic locked-canvas LMB pan is not guaranteed |
-| Pan while maximized | RMB | Use Hand+LMB or MMB; RMB opens context menu |
+| Pan | LMB + Alt / MMB | MMB and Space+LMB exist; default Alt+LMB duplicates selection; optional PureRef-style preset explicitly reassigns it to pan |
+| Pan while locked | LMB | Use Space+LMB or MMB; automatic locked-canvas LMB pan is not guaranteed |
+| Pan while maximized | RMB | Use Space+LMB or MMB; RMB opens context menu |
 | Pan cropping | LMB + V | Missing gesture; V currently selects the Select tool |
 | Rotate | LMB + Ctrl | R / Shift+R and Tools; missing continuous drag gesture |
 | Scale | LMB + Ctrl+Alt | Tools scale controls; missing modifier-drag gesture |
@@ -233,3 +235,17 @@ or Cancel cancels selection. Unsupported choices are disabled by platform capabi
 cancel with Escape/the Cancel button. `F11` toggles borderless fullscreen.
 These actions are rebindable and available from the command palette. Pointer
 approach, Tab focus and the Window controls button reveal the titlebar controls.
+
+## Canvas multi-selection
+
+Selection modifiers are captured on pointer down through the binding registry;
+releasing the modifier during the gesture does not change its operation. A normal
+drag of an already selected item moves the selected group. Toggling a selected
+item off does not start a move or rectangle. Rectangles apply on release, so
+moving their edge back and forth does not repeatedly toggle items; Escape cancels
+without changing the selection. Clicks with modifiers on empty canvas preserve
+the selection. Shift adds; Ctrl/Command toggles, including with Shift held.
+The searchable shortcut cheat sheet and binding editor list both operations.
+
+Planned touch path (not implemented here): a visible “Select multiple” mode on
+the canvas, where taps toggle elements without keyboard modifiers.

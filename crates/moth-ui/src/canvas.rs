@@ -92,9 +92,31 @@ pub fn minimap(
 
 /// Keeps selection measurements visible without retaining scene metadata.
 pub fn selection_badge(ctx: &Context, viewport: egui::Rect, count: usize, size: egui::Vec2) {
+    let label = format!(
+        "{} {} · {:.0} × {:.0}",
+        count,
+        text(Text::Selected),
+        size.x,
+        size.y
+    );
+    let mut font = egui::TextStyle::Body.resolve(&ctx.style_of(ctx.theme()));
+    let color = crate::tokens(ctx).text;
+    let measured = ctx
+        .fonts_mut(|fonts| fonts.layout_no_wrap(label.clone(), font.clone(), color))
+        .size()
+        .x;
+    let available = (viewport.width()
+        - 2. * f32::from(crate::tokens(ctx).space_m + crate::tokens(ctx).space_s))
+    .max(1.);
+    font.size *= (available / measured).min(1.);
+    let gap = crate::tokens(ctx).space_m as f32;
+    let bottom = ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("bottom_toolbar")))
+        .map_or(viewport.bottom(), |rect| rect.top());
     egui::Area::new(egui::Id::new("selection_badge"))
-        .fixed_pos(viewport.center_bottom() - egui::vec2(0., 76.))
-        .pivot(egui::Align2::CENTER_BOTTOM)
+        .constrain_to(viewport)
+        .fixed_pos(egui::pos2(viewport.left() + gap, bottom - gap))
+        .pivot(egui::Align2::LEFT_BOTTOM)
         .interactable(false)
         .show(ctx, |ui| {
             egui::Frame::new()
@@ -102,13 +124,7 @@ pub fn selection_badge(ctx: &Context, viewport: egui::Rect, count: usize, size: 
                 .inner_margin(crate::tokens(ui.ctx()).space_s as i8)
                 .corner_radius(crate::tokens(ui.ctx()).radius_badge)
                 .show(ui, |ui| {
-                    ui.label(format!(
-                        "{} {} · {:.0} × {:.0}",
-                        count,
-                        text(Text::Selected),
-                        size.x,
-                        size.y
-                    ));
+                    ui.add(egui::Label::new(egui::RichText::new(label).font(font)).extend());
                 });
         });
 }
@@ -116,6 +132,40 @@ pub fn selection_badge(ctx: &Context, viewport: egui::Rect, count: usize, size: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn badge_remains_one_line_inside_a_narrow_viewport() {
+        let ctx = Context::default();
+        crate::theme(&ctx, &crate::Tokens::LIGHT);
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(320., 600.));
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(viewport),
+                    ..Default::default()
+                },
+                |ui| {
+                    selection_badge(
+                        ui.ctx(),
+                        viewport,
+                        999999,
+                        egui::vec2(999999999., 999999999.),
+                    );
+                },
+            );
+            for text in output.shapes.iter().filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text),
+                _ => None,
+            }) {
+                assert_eq!(text.galley.rows.len(), 1);
+            }
+            output.textures_delta.clear();
+        }
+        let rect = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("selection_badge")))
+            .unwrap();
+        assert!(viewport.contains_rect(rect), "{rect:?}");
+    }
 
     #[test]
     fn badge_reports_count_and_world_size() {

@@ -18,8 +18,16 @@ impl App {
             SavePath => {
                 return self.modal.dialog.is_some() && !self.modal.dialog_path.trim().is_empty();
             }
-            DismissRecovery => return !self.workspace.recovery_paths().is_empty(),
+            DismissRecovery | RestoreRecovery => {
+                return !self.workspace.recovery_paths().is_empty() && self.workspace.board.idle();
+            }
             CancelArrange => return self.workspace.board.arrange_prompt.is_some(),
+            AddedHorizontal | AddedVertical | AddedGrid | AddedOptimal | UndoAdded
+            | DismissAdded => {
+                return self.workspace.board.added.is_some()
+                    && self.workspace.board.idle()
+                    && !self.tools.locked;
+            }
             _ => {}
         }
         if self.editing.is_some() {
@@ -34,6 +42,7 @@ impl App {
                 | CloseWindow
                 | New
                 | Open
+                | Images
                 | Library
                 | CloseTab
                 | NextTab
@@ -61,15 +70,7 @@ impl App {
         }
         if matches!(
             action,
-            Fit | Focus
-                | Previous
-                | Next
-                | ZoomIn
-                | ZoomOut
-                | ZoomReset
-                | ResetCamera
-                | Select
-                | Hand
+            Fit | Focus | Previous | Next | ZoomIn | ZoomOut | ZoomReset | ResetCamera | Select
         ) {
             return true;
         }
@@ -166,6 +167,22 @@ impl App {
         if !self.action_enabled(action) {
             return;
         }
+        if matches!(
+            action,
+            AddedHorizontal | AddedVertical | AddedGrid | AddedOptimal
+        ) {
+            if let Some(added) = &self.workspace.board.added {
+                let ids = added.ids.clone();
+                let mode = match action {
+                    AddedHorizontal => arrange::Arrange::Horizontal,
+                    AddedVertical => arrange::Arrange::Vertical,
+                    AddedGrid => arrange::Arrange::Grid,
+                    _ => arrange::Arrange::Optimal,
+                };
+                self.apply(Intent::Arrange(mode, ids), event_loop);
+            }
+            return;
+        }
         if matches!(action, Horizontal | Vertical | Grid | Optimal)
             && let Some(ids) = self.workspace.board.arrange_prompt.clone()
         {
@@ -208,6 +225,13 @@ impl App {
             KeepOpen => Intent::KeepOpen,
             CancelDialog => Intent::CancelDialog,
             DismissRecovery => Intent::DismissRecovery,
+            RestoreRecovery => Intent::RestoreRecovery,
+            DismissAdded => {
+                self.workspace.finish_added();
+                return;
+            }
+            UndoAdded => Intent::Undo,
+            AddedHorizontal | AddedVertical | AddedGrid | AddedOptimal => return,
             CancelArrange => Intent::DismissArrangePrompt,
             SavePath => {
                 let mut path = std::path::PathBuf::from(&self.modal.dialog_path);
@@ -241,17 +265,22 @@ impl App {
                 return;
             }
             Export => {
+                self.workspace.board.export_message = None;
                 self.tools.export_open = true;
                 return;
             }
             SampleColor => {
-                self.tools.picking = !self.tools.picking;
-                self.tools.picker_open = self.tools.picking;
+                self.workspace.board.export_message = None;
+                self.tools.picking = true;
+                self.tools.coordinates = false;
+                self.tools.picker_open = true;
                 return;
             }
             CoordinatePicker => {
-                self.tools.coordinates = !self.tools.coordinates;
-                self.tools.picker_open = self.tools.coordinates;
+                self.workspace.board.export_message = None;
+                self.tools.coordinates = true;
+                self.tools.picking = false;
+                self.tools.picker_open = true;
                 return;
             }
             ApplyItem => {
@@ -347,6 +376,7 @@ impl App {
             }
             New => Intent::New,
             Open => Intent::Open,
+            Images => Intent::Images,
             Save => Intent::Save,
             Library => Intent::Home,
             CloseTab => Intent::CloseTab(0),
@@ -371,14 +401,7 @@ impl App {
             Fullscreen => Intent::Fullscreen,
             Minimize => Intent::Minimize,
             Maximize => Intent::Maximize,
-            Select => {
-                self.workspace.board.view.pan = false;
-                return;
-            }
-            Hand => {
-                self.workspace.board.view.pan = true;
-                return;
-            }
+            Select => return,
             Fit => Intent::Fit,
             Focus => Intent::FitSelection,
             Previous => Intent::Focus(-1),
@@ -497,9 +520,6 @@ impl App {
                         )
                     }
                 };
-                if action == PackFit {
-                    self.workspace.board.view.needs_fit = true;
-                }
                 Intent::Commands(commands)
             }
             Lock => {
@@ -512,7 +532,8 @@ impl App {
                 self.workspace.board.grayscale = self.tools.grayscale;
                 return;
             }
-            MoveDrag | ExtendDrag | DuplicateDrag | PanDrag | PanSpaceDrag | PanAltDrag => return,
+            MoveDrag | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag | PanSpaceDrag
+            | PanAltDrag => return,
         };
         self.apply(intent, event_loop);
     }

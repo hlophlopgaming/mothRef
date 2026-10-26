@@ -2,8 +2,35 @@
 
 ## Unreleased
 
+- Remove the separate Hand/Pan canvas mode, its toolbar button and H binding. Keep Select active with Space-drag, middle-drag and two-contact touch panning.
+
+- Fix Ctrl/Command, Shift and Alt pointer gestures being rejected after physical modifier key presses; keep modifiers separate from held-key gestures such as Space-drag.
+
+- Add Ctrl/Command-click and rectangle selection toggling, plus additive Shift rectangles. Preserve selected-group dragging and list both gestures in the configurable shortcut cheat sheet.
+
+- Add proportional corner resizing for single images and multi-selection, with an anchored opposite corner, live previews through journal acknowledgment, Escape cancellation and one undo step.
+- Arrange completed image additions, fit after the journal acknowledges the layout, and show method switching plus Undo for the whole import. Keep the maintainer-selected default of asking above five images.
+- Keep editor and export windows open after actions; show picker results and export progress, success and errors in their tool windows. Clarify export destinations and formats, and cancel an armed picker when its window closes.
+- Prevent a resize-time GPU scissor validation crash by using the acquired surface texture dimensions. Stop old recovery offers appearing when undo empties an active board.
+- Add transform/crop/duplicate/delete icons and dropdown indicators, skip unavailable commands during palette keyboard navigation, simplify empty-board wording and route Choose files… to image insertion. Omit zero note/image counts from the save chip.
+
+- Keep Settings navigation and controls in separate vertical columns. Remove the decorative dark grid so the canvas follows the selected paper or Screen theme.
+
+- Use the light paper theme by default, preserving saved theme choices. Bundle OFL-licensed Bricolage Grotesque Bold for the wordmark and headings, with Noto Sans fallback for translated text.
+
+- Keep the selection frame and selection bar at the dropped position while the journal records a move; prevent a brief jump back to the old position.
+
+- Keep the camera position and zoom unchanged after moving, arranging, aligning or resizing items, including undo and redo.
 - Fix dragged images drifting away from the cursor when zooming or wheel-panning in the middle of a drag (or while smooth zoom is still settling): the drag is now anchored to the board, so only the board zooms around the cursor and the images stay where you grabbed them. Rubber-band selection keeps its starting corner the same way.
 - Recolor the dark theme with the «Pixel» palette from docs/DESIGN.md: green-grey Screen background, Bone text, Sage accent, Wing for destructive actions. In the light «Album» theme, primary buttons now use dark Graphite text instead of near-white text on sage, idle buttons have an outline, and selected icons use Moss so they stay visible on paper.
+- Put save state and separate, correctly inflected image/note counts in the window bar. Translate stored status messages when drawing, keep the selection badge on one line, stack shortcut feedback above the toolbar, and keep the selection bar inside the window.
+- Give menus reserved icon columns, vector submenu arrows and named Align/Order groups. Move File and View actions to window-bar menus, keep one Settings gear, add an explicit Images… picker, and align palette rows with readable shortcut symbols.
+- Center Settings with independent navigation/content scrolling and a fixed search field; clarify adding-image labels and move packing heuristics to For developers. Improve light-theme text/selection contrast and secondary buttons, and show one Open file… entry in the library.
+- List recovery entries by title and modification time with Restore/Discard controls. Record the original save destination beside each journal and preserve it on restore; archive restored journal bytes and refuse to discard live journals or files outside the recovery folder. Legacy journals without destination metadata (or with damaged metadata) restore as unnamed boards and require Save As.
+
+- Keep notes at the editor’s visible text size when created at any zoom, and preserve the text scale of existing notes when editing.
+
+- Default to Select on new and reopened boards, and allow double-click focus with either navigation tool. Frame boards, selections and newly added images clear of the window bar and floating toolbars.
 
 ## 0.1.0-alpha.9 — 2026-10-24
 

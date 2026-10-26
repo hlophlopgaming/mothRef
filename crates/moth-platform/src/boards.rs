@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Serializes durable mutations on a bounded storage queue.
 use super::DesktopStorage;
+mod recovery;
 use moth_format::{Handle, Storage, board};
 use moth_scene::{BlobId, Command, Item, Rect, Scene};
+pub use recovery::Recovery;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs::{File, OpenOptions},
@@ -29,6 +31,10 @@ pub enum Request {
     Save(PathBuf),
     /// Load into an empty board and establish a new recovery journal.
     Open(PathBuf),
+    /// Restore a validated private journal, retaining its original save destination.
+    Restore(PathBuf),
+    /// Remove only an explicitly rejected journal in the application recovery folder.
+    DiscardRecovery(PathBuf),
     /// Convert a BeeRef `.bee` database into reversible inserts on an empty board.
     ImportBee(PathBuf),
     /// Convert a PureRef `.pur` board through the bounded local purcore fork.
@@ -59,7 +65,9 @@ pub enum Completion {
         bounds: Option<Rect>,
     },
     /// Offers existing journals without silently replacing the current board.
-    Recovery(Vec<PathBuf>),
+    Recovery(Vec<Recovery>),
+    /// The selected private recovery journal has been explicitly discarded.
+    RecoveryDiscarded(PathBuf),
     /// Read-only recent-file suggestions, bounded to twenty entries.
     Recent(Vec<PathBuf>),
     /// The persisted interface language, or a detected default on first launch.
@@ -75,7 +83,7 @@ pub enum Completion {
     /// Applies a whole journaled group as one unit.
     AppliedBatch(Vec<Command>, Vec<(BlobId, Handle)>),
     /// Finishes loading recovered metadata and journal-backed originals.
-    Opened(Scene, HashMap<BlobId, Handle>, bool),
+    Opened(Scene, HashMap<BlobId, Handle>, bool, Option<PathBuf>),
     /// Imported inserts, their journal-backed originals and the count of skipped items.
     Imported(Vec<Command>, HashMap<BlobId, Handle>, usize),
     /// Confirms an explicit save has reached stable storage.
@@ -131,6 +139,7 @@ struct State {
     scene: Scene,
     sources: HashMap<BlobId, Handle>,
     journal: Option<File>,
+    journal_guard: Option<File>,
     blobs: HashSet<BlobId>,
     undo: VecDeque<Step>,
     redo: VecDeque<Step>,
@@ -253,7 +262,9 @@ impl State {
                 use std::os::unix::fs::PermissionsExt;
                 std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
             }
+            let guard = recovery::lock(&directory.join("board.moth"))?;
             self.journal = Some(create(&directory.join("board.moth"))?);
+            self.journal_guard = Some(guard);
             sync_directory(&self.storage.base_directory()?)?;
         }
         self.journal
@@ -422,21 +433,47 @@ impl State {
         if let Err(e) = recent(&self.storage.base_directory()?, Some(path)) {
             tracing::warn!(%e, "recent file catalog unavailable");
         }
+        self.journal()?;
+        if let Some(destination) = &self.destination {
+            recovery::remember(&self.storage, &destination.0)?;
+        }
         Ok(Completion::Saved)
     }
     fn open(&mut self, path: PathBuf) -> io::Result<Completion> {
+        self.open_from(path.clone(), Some(path), false)
+    }
+    fn open_from(
+        &mut self,
+        path: PathBuf,
+        destination: Option<PathBuf>,
+        restored: bool,
+    ) -> io::Result<Completion> {
         let _span = tracing::info_span!("open_board").entered();
-        self.claim(&path, true)?;
         if !self.scene.is_empty() {
             return Err(error(
                 "Open requires an empty board; save and restart first",
             ));
+        }
+        if let Some(destination) = destination {
+            if let Err(error) = self.claim(&destination, true) {
+                if !restored {
+                    return Err(error);
+                }
+                tracing::warn!(%error, "original destination unavailable; restoring as an unnamed board");
+                self.destination = None;
+            }
+        } else {
+            self.destination = None;
         }
         let mut file = File::open(&path)?;
         let loaded = {
             let _span = tracing::info_span!("parse_moth").entered();
             board::read(&mut file).map_err(error)?
         };
+        self.journal()?;
+        if let Some(destination) = &self.destination {
+            recovery::remember(&self.storage, &destination.0)?;
+        }
         let mut batch = LoadBatch {
             bounds: loaded.scene.bounds(),
             ..LoadBatch::default()
@@ -493,13 +530,18 @@ impl State {
         self.blobs = copied;
         self.undo.clear();
         self.redo.clear();
-        if let Err(e) = recent(&self.storage.base_directory()?, Some(path)) {
+        if let Some(destination) = &self.destination
+            && let Err(e) = recent(&self.storage.base_directory()?, Some(destination.0.clone()))
+        {
             tracing::warn!(%e, "recent file catalog unavailable");
         }
         Ok(Completion::Opened(
             loaded.scene,
             self.sources.clone(),
-            loaded.recovered,
+            loaded.recovered || restored,
+            self.destination
+                .as_ref()
+                .map(|destination| destination.0.clone()),
         ))
     }
     /// Converts a foreign board into inserts on the current (empty) board.
@@ -740,6 +782,35 @@ impl State {
             }
             Request::Save(path) => Ok(Some(self.save(path)?)),
             Request::Open(path) => Ok(Some(self.open(path)?)),
+            Request::Restore(path) => {
+                let directory = recovery::validate(&self.storage, &path)?;
+                if directory == self.storage.recovery_directory()? {
+                    return Err(error("Cannot restore the active journal"));
+                }
+                let _guard = recovery::lock(&path)?;
+                let destination = recovery::destination(&path).unwrap_or_else(|error| {
+                    tracing::warn!(%error, "recovery destination unavailable; restoring as an unnamed board");
+                    None
+                });
+                let completion = self.open_from(path.clone(), destination, true)?;
+                // Keep the source bytes even when a damaged tail was only partially recoverable.
+                let archive = directory.join(format!("restored-{}.moth", uuid::Uuid::now_v7()));
+                if let Err(error) =
+                    std::fs::rename(path, archive).and_then(|()| sync_directory(&directory))
+                {
+                    tracing::warn!(%error, "restored recovery journal archival failed");
+                }
+                Ok(Some(completion))
+            }
+            Request::DiscardRecovery(path) => {
+                let directory = recovery::validate(&self.storage, &path)?;
+                if directory == self.storage.recovery_directory()? {
+                    return Err(error("Cannot discard the active journal"));
+                }
+                let _guard = recovery::lock(&path)?;
+                std::fs::remove_dir_all(directory)?;
+                Ok(Some(Completion::RecoveryDiscarded(path)))
+            }
             Request::ImportBee(path) | Request::ImportPur(path) => {
                 let result = self.import_foreign(path)?;
                 self.redo.clear();
@@ -893,21 +964,7 @@ impl Worker {
             .name("storage".into())
             .spawn(move || {
                 if discover {
-                    let recovery = (|| -> io::Result<Vec<PathBuf>> {
-                        let directory = storage.base_directory()?;
-                        std::fs::create_dir_all(&directory)?;
-                        let mut paths = Vec::new();
-                        for entry in std::fs::read_dir(directory)?.take(1024) {
-                            let entry = entry?;
-                            if entry.file_type()?.is_dir() {
-                                let path = entry.path().join("board.moth");
-                                if path.is_file() {
-                                    paths.push(path);
-                                }
-                            }
-                        }
-                        Ok(paths)
-                    })();
+                    let recovery = recovery::discover(&storage);
                     let initial = match recovery {
                         Ok(paths) => Completion::Recovery(paths),
                         Err(e) => Completion::Failed(e.to_string()),
@@ -954,6 +1011,7 @@ impl Worker {
                     scene: Scene::default(),
                     sources: HashMap::new(),
                     journal: None,
+                    journal_guard: None,
                     blobs: HashSet::new(),
                     undo: VecDeque::new(),
                     redo: VecDeque::new(),
@@ -1007,6 +1065,126 @@ impl Worker {
 mod tests {
     use super::*;
     #[test]
+    fn restore_keeps_original_destination_and_preserves_source_until_durable() {
+        let mut original = state();
+        let root = original.storage.base_directory().unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("Artist references.moth");
+        original.save(path.clone()).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let note = Item::text(
+            "unsaved note",
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 120.,
+                height: 40.,
+            },
+            None,
+        );
+        original
+            .request(Request::Apply(Command::Insert(note.clone()), None))
+            .unwrap();
+        let journal = original
+            .storage
+            .recovery_directory()
+            .unwrap()
+            .join("board.moth");
+        let mut restored = state();
+        restored.storage = Arc::new(DesktopStorage::in_directory(root.clone()));
+        assert!(
+            restored.request(Request::Restore(journal.clone())).is_err(),
+            "live journals must remain untouched"
+        );
+        assert!(journal.is_file());
+        drop(original);
+        let completion = restored.request(Request::Restore(journal.clone())).unwrap();
+        assert!(
+            matches!(completion, Some(Completion::Opened(_, _, true, Some(ref destination))) if destination == &path)
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "restore must not write the original file"
+        );
+        assert_eq!(restored.scene.get(note.id), Some(&note));
+        assert!(
+            !journal.exists(),
+            "restored journals must not be offered again"
+        );
+        assert!(
+            std::fs::read_dir(journal.parent().unwrap())
+                .unwrap()
+                .any(|entry| entry
+                    .unwrap()
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "moth")),
+            "the original journal bytes stay archived"
+        );
+        restored.save(path.clone()).unwrap();
+        let loaded = board::read(&mut File::open(&path).unwrap()).unwrap();
+        assert_eq!(loaded.scene.get(note.id), Some(&note));
+        drop(restored);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn corrupt_recovery_metadata_restores_unnamed_without_touching_the_original() {
+        let mut original = state();
+        let root = original.storage.base_directory().unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("original.moth");
+        original.save(path.clone()).unwrap();
+        let journal = original
+            .storage
+            .recovery_directory()
+            .unwrap()
+            .join("board.moth");
+        let bytes = std::fs::read(&journal).unwrap();
+        drop(original);
+        std::fs::write(
+            journal.parent().unwrap().join("destination"),
+            b"torn metadata",
+        )
+        .unwrap();
+        let mut restored = state();
+        restored.storage = Arc::new(DesktopStorage::in_directory(root.clone()));
+        assert!(
+            restored
+                .request(Request::DiscardRecovery(path.clone()))
+                .is_err()
+        );
+        assert!(path.is_file());
+        assert!(matches!(
+            restored.request(Request::Restore(journal.clone())).unwrap(),
+            Some(Completion::Opened(_, _, true, None))
+        ));
+        let archived = std::fs::read_dir(journal.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "moth")
+            })
+            .unwrap();
+        assert_eq!(std::fs::read(archived).unwrap(), bytes);
+        assert!(path.is_file());
+        let live = restored
+            .storage
+            .recovery_directory()
+            .unwrap()
+            .join("board.moth");
+        assert!(
+            restored
+                .request(Request::DiscardRecovery(live.clone()))
+                .is_err()
+        );
+        assert!(live.is_file());
+        drop(restored);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn tabs_cannot_save_over_an_unopened_or_already_owned_board() {
         let mut first = state();
         let directory = first.storage.base_directory().unwrap();
@@ -1032,6 +1210,7 @@ mod tests {
             scene: Scene::default(),
             sources: HashMap::new(),
             journal: None,
+            journal_guard: None,
             blobs: HashSet::new(),
             undo: VecDeque::new(),
             redo: VecDeque::new(),
@@ -1068,6 +1247,7 @@ mod tests {
         let loaded = board::read(&mut File::open(path).unwrap()).unwrap();
         assert_eq!(loaded.scene.get(original.id).unwrap().transform, transform);
         state.journal = None;
+        state.journal_guard = None;
         state.storage.discard().unwrap();
     }
     #[test]
@@ -1135,7 +1315,7 @@ mod tests {
         let mut loaded = self::state();
         assert!(matches!(
             loaded.request(Request::Open(path.clone())),
-            Ok(Some(Completion::Opened(_, _, false)))
+            Ok(Some(Completion::Opened(_, _, false, _)))
         ));
         assert_eq!(loaded.scene.get(item.id), Some(&item));
         let backup_directory = state
@@ -1149,7 +1329,9 @@ mod tests {
                     .as_str(),
             );
         state.journal = None;
+        state.journal_guard = None;
         loaded.journal = None;
+        loaded.journal_guard = None;
         state.storage.discard().unwrap();
         assert!(
             backup_directory.is_dir(),
@@ -1198,6 +1380,7 @@ mod tests {
             state.request(Request::Redo).unwrap();
             assert_eq!(board::snapshot(&state.scene).unwrap(), before);
             state.journal = None;
+            state.journal_guard = None;
             state.storage.discard().unwrap();
             std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
         }
@@ -1231,6 +1414,7 @@ mod tests {
             assert_eq!(recovered.scene.len(), state.scene.len());
             assert_eq!(recovered.blobs.len(), state.sources.len());
             state.journal = None;
+            state.journal_guard = None;
             // The journal alone must suffice to reopen every original.
             let mut restored = self::state();
             restored
@@ -1242,6 +1426,7 @@ mod tests {
                 assert_eq!(blake3::hash(&bytes), *hash);
             }
             restored.journal = None;
+            restored.journal_guard = None;
             restored.storage.discard().unwrap();
             std::fs::remove_dir_all(restored.storage.base_directory().unwrap()).unwrap();
             state.storage.discard().unwrap();
@@ -1274,10 +1459,15 @@ mod tests {
             }
         };
         let recovery = state.storage.recovery_directory().unwrap();
+        let mut entries: Vec<_> = std::fs::read_dir(&recovery)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        entries.sort();
         assert_eq!(
-            std::fs::read_dir(&recovery).unwrap().count(),
-            1,
-            "opening must only write the recovery journal, not duplicate originals"
+            entries,
+            ["active", "board.moth", "destination"],
+            "opening keeps only the journal and its session metadata, without duplicating originals"
         );
         // Reads must survive replacement/compaction of the opened board.
         let handle = state.storage.register(path.clone()).unwrap();
@@ -1307,6 +1497,7 @@ mod tests {
         assert_scene(&saved.scene);
         // Recovery itself must also open without any loose original files.
         state.journal = None;
+        state.journal_guard = None;
         let mut restored = self::state();
         restored.open(recovery.join("board.moth")).unwrap();
         assert_scene(&restored.scene);
@@ -1317,6 +1508,7 @@ mod tests {
             );
         }
         restored.journal = None;
+        restored.journal_guard = None;
         restored.storage.discard().unwrap();
         std::fs::remove_dir_all(restored.storage.base_directory().unwrap()).unwrap();
         state.storage.discard().unwrap();
@@ -1367,6 +1559,7 @@ mod tests {
         assert_eq!(recovered.scene.len(), 2);
         assert!(recovered.scene.items().any(|i| i.note() == Some("hi")));
         state.journal = None;
+        state.journal_guard = None;
         state.storage.discard().unwrap();
         std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
     }
@@ -1395,6 +1588,7 @@ mod tests {
         let [w, h] = moth_scene::note_size("note");
         assert_eq!((note.rect.width, note.rect.height), (w * 1.5, h * 1.5));
         state.journal = None;
+        state.journal_guard = None;
         state.storage.discard().unwrap();
         std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
     }
@@ -1445,6 +1639,7 @@ mod tests {
             Some(&item)
         );
         state.journal = None;
+        state.journal_guard = None;
         state.storage.discard().unwrap();
         std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
     }
@@ -1589,6 +1784,8 @@ mod tests {
         assert_eq!(state.scene.len(), 3);
 
         state.journal = None;
+
+        state.journal_guard = None;
         state.storage.discard().unwrap();
         std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
     }

@@ -57,16 +57,20 @@ Five tasks, each one change set. Task 1 first; the rest in any order.
 
 ### Task 1 — Defaults and framing (findings 2, 3, 17)
 
+Implemented; tier-1 formatting and Clippy checks only. Regression tests added for Select defaults and safe-area framing.
+
 1. Make Select the default tool for new and reopened boards; Hand stays one key
    away (`H`, Space+drag, middle button).
 2. Let double-click focus work with any navigation tool: compute `activate` from
    "not dragging" instead of requiring the move-drag pointer action.
 3. Give camera fits a safe area: subtract the window bar, the bottom toolbar and
    the selection bar (when shown) from the viewport before fitting. Apply it to
-   Fit board, Fit selection, double-click focus and the fit after arranging.
+   Fit board, Fit selection and double-click focus. Arranging items preserves the camera position and zoom.
 4. After adding images, fit the camera to the added images.
 
 ### Task 2 — Notes keep their size (finding 1)
+
+Implemented; tier-1 formatting and Clippy checks only. Added a regression test comparing editor and rendered text heights at 35% zoom; test execution deferred.
 
 1. When a note is created, set its world size so it appears at the editor's
    on-screen size at the current zoom.
@@ -76,6 +80,8 @@ Five tasks, each one change set. Task 1 first; the rest in any order.
    text height equals the editor's.
 
 ### Task 3 — Chips, badges and toasts (findings 5, 6, 7)
+
+Implemented; tier-1 checks only. Regression tests added; execution deferred.
 
 1. Move the save state into the window bar, right of the tabs, as one line
    ("Saved" / "Not saved", plus the item count). It never covers tabs or content.
@@ -91,6 +97,8 @@ Five tasks, each one change set. Task 1 first; the rest in any order.
 
 ### Task 4 — Menus and toolbar contents (findings 8–12, 16)
 
+Implemented; tier-1 checks only. Regression tests added; execution deferred.
+
 1. Menu rows: a fixed icon column (blank when an action has no icon), label,
    right-aligned shortcut. No overlap at any interface scale.
 2. Draw submenu arrows with a `moth-ui` icon instead of egui's glyph; extend the
@@ -105,6 +113,8 @@ Five tasks, each one change set. Task 1 first; the rest in any order.
 6. Shortcut labels as symbols: `=`, `−`, `,`, `/`.
 
 ### Task 5 — Settings window, light theme, recovery (findings 4, 13–15, 18)
+
+Implemented; tier-1 checks only. Regression tests added; execution deferred.
 
 1. Settings as a centered dialog with a fixed size; the sidebar and the content
    scroll separately; the search field stays visible.
@@ -126,3 +136,83 @@ Five tasks, each one change set. Task 1 first; the rest in any order.
 - Every finding A and B is fixed or has a written reason in the change log.
 - Re-running this review on the next alpha shows no overlap of chrome over
   content or over other chrome at 1440×900 and at 900×600.
+
+## Validation notes for tasks 3–5
+
+- Run formatting and Clippy for `moth-ui`, `moth-platform`, `mothref` and `xtask`; no tests, benchmarks, PR or CI wait in this session.
+- Regression coverage includes plural rules and live message translation, text contrast, reserved menu icon slots, shortcut symbols, selection-bar placement, toast placement, recovery destination preservation, sidecar checksums, rejection of live journals and files outside recovery, and unnamed recovery from damaged destination metadata.
+- Recovery destinations are checksummed native-path sidecars, written and atomically replaced by the storage worker. The `.moth` schema is unchanged. Source journals are archived after the replacement journal is durable, including any damaged tail; live journals are excluded using non-blocking file locks.
+- Older journals did not record the original filename or destination. Guessing from the recent-file list could overwrite an unrelated board, so those journals restore as unnamed boards and require Save As. A damaged sidecar or an unavailable/already-owned original destination has the same safe fallback and does not block recovering the board itself.
+- Native UI checks at 1440×900 and 900×600, Windows/macOS file locks and atomic replacement, and the recovery/journal kill-process checks remain for the maintainer or release preparation under AGENTS.md section 3.
+
+## Regression guard: selection jumps back after dropping items
+
+The shared selection bounds once read `board.scene` / `board.motion` after
+pointer release, ignoring `DragMotion::returning`. The scene deliberately keeps
+the old position until the journal acknowledges the move. Images already used
+the released preview, so the shared frame and selection bar briefly jumped back.
+
+When changing selection chrome, use the same presentation geometry as the drawn
+items: live drag preview while dragging, then released (`returning`) geometry
+before ordinary item transitions or scene geometry. Keep that priority even when
+animations are disabled or the release animation has finished but storage is
+still pending. Never fix this by mutating the scene before journal acknowledgment.
+Cover delayed storage with multiple selected items and reduced motion; the canvas
+regression is `selection_keeps_released_positions_until_storage_acknowledges`.
+
+
+## Native follow-up — 2026-10-25
+
+**Accepted by the maintainer on 2026-10-25:** “Можно принять”. The editing-polish
+roadmap entry and implemented Album theme/type work are complete. The minimap
+intentionally uses silhouettes, per the maintainer; the final mark, app icon and
+README logo are on hold. Double-click focus was confirmed working by the
+maintainer and left unchanged by this follow-up.
+
+Implemented:
+
+- Paper default while retaining explicit saved theme choices; Pixel dark palette;
+  OFL Bricolage Grotesque Bold headings/wordmark with translated-text fallbacks.
+  Removed the opaque dark decorative grid so the canvas follows theme tokens.
+- Settings navigation/content stack independently instead of inheriting the outer
+  horizontal layout. Transform, crop, duplicate and delete have vector icons;
+  dropdowns have indicators, and keyboard palette navigation skips disabled items.
+- Single and multi-selection corner scaling with the opposite corner fixed,
+  proportional live previews, Escape cancellation and one journaled undo step.
+  Released resize previews remain until storage acknowledges the change.
+- Import method switching and Undo in one notification. Import and layout changes
+  share the existing undo group until dismissal or the next mutation. Commands
+  still reach the journal before the scene changes. Fit runs after acknowledgment.
+  The default remains ask above five; automatic arrangement is opt-in.
+- Picker hints, results and errors are visible in the tool window. Closing it
+  disarms picking. Export has its own destination label and visible result/progress;
+  shared action rows close menus rather than collapsing editor/export windows.
+- Acquired surface texture dimensions determine clipping during resize, fixing
+  a reproduced wgpu scissor panic. Old recovery offers no longer interrupt an
+  active board after Undo empties it. Empty-board Choose files… inserts images.
+
+Native validation used a release build, repository images and an isolated Linux
+X11 display `:93`, profile `/tmp/mothref-editing-native-93/data`. Captures and
+export artifacts remain in that temporary directory; artwork was not redistributed.
+Covered 1440×900 and 900×600, repeated window shrinking/growing, selection frames,
+corner scaling and Undo for one/two images, rotation/Undo, numeric frame cropping
+and content scaling/Undo, six-image prompt → Grid → Vertical → Undo-all → Redo,
+Settings/keyboard opening, palette focus, source-coordinate and color picking,
+and native Copy image → Paste. The maintainer independently confirmed double-click
+focus. A separate `--software` launch could not find a fallback adapter here.
+
+Export evidence: PNG 2048×996 with a valid PNG header; parsed SVG with two embedded
+images; PDF with a `%PDF-1.4` header; original-file and folder exports matched the
+source SHA-256 `494ba158164fca56b7ff4f1ef78290cfb31cd9d03dd00f883c81c96f196ac62c`.
+ZIP contained one original, passed CRC inspection and preserved its bytes.
+Repeating the PNG export left its SHA-256 unchanged, confirming refusal to overwrite.
+
+Regression coverage was added for import undo grouping/post-ack fitting, proportional
+resize undo/checkpoint round trips, rotated anchors, theme defaults, Settings column
+layout, translated feedback counts, keyboard availability and editor-window retention.
+Formatting, workspace Clippy with warnings denied and the release build passed.
+Automated tests, benchmarks, fuzzing, kill tests and soak tests were **not run** under
+AGENTS.md §3; no long qualification was started. Windows/macOS, native file dialogs
+and physical touch/pen still require platform/release qualification. Tests for earlier
+recovery-worker changes remain subject to the same policy. The maintainer requested
+ending lengthy validation; no additional native loops were run after acceptance.

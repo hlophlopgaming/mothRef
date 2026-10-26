@@ -53,12 +53,51 @@ pub fn set_locale(language: Locale) {
 }
 /// Missing translations fall back to English at build time.
 pub fn text(key: Text) -> &'static str {
-    CATALOGS[locale().0].strings[index(key)]
+    translated(locale(), key)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn plural_counts_and_messages_follow_the_render_language() {
+        assert_eq!(
+            Message::Count(Text::AddedImages, 6).render(Locale::EN),
+            "Added images: 6"
+        );
+        assert_eq!(
+            Message::Count(Text::AddedImages, 6).render(Locale::RU),
+            "Добавлено изображений: 6"
+        );
+        assert_eq!(item_counts(Locale::EN, 1, 2), "1 image · 2 notes");
+        assert_eq!(item_counts(Locale::EN, 1, 0), "1 image");
+        assert_eq!(item_counts(Locale::RU, 0, 1), "1 заметка");
+        assert_eq!(item_counts(Locale::EN, 0, 0), "0 images");
+        for (count, noun) in [
+            (0, "изображений"),
+            (1, "изображение"),
+            (2, "изображения"),
+            (5, "изображений"),
+            (11, "изображений"),
+            (12, "изображений"),
+            (21, "изображение"),
+            (24, "изображения"),
+            (111, "изображений"),
+        ] {
+            assert!(
+                item_counts(Locale::RU, count, 1)
+                    .starts_with(&format!("{count} {noun} · 1 заметка"))
+            );
+        }
+        let message = Message::Count(Text::ImportSkippedCount, 3);
+        assert_eq!(message.render(Locale::EN), "Imported; skipped 3 items");
+        assert_eq!(
+            message.render(Locale::RU),
+            "Импортировано; пропущено элементов: 3"
+        );
+        let saved = Message::from(Text::Saved);
+        assert_ne!(saved.render(Locale::EN), saved.render(Locale::RU));
+    }
     #[test]
     fn catalogs_and_language_tags() {
         assert_eq!(Locale::from_code(" RU_ru.UTF-8 "), Some(Locale::RU));
@@ -72,5 +111,74 @@ mod tests {
             assert!(catalog.strings.iter().all(|s| !s.trim().is_empty()));
         }
         assert_eq!(english.strings[index(Text::Title)], "MothRef");
+    }
+}
+
+/// Resolves a key without changing the application language.
+pub fn translated(language: Locale, key: Text) -> &'static str {
+    CATALOGS[language.0].strings[index(key)]
+}
+/// Inflects board counts using the selected catalog's plural rules.
+pub fn item_counts(language: Locale, images: usize, notes: usize) -> String {
+    let noun = |count: usize, forms: [Text; 3]| {
+        let form = if language == Locale::RU {
+            if count % 10 == 1 && count % 100 != 11 {
+                0
+            } else if (2..=4).contains(&(count % 10)) && !(12..=14).contains(&(count % 100)) {
+                1
+            } else {
+                2
+            }
+        } else if count == 1 {
+            0
+        } else {
+            2
+        };
+        format!("{count} {}", translated(language, forms[form]))
+    };
+    let image_count = noun(images, [Text::ImageOne, Text::ImageFew, Text::ImageMany]);
+    let note_count = noun(notes, [Text::NoteOne, Text::NoteFew, Text::NoteMany]);
+    match (images, notes) {
+        (_, 0) => image_count,
+        (0, _) => note_count,
+        _ => format!("{image_count} · {note_count}"),
+    }
+}
+
+/// Worker feedback keeps translation keys until the next paint.
+#[derive(Clone)]
+pub enum Message {
+    /// A bundled message without arguments.
+    Text(Text),
+    /// A bundled count-bearing message.
+    Count(Text, usize),
+    /// External errors or user data, already supplied by a worker.
+    Detail(String),
+}
+impl Default for Message {
+    fn default() -> Self {
+        Self::Detail(String::new())
+    }
+}
+impl From<Text> for Message {
+    fn from(key: Text) -> Self {
+        Self::Text(key)
+    }
+}
+impl From<String> for Message {
+    fn from(detail: String) -> Self {
+        Self::Detail(detail)
+    }
+}
+impl Message {
+    /// Resolve the current language without changing the saved message.
+    pub fn render(&self, language: Locale) -> String {
+        match self {
+            Self::Text(key) => translated(language, *key).to_owned(),
+            Self::Count(key, count) => {
+                translated(language, *key).replace("{count}", &count.to_string())
+            }
+            Self::Detail(detail) => detail.clone(),
+        }
     }
 }

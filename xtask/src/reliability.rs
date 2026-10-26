@@ -310,6 +310,7 @@ impl Soak {
             match self.worker.results.recv_timeout(Duration::from_secs(30))? {
                 Completion::Loading { .. }
                 | Completion::Recovery(_)
+                | Completion::RecoveryDiscarded(_)
                 | Completion::Recent(_)
                 | Completion::Settings(_)
                 | Completion::Preferences(_)
@@ -318,7 +319,7 @@ impl Soak {
                 Completion::Applied(_, _) | Completion::AppliedBatch(_, _) | Completion::Saved => {
                     break;
                 }
-                Completion::Opened(_, _, _) => anyhow::bail!("unexpected open completion"),
+                Completion::Opened(_, _, _, _) => anyhow::bail!("unexpected open completion"),
                 Completion::Exported(_) => anyhow::bail!("unexpected export completion"),
                 Completion::Imported(_, _, _) => anyhow::bail!("unexpected import completion"),
             }

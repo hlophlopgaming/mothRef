@@ -8,6 +8,8 @@ use std::{
 };
 /// Persistent accessibility preference; absent means motion is enabled.
 pub const REDUCED_MOTION: &str = "reduced_motion";
+/// All preferences and registered shortcuts fit one validated update; the file still has a 64 KiB limit.
+pub const MAX_ENTRIES: usize = 256;
 
 /// Reads `settings.txt` into a `key=value` map; missing files read as empty.
 pub fn load(directory: &Path) -> io::Result<BTreeMap<String, String>> {
@@ -39,7 +41,7 @@ pub fn save(directory: &Path, key: &str, value: &str) -> io::Result<()> {
 }
 /// Saves a whole preference change together, preserving unrelated keys.
 pub fn save_all(directory: &Path, values: &BTreeMap<String, String>) -> io::Result<()> {
-    if values.len() > 128 {
+    if values.len() > MAX_ENTRIES {
         return Err(io::Error::other("Too many preferences"));
     }
     for (key, value) in values {
@@ -74,6 +76,20 @@ pub fn save_all(directory: &Path, values: &BTreeMap<String, String>) -> io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn entry_budget_accepts_the_full_registry_and_still_rejects_oversized_updates() {
+        let root =
+            std::env::temp_dir().join(format!("moth-settings-entries-{}", uuid::Uuid::now_v7()));
+        let mut values: BTreeMap<_, _> = (0..MAX_ENTRIES)
+            .map(|index| (format!("binding_{index}"), String::new()))
+            .collect();
+        save_all(&root, &values).unwrap();
+        assert_eq!(load(&root).unwrap(), values);
+        values.insert("one-too-many".into(), String::new());
+        assert!(save_all(&root, &values).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn preferences_reject_injection_and_oversized_files() {
         let root =

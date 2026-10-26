@@ -71,7 +71,7 @@ CoordinatePicker = Pick image coordinates and info
 ExportZip = Export originals to ZIP
 ChangedSetting = * differs from the default
 ByLayer = By layer order
-SaveState = saved
+SaveState = Saved
 Journaled = journaled
 RecoveryOn = recovery on
 ZoomIn = Zoom in
@@ -102,12 +102,12 @@ ByFilename = By filename
 ScaleSelection = Scale selection
 Export = Export
 Exported = Export complete
-ExportScene = Scene PNG / SVG
-ExportSelection = Selection PNG / SVG
+ExportScene = Scene PNG / SVG / PDF
+ExportSelection = Selection PNG / SVG / PDF
 ExportOriginal = Original image to file
 ExportOriginals = All originals to a new folder
 CopyImage = Copy image
-SampleColor = Pick image color → HEX
+SampleColor = Pick image color
 ExportSide = Longest output side (pixels)
 ExportLimit = Use .png, .svg or .pdf for scenes; .zip for originals. Scene/clipboard images and samples use previews up to 2048 px. Existing files are never replaced.
 CropRegion = Crop export to region
@@ -197,7 +197,7 @@ Fit = Fit board
 Pan = Pan
 Select = Select
 ClipboardBusy = Clipboard is busy; try again shortly.
-Empty = Drop images here, or paste an image to begin.
+Empty = Drop images here
 Volatile = PNG / JPEG / WebP / GIF / BMP
 Close = Discard and close
 Keep = Keep working
@@ -221,7 +221,7 @@ NudgeDownFast = Nudge down (10)
 ArrangeName = Arrange by name
 ArrangeTime = Arrange by addition
 MoveDrag = Move / select drag
-ExtendDrag = Extend selection drag
+ExtendDrag = Add to selection (click or rectangle)
 DuplicateDrag = Duplicate drag
 PanDrag = Pan drag
 PanSpaceDrag = Pan drag (alternate 1)
@@ -296,3 +296,42 @@ Language = Language
 UnsavedChip = Not saved
 EditNote = Edit note
 KeysSettings = Keys and mouse
+
+FileMenu = File
+AlignGroup = Align
+OrderGroup = Order
+InsertImages = Images…
+OpenFile = Open file…
+RestoreRecovery = Restore
+DiscardRecovery = Discard
+ImageOne = image
+ImageFew = images
+ImageMany = images
+NoteOne = note
+NoteFew = notes
+NoteMany = notes
+NewImageLayout = Layout for new images
+ImageGap = Gap between images
+ManyImages = When many images are added (count)
+PackingChoice = Packing heuristic
+PackingSplit = Packing split rule
+ImportSkippedCount = Imported; skipped {count} items
+
+ChangedNow = just now
+ChangedMinutes = {count} min ago
+ChangedHours = {count} h ago
+ChangedDays = {count} d ago
+
+AddedImages = Added images: {count}
+
+ChooseFiles = Choose files…
+
+ImagePickers = Image pickers
+
+PickColorHint = Click an image to copy its color. Esc cancels.
+
+PickCoordinatesHint = Click an image to see pixel coordinates and source information. Esc cancels.
+
+ExportPath = Destination file or folder
+
+ToggleDrag = Toggle selection (click or rectangle)

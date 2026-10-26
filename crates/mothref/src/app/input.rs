@@ -75,7 +75,19 @@ impl InputState {
         dragging: bool,
     ) -> Option<super::bindings::Action> {
         use super::bindings::Action;
-        if pressed && !blocked {
+        // Physical modifier events duplicate `mods`; they are not held-key gestures.
+        let modifier = matches!(
+            key,
+            egui::Key::ShiftLeft
+                | egui::Key::ShiftRight
+                | egui::Key::ControlLeft
+                | egui::Key::ControlRight
+                | egui::Key::AltLeft
+                | egui::Key::AltRight
+                | egui::Key::SuperLeft
+                | egui::Key::SuperRight
+        );
+        if pressed && !blocked && !modifier {
             self.held.insert(key);
         } else {
             self.held.remove(&key);
@@ -118,6 +130,62 @@ mod tests {
     use super::super::bindings::{Action, Registry};
     use super::*;
     use egui::Key;
+    #[test]
+    fn physical_modifiers_do_not_block_selection_or_pan_chords() {
+        let registry = Registry::default();
+        for (key, modifiers, action) in [
+            (
+                Key::ControlLeft,
+                egui::Modifiers::CTRL | egui::Modifiers::COMMAND,
+                Action::ToggleDrag,
+            ),
+            (
+                Key::ControlRight,
+                egui::Modifiers::CTRL | egui::Modifiers::COMMAND,
+                Action::ToggleDrag,
+            ),
+            (
+                Key::SuperLeft,
+                egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND,
+                Action::ToggleDrag,
+            ),
+            (
+                Key::SuperRight,
+                egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND,
+                Action::ToggleDrag,
+            ),
+            (Key::ShiftLeft, egui::Modifiers::SHIFT, Action::ExtendDrag),
+            (Key::ShiftRight, egui::Modifiers::SHIFT, Action::ExtendDrag),
+            (Key::AltLeft, egui::Modifiers::ALT, Action::DuplicateDrag),
+            (Key::AltRight, egui::Modifiers::ALT, Action::DuplicateDrag),
+        ] {
+            let mut input = InputState {
+                modifiers,
+                ..Default::default()
+            };
+            input.key_action(&registry, key, true, false, false, false);
+            assert_eq!(
+                registry.pointer(1, input.mods(), &input.held),
+                Some(action),
+                "physical {key:?} must not count as an extra held key"
+            );
+            input.key_action(&registry, key, false, false, false, false);
+            assert!(input.held.is_empty());
+        }
+        let mut input = InputState {
+            modifiers: egui::Modifiers::CTRL | egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            ..Default::default()
+        };
+        for key in [Key::ControlLeft, Key::ShiftLeft] {
+            input.key_action(&registry, key, true, false, false, false);
+        }
+        assert_eq!(
+            registry.pointer(1, input.mods(), &input.held),
+            Some(Action::ToggleDrag)
+        );
+        input.key_action(&registry, Key::A, true, false, false, false);
+        assert_eq!(registry.pointer(1, input.mods(), &input.held), None);
+    }
     #[test]
     fn pointer_matches_canvas_points_at_custom_ui_scale() {
         for native_scale in [1., 2.] {

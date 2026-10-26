@@ -154,64 +154,76 @@ impl Tools {
                         self.draft = Some((item.id, item.rect, item.transform));
                     }
                     let rotation_snap = settings.rotation_snap;
-                    ui.collapsing(text(Text::EditSelection), |ui| {
-                        let Some((_, frame, t)) = &mut self.draft else {
-                            return;
-                        };
-                        ui.label(&item.name);
-                        rect(ui, frame);
-                        let mut degrees = t.rotation.to_degrees();
-                        number(ui, Text::Rotation, &mut degrees, -36000.0..=36000.0);
-                        t.rotation = degrees.to_radians();
-                        if rotation_snap {
-                            t.rotation = snap::snap_angle(t.rotation, 15.0_f32.to_radians());
-                        }
-                        ui.add(
-                            egui::Slider::new(&mut t.opacity, 0.0..=1.0).text(text(Text::Opacity)),
-                        );
-                        ui.add_enabled(
-                            item.blob().is_some(),
-                            egui::Checkbox::new(&mut t.grayscale, text(Text::Grayscale)),
-                        );
-                        ui.add_enabled(
-                            item.blob().is_some(),
-                            egui::Checkbox::new(&mut t.flip[0], text(Text::FlipHorizontal)),
-                        );
-                        ui.add_enabled(
-                            item.blob().is_some(),
-                            egui::Checkbox::new(&mut t.flip[1], text(Text::FlipVertical)),
-                        );
-                        ui.add_enabled_ui(item.blob().is_some(), |ui| {
-                            ui.collapsing(text(Text::Content), |ui| {
-                                number(ui, Text::ContentScale, &mut t.content_scale, 0.001..=1000.);
-                                number(
-                                    ui,
-                                    Text::OffsetX,
-                                    &mut t.content_offset[0],
-                                    -1000.0..=1000.0,
-                                );
-                                number(
-                                    ui,
-                                    Text::OffsetY,
-                                    &mut t.content_offset[1],
-                                    -1000.0..=1000.0,
-                                );
-                                let mut degrees = t.content_rotation.to_degrees();
-                                number(ui, Text::Rotation, &mut degrees, -36000.0..=36000.0);
-                                t.content_rotation = degrees.to_radians();
+                    egui::CollapsingHeader::new(text(Text::EditSelection))
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            let Some((_, frame, t)) = &mut self.draft else {
+                                return;
+                            };
+                            ui.label(&item.name);
+                            rect(ui, frame);
+                            let mut degrees = t.rotation.to_degrees();
+                            number(ui, Text::Rotation, &mut degrees, -36000.0..=36000.0);
+                            t.rotation = degrees.to_radians();
+                            if rotation_snap {
+                                t.rotation = snap::snap_angle(t.rotation, 15.0_f32.to_radians());
+                            }
+                            ui.add(
+                                egui::Slider::new(&mut t.opacity, 0.0..=1.0)
+                                    .text(text(Text::Opacity)),
+                            );
+                            ui.add_enabled(
+                                item.blob().is_some(),
+                                egui::Checkbox::new(&mut t.grayscale, text(Text::Grayscale)),
+                            );
+                            ui.add_enabled(
+                                item.blob().is_some(),
+                                egui::Checkbox::new(&mut t.flip[0], text(Text::FlipHorizontal)),
+                            );
+                            ui.add_enabled(
+                                item.blob().is_some(),
+                                egui::Checkbox::new(&mut t.flip[1], text(Text::FlipVertical)),
+                            );
+                            ui.add_enabled_ui(item.blob().is_some(), |ui| {
+                                ui.collapsing(text(Text::Content), |ui| {
+                                    number(
+                                        ui,
+                                        Text::ContentScale,
+                                        &mut t.content_scale,
+                                        0.001..=1000.,
+                                    );
+                                    number(
+                                        ui,
+                                        Text::OffsetX,
+                                        &mut t.content_offset[0],
+                                        -1000.0..=1000.0,
+                                    );
+                                    number(
+                                        ui,
+                                        Text::OffsetY,
+                                        &mut t.content_offset[1],
+                                        -1000.0..=1000.0,
+                                    );
+                                    let mut degrees = t.content_rotation.to_degrees();
+                                    number(ui, Text::Rotation, &mut degrees, -36000.0..=36000.0);
+                                    t.content_rotation = degrees.to_radians();
+                                });
                             });
+                            super::surfaces::menu(
+                                ui,
+                                &[
+                                    super::surfaces::Slot::Action(
+                                        super::bindings::Action::ApplyItem,
+                                    ),
+                                    super::surfaces::Slot::Action(
+                                        super::bindings::Action::CancelItem,
+                                    ),
+                                ],
+                                enabled,
+                                registry,
+                                &mut intents,
+                            );
                         });
-                        super::surfaces::menu(
-                            ui,
-                            &[
-                                super::surfaces::Slot::Action(super::bindings::Action::ApplyItem),
-                                super::surfaces::Slot::Action(super::bindings::Action::CancelItem),
-                            ],
-                            enabled,
-                            registry,
-                            &mut intents,
-                        );
-                    });
                 } else {
                     self.draft = None;
                     self.observed = None;
@@ -269,7 +281,8 @@ impl Tools {
             .max_height(ui.content_rect().height())
             .show(ui.ctx(), |ui| {
                 ui.label(text(Text::ExportLimit));
-                ui.label(text(Text::Path));
+                export_feedback(ui, board);
+                ui.label(text(Text::ExportPath));
                 ui.text_edit_singleline(&mut self.path);
                 ui.horizontal(|ui| {
                     ui.label(text(Text::ExportSide));
@@ -283,12 +296,22 @@ impl Tools {
             });
         self.export_open = open;
         let mut open = self.picker_open;
-        egui::Window::new(text(Text::SampleColor))
+        egui::Window::new(text(Text::ImagePickers))
             .open(&mut open)
             .show(ui.ctx(), |ui| {
-                for (i, label) in ["HEX", "RGB", "HSV"].into_iter().enumerate() {
-                    ui.selectable_value(&mut self.color_format, i as u8, label);
+                ui.horizontal_wrapped(|ui| {
+                    for (i, label) in ["HEX", "RGB", "HSV"].into_iter().enumerate() {
+                        ui.selectable_value(&mut self.color_format, i as u8, label);
+                    }
+                });
+                if self.picking || self.coordinates {
+                    ui.label(text(if self.coordinates {
+                        Text::PickCoordinatesHint
+                    } else {
+                        Text::PickColorHint
+                    }));
                 }
+                export_feedback(ui, board);
                 super::surfaces::menu(
                     ui,
                     &[
@@ -301,7 +324,19 @@ impl Tools {
                 );
             });
         self.picker_open = open;
+        if !open {
+            self.picking = false;
+            self.coordinates = false;
+        }
         intents
+    }
+}
+fn export_feedback(ui: &mut egui::Ui, board: &Document) {
+    if board.exporting {
+        ui.spinner();
+    }
+    if let Some(message) = &board.export_message {
+        ui.label(message.render(moth_ui::locale()));
     }
 }
 pub(super) fn layout(i: u8) -> (Text, arrange::Arrange) {
