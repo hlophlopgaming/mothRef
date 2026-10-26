@@ -223,8 +223,8 @@ Targets are in `ROADMAP.md`. Rules for agents:
 - Small PRs, one concern each. Title format: `area: imperative summary` (for example `format: append checkpoints instead of rewriting`).
 - Commits follow Conventional Commits (`feat:`, `fix:`, `perf:`, `refactor:`, `test:`, `docs:`, `chore:`).
 - Update `CHANGELOG.md` under "Unreleased" for every user-visible change.
-- Architectural decisions go into `docs/decisions/NNNN-title.md` (context, decision, consequences) and a line in the decision log of `ROADMAP.md`.
-- Tick the matching checkbox in `ROADMAP.md` when a milestone task is done.
+- Architectural decisions go into `docs/decisions/NNNN-title.md` (context, decision, consequences) and a line at the top of the decision log in `docs/decisions/README.md`.
+- Tick the matching checkbox in `ROADMAP.md` (and in `docs/FEATURES.md` for parity and Milanote items) when a task is done. Keep open items at the top of each milestone; finished ones move into its collapsed "Done" list.
 
 ---
 
