@@ -1,8 +1,24 @@
 # MothRef Roadmap
 
-MothRef is a fast, crash-proof reference board for artists, written in Rust and licensed under GPL-3.0-or-later. It aims to carry on where [BeeRef](https://github.com/rbreu/beeref) stopped: everything BeeRef and PureRef 2 can do, plus a board library, Milanote-style elements, a browser extension, a web build and (eventually) real-time collaboration — while being several times faster and never losing the user's work.
+MothRef is a fast, crash-proof reference board for artists, written in Rust and licensed under GPL-3.0-or-later. It carries on where [BeeRef](https://github.com/rbreu/beeref) stopped: everything BeeRef and PureRef 2 can do, plus a board library, Milanote-style elements, a browser extension, a web build and (eventually) real-time collaboration — while being faster and never losing the user's work. Board files use the `.moth` extension.
 
-Board files use the `.moth` extension.
+This file says **what comes next and in which order**. Related files:
+
+- [`CHANGELOG.md`](CHANGELOG.md) — what has shipped, release by release
+- [`docs/FEATURES.md`](docs/FEATURES.md) — the full feature inventory: priorities, PureRef 2 / BeeRef parity checklist, Milanote checklist
+- [`docs/decisions/README.md`](docs/decisions/README.md) — decision log
+- [`docs/DEFERRED.md`](docs/DEFERRED.md) — ideas to check later, without a milestone
+- [`docs/DESIGN.md`](docs/DESIGN.md) — how the UI looks; [`AGENTS.md`](AGENTS.md) — how to build it
+
+---
+
+## How this file is kept
+
+- Each milestone shows **open work first**. Finished items move into the collapsed "Done" list under the same milestone, unchanged, so their history stays.
+- An item that is built but not yet checked on real hardware stays open and says what is left ("native qualification"). Long-running qualification that does not block a release lives in [Qualification](#qualification).
+- Dated maintainer notes ("maintainer, 2026-10-24") belong in the [decision log](docs/decisions/README.md); a milestone keeps at most one short **Why** or **Priority** line.
+- Work normally follows milestone order, but the maintainer may pull a later item forward; that is recorded in the decision log. A **release** ships only when every milestone listed for it meets its exit criteria.
+- Agents tick an item when its PR lands and move it into "Done" when the milestone is next tidied.
 
 ---
 
@@ -11,33 +27,56 @@ Board files use the `.moth` extension.
 Every milestone and every pull request is judged against these, in this order:
 
 1. **Never lose the user's work.** Every action reaches disk within 1 second. A crash costs at most the last second. This beats any feature.
-2. **Memory follows a budget, not the board size.** RAM and VRAM stay flat as boards grow. The user chooses the trade-off between zoom speed and memory (performance mode, default "In memory"); every mode stays within an explicit budget.
-3. **The UI thread never waits.** Decoding, compression, disk and network run off the main thread. Frame time target: ≤ 4 ms of main-thread work.
-4. **Small files.** Original image bytes are stored as-is (no re-encoding to PNG), deduplicated by content hash. Caches can be dropped and rebuilt.
-5. **Open.** GPL-3.0-or-later, a documented file format, import of `.bee` and `.pur`.
+2. **Memory follows a budget, not the board size.** RAM stays within explicit budgets. Video memory follows the detected graphics card; the default full-resolution mode deliberately keeps the whole board resident up to that limit ([decision 0017](docs/decisions/0017-full-resolution-mode.md)), and the user can pick a leaner performance mode.
+3. **The UI thread never waits.** Decoding, compression, disk and network run off the main thread. Frame time target: ≤ 4 ms of main-thread work. Nothing loads while zooming in the default mode.
+4. **A reference viewer first.** View mode stays as calm as PureRef: images only. Board-building tools (notes, drawing, Milanote-style elements) live in Collect mode and never clutter View; switching modes never loses functionality.
+5. **Small files.** Original image bytes are stored as-is (no re-encoding), deduplicated by content hash. Caches can be dropped and rebuilt.
+6. **Open.** GPL-3.0-or-later, a documented file format, import of `.bee` and `.pur`.
 
 ---
 
-## Releases at a glance
+## Where we are
 
-| Release | After milestone | Promise |
+Latest release: **0.1.0-alpha.10** (2026-10-26). Pre-alpha builds for Windows, macOS and Linux are attached to every tagged release on GitHub Releases.
+
+| Milestone | State | What is left |
 | --- | --- | --- |
-| 0.1 pre-alpha | M1 | Does not lose data |
-| 0.3 public alpha | M2, M2.5, M2.6 | Replaces BeeRef, opens `.bee` and `.pur`, zooms faster than PureRef |
-| 0.7 beta | M4 | Feature parity with PureRef 2 |
-| 1.0 | M7 | All P0 and P1 features done, all performance targets met |
-| 1.5 | M10 (items tagged 1.5), M12, M14 | Reference analysis (composition overlays, ruler with calibration), Obsidian interop, capture integrations for third-party tools |
-| 2.0 | M9, M10 (items tagged 2.0), M16 | Web build and real-time collaboration; perspective and value tools; Excalidraw, draw.io and UML/XML interop, Blender plugin, video-frame capture |
-
-Starting with **M1 / release 0.1**, every tagged release includes downloadable Windows, macOS and Linux binaries on **GitHub Releases**.
-
-Milestones run strictly in order. M8 and M9 come after 1.0, but the architecture decisions they depend on (stable UUIDs, fractional z-order, command-based mutations, content-addressed blobs) are made in M0–M1.
-
-M10–M16 (artist tools, review workflow, note-app interop, CLI and automation, capture integrations, PDF references, diagram-format and Blender interop) also come after 1.0. They do not depend on M8 or M9, so they may run in parallel with them and ship in 1.x minor releases as they land. Release targets set by the maintainer on 2026-10-21: items tagged **1.5** ship by release 1.5, items tagged **2.0** by release 2.0; untagged post-1.0 items have no target yet.
+| M0 Canvas | ✅ done | Native touch, desktop-pen and end-to-end paste qualification ([Qualification](#qualification)) |
+| M1 Reliability and file format | ✅ done | Long kill / fuzz / soak runs ([Qualification](#qualification)) |
+| M2 BeeRef parity | 🟡 almost | App icon (on hold); a dozen small parity items |
+| M2.5 Zoom performance and memory modes | 🟡 almost | Measurements on reference hardware |
+| M2.6 UI architecture | ✅ done | Native and CI screenshot qualification |
+| M3 Everyday usability, window, overlay, browser | 🟡 about half | Tabs, overlay HUD, watch folder, browser extension, window attach, native window qualification |
+| M4 PureRef 2 parity | ⚪ not started | Minimap is already done |
+| M5 Library | 🟡 first slice | Start screen, search, tags, pins and folder stacks exist; index, previews, trash, health open |
+| M6 Milanote-style elements | ⚪ not started | |
+| M7 Import compatibility and 1.0 qualification | ⚪ not started | |
+| M8–M16 | after 1.0 | |
 
 ---
 
-## Milestones
+## Releases
+
+| Release | Ships when these are done | Promise | State |
+| --- | --- | --- | --- |
+| 0.1 pre-alpha | M0, M1 | Does not lose data | shipping as 0.1.0-alpha.N |
+| **0.3 public alpha** | M2, M2.5, M2.6 | Replaces BeeRef, opens `.bee` and `.pur`, zooms faster than PureRef | **next** |
+| 0.7 beta | M3, M4 | Feature parity with PureRef 2 | |
+| 1.0 | M5, M6, M7 | All P0 and P1 features, all performance targets | |
+| 1.5 | M10 items tagged 1.5, M12, M14 | Composition overlays and ruler, Obsidian interop, capture integrations | |
+| 2.0 | M8, M9, M10 items tagged 2.0, M16 | Web build and collaboration; value and perspective tools; Excalidraw, draw.io, UML/XML, Blender, video frames | |
+| 1.x, no target yet | M11, M13, M15, untagged M10 items | Review workflow, CLI, PDF references, other artist tools | |
+
+M8 and M9 come after 1.0, but the architecture they depend on (stable UUIDs, fractional z-order, command-based mutations, content-addressed blobs) is already in place from M0–M1. M10–M16 do not depend on M8 or M9 and ship in 1.x minor releases as they land.
+
+---
+
+## Shipped — 0.1 pre-alpha
+
+M0 and M1 are complete; the open qualification runs are listed under [Qualification](#qualification).
+
+<details>
+<summary>M0 — Canvas, review follow-up, M1 — Reliability and file format</summary>
 
 ### M0 — Canvas
 
@@ -86,7 +125,6 @@ Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](d
 - [x] Recovery dialog on startup, save prompt on exit
 - [x] Undo/redo for every command (bounded to 256 commands per session)
 - [x] Panic hook, crash report, decoder isolation (`catch_unwind`, header size checks)
-- [ ] Tests: truncated-file recovery, 1,000× `kill -9`, reader fuzzing (eight-hour soak deferred to 1.2+)
 - [x] Recent files
 - [x] Portability: compressed texture format chosen at runtime (BC7 on desktop, uncompressed RGBA8 fallback; ASTC deferred to M8); LOD caches in `.moth` stay rebuildable for any format
 
@@ -97,11 +135,38 @@ qualification move to 1.2+ and do not block earlier releases; they remain unveri
 
 **Exit criteria:** 1,000 random `kill -9` runs lose no more than 1 second of work; the short soak test shows a flat RSS. → **Release 0.1**
 
+</details>
+
+---
+
+## Now — toward 0.3 public alpha
+
 ### M2 — BeeRef parity (+ PureRef import)
 
-**Tooling status:** the initial 2026-10-18 implementation was not usability
-acceptance. The editing-polish follow-up below was explicitly accepted by the
-maintainer on 2026-10-25; remaining M2 parity items are tracked separately.
+**Exit criteria:** every BeeRef board opens losslessly; every feature in BeeRef's README and CHANGELOG is present; all M2 items in [FEATURES.md](docs/FEATURES.md) are ticked. → **Release 0.3**
+
+Open:
+
+- [ ] New app icon and README logo — **on hold** until the final mark is drawn
+- [ ] Parity leftovers from [FEATURES.md](docs/FEATURES.md) (a few were tagged M0/M1 there but never done, so they are collected here):
+  - [ ] Color picker: keep picking outside the window while the button is held (the rest is done)
+  - [ ] Coordinate picker: check every field (pixel X/Y, image name, source, size, selection size)
+  - [ ] Show the color gamut of an image (BR)
+  - [ ] Open image source — the URL or path the image came from (PR)
+  - [ ] Arrange by file path (PR)
+  - [ ] Setting "bring selected images to front" (PR)
+  - [ ] Optional scrollbars and menu bar (BR)
+  - [ ] Embed images or link to files on disk (PR), and relink missing linked images (PR) — a format change
+  - [ ] Optional auto-downscale of very large images on import (PR)
+  - [ ] Load the most recent scene; option to reopen the last scene on start (PR)
+  - [ ] Open files from the command line: the first `.moth` / `.bee` / `.pur` argument opens a board, image paths are added (BR)
+  - [ ] Notify when pasting from an empty or unusable clipboard (BR)
+  - [ ] Debug log viewer in the app (BR)
+
+Validation notes: [editing and export](docs/M2-EDITING-VALIDATION.md), [import](docs/M2-IMPORT-VALIDATION.md), [load performance](docs/LOAD-PERFORMANCE.md), target layout [DESIGN.md](docs/DESIGN.md).
+
+<details>
+<summary>Done</summary>
 
 - [x] Rework and polish the editing tools before accepting M2: validate actual
   workflows for selection, transforms/cropping, arrangement, pickers and export;
@@ -118,40 +183,35 @@ maintainer on 2026-10-25; remaining M2 parity items are tracked separately.
   - [x] Empty board: plain wording, every supported format listed, "Choose files…" and "Paste"
   - [x] Fix defects from the 2026-10-24 alpha review (DESIGN.md §5): missing "→"/"▸" glyphs, palette focus and position, minimap silhouettes (maintainer-approved), zoom button order, top menu height
 - [x] Apply the «Album» identity (DESIGN.md §2): light paper theme by default, dark theme in the «Pixel» palette (screen, ink, bone, sage, wing), sage/moss accents, Bricolage Grotesque for the logo and large headings
-- [ ] New app icon and README logo — **on hold** until the final mark is drawn (maintainer, 2026-10-25)
-
-**Current priority (maintainer, 2026-10-18):** accelerate bulk image import and
-board opening. Other feature work waits until this performance task is complete.
-Short data-safety checks and existing automated CI remain in scope.
-
 - [x] Speed up bulk image import and opening `.moth`, `.bee` and `.pur` boards: measure time to first image and full load before/after on representative large boards; profile parsing, decoding and durable writes, remove repeated recovery-directory scans where confirmed, and keep memory budgets and crash recovery intact
-
-  Before/after measurements, recovery checks and remaining latency limits: [load performance](docs/LOAD-PERFORMANCE.md).
 - [x] Scale, rotate, flip, crop; transform image content inside its crop frame (BeeRef #140)
 - [x] Mass scaling and arrangement: vertical, horizontal, optimal packing, by filename, configurable gap
 - [x] Text notes, opacity, grayscale, color sampler (hex to clipboard)
 - [x] Export: whole scene to PNG/SVG, a selected region (BeeRef #143), a single image to file or clipboard (BeeRef #132), all images to a folder
 - [x] Empty-board state: drop zone with hint text and Paste / Open buttons (touch path for both)
-
-  Editing/export validation and preview-resolution limits: [M2 notes](docs/M2-EDITING-VALIDATION.md).
-
-- [x] Status bar: render adapter, item count, selection count, autosave/journal state ("saved", "journaled", "recovery on")
+- [x] Status bar: render adapter, item count, selection count, autosave/journal state ("saved", "journaled", "recovery on") — later replaced by the save-state chip; diagnostics moved to Settings › For developers
 - [x] Zoom controls in the toolbar: − / + buttons and an editable zoom percentage field
 - [x] Selection badge: item count and bounding size, shown while selecting and transforming
 - [x] Every toolbar and tool-rail button has a tooltip with its name and current shortcut
 - [x] Portability: responsive UI layout — no fixed desktop sizes, panels adapt to small screens
-- [x] `.bee` import (SQLite reader, embedded images, layout and stacking; notes and unsupported transforms are reported as skipped)
+- [x] `.bee` import (SQLite reader, embedded images, notes, layout and stacking; unsupported transforms are reported as skipped)
 - [x] Bounded `.pur` import via the local `purcore` safety fork from [LazyRef](https://github.com/achrllrogia45/LazyRef): 1.10/2.1 corpus and private 175-image 2.1.2 qualification, 4 GiB file admission, embedded-image/plain-note import, journal/undo integration
   - Compatibility is limited to verified files and supported content; see [import validation](docs/M2-IMPORT-VALIDATION.md). Extend coverage when reproducible sample files become available; qualifying every PureRef version is not an M2 requirement.
-- [ ] All parity- and Milanote-checklist items tagged M2 (see checked entries below and [validation / remaining gaps](docs/M2-EDITING-VALIDATION.md#m2-parity-follow-up))
 
-**Exit criteria:** every BeeRef board opens losslessly; every feature in BeeRef's README and CHANGELOG is present; all M2 parity items are ticked. → **Release 0.3 (public alpha)**
+</details>
 
 ### M2.5 — Zoom performance and memory modes
 
-**Priority (maintainer, 2026-10-20):** zoom speed and memory use come before M3.
-Users choose how decoded previews are kept, as in PureRef's performance modes; the
-default is "In memory". See [decision 0014](docs/decisions/0014-performance-modes-lod-cache.md).
+**Why:** zoom speed and memory use come before new features. Users choose how decoded previews are kept, as in PureRef's performance modes ([decision 0014](docs/decisions/0014-performance-modes-lod-cache.md), [0016](docs/decisions/0016-baked-tile-packs.md), [0017](docs/decisions/0017-full-resolution-mode.md)).
+
+**Exit criteria:** in the default mode, zooming to full detail on an image already shown completes in ≤ 100 ms with a warm cache; every mode stays within its documented memory budget; "No cache" releases texture memory when zoomed out to fit the board.
+
+Open:
+
+- [ ] Measure per mode on reference hardware: warm-cache zoom latency to 2048 px, RSS after zooming in and back out, board open time; record results in [load performance](docs/LOAD-PERFORMANCE.md)
+
+<details>
+<summary>Done</summary>
 
 - [x] Performance mode setting: In memory (default), In memory with low zoom quality, Cache on disk, No cache; persisted, explained in English and Russian
 - [x] Decode once per zoom range: larger whole-image previews use 2× headroom; coarse fallbacks stay at their requested size, and cached previews/tiles avoid re-reading, decoding and BC7-encoding the original
@@ -165,22 +225,21 @@ default is "In memory". See [decision 0014](docs/decisions/0014-performance-mode
 - [x] Evaluate a global allocator (mimalloc) against glibc arenas with a heap profiler; keep it only with a measured RSS win
 - [x] Baked tile packs: one background pass per large image writes every detail tile, so zoom reads ready tiles instead of decoding; parent tiles stand in while a tile loads; "Prepare zoom tiles" setting: on screen (default), whole board, off (decision 0016)
 - [x] "Everything at full resolution" mode (default): whole board in video memory at open, progress bar, overflow warning with on-demand fallback; video-memory limit from the detected adapter (decision 0017)
-- [ ] Measure per mode on reference hardware: warm-cache zoom latency to 2048 px, RSS after zooming in and back out, board open time; record results in [load performance](docs/LOAD-PERFORMANCE.md)
 
-**Exit criteria:** in the default mode, zooming to full detail on an image already shown completes in ≤ 100 ms with a warm cache; every mode stays within its documented memory budget; "No cache" releases texture memory when zoomed out to fit the board.
+</details>
 
 ### M2.6 — UI architecture: surfaces from actions, settings model, theme tokens
 
-**Why (maintainer, 2026-10-24):** the open M2 task "rework and polish the editing
-tools" is a UI redesign. Today buttons build commands inline, settings are fields
-of the Board tools panel and colors are literals, so every redesign would be a
-rewrite. This milestone makes the UI cheap to rearrange first
-([decision 0018](docs/decisions/0018-ui-surfaces-from-action-registry.md)).
-Board logic, the format and the renderer are not touched. Step plans for agents:
-[docs/plans/ui-architecture](docs/plans/ui-architecture/README.md).
+**Why:** buttons run registered actions, settings are a schema and colors are tokens, so rearranging the UI is a list edit instead of a rewrite ([decision 0018](docs/decisions/0018-ui-surfaces-from-action-registry.md), step plans in [docs/plans/ui-architecture](docs/plans/ui-architecture/README.md)).
 
-Each step is one PR, keeps behavior and appearance unchanged unless it says
-otherwise, and leaves the app shippable.
+**Exit criteria:** no `Command` is built in UI code; no `Color32` literal outside the theme module; moving a button between surfaces is a one-line list change; the Board tools window is gone with no lost capability; headless UI screenshots of the board, library, settings and selection states are compared in CI.
+
+Open:
+
+- [ ] Native and CI qualification listed in [UI refactor validation](docs/plans/ui-architecture/VALIDATION.md); the minimap-thumbnail improvement remains a follow-up (no new image cache)
+
+<details>
+<summary>Done</summary>
 
 - [x] **Step 1 — Theme tokens.** One `moth-ui` theme module owns every color, radius and spacing value as named tokens, with a dark set (today's look) and a light set; `theme()` takes the active set; no `Color32` literal remains outside the module. Appearance unchanged.
 - [x] **Step 2 — Buttons run actions.** Every button in the Board tools window, the toolbar, the canvas context menu and modals runs a registered `Action` through `Intent::Action`; missing actions are added to `app/bindings.rs`; no surface builds a `Command`. Each action gains an icon id. Behavior unchanged.
@@ -189,17 +248,49 @@ otherwise, and leaves the app shippable.
 - [x] **Step 5 — Remove Board tools.** Delete the window and `Intent::ToggleTools`; every former control is reachable from a surface list, the palette and a touch path.
 - [x] **Step 6 — Fixes from the alpha.9 review.** Select by default and fits that respect the floating chrome; notes keep their size after editing; save chip in the window bar with plurals and live translation; menus with an icon column, named submenus and no "More actions" drawer; settings dialog, light-theme contrast and a recovery dialog without raw paths. Plan and findings: [alpha.9 review](docs/plans/alpha9-review/README.md).
 
-**Exit criteria:** no `Command` is built in UI code; no `Color32` literal outside the theme module; moving a button between surfaces is a one-line list change; the Board tools window is gone with no lost capability; headless UI screenshots of the board, library, settings and selection states are compared in CI.
+</details>
 
-Implementation inventory and pending native/CI qualification:
-[UI refactor validation](docs/plans/ui-architecture/VALIDATION.md). The auxiliary
-minimap-thumbnail improvement remains a follow-up; no new image cache is added.
+---
+
+## Next — toward 0.7 beta
 
 ### M3 — Everyday usability, board conversion, window, overlay, browser
 
-**Priority within M3 (maintainer, 2026-10-18):** comfortable daily editing,
-discoverable shortcuts and navigation without a working middle mouse button come
-before the browser extension and advanced window integration.
+**Exit criteria:** daily navigation and batch editing work without middle-click or wheel input; shortcuts are discoverable and rebindable; opened `.bee` / `.pur` boards save and reopen safely as `.moth`, with conversion prompts and reports of unsupported content; the overlay works on top of Krita, Photoshop and Blender on Windows, macOS and X11.
+
+Navigation, shortcuts, the command palette, batch editing and board conversion are done (see "Done" below). Open work, grouped:
+
+**Window modes and overlay** — layout in [DESIGN.md](docs/DESIGN.md) §4, screens 15–17; checks in [M3 window validation](docs/M3-WINDOW-VALIDATION.md)
+
+- [ ] Window modes: Collect (full chrome) ⇄ View (images only) with `Tab`, Over with `Ctrl/⌘+T` — built; left:
+  - [ ] Native qualification of mode transitions, opacity and blur on Linux, Windows and macOS
+  - (Group-only viewing moved to M4 groups; it needs the scene group model)
+- [ ] Transparent overlay with adjustable opacity and click-through (BeeRef #100) — X11 qualified; Windows / macOS and controller-recovery checks open
+- [ ] Overlay HUD: opacity slider, click-through toggle, always-on-top toggle, exit button, one-time hint with the exit shortcut — compare with the Over panel from 0.1.0-alpha.10 and tick what it already covers
+- [ ] Overlay grab handle that always receives clicks, so the overlay can be left without a global hotkey (Wayland and Flatpak fallback)
+- [ ] Attach to another application's window: Windows and X11 (macOS and Wayland are P2)
+- [ ] Remaining window-mode parity items in [FEATURES.md](docs/FEATURES.md#window-modes-m3): always on bottom, lock window position, overlay selection (each selected image in its own window), resize window to selection, opacity up/down shortcuts, custom appearance colors, system-global shortcuts
+
+**Window reliability**
+
+- [ ] Desktop GUI launch without a terminal: no extra console window on Windows, normal Finder launch on macOS; keep diagnostic logging and intentional CLI output; qualify both launch paths
+- [ ] Windows maximize / restore / fullscreen: repeated transitions, resize and surface recreation without losing the scene (a PureRef field report, not a reproduced MothRef bug)
+
+**Tabs**
+
+- [ ] Board tabs in one window; drag a tab out into its own window and back (four independent journaled tabs are done)
+- [ ] Tab state: unsaved marker for boards that live only in the journal, close button, middle-click to close, "+" for a new board
+
+**Collecting from outside**
+
+- [ ] Watch folder: images that appear in a chosen folder (for example the OS screenshots folder) are imported into a chosen board's Inbox
+- [ ] Browser extension "Send to MothRef" + `moth-bridge` native host + "Inbox" board
+- [ ] Web clipper items from [FEATURES.md](docs/FEATURES.md#web-clipper-m3-in-the-mothref-browser-extension): Save button on hover, text clips, board picker, source URL kept
+
+**Foreign-format policy:** `.pur` writing/export and save-back are out of scope. A `.bee` export exception may be considered separately; it is not an M3 commitment or a normal Save action. If introduced, its dialog must recommend `.moth`, explain measured size benefits and warn that repeated editing/saving between applications has no guaranteed round-trip compatibility. It must report unsupported content before writing and preserve the original file.
+
+<details>
+<summary>Done</summary>
 
 - [x] Consistent multi-selection editing: move, scale, rotate, flip, duplicate, delete, reorder and arrange selected items together; show the affected selection and make each batch action one undo step
 - [x] Canvas multi-selection: Ctrl/Command-click and rectangle toggle, Shift-click and rectangle add; preserve group moves and expose bindings in the shortcut cheat sheet. Touch multi-select mode is planned in [SHORTCUTS.md](docs/SHORTCUTS.md).
@@ -222,43 +313,24 @@ before the browser extension and advanced window integration.
 - [x] After opening a foreign board, offer “Save as .moth to continue working in MothRef” with Save As and Continue without saving; the first Save opens the `.moth` destination chooser, and closing an unsaved conversion prompts to save or discard
 - [x] Explain conversion before saving: retain original image bytes and supported layout/edits, list unsupported content, and keep the original `.bee` / `.pur` available; test import → `.moth` save → reopen and crash recovery
 - [x] Separate board-file admission from individual-image limits: `.pur`, `.moth` and `.bee` must not inherit the image-import byte cap; use bounded streaming and explicit board-specific limits, retaining checksum, dimension, decoded-memory and corrupt-file protections
-
-**Foreign-format policy:** `.pur` writing/export and save-back are out of scope.
-A `.bee` export exception may be considered separately; it is not an M3 commitment
-or a normal Save action. If introduced, its dialog must recommend `.moth`, explain
-measured size benefits and warn that repeated editing/saving between applications
-has no guaranteed round-trip compatibility. It must report unsupported content
-before writing and preserve the original file.
-
 - [x] Always-on-top, frameless window, move window by hotkey
 - [x] Auto-reveal window bar: minimize, maximize/restore, close and pin controls appear on pointer approach; also reveal through keyboard focus and an explicit touch action
-- [ ] Window modes (DESIGN.md §4, screens 15–17): Collect (full chrome) ⇄ View (images only, PureRef-like) with `Tab`; Over with `Ctrl/⌘+T`; a group can be viewed on its own; narrow windows switch to View; mode remembered per board. Opacity and board background (solid / translucent / glass with platform blur) live in the View popover and the Over panel
-  - [x] Collect/View action, automatic narrow-window View, sliding bar and touch reveal, shared appearance controls, per-board local presentation history, and Over controller integration
-  - [ ] Group-only viewing: blocked on the scene group model and group-title selection
-  - [ ] Native qualification of mode transitions, opacity and blur on Linux, Windows and macOS; see [M3 window validation](docs/M3-WINDOW-VALIDATION.md#window-modes-and-appearance)
+- [x] Collect/View action, automatic narrow-window View, sliding bar and touch reveal, shared appearance controls, per-board local presentation history, and Over controller integration
 - [x] Pin button and rebindable shortcut: choose above all windows or above a chosen window; for the latter, let the user click the target, with cancel and visible active mode. A shortcut toggles the mode off/on using the last choice; respect platform capability flags
-- [ ] Desktop GUI launch without a terminal: investigate the reported extra cmd window on Windows and ensure packaged GUI launches do not open a console; check normal Finder launch on macOS for the same symptom. Preserve diagnostic logging and intentional CLI output; qualify both launch paths
-- [ ] Windows maximize/restore/fullscreen reliability: exercise repeated transitions, resize and surface recreation without losing the scene. Field report: PureRef crashed on Windows when expanded to fill the screen; maximize versus fullscreen is unconfirmed, and this is not yet a reproduced MothRef bug
-  Implementation and pending native qualification: [M3 window validation](docs/M3-WINDOW-VALIDATION.md).
-- [ ] Transparent overlay with adjustable opacity and click-through (BeeRef #100)
-  - [x] Native overlay controls and composited master opacity; X11 qualification (Windows/macOS pending)
-  - Pending cross-platform overlay and controller-recovery checks: [M3 window validation](docs/M3-WINDOW-VALIDATION.md#transparent-overlay).
-- [ ] Board tabs in one window; drag a tab out into its own window and back
-  - [x] Four independent journaled tabs, with dirty-close prompts and stable ordering
-- [ ] Tab state: unsaved marker for boards that live only in the journal, close button, middle-click to close, "+" for a new board
-- [ ] Overlay HUD: opacity slider, click-through toggle, always-on-top toggle, exit button, one-time hint with the exit shortcut
-- [ ] Overlay grab handle that always receives clicks, so the overlay can be left without a global hotkey (Wayland and Flatpak fallback)
-- [ ] Watch folder: images that appear in a chosen folder (for example the OS screenshots folder) are imported into a chosen board's Inbox
-- [ ] Browser extension "Send to MothRef" + `moth-bridge` native host + "Inbox" board
-- [ ] Attach to another application's window: Windows and X11 (macOS and Wayland are P2)
+- [x] Native overlay controls and composited master opacity; X11 qualification (Windows/macOS pending)
+- [x] Four independent journaled tabs, with dirty-close prompts and stable ordering
 - [x] Platform capability flags surfaced in the UI
-- [ ] All parity- and Milanote-checklist items tagged M3 (web clipper: hover Save, text clips, board picker; always on bottom, lock window, overlay selection, master opacity, resize to selection, appearance themes)
 
-**Exit criteria:** daily navigation and batch editing work without middle-click or wheel input; shortcuts are discoverable and rebindable; opened `.bee` / `.pur` boards save and reopen safely as `.moth`, with conversion prompts and reports of unsupported content; the overlay works on top of Krita, Photoshop and Blender on Windows, macOS and X11.
+</details>
 
 ### M4 — PureRef 2 parity
 
+**Exit criteria:** every P0/P1 item sourced from PureRef in the [feature matrix](docs/FEATURES.md#feature-matrix) is done. → **Release 0.7 (beta)**
+
+Open:
+
 - [ ] Groups and a hierarchy tree view: Ctrl/⌘+G adds a tinted backdrop and focuses an inline title field at once; clicking the title selects the whole group, dragging it moves the group, dropping an image on the backdrop adds it; the hierarchy tree lives in a slide-out Layers drawer (DESIGN.md screen 14)
+  - [ ] View a group on its own in View mode (moved from M3)
 - [ ] Freehand drawing (3 widths, eraser, color) and shapes (ellipse, rectangle, line)
 - [ ] Drawing pens: marker (thin / thick) and highlighter (thin / thick), each with color selection
 - [ ] Washi tape: textured tape strips from a built-in set, plus user-added custom textures
@@ -269,26 +341,36 @@ before writing and preserve the original file.
 - [ ] Line/dot grid with snapping; automatic alignment guides and edge/center snapping (BeeRef #129). Images snap by their displayed bounds; make grid visibility and snapping independently toggleable, with a temporary bypass while dragging
 - [ ] Slideshow (incl. random order), embedded ICC profiles
 - [ ] Timed drawing sessions on top of the slideshow: images from the board, a group or a selection; fixed intervals (30 s, 1, 2, 5, 10 min) or a session plan (for example 10 × 30 s, 5 × 2 min); pause, skip, countdown and a sound cue; list of the shown images at the end; runs full screen or in a mini window pinned over other apps that keeps the current image's aspect ratio while resized
-- [ ] Minimap / navigator: board overview with the viewport rectangle; click or drag to move the camera; toggle with a shortcut
 - [ ] All parity- and Milanote-checklist items tagged M4 (presentation mode, note formatting and markdown shortcuts, sketch card, drawing shortcuts, GIF frame tools, drawing details, locked groups, hierarchy tools, note parenting and links)
 
-**Exit criteria:** every P0/P1 item sourced from PureRef in the feature matrix is done. → **Release 0.7 (beta)**
+<details>
+<summary>Done</summary>
+
+- [x] Minimap / navigator: board overview with the viewport rectangle; click or drag to move the camera; toggle with a shortcut — shipped early with configurable size, position and opacity (0.1.0-alpha.9–10)
+
+</details>
+
+---
+
+## Later — toward 1.0
 
 ### M5 — Library
 
+**Exit criteria:** a library of 1,000 boards is on screen < 200 ms after launch.
+
+A first slice shipped early ([decision 0004](docs/decisions/0004-reference-workspace.md)); items below say what already exists.
+
 - [ ] Board index (`redb`) with file watcher (`notify`)
   - [x] Bounded recent/pinned catalog with background previews, search, folder filters and persistent tags/pins (requested reference UI slice)
-- [ ] Start screen: card grid with board previews; stacks shown as a fan of previews or as a folder with icon and color; tags; search; pinning
+- [ ] Start screen: card grid with board previews; stacks shown as a fan of previews or as a folder with icon and color; tags; search; pinning — grid, previews, tags, search and pins exist; stack fans, icons and colors open
 - [ ] Stacks are real folders on disk (Procreate-style: drop a board on a board to create a stack); "smart collections" are saved tag filters
 - [ ] File manager thumbnails for `.moth` and `.bee` (BeeRef #152): Windows `IThumbnailProvider`, freedesktop thumbnailer, macOS Quick Look extension
 - [ ] Board preview image rendered off the UI thread after a checkpoint and stored as a rebuildable chunk (format version bump); used by the start screen, file-manager thumbnails and the note-app sidecar (M12)
-- [ ] Library sidebar: All boards, Recent, Pinned, Trash (boards deleted from the library go to the OS trash and are listed here), Stacks, Smart collections; counts next to each entry; an icon per entry (pin for Pinned); stack colors picked from a palette and repeated as a dot on the board cards
-- [ ] Library view options: sort by last opened, last edited, name, item count or size; grid / list view; tag filter chips above the grid
+- [ ] Library sidebar (All boards, Pinned, Stacks and Smart collections exist): All boards, Recent, Pinned, Trash (boards deleted from the library go to the OS trash and are listed here), Stacks, Smart collections; counts next to each entry; an icon per entry (pin for Pinned); stack colors picked from a palette and repeated as a dot on the board cards
+- [ ] Library view options: sort by last opened, last edited, name, item count or size; grid / list view; tag filter chips above the grid — last opened / name sort and grid / list exist
 - [ ] Board cards show item count, last edited time, file size, pinned state and an "unsaved" badge when a recovery journal is pending; the library header shows totals
 - [ ] Library health: boards with missing linked files (with relink), duplicate images across boards by content hash, largest boards
 - [ ] All Milanote-checklist items tagged M5 (templates, search inside boards, item trash)
-
-**Exit criteria:** a library of 1,000 boards is on screen < 200 ms after launch.
 
 ### M6 — Milanote-style elements
 
@@ -301,13 +383,21 @@ before writing and preserve the original file.
 
 ### M7 — Full import compatibility and release qualification
 
+**Exit criteria:** all P0 and P1 features done, all performance targets met. → **Release 1.0**
+
 - [ ] Extend `.pur` import coverage for supported content and geometry; verify preservation through `.moth` save/reopen, with explicit reports for unsupported content
 - [ ] Corpus covers every released PureRef 1.x and 2.x version; import → `.moth` save → reopen tests in CI
 - [ ] Format discrepancies are fixed upstream in LazyRef, not in a private fork
 
-**Exit criteria:** all P0 and P1 features done, all performance targets met. → **Release 1.0**
+---
 
-### M8 — Web build and multilingual handbook (after 1.0)
+## After 1.0
+
+Release targets: items tagged **1.5** ship by 1.5, items tagged **2.0** by 2.0; untagged items have no target yet.
+
+### M8 — Web build and multilingual handbook (target 2.0)
+
+**Exit criteria:** a 1,000-image board opens in the browser and saves to a `.moth` file that the desktop app opens; the separate handbook repository and public website provide illustrated English and Russian guides and an API reference matching the released app.
 
 - [ ] `wasm32` build; WebGPU renderer with WebGL2 fallback
 - [ ] Web backend for `moth-io` using `createImageBitmap` and Web Workers
@@ -320,9 +410,7 @@ before writing and preserve the original file.
 - [ ] Multilingual handbook: English and Russian at launch, language switcher, a shared page structure and a contribution workflow for further translations; translated captions and alt text for illustrations
 - [ ] Keep handbook versions aligned with app releases; provide navigation and search across user guides and API pages, and check links and documentation builds in the handbook repository's CI
 
-**Exit criteria:** a 1,000-image board opens in the browser and saves to a `.moth` file that the desktop app opens; the separate handbook repository and public website provide illustrated English and Russian guides and an API reference matching the released app.
-
-### M9 — Collaboration (after 1.0, no fixed timeline)
+### M9 — Collaboration (no fixed timeline)
 
 - [ ] Prototype on two CRDT libraries (candidates: Loro, Yrs, Automerge); pick by speed and history size
 - [ ] `moth-sync`: commands → CRDT operations; blob sync by `blake3` hash
@@ -331,7 +419,7 @@ before writing and preserve the original file.
 
 **Exit criteria:** three people edit one board from different OSes and the browser; after a network drop everything merges without loss. → **Release 2.0**
 
-### M10 — Artist tools (after 1.0)
+### M10 — Artist tools
 
 Tools that help while painting from references, not only while collecting them. None of them changes the source image; they are view settings or overlays.
 
@@ -357,7 +445,7 @@ Tools that help while painting from references, not only while collecting them. 
 
 **Exit criteria:** every tool works on a 1,000-image board without breaking the frame budget; none of them mutates image data. Persisted overlays, measurements and calibrations follow the format-change rules (schema bump, migration, corpus files, `docs/FORMAT.md`).
 
-### M11 — Review and presentation (after 1.0)
+### M11 — Review and presentation
 
 For art directors who collect references and give feedback on work in progress. Everything is local; sharing and live comments stay in M9.
 
@@ -369,7 +457,7 @@ For art directors who collect references and give feedback on work in progress. 
 
 **Exit criteria:** a review round (annotate, set statuses, compare versions, export a PDF) is possible without leaving the app.
 
-### M12 — Note-app interop: Obsidian and other Markdown tools (after 1.0)
+### M12 — Note-app interop: Obsidian and other Markdown tools
 
 **Target: 1.5** (maintainer, 2026-10-21), except the Obsidian viewer plugin, which waits for M8.
 
@@ -385,7 +473,7 @@ Integration goes through open formats and URIs, not through one application's AP
 
 **Exit criteria:** a board exported as JSON Canvas opens in Obsidian with every image, note, group and line, and imports back without loss of those elements.
 
-### M13 — Command-line tools and automation (after 1.0)
+### M13 — Command-line tools and automation
 
 A headless mode of the `mothref` binary, so agents, scripts and power users can build and edit boards without the GUI. Arguments are parsed with `clap` (subcommands, `--help`, `--json`); it lives in the existing binary, not a new crate. Every command reaches the board through the same `Command` / journal path as the GUI — the CLI never writes the `.moth` byte stream by hand.
 
@@ -402,7 +490,7 @@ A headless mode of the `mothref` binary, so agents, scripts and power users can 
 
 **Exit criteria:** an agent creates a board, fetches reference images from the internet, arranges them into a tidy layout, and exports a preview — in one scripted invocation, producing files the GUI opens unchanged.
 
-### M14 — Capture integrations for third-party tools (after 1.0, target 1.5)
+### M14 — Capture integrations for third-party tools (target 1.5)
 
 PureRef has no plugin API, so its community built tools that push images into it from outside: browser clippers with a local helper (RefDrop, PureDrop), a ComfyUI connector, ShareX setups and hotkey scripts. MothRef offers this officially. The browser extension itself stays in M3; M14 opens the same path to other tools.
 
@@ -415,7 +503,7 @@ PureRef has no plugin API, so its community built tools that push images into it
 
 **Exit criteria:** with MothRef running, a screenshot from ShareX, an image from a ComfyUI run and a file sent from the file manager each land on the chosen board within 1 second, journaled like a paste, and nothing listens on the network unless the user enabled it.
 
-### M15 — PDF references (after 1.0, release to be confirmed by the maintainer)
+### M15 — PDF references (release to be confirmed)
 
 PureRef handles images and GIFs only; a PDF (an artbook, a model sheet, a manual) has to be converted to images first. MothRef imports PDFs directly.
 
@@ -429,7 +517,7 @@ PureRef handles images and GIFs only; a PDF (an artbook, a model sheet, a manual
 
 **Exit criteria:** a 300-page artbook PDF shows its thumbnails in the import dialog within 2 seconds of the first page, a hand-typed page range imports exactly those pages, and the board stays within the memory budget of the active performance mode while zooming through them.
 
-### M16 — Diagram formats, Blender and video-frame capture (after 1.0, target 2.0)
+### M16 — Diagram formats, Blender and video-frame capture (target 2.0)
 
 - [ ] Excalidraw: read `.excalidraw` JSON and Obsidian's `.excalidraw.md` (plain and compressed); images become image items (their embedded files as blobs), text becomes notes, rectangles, ellipses, arrows, lines and freehand strokes map to M4/M6 shapes, lines and drawings; unsupported elements are reported. Export is a later decision
 - [ ] draw.io / diagrams.net: read `.drawio` XML (compressed and uncompressed diagrams); shapes, text and connectors map to MothRef elements where they exist, otherwise the diagram is imported as one vector item
@@ -439,305 +527,24 @@ PureRef handles images and GIFs only; a PDF (an artbook, a model sheet, a manual
 
 **Exit criteria:** an Excalidraw file and a draw.io file open as editable boards with a report of anything skipped; a reference sent to Blender arrives at its calibrated size; a captured video frame keeps a link back to the exact moment in the source video.
 
----
+### Ideas without a milestone
 
-## Feature matrix
-
-Priorities: **P0** = no release without it, **P1** = required for 1.0, **P2** = after 1.0.
-
-| Feature | Source | Priority | Milestone |
-| --- | --- | --- | --- |
-| Infinite canvas: pan, zoom, rubber-band selection | BeeRef, PureRef | P0 | M0 |
-| Drag-and-drop from files and browsers, paste from clipboard | BeeRef, PureRef | P0 | M0 |
-| Works without a dedicated GPU (software fallback) | MothRef | P0 | M0 |
-| Autosave + crash recovery | MothRef | P0 | M1 |
-| Save prompt on exit | MothRef, BeeRef 0.3.4-dev | P0 | M1 |
-| `.moth` format, recent files | MothRef, PureRef 2.1 | P0 | M1 |
-| Undo/redo for everything | BeeRef, PureRef | P0 | M1 |
-| Move, scale, rotate, flip | BeeRef, PureRef | P0 | M2 |
-| Crop | BeeRef, PureRef | P0 | M2 |
-| Transform content inside crop frame (#140) | MothRef | P1 | M2 |
-| Mass scale to same width/height/area | BeeRef | P0 | M2 |
-| Arrange: vertical, horizontal, optimal, by filename, gap | BeeRef | P0 | M2 |
-| Text notes | BeeRef, PureRef | P0 | M2 |
-| Opacity and grayscale | BeeRef | P1 | M2 |
-| Color sampler with hex copy | BeeRef, PureRef | P1 | M2 |
-| Export scene to PNG/SVG, export all images | BeeRef | P1 | M2 |
-| Export a region (#143), image to file/clipboard (#132) | MothRef | P1 | M2 |
-| Hotkey to jump between images (#116) | MothRef | P1 | M3 |
-| Configurable hotkeys and mouse | BeeRef, PureRef | P1 | M3 |
-| Navigation without middle-click or wheel input | MothRef | P1 | M3 |
-| Consistent batch editing of selected items | BeeRef, PureRef | P1 | M3 |
-| Open `.bee` / `.pur`, offer conversion and save only as `.moth` | MothRef | P1 | M3 |
-| `.bee` import | MothRef | P0 | M2 |
-| `.pur` import, verified 1.x and 2.x samples | MothRef | P1 | M2 |
-| Always-on-top, frameless, move window by key | BeeRef, PureRef | P0 | M3 |
-| Board tabs + tear-off windows | MothRef | P1 | M3 |
-| Transparent overlay, click-through (#100) | MothRef, PureRef | P1 | M3 |
-| Attach to another app's window | PureRef 2.0 | P2 | M3 |
-| Browser extension "Send to MothRef" | MothRef | P1 | M3 |
-| Groups and hierarchy tree | PureRef 2.0 | P1 | M4 |
-| Freehand drawing | PureRef 2.0 | P1 | M4 |
-| Shapes | PureRef 2.1 | P1 | M4 |
-| Rich text: links, checklists, formatting | PureRef 2.0 | P1 | M4 |
-| Configurable heading font size (#130) | MothRef | P1 | M4 |
-| GIFs with frame stepping | PureRef 2.0 | P1 | M4 |
-| Grid with snapping | PureRef 2.1 | P1 | M4 |
-| Alignment guides and snapping (#129) | MothRef | P1 | M4 |
-| Searchable in-app cheat sheet of all current hotkeys | MothRef, Milanote | P1 | M3 |
-| Command Palette / Omnibar: search and run actions, show shortcuts | MothRef, PureRef 2.0 | P1 | M3 |
-| Slideshow incl. random order | PureRef 2.0 | P2 | M4 |
-| ICC color profiles | PureRef 2.0 | P1 | M4 |
-| Trackpad gestures | PureRef 2.0 | P1 | M3 |
-| Start screen with board previews | MothRef, BeeRef | P0 | M5 |
-| Stacks (folders) and tags, smart collections | MothRef | P1 | M5 |
-| File manager thumbnails (#152) | MothRef | P1 | M5 |
-| Milanote-style elements (see the Milanote checklist) | Milanote | P1 | M4–M6 |
-| Web build | MothRef | P2 | M8 |
-| Real-time collaboration | MothRef | P2 | M9 |
-| Status bar, empty-board state, zoom field, selection badge | MothRef | P1 | M2 |
-| Watch folder import | MothRef | P1 | M3 |
-| Overlay HUD and grab handle | MothRef | P1 | M3 |
-| Timed drawing sessions | MothRef | P1 | M4 |
-| Minimap / navigator | MothRef | P1 | M4 |
-| Board preview chunk | MothRef | P0 | M5 |
-| Library sorting, views, board stats, library health | MothRef | P1 | M5 |
-| Palette export/import (`.gpl`, `.ase`) | MothRef | P1 | M6 |
-| SpaceMouse | PureRef 2.0 | P2 | after 1.0 |
-| Composition overlays, ruler with calibration (target 1.5) | MothRef, This Ruler Rules | P2 | M10 |
-| Mirror view | MothRef | P2 | M10 |
-| Value check, perspective helper (target 2.0) | MothRef | P2 | M10 |
-| Video references | FrameRef | P2 | M10 |
-| Open in external editor | MothRef | P2 | M10 |
-| Redlines, review statuses, image comparison | MothRef | P2 | M11 |
-| Client presentation and pitch sheet export | MothRef | P2 | M11 |
-| JSON Canvas export/import | Obsidian | P2 | M12 |
-| Deep links, wiki-links, linked `.md` notes, preview sidecar | MothRef | P2 | M12 |
-| CLI / headless automation (`clap` subcommands, `--json`) | MothRef | P2 | M13 |
-| Fetch images from HTTP(S) URLs into a board | MothRef | P2 | M13 |
-| Local drop API, ShareX / ComfyUI / file-manager integrations (target 1.5) | RefDrop, PureDrop, MothRef | P2 | M14 |
-| PDF import with page picker (release to be confirmed) | MothRef | P2 | M15 |
-| Excalidraw, draw.io and UML/XML import (target 2.0) | MothRef | P2 | M16 |
-| Blender plugin (target 2.0) | MothRef | P2 | M16 |
-| Video-frame capture from the browser (target 2.0) | RefDrop, MothRef | P2 | M16 |
-
-`#NNN` refers to issues in the [BeeRef repository](https://github.com/rbreu/beeref/issues).
-
-### Parity checklist (PureRef 2.1 + BeeRef 0.3.x)
-
-The matrix above lists features at headline level. This checklist is the full command-level inventory from the [PureRef handbook](https://www.pureref.com/handbook/) and BeeRef's [actions](https://github.com/rbreu/beeref/blob/main/beeref/actions/actions.py) and [CHANGELOG](https://github.com/rbreu/beeref/blob/main/CHANGELOG.rst). A milestone is not done until every item tagged with it is ticked. Source: **PR** = PureRef, **BR** = BeeRef.
-
-As in PureRef: when nothing is selected, arrange/align/normalize actions apply to all items; otherwise only to the selection. Most of them also work on notes.
-
-#### Normalize (M2)
-- [x] Normalize height (PR, BR)
-- [x] Normalize width (PR, BR)
-- [x] Normalize size (PR, BR)
-- [x] Normalize area (PR)
-- [x] Normalize scale (PR)
-
-#### Arrange (M2 unless noted)
-- [x] Optimal — tightly pack all selected displayed bounds into a compact square, with no gap or resizing; independent of window size and zoom (maintainer clarification)
-- [x] By name / by filename (PR, BR)
-- [x] By time added (PR)
-- [ ] By file path (PR)
-- [x] Randomly (PR 2.1)
-- [ ] By hierarchy order (PR) — M4, needs the hierarchy
-- [x] Horizontal, vertical and square layouts by filename (BR)
-- [x] Running the same arrange command again reverses the order (PR)
-- [x] Configurable gap between items for horizontal, vertical and grid layouts; Optimal always uses zero gap
-- [x] Auto-arrange newly added images, with a chosen default method (PR "select and pack new images", BR "default arrange method")
-  - [x] Ask how to arrange when one drop/paste adds more than `arrange_prompt_threshold` (default 5) images; result lands at the cursor in one undo step
-  - [x] Make the threshold and the default method real settings instead of a constant
-- [x] Pack all + optimize canvas in one command (PR)
-
-#### Align and distribute (M2)
-- [x] Align left / right / top / bottom (PR)
-- [x] Distribute horizontally / vertically (PR)
-- [x] Stack — pile selected images on top of each other in layer order (PR)
-
-#### Transform (M2 unless noted)
-- [x] Flip horizontally / vertically (PR, BR)
-- [x] Reset scale, rotation, flip, crop, or all transforms (PR, BR)
-- [x] Raise to top / lower to bottom (BR)
-- [ ] Setting "bring selected images to front" (PR)
-- [x] Per-image sampling: bilinear vs nearest neighbour, plus a default for new images (PR); automatic nearest-neighbour at large zoom for pixel art (BR)
-- [ ] Lock item so it cannot be selected on the canvas, e.g. as a backdrop (PR) — M4
-
-#### Canvas and view (M0–M2)
-- [x] Fit scene / focus canvas (PR, BR) — M0
-- [x] Fit selection / focus image; double-click a selected image to fit the entire group's width and height, again on the same image to go back; an unselected image focuses alone (PR, BR) — M0
-- [x] Reset camera; reset zoom to 100% (PR) — M0
-- [x] Focus next / previous image (PR; BeeRef #116)
-- [x] Optimize canvas — fit the canvas snugly around all items (PR)
-- [x] Lock canvas — nothing on it can be changed (PR)
-- [x] Grayscale for the whole canvas (PR) and per image (PR, BR)
-- [x] Configurable scroll wheel: pan, zoom or nothing; Shift / Shift+Ctrl + wheel to pan (PR, BR)
-- [ ] Optional scrollbars and menu bar (BR)
-- [x] Scale the scene with the window on resize, as a setting (PR)
-
-#### Window modes (M3)
-- [ ] Always on top (PR, BR)
-- [ ] Always on top of a chosen application (PR) — P2 outside Windows/X11
-- [ ] Always on bottom — use the board as an interactive wallpaper (PR)
-- [ ] Lock window position; option to stay locked while maximized (PR)
-- [ ] Transparent to mouse (click-through), with a system-global shortcut and "disable on activate" (PR; BeeRef #100)
-- [ ] Overlay selection — every selected image gets its own borderless floating window (PR)
-- [ ] Master window opacity up / down (PR)
-- [ ] Resize window to selection or to all items (PR)
-- [ ] Toggle title bar, window border, fullscreen (PR, BR); move window by hotkey or modifier+drag with its own cursor (PR, BR)
-- [ ] Appearance: background, canvas and selection colors; "glass" theme with a transparent canvas (PR)
-
-#### Pickers and info (M2)
-- [ ] Color picker: RGB / HSV / HEX, copy value, keep picking outside the window while the button is held, ignores image opacity (PR, BR)
-- [ ] Coordinate picker: pixel X/Y, image name, source, size, size of the selection (PR)
-- [ ] Show color gamut of an image (BR)
-- [ ] Open image source — the URL or path the image came from (PR); filled automatically by the browser extension
-
-#### Images, files and export
-- [ ] Embed images or link to files on disk (PR) — M1
-- [ ] Relink missing linked images (PR) — M2
-- [ ] Optional auto-downscale of very large images on import (PR) — M2
-- [x] Export selected images, all images, scene (PR, BR) — M2
-- [ ] Load most recent scene; option to reopen the last scene on start (PR) — M1
-- [ ] Open image files from the command line; first argument `.moth`/`.bee`/`.pur` opens a board (BR) — M1
-- [ ] Notify when pasting from an empty or unusable clipboard (BR) — M0
-- [ ] Comment on an image, shown as an icon and tooltip (PR) — M6, with comment pins
-
-#### Notes (M2 plain, M4 rich)
-- [x] Notes auto-size to text; manual size wraps text (PR)
-- [ ] Creating a note with an image or group selected parents it to that item (PR) — M4
-- [ ] Copy / paste text formatting (PR) — M4
-- [ ] Links to local files; clicking a link to a `.moth` / `.pur` / `.bee` file opens that board (PR) — M4
-
-#### GIFs (M4)
-- [ ] Play / pause, timeline scrubbing, playback speed, frame step (PR)
-- [ ] Copy a single frame, or drag it out as a new image item (PR)
-
-#### Drawing (M4)
-- [ ] Line color, thickness and style for all tools (PR)
-- [ ] Shift snaps lines to 0/45/90°, makes perfect circles and squares (PR)
-- [ ] Double-click a drawing (or its hierarchy entry) to edit it again (PR)
-
-#### Groups and hierarchy (M4)
-- [ ] Groups with a customizable background, auto-resize to content, empty groups removed (PR)
-- [ ] Locked groups: click selects the group, double-click enters it (PR)
-- [ ] Slideshow and pack operate on a group's content when only the group is selected (PR)
-- [ ] Hierarchy: drag to reorder and re-parent, rename with F2, status icons (linked, locked, comment), tooltip with source and size (PR)
-- [ ] Parent selected items to the first selected item (PR)
-
-#### Slideshow (M4)
-- [ ] Interval setting; order: ordered / shuffle (each once) / random (PR)
-- [ ] Toolbar play / pause / step; manual navigation pauses it; UI fade options (PR)
-
-#### Input, shortcuts, localization
-- [ ] Every action rebindable; system-global shortcuts for chosen actions (PR, BR) — M3
-- [x] Settings show which values differ from defaults (BR) — M2
-- [x] Settings store and panel: persist preferences; first values `arrange_prompt_threshold` and the arrange gap
-- [x] Undo history size slider: how many steps to keep in memory (default 256), shown with an estimate of the memory the history consumes (bytes per step × kept steps), so a user can trade undo depth for RAM
-- [ ] Touch input and SpaceMouse (PR) — touch via the input abstraction (M0), SpaceMouse after 1.0
-- [x] Interface translations; at least English and Russian at 0.3, more later (PR 2.1 ships 7 languages) — M2
-- [x] Extensible translation catalogs with automatic language registration and English fallback
-- [ ] Debug log viewer in the app (BR) — M1
-
-### Milanote checklist
-
-Inventory of [Milanote](https://milanote.com) features from its [help center](https://help.milanote.com/llms.txt), [keyboard shortcuts](https://help.milanote.com/getting-started/shortcuts) and [release notes](https://milanote.com/releases), with a decision for each. MothRef takes what helps collect and arrange references offline; it skips what only makes sense for a cloud SaaS. Milestone in brackets; **skip** = not planned, **after 1.0** = P2.
-
-#### Cards and elements
-- [ ] **Note card**: rich text with large/normal heading, bold, italic, underline, strikethrough, highlight, bullet/numbered/check lists, quote, code block, indent, center alignment (M4)
-- [ ] Markdown shortcuts at line start: `#`, `.`/`-`, `1.`, `[ ]`, `>` (M4)
-- [ ] Optional **source line** at the bottom of a note; Ctrl/⌘+Enter copies it to the next note (M6)
-- [ ] **Card colors**: one of 9 colors for notes, columns and boards; a color strip on image cards (M6)
-- [ ] **Heading** card — big text without a card background (M4)
-- [ ] **To-do card** as its own element, besides checklists inside notes (M6)
-- [ ] **Image caption** — select an image and start typing; toggle caption visibility (M6)
-- [x] Image actions: download original, open in the system viewer (M2)
-- [ ] **Link card** with three toggleable parts: preview image, URL, description; preview fetched only on user action (M6)
-- [ ] Custom link thumbnail — drop an image onto the link card's preview (M6)
-- [ ] Pasting a board link (`.moth` path or `mothref://` link) creates a **board shortcut card** (M6)
-- [ ] **Column**: title, drag to reorder with an insertion line, resize, collapse/expand, item count, "Group into column" from a selection; columns can hold boards but not other columns (M6)
-- [ ] **Nested board**: card with preview, double-click to enter, drop a board on a board to nest it, drag onto a breadcrumb to move it up (M6)
-- [ ] **Lines**: drag from a card's corner handle, connect to another card or anchor to a point, bend by the middle handle (double-click to straighten), Shift for straight, color and weight, label by typing, pasted text on a line becomes its label (M6)
-- [ ] **Color swatch**: new swatches auto-pick a color that matches the board's images; HEX / RGB / HSL display or no label; paste a HEX; eyedropper from board images; resizable (M6)
-- [ ] Palette extraction from a selected image (k-means, 5–8 swatches) — MothRef addition (M6)
-- [ ] **Sketch card** with a white background (M4)
-- [ ] Drawing shortcuts: D pen, V select, E eraser, X previous color, 1–4 pen size, Esc to finish; pressure "ink effect" with an off switch; export a drawing as SVG (M4)
-- [ ] **Comment pins** on items, shown on hover; hidden in presentation mode (M6)
-- [ ] Table card with formulas (after 1.0)
-- [ ] Document card — long-form text opened full-screen (after 1.0)
-- [ ] PDF documents (M15); other file cards and audio cards (after 1.0)
-- [ ] Video card and video link embeds (YouTube, Vimeo) (after 1.0, together with video on the canvas)
-- Map card — **skip** (needs online map tiles)
-- Built-in stock photo search (Pexels) — **skip** (network service; the browser extension covers collecting)
-
-#### Creating and editing
-- [ ] Double-click empty canvas creates a note (setting, off by default to keep PureRef behaviour) (M4)
-- [ ] Ctrl/⌘+Enter creates the next note/board/column below the selected one, matching its width and pushing items below down (M6)
-- [x] Duplicate with Alt/⌥+drag (M2)
-- [x] Nudge with arrow keys, farther with Shift+arrows (M2)
-- [x] Send backward / bring forward one step, besides to-top / to-bottom (M2)
-- [ ] Lock item position from the context menu (M4, same as PureRef "lock item")
-- [ ] Cards snap to the grid; optional "crop images to fit the grid" (M4)
-- [ ] Remove image background — local model, no cloud (after 1.0)
-
-#### Organizing
-- [ ] **Unsorted tray** per board: imported and clipped items land there first, then get dragged onto the canvas; the browser extension can send to it (M6)
-- [ ] **Item labels**: colored labels on any item, rename updates everywhere, usage count, find all items with a label. Same tag system as board tags in the library (M6)
-- [ ] **Synced notes**: duplicate a note as a linked copy that stays in sync, within one board file (M6); across board files (after 1.0)
-- [ ] Item **trash**: deleted items stay restorable per board until emptied, on top of undo (M5)
-- [ ] **Templates**: "convert board to template", start a new board from a template (M5)
-- [ ] Search across boards and inside them: note text, captions, labels, link titles; jump to the item (M5)
-- [ ] Navigation: back / forward history, go to parent board, recent boards (M6)
-
-#### Viewing and presenting
-- [ ] **Presentation mode**: full-screen, editing locked, comments hidden, click an item to focus/zoom it, settings remembered (M4, alongside slideshow)
-- [x] Dark / light theme toggle (M2)
-- [x] Interface scale smaller / larger (M2)
-- [x] Searchable in-app shortcut cheat sheet on `/` and in Help: all actions grouped by category, showing current custom bindings (M3, next to the command palette)
-
-#### Export
-- [x] PDF export of a board or a selection (M2)
-- [ ] Markdown and plain-text export of notes, headings, to-dos and link cards (M6)
-- [x] ZIP of all original images and files (M2, with "export all images")
-- Word export — **skip** (Markdown covers it)
-
-#### Web clipper (M3, in the MothRef browser extension)
-- [ ] "Save" button on hover over any image
-- [ ] Save selected text as a note: right-click menu or a button next to the selection (setting)
-- [ ] Choose the target: active board, one of the 10 most recent boards, or the board's unsorted tray
-- [ ] Clipped items keep the page URL as their source
-
-#### Collaboration and cloud (M9 or skip)
-- [ ] Real-time co-editing, read-only share links, per-board editor list (M9)
-- [ ] Reactions and @mentions on comments (M9)
-- Password-protected boards — **skip** as a server feature; optional encrypted `.moth` files (after 1.0)
-- Accounts, plans, billing, team admin, notifications by email — **skip**
-
-#### Mobile and tablet (future Android port)
-- [ ] Share-sheet target ("Share to MothRef") instead of the browser extension
-- [ ] Touch gestures: double-tap canvas for a note, long-press to drag, pinch to zoom, three-finger swipe undo/redo, long-press + drag to multi-select
+- [ ] **2.0 candidate only:** 3D model reference items; scope, formats, interaction and resource budgets remain open. Do not start before 1.0.
+- Android port: portability rules are built in from M0 (see [AGENTS.md](AGENTS.md)); no milestone yet. Mobile items are listed in [FEATURES.md](docs/FEATURES.md#mobile-and-tablet-future-android-port).
+- Checks and ideas moved out of M3 on 2026-10-26: [docs/DEFERRED.md](docs/DEFERRED.md).
 
 ---
 
-## Deferred qualification — 1.2 or later
+## Qualification
 
-- [ ] Full eight-hour combined render/persistence soak (CI / maintainer only).
-- [ ] Native Windows/macOS manual save, recovery, clipboard, close and OS-shutdown checks.
+Checks that need real hardware or long runs. They do not block the next alpha unless a milestone's exit criteria name them.
 
-Deferred by the maintainer on 2026-10-18; these checks do not block earlier releases.
-Automated cross-platform CI and short change-specific safety checks remain required.
+- [ ] M0: real touch devices, other desktop pens and native end-to-end paste ([M0 validation](docs/M0-VALIDATION.md); Huion pen and Wayland drops are done)
+- [ ] M1: truncated-file recovery and reader fuzzing at release length; 1,000× `kill -9` ([M1 validation](docs/M1-VALIDATION.md))
+- [ ] 1.2 or later: full eight-hour combined render/persistence soak (CI / maintainer only)
+- [ ] 1.2 or later: native Windows/macOS manual save, recovery, clipboard, close and OS-shutdown checks
 
----
-
-## Field observations — 2026-10-20
-
-The M3 navigation, packing, feedback, window and memory follow-ups above come from
-maintainer use of PureRef; they describe desired MothRef behavior, not verified
-claims about PureRef internals. The unwanted grouping after opening a file is a
-reported pain point; its cause and source-file hierarchy remain unknown.
-
-- [ ] **2.0.0 candidate only:** 3D model reference items; scope, formats, interaction and resource budgets remain open. Do not start before 1.0 or treat this as an M3 import requirement.
+The 1.2 items were deferred by the maintainer on 2026-10-18. Automated cross-platform CI and short change-specific safety checks remain required for every release. Carry-over technical debt: [TECH-DEBT.md](docs/TECH-DEBT.md).
 
 ---
 
@@ -786,47 +593,3 @@ All builds come from one GitHub Actions pipeline triggered by a release tag. Raw
 | Extension | WebExtension (MV3) | addons.mozilla.org, Chrome Web Store | M3 |
 
 Known issues to plan for: macOS notarization needs a paid Apple Developer account; Windows signing (apply to a free OSS program such as SignPath Foundation early); Flatpak sandbox limits drag-and-drop sources, native messaging and overlays; the in-app update check is disabled in package-manager builds.
-
----
-
-## Decision log
-
-| Date | Decision |
-| --- | --- |
-| 2026-10-24 | [UI surfaces from the action registry](docs/decisions/0018-ui-surfaces-from-action-registry.md): buttons run registered actions, surfaces are action lists, settings are a schema-driven model, visual values come from light/dark theme tokens; Board tools window removed in M2.6 |
-| 2026-10-22 | [Full-resolution mode](docs/decisions/0017-full-resolution-mode.md): default mode preloads every image at full resolution into video memory behind a progress bar and never loads while zooming; video-memory limit detected from the adapter and shown to the user; AGENTS.md exception |
-| 2026-10-21 | [Baked tile packs](docs/decisions/0016-baked-tile-packs.md): one background decode per large image writes every detail tile; parent tiles stand in while loading; "Prepare zoom tiles" setting (on screen / whole board / off); RAM cache 12.5% ≤ 1 GiB written through to an 8 GiB disk cache |
-| 2026-10-21 | [Viewport tiles and scheduling](docs/decisions/0015-viewport-tiles-and-scheduling.md): bounded replaceable viewport queue; fixed-size visible detail tiles; native JPEG scanlines and Android NDK toolchain |
-| 2026-10-21 | Post-1.0 release targets: 1.5 = composition overlays and ruler (M10), Obsidian interop (M12), capture integrations (M14); 2.0 = perspective and value tools (M10), Excalidraw / draw.io / UML-XML interop, Blender plugin, video-frame capture (M16); PDF import with a page picker (M15), release to be confirmed |
-| 2026-10-20 | [Performance modes and LOD cache](docs/decisions/0014-performance-modes-lod-cache.md): PureRef-style In memory (default) / low zoom quality / Cache on disk / No cache; decode once per zoom range from a budgeted RAM or disk cache; BC7 only where it can be encoded |
-| 2026-10-19 | [RAM-aware texture budget](docs/decisions/0013-ram-aware-texture-budget.md): replace per-image growth with actual texture bytes and available RAM; configurable RAM allowance/cache limits, adapter defaults and LRU eviction |
-| 2026-10-19 | [Progressive durable loading](docs/decisions/0012-progressive-board-loading.md): journaled loading batches overlap previews with storage; bounded footer-chain indexing accelerates healthy `.moth` reads while retaining scanner recovery |
-| 2026-10-19 | [Journal original ranges](docs/decisions/0011-journal-original-ranges.md): read originals through bounded read-only storage handles into the session journal; remove duplicate `.source` files without changing durable completion boundaries |
-| 2026-10-16 | Name: MothRef, file extension `.moth`, license GPL-3.0-or-later |
-| 2026-10-16 | Stack: Rust, `wgpu`, `winit`, egui with a fully custom theme and animations |
-| 2026-10-16 | Multiple boards: tabs in one window, tabs can be torn off into windows |
-| 2026-10-16 | Stacks are folders on disk; smart collections are saved tag filters |
-| 2026-10-16 | LOD tiles: per-board switch between "fast open" (in file) and "compact file" (external cache); compact by default |
-| 2026-10-16 | No-GPU support: wgpu software adapter in M0; dedicated CPU renderer only if benchmarks demand it |
-| 2026-10-16 | PureRef compatibility through `purcore` from LazyRef (MIT), pinned; fixes go upstream; clean-room only |
-| 2026-10-16 | Collaboration via CRDT; the sync server is recorded but has no timeline, its license is decided later |
-| 2026-10-16 | Distribute through every channel listed above |
-| 2026-10-16 | Milanote: take the offline board features (cards, lines, columns, nested boards, labels, unsorted tray, presentation mode, web clipper); skip cloud-only ones (stock photos, maps, accounts, password boards) |
-| 2026-10-16 | Android is a future target (no milestone yet). Portability rules are built in from M0: storage trait, input abstraction, surface-loss handling (M0); runtime texture format (M1); responsive layout (M2) |
-| 2026-10-16 | [M0 preview budgets and durable clipboard staging](docs/decisions/0001-m0-canvas-budgets.md): 96 MiB GPU cache, bounded decode work, checksummed RGBA scratch records; keep the 50 ms paste criterion open rather than bypass durability |
-| 2026-10-16 | [M1 version-one records and recovery](docs/decisions/0002-m1-durable-records.md): footer commits, journal-before-acknowledgment, atomic snapshots and compaction, bounded session history |
-| 2026-10-16 | Maintainer accepts the measured 11–12 ms frame time (12 ms benchmark ceiling); revise the immediate 4K paste target to 250 ms. Historical measurements retain their original targets. The paste harness excludes OS clipboard transfer; native end-to-end qualification remains separate. |
-| 2026-10-16 | Maintainer tightens the immediate 4K paste target to 150 ms; qualification remains open. |
-| 2026-10-16 | Maintainer accepts approximately 200 ms durable 4K paste and closes TD-03; the 150 ms goal is withdrawn. Timing outliers and native qualification remain documented. |
-| 2026-10-16 | [Bounded WebP previews](docs/decisions/0003-bounded-webp-previews.md): maintainer permits full-frame static WebP with 8 MiB encoded/frame admission limits; internal codec allocations are separately qualified. GIF/BMP use row-based previews. |
-| 2026-10-18 | [Runtime texture format](docs/decisions/0006-runtime-texture-format.md): BC7 on desktop (target-gated `intel_tex_2`), RGBA8 fallback, ASTC deferred to M8; `.moth` stays GPU-format independent |
-
-| 2026-10-17 | [Reference workspace](docs/decisions/0004-reference-workspace.md): requested early UI slice uses four isolated sessions, a bounded catalog and a separate overlay controller; full M3/M5 remain open. |
-| 2026-10-17 | [M2 content transforms and schema 2](docs/decisions/0005-m2-content-transform.md): five-field per-item transform (rotation, flip, content offset/scale/rotation), frame-only indexed footprint, schema 2 records that keep reading schema 1 |
-| 2026-10-16 | Post-1.0 milestones M10 (artist tools), M11 (review and presentation), M12 (note-app interop through Markdown, JSON Canvas and URIs, not a single app's API); independent of M8/M9 |
-| 2026-10-17 | Post-1.0 milestone M13 (CLI and automation): headless subcommands built into the `mothref` binary with `clap`, `--json` output; reuses the single storage-worker write path; images may be fetched from URLs on explicit invocation |
-| 2026-10-18 | [M2 editing and export](docs/decisions/0008-m2-editing-export.md): schema 4 appearance/source names, journaled inspector, bounded PNG/SVG export and unchanged original export |
-| 2026-10-18 | [Local purcore import fork](docs/decisions/0007-local-purcore-import.md): maintainer authorizes vendoring and local fixes; bounded path-free import, 1.10/2.1 baseline corpus; coverage limited to verified files, with additional qualification driven by available samples |
-
-| 2026-10-19 | [Adaptive GPU cache budget](docs/decisions/0009-adaptive-gpu-budget.md): maintainer requests count-based growth/shrink; 32–512 MiB discrete, 32–96 MiB shared/software, immediate eviction on shrink and zero allocation for an empty board |
-| 2026-10-19 | [Parallel app responsibility split](docs/decisions/0010-app-responsibility-split.md): retain upstream history and historical design notes while integrating the later tested intent/Workspace/Shell refactor and motion implementation |
