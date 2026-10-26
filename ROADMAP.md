@@ -560,7 +560,7 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 - [x] Reset scale, rotation, flip, crop, or all transforms (PR, BR)
 - [x] Raise to top / lower to bottom (BR)
 - [ ] Setting "bring selected images to front" (PR)
-- [ ] Per-image sampling: bilinear vs nearest neighbour, plus a default for new images (PR); automatic nearest-neighbour at large zoom for pixel art (BR)
+- [x] Per-image sampling: bilinear vs nearest neighbour, plus a default for new images (PR); automatic nearest-neighbour at large zoom for pixel art (BR)
 - [ ] Lock item so it cannot be selected on the canvas, e.g. as a backdrop (PR) — M4
 
 #### Canvas and view (M0–M2)
@@ -604,7 +604,7 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 - [ ] Comment on an image, shown as an icon and tooltip (PR) — M6, with comment pins
 
 #### Notes (M2 plain, M4 rich)
-- [ ] Notes auto-size to text; manual size wraps text (PR)
+- [x] Notes auto-size to text; manual size wraps text (PR)
 - [ ] Creating a note with an image or group selected parents it to that item (PR) — M4
 - [ ] Copy / paste text formatting (PR) — M4
 - [ ] Links to local files; clicking a link to a `.moth` / `.pur` / `.bee` file opens that board (PR) — M4

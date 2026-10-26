@@ -538,75 +538,43 @@ fn draw_note(ui: &egui::Ui, camera: &Camera, item: &Item) {
         return;
     };
     let zoom = camera.zoom;
-    let rows = text.lines().count().max(1) as f32;
-    // The frame is the note's text bounds; recover the font size from its height
-    // so an imported note scaled by BeeRef's `scale` renders at that size.
-    let font_size = note_font_size(item.rect, text) * zoom;
-    let font = egui::FontId::proportional(font_size);
-    let color = moth_ui::tokens(ui.ctx())
-        .text
-        .gamma_multiply(item.transform.opacity);
-    let fill = moth_ui::tokens(ui.ctx())
-        .note_fill()
-        .gamma_multiply(item.transform.opacity);
-    let stroke = egui::Stroke::new(
-        1.,
-        moth_ui::tokens(ui.ctx())
-            .border
-            .gamma_multiply(item.transform.opacity),
-    );
+    let font_size = item.note_font_size() * zoom;
+    let tokens = moth_ui::tokens(ui.ctx());
+    let color = tokens.text.gamma_multiply(item.transform.opacity);
+    let fill = tokens.note_fill().gamma_multiply(item.transform.opacity);
+    let stroke = egui::Stroke::new(1., tokens.border.gamma_multiply(item.transform.opacity));
     let rotation = item.transform.rotation;
-
-    // Upright notes take the simple rounded-card path.
-    if rotation.abs() < 1e-4 {
-        let p = camera.screen([item.rect.x, item.rect.y]);
-        let card = egui::Rect::from_min_size(
-            egui::pos2(p[0], p[1]),
-            egui::vec2(item.rect.width * zoom, item.rect.height * zoom),
-        );
-        ui.painter()
-            .rect_filled(card, moth_ui::tokens(ui.ctx()).radius_s as f32 * zoom, fill);
-        ui.painter().rect_stroke(
-            card,
-            moth_ui::tokens(ui.ctx()).radius_s as f32 * zoom,
-            stroke,
-            egui::StrokeKind::Inside,
-        );
-        let mut y = p[1];
-        for line in text.lines() {
-            ui.painter().text(
-                egui::pos2(p[0], y),
-                egui::Align2::LEFT_TOP,
-                line,
-                font.clone(),
-                color,
-            );
-            y += font_size * 1.3;
-        }
-        return;
-    }
-
-    // Rotated notes: polygon card plus per-line text rotated around its own top-left.
     let corners = item.rect.corners(rotation).map(|corner| {
         let s = camera.screen(corner);
         egui::pos2(s[0], s[1])
     });
-    ui.painter().add(egui::Shape::convex_polygon(
-        vec![corners[0], corners[1], corners[3], corners[2]],
-        fill,
-        stroke,
-    ));
-    let line_offset = egui::vec2(
-        (corners[2].x - corners[0].x) / rows,
-        (corners[2].y - corners[0].y) / rows,
-    );
-    for (i, line) in text.lines().enumerate() {
-        let pos = corners[0] + line_offset * i as f32;
-        let galley = ui.fonts_mut(|f| f.layout_no_wrap(line.to_owned(), font.clone(), color));
-        ui.painter().add(egui::Shape::Text(
-            egui::epaint::TextShape::new(pos, galley, color).with_angle(rotation),
+    if rotation.abs() < 1e-4 {
+        let card = egui::Rect::from_min_max(corners[0], corners[3]);
+        ui.painter()
+            .rect_filled(card, tokens.radius_s as f32 * zoom, fill);
+        ui.painter().rect_stroke(
+            card,
+            tokens.radius_s as f32 * zoom,
+            stroke,
+            egui::StrokeKind::Inside,
+        );
+    } else {
+        ui.painter().add(egui::Shape::convex_polygon(
+            vec![corners[0], corners[1], corners[3], corners[2]],
+            fill,
+            stroke,
         ));
     }
+    let galley = note_galley(
+        ui.ctx(),
+        text,
+        font_size,
+        item.transform.note_wrap.then_some(item.rect.width * zoom),
+        color,
+    );
+    ui.painter().add(egui::Shape::Text(
+        egui::epaint::TextShape::new(corners[0], galley, color).with_angle(rotation),
+    ));
 }
 
 pub(super) fn new_note_rect(anchor: [f32; 2], zoom: f32) -> Rect {
@@ -628,17 +596,15 @@ fn note_editor(
     zoom: f32,
 ) -> egui::text_edit::TextEditOutput {
     let font_size = editing.font_size * zoom;
+    let wrap_width = editing.wrap.then_some(editing.width * zoom);
     let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _: f32| {
-        let job = egui::text::LayoutJob::simple_format(
-            text.as_str().to_owned(),
-            egui::TextFormat {
-                font_id: egui::FontId::proportional(font_size),
-                color: moth_ui::tokens(ui.ctx()).text,
-                line_height: Some(font_size * 1.3),
-                ..Default::default()
-            },
-        );
-        ui.fonts_mut(|fonts| fonts.layout_job(job))
+        note_galley(
+            ui.ctx(),
+            text.as_str(),
+            font_size,
+            wrap_width,
+            moth_ui::tokens(ui.ctx()).text,
+        )
     };
     egui::TextEdit::multiline(&mut editing.draft)
         .font(egui::FontId::proportional(font_size))
@@ -649,17 +615,37 @@ fn note_editor(
         .show(ui)
 }
 
-/// Measures a note's auto-sized frame in world units, using egui's bundled font.
-pub(super) fn measure_note(ctx: &egui::Context, text: &str, font_size: f32) -> [f32; 2] {
-    let font = egui::FontId::proportional(font_size);
-    let color = moth_ui::tokens(ctx).text;
-    let mut width = 0.0f32;
-    let lines = text.lines().count().max(1);
-    for line in text.lines() {
-        let galley = ctx.fonts_mut(|f| f.layout_no_wrap(line.to_owned(), font.clone(), color));
-        width = width.max(galley.size().x);
-    }
-    [width.max(font_size * 0.6), lines as f32 * font_size * 1.3]
+fn note_galley(
+    ctx: &egui::Context,
+    text: &str,
+    font_size: f32,
+    width: Option<f32>,
+    color: egui::Color32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple_format(
+        text.to_owned(),
+        egui::TextFormat {
+            font_id: egui::FontId::proportional(font_size),
+            color,
+            line_height: Some(font_size * 1.3),
+            ..Default::default()
+        },
+    );
+    job.wrap.max_width = width.unwrap_or(f32::INFINITY);
+    ctx.fonts_mut(|fonts| fonts.layout_job(job))
+}
+
+pub(super) fn measure_note_frame(
+    ctx: &egui::Context,
+    text: &str,
+    font_size: f32,
+    width: Option<f32>,
+) -> [f32; 2] {
+    let galley = note_galley(ctx, text, font_size, width, moth_ui::tokens(ctx).text);
+    [
+        width.unwrap_or(galley.size().x.max(font_size * 0.6)),
+        galley.size().y.max(font_size * 1.3),
+    ]
 }
 
 /// The canvas viewport as a clip rectangle in physical pixels.
@@ -743,6 +729,59 @@ pub(super) fn preview_rect(
 mod tests {
     use super::*;
     #[test]
+    fn wrapped_note_uses_one_layout_for_editor_measurement_and_painting() {
+        let ctx = egui::Context::default();
+        moth_ui::theme(&ctx, &moth_ui::Tokens::LIGHT);
+        let text = "Reference image with several words\nРусская заметка";
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            let auto = measure_note_frame(ui.ctx(), text, 24., None);
+            let wrapped = measure_note_frame(ui.ctx(), text, 24., Some(100.));
+            assert_eq!(wrapped[0], 100.);
+            assert!(wrapped[1] > auto[1]);
+            let mut item = Item::text(
+                text,
+                Rect {
+                    x: 0.,
+                    y: 0.,
+                    width: 100.,
+                    height: wrapped[1],
+                },
+                None,
+            );
+            item.transform.note_font_size = 24.;
+            item.transform.note_wrap = true;
+            let mut editing = Editing {
+                id: item.id,
+                original: text.into(),
+                draft: text.into(),
+                anchor: [0.; 2],
+                font_size: 24.,
+                width: 100.,
+                wrap: true,
+                focus: false,
+            };
+            let editor = note_editor(ui, &mut editing, 1.);
+            assert!((editor.galley.size().y - wrapped[1]).abs() < 0.01);
+            assert_eq!(
+                editor.galley.rows.len(),
+                note_galley(
+                    ui.ctx(),
+                    text,
+                    24.,
+                    Some(100.),
+                    moth_ui::tokens(ui.ctx()).text
+                )
+                .rows
+                .len()
+            );
+            draw_note(ui, &Camera::default(), &item);
+            assert_eq!(item.note_font_size(), 24.);
+            let larger = measure_note_frame(ui.ctx(), text, 48., Some(200.));
+            assert!((larger[1] - wrapped[1] * 2.).abs() < 1.);
+        });
+        output.textures_delta.clear();
+    }
+    #[test]
     fn note_commit_at_35_percent_preserves_editor_text_height() {
         let ctx = egui::Context::default();
         moth_ui::theme(&ctx, &moth_ui::Tokens::DARK);
@@ -756,6 +795,7 @@ mod tests {
             anchor: [rect.x, rect.y],
             font_size: note_font_size(rect, ""),
             width: rect.width,
+            wrap: false,
             focus: false,
         };
         let mut editor_height = 0.;
@@ -768,7 +808,8 @@ mod tests {
             );
             editor_height = editor.galley.rows[0].glyphs[0].font_height;
             assert!((editing.font_size * zoom - moth_scene::NOTE_FONT_SIZE).abs() < 0.001);
-            let [width, height] = measure_note(ui.ctx(), &editing.draft, editing.font_size);
+            let [width, height] =
+                measure_note_frame(ui.ctx(), &editing.draft, editing.font_size, None);
             item.rect.width = width;
             item.rect.height = height;
             item.content = moth_scene::Content::Text(editing.draft.clone());
@@ -788,15 +829,13 @@ mod tests {
             .shapes
             .iter()
             .filter_map(|shape| match &shape.shape {
-                egui::Shape::Text(text)
-                    if text.galley.text() == "Reference" || text.galley.text() == "Second line" =>
-                {
+                egui::Shape::Text(text) if text.galley.text() == "Reference\nSecond line" => {
                     Some(text.galley.rows[0].glyphs[0].font_height)
                 }
                 _ => None,
             })
             .collect();
-        assert_eq!(drawn.len(), 2);
+        assert_eq!(drawn.len(), 1);
         for height in drawn {
             assert!((height - editor_height).abs() < 0.01);
         }

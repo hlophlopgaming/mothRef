@@ -436,6 +436,22 @@ pub enum Text {
     CopyImage,
     /// Open the embedded original with the system image viewer.
     OpenOriginal,
+    /// Wrap text to frame width.
+    NoteWrap,
+    /// Text size.
+    NoteFontSize,
+
+    /// Image smoothing.
+    ImageSampling,
+    /// Use canvas setting.
+    SamplingDefault,
+    /// Smooth.
+    SamplingSmooth,
+    /// Sharp pixels (nearest neighbor).
+    SamplingNearest,
+    /// Automatic: sharp pixels at 200% and above.
+    SamplingAutomatic,
+
     /// Confirmation after the system viewer accepts an image.
     ViewerOpened,
     /// Localized SampleColor control.

@@ -39,6 +39,7 @@ struct Editing {
     anchor: [f32; 2],
     font_size: f32,
     width: f32,
+    wrap: bool,
     focus: bool,
 }
 mod actions;
@@ -422,7 +423,8 @@ impl App {
         let rect = canvas::new_note_rect(world, self.workspace.board.view.camera.zoom);
         let font_size = canvas::note_font_size(rect, "");
         let width = rect.width;
-        let item = Item::text("", rect, self.workspace.board.scene.top());
+        let mut item = Item::text("", rect, self.workspace.board.scene.top());
+        item.transform.note_font_size = font_size;
         let id = item.id;
         self.workspace
             .persist(moth_platform::boards::Request::Apply(
@@ -436,6 +438,7 @@ impl App {
             anchor: world,
             font_size,
             width,
+            wrap: false,
             focus: true,
         });
     }
@@ -455,8 +458,9 @@ impl App {
             original: text.to_owned(),
             draft: text.to_owned(),
             anchor: [item.rect.x, item.rect.y],
-            font_size: canvas::note_font_size(item.rect, text),
+            font_size: item.note_font_size(),
             width: item.rect.width,
+            wrap: item.transform.note_wrap,
             focus: true,
         });
     }
@@ -472,8 +476,23 @@ impl App {
         if editing.draft.trim().is_empty() {
             commands.push(Command::Remove(editing.id));
         } else {
-            let [width, height] =
-                canvas::measure_note(self.shell.context(), &editing.draft, editing.font_size);
+            let [width, height] = canvas::measure_note_frame(
+                self.shell.context(),
+                &editing.draft,
+                editing.font_size,
+                editing.wrap.then_some(editing.width),
+            );
+            if let Some(item) = self.workspace.board.scene.get(editing.id)
+                && item.transform.note_font_size == 0.
+            {
+                commands.push(Command::SetTransform {
+                    id: editing.id,
+                    transform: Transform {
+                        note_font_size: editing.font_size,
+                        ..item.transform
+                    },
+                });
+            }
             commands.push(Command::SetText {
                 id: editing.id,
                 text: editing.draft,
@@ -1308,6 +1327,7 @@ impl App {
                                 let point = self.workspace.board.view.camera.world(p.position);
                                 if let Some(resize) = &mut self.resizing {
                                     resize.update(point);
+                                    resize.wrap_note(self.shell.context());
                                 }
                             }
                             Phase::Up => {
@@ -1316,6 +1336,7 @@ impl App {
                                     .take()
                                     .expect("active resize owns the pointer");
                                 resize.update(self.workspace.board.view.camera.world(p.position));
+                                resize.wrap_note(self.shell.context());
                                 let commands = resize.commands();
                                 if !commands.is_empty() {
                                     let pending = self.workspace.board.in_flight;
@@ -1856,6 +1877,8 @@ impl App {
             },
             viewport: self.workspace.board.view.viewport,
             grayscale: self.tools.grayscale,
+            sampling: moth_scene::Sampling::from_code(self.settings.sampling + 1)
+                .unwrap_or_default(),
         };
         let camera = self.workspace.board.view.camera;
         let mut previews: Vec<_> = if self.moving.is_some()

@@ -338,3 +338,10 @@ ToggleDrag = Переключить выделение (клик или рамк
 
 OpenOriginal = Открыть оригинал в просмотрщике
 ViewerOpened = Изображение открыто в системном просмотрщике
+ImageSampling = Сглаживание изображений
+SamplingDefault = Как в настройках холста
+SamplingSmooth = Плавное
+SamplingNearest = Чёткие пиксели (ближайший сосед)
+SamplingAutomatic = Автоматически: чёткие пиксели от 200%
+NoteWrap = Переносить текст по ширине рамки
+NoteFontSize = Размер текста

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Choose smooth, sharp-pixel or automatic image sampling in Settings › Canvas, with per-image overrides in the selection/context menus and item editor. Automatic switches to sharp pixels at 200% of original pixel size.
+- Auto-size notes to their text, or wrap at a manually resized width while preserving text size. The item editor controls wrapping and font size; grouped scaling scales text with its frame. Export preserves fixed note fonts and wraps text.
+- Save sampling and note layout in schema 5; continue reading schemas 1–4 and upgrade older boards through atomic compaction. Older MothRef builds cannot open newly saved schema-5 boards.
+
 - Open a selected original in the system image viewer from the context menu, export window or command palette. Viewer copies are bounded and never replace board originals.
 
 - Remove the separate Hand/Pan canvas mode, its toolbar button and H binding. Keep Select active with Space-drag, middle-drag and two-contact touch panning.

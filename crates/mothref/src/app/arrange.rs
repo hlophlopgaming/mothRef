@@ -104,7 +104,7 @@ pub fn normalize(items: &[&Item], mode: Normalize) -> Vec<Command> {
     };
     items
         .iter()
-        .filter_map(|item| {
+        .flat_map(|item| {
             let rect = match mode {
                 Normalize::Width => Rect {
                     width: reference.width,
@@ -131,8 +131,17 @@ pub fn normalize(items: &[&Item], mode: Normalize) -> Vec<Command> {
                     }
                 }
             };
-            rect.valid()
-                .then_some(Command::SetRect { id: item.id, rect })
+            if !rect.valid() {
+                return Vec::new();
+            }
+            let mut commands = vec![Command::SetRect { id: item.id, rect }];
+            if item.note().is_some() {
+                commands.push(Command::SetTransform {
+                    id: item.id,
+                    transform: item.scaled_note_transform(rect.height / item.rect.height),
+                });
+            }
+            commands
         })
         .collect()
 }
@@ -592,10 +601,21 @@ pub(super) fn scale(items: &[&moth_scene::Item], factor: f32) -> Vec<Command> {
             },
         })
         .collect();
-    if commands
-        .iter()
-        .all(|c| matches!(c,Command::SetRect{rect,..} if rect.valid()))
-    {
+    let mut commands = commands;
+    commands.extend(
+        items
+            .iter()
+            .filter(|item| item.note().is_some())
+            .map(|item| Command::SetTransform {
+                id: item.id,
+                transform: item.scaled_note_transform(factor),
+            }),
+    );
+    if commands.iter().all(|c| match c {
+        Command::SetRect { rect, .. } => rect.valid(),
+        Command::SetTransform { transform, .. } => transform.valid(),
+        _ => false,
+    }) {
         commands
     } else {
         Vec::new()

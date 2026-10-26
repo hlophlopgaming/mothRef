@@ -1043,6 +1043,105 @@ mod tests {
         });
     }
     #[test]
+    fn nearest_and_smooth_instances_share_a_texture_without_mixing_pixels() {
+        use super::*;
+        use moth_scene::Sampling;
+        pollster::block_on(async {
+            let instance =
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let (_, device, queue) = crate::request_device(&instance, None, false).await.unwrap();
+            let mut registry =
+                Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm, ImageFormat::Rgba8);
+            registry.keep_all = true;
+            registry.tile_detail = false;
+            let image = Decoded {
+                hash: hash_fixture(1234),
+                original: [2, 1],
+                tile: None,
+                format: ImageFormat::Rgba8,
+                mips: vec![Mip {
+                    width: 2,
+                    height: 1,
+                    bytes: vec![255, 0, 0, 255, 0, 0, 255, 255],
+                }],
+            };
+            registry.upload(&device, &queue, &image);
+            let mut sharp = Item::image(
+                image.hash,
+                Rect {
+                    x: 0.,
+                    y: 0.,
+                    width: 32.,
+                    height: 16.,
+                },
+                None,
+            );
+            let mut smooth = Item::image(
+                image.hash,
+                Rect {
+                    x: 32.,
+                    ..sharp.rect
+                },
+                None,
+            );
+            smooth.transform.sampling = Sampling::Smooth;
+            let texture = target(&device, 64, 16);
+            let view = texture.create_view(&Default::default());
+            let allocated = registry.allocated_bytes();
+            for (item_sampling, default) in [
+                (Sampling::Nearest, Sampling::Smooth),
+                (Sampling::Default, Sampling::Nearest),
+                (Sampling::Automatic, Sampling::Smooth),
+            ] {
+                sharp.transform.sampling = item_sampling;
+                registry.sampling = default;
+                for flipped in [false, true] {
+                    sharp.transform.flip[0] = flipped;
+                    registry
+                        .draw(
+                            &device,
+                            &queue,
+                            crate::Target {
+                                view: &view,
+                                screen: [64., 16.],
+                                clip: None,
+                                clear: wgpu::Color::BLACK,
+                                grid: false,
+                                opacity: 1.,
+                            },
+                            &[&sharp, &smooth],
+                            Camera::default(),
+                        )
+                        .unwrap();
+                    let pixels = readback(&device, &queue, &texture, 256).unwrap();
+                    for x in 0..32 {
+                        let offset = 8 * 256 + x * 4;
+                        let red = (x < 16) != flipped;
+                        let expected = if red {
+                            [255u8, 0, 0, 255]
+                        } else {
+                            [0u8, 0, 255, 255]
+                        };
+                        assert!(
+                            pixels[offset..offset + 4]
+                                .iter()
+                                .zip(expected)
+                                .all(|(&actual, expected)| actual.abs_diff(expected) <= 2)
+                        );
+                    }
+                    let center = 8 * 256 + 48 * 4;
+                    assert!(
+                        pixels[center] > 100 && pixels[center + 2] > 100,
+                        "smooth neighbor must keep interpolation"
+                    );
+                    assert_eq!(registry.allocated_bytes(), allocated);
+                }
+            }
+            registry.clear();
+            assert_eq!(registry.image_bytes(), 0);
+        });
+    }
+    #[test]
     fn detail_refinement_blends_mips_without_extra_textures_or_geometry_changes() {
         use super::*;
         pollster::block_on(async {

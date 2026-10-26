@@ -7,6 +7,8 @@ pub(super) struct Resize {
     anchor: [f32; 2],
     corner: [f32; 2],
     factor: f32,
+    corner_index: usize,
+    note_height: Option<f32>,
     pub released: bool,
 }
 impl Resize {
@@ -39,6 +41,8 @@ impl Resize {
             anchor: corners[3 - index],
             corner: corners[index],
             factor: 1.,
+            corner_index: index,
+            note_height: None,
             released: false,
         })
     }
@@ -48,9 +52,16 @@ impl Resize {
             self.corner[1] - self.anchor[1],
         ];
         let length = diagonal[0].powi(2) + diagonal[1].powi(2);
-        let factor = ((point[0] - self.anchor[0]) * diagonal[0]
-            + (point[1] - self.anchor[1]) * diagonal[1])
-            / length;
+        let factor = if let [item] = self.items.as_slice()
+            && item.note().is_some()
+        {
+            let (sin, cos) = item.transform.rotation.sin_cos();
+            let width = (point[0] - self.anchor[0]) * cos + (point[1] - self.anchor[1]) * sin;
+            width / item.rect.width * if self.corner_index & 1 == 0 { -1. } else { 1. }
+        } else {
+            ((point[0] - self.anchor[0]) * diagonal[0] + (point[1] - self.anchor[1]) * diagonal[1])
+                / length
+        };
         if factor.is_finite() {
             let factor = factor.clamp(0.001, 1000.);
             if self
@@ -62,7 +73,62 @@ impl Resize {
             }
         }
     }
+    pub fn wrap_note(&mut self, ctx: &egui::Context) {
+        if let [item] = self.items.as_slice()
+            && let Some(text) = item.note()
+        {
+            let previous = self.note_height;
+            self.note_height = Some(
+                super::canvas::measure_note_frame(
+                    ctx,
+                    text,
+                    item.note_font_size(),
+                    Some(item.rect.width * self.factor),
+                )[1],
+            );
+            if !self.rect(item, self.factor).valid() {
+                self.note_height = previous;
+            }
+        }
+    }
+    fn transform(&self, item: &Item) -> moth_scene::Transform {
+        if self.note_height.is_some() {
+            moth_scene::Transform {
+                note_font_size: item.note_font_size(),
+                note_wrap: true,
+                ..item.transform
+            }
+        } else {
+            item.scaled_note_transform(self.factor)
+        }
+    }
     fn rect(&self, item: &Item, factor: f32) -> Rect {
+        if let Some(height) = self.note_height {
+            let width = item.rect.width * factor;
+            let delta = [
+                if self.corner_index & 1 == 0 {
+                    -width
+                } else {
+                    width
+                },
+                if self.corner_index & 2 == 0 {
+                    -height
+                } else {
+                    height
+                },
+            ];
+            let (sin, cos) = item.transform.rotation.sin_cos();
+            let center = [
+                self.anchor[0] + (delta[0] * cos - delta[1] * sin) / 2.,
+                self.anchor[1] + (delta[0] * sin + delta[1] * cos) / 2.,
+            ];
+            return Rect {
+                x: center[0] - width / 2.,
+                y: center[1] - height / 2.,
+                width,
+                height,
+            };
+        }
         Rect {
             x: self.anchor[0] + (item.rect.x - self.anchor[0]) * factor,
             y: self.anchor[1] + (item.rect.y - self.anchor[1]) * factor,
@@ -76,6 +142,7 @@ impl Resize {
             .map(|item| {
                 let mut copy = item.clone();
                 copy.rect = self.rect(item, self.factor);
+                copy.transform = self.transform(item);
                 copy
             })
             .collect()
@@ -86,9 +153,18 @@ impl Resize {
         }
         self.items
             .iter()
-            .map(|item| Command::SetRect {
-                id: item.id,
-                rect: self.rect(item, self.factor),
+            .flat_map(|item| {
+                let mut commands = vec![Command::SetRect {
+                    id: item.id,
+                    rect: self.rect(item, self.factor),
+                }];
+                if item.note().is_some() {
+                    commands.push(Command::SetTransform {
+                        id: item.id,
+                        transform: self.transform(item),
+                    });
+                }
+                commands
             })
             .collect()
     }
@@ -128,10 +204,58 @@ mod tests {
         assert!((fixed[1] - corners[0][1]).abs() < 0.001);
         assert!((preview.rect.width - item.rect.width * 2.).abs() < 0.001);
     }
+    #[test]
+    fn a_single_note_wraps_on_resize_without_changing_its_font_or_anchor() {
+        let ctx = egui::Context::default();
+        moth_ui::theme(&ctx, &moth_ui::Tokens::LIGHT);
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            let mut note = Item::text(
+                "one two three four five six",
+                Rect {
+                    x: 10.,
+                    y: 20.,
+                    width: 300.,
+                    height: 32.,
+                },
+                None,
+            );
+            note.transform.note_font_size = 24.;
+            let mut drag =
+                Resize::start(vec![note.clone()], Camera::default(), [310., 52.], 12.).unwrap();
+            drag.update([110., 31.]);
+            drag.wrap_note(ui.ctx());
+            let preview = drag.previews().remove(0);
+            assert!(preview.rect.width < note.rect.width);
+            assert!(preview.rect.height > note.rect.height);
+            assert_eq!(preview.note_font_size(), 24.);
+            assert!(preview.transform.note_wrap);
+            assert_eq!(preview.rect.x, note.rect.x);
+            assert_eq!(preview.rect.y, note.rect.y);
+            let mut scene = Scene::default();
+            scene.apply(Command::Insert(note.clone())).unwrap();
+            let undo: Vec<_> = drag
+                .commands()
+                .into_iter()
+                .map(|command| scene.apply(command).unwrap())
+                .collect();
+            assert_eq!(scene.get(note.id), Some(&preview));
+            for command in undo.into_iter().rev() {
+                scene.apply(command).unwrap();
+            }
+            assert_eq!(scene.get(note.id), Some(&note));
+        });
+        output.textures_delta.clear();
+    }
     proptest::proptest! {
         #[test]
         fn multi_resize_undo_and_checkpoint_preserve_scene(factor in 0.05f32..10.) {
-            let items = vec![item(10., 120., 0.), item(150., 60., 0.)];
+            let mut note = Item::text("wrapped note text", Rect{x:10., y:20., width:120., height:80.}, None);
+            note.transform.note_font_size = 24.;
+            note.transform.note_wrap = true;
+            let mut image = item(150., 60., 0.);
+            let original = include_bytes!("../../../../corpus/images/rows.png");
+            image.content = moth_scene::Content::Image(moth_io::decode(original, 1).unwrap().hash);
+            let items = vec![note, image];
             let mut scene = Scene::default();
             for item in &items { scene.apply(Command::Insert(item.clone())).unwrap(); }
             let mut drag = Resize::start(items.clone(), Camera::default(), [210., 100.], 12.).unwrap();
@@ -141,6 +265,7 @@ mod tests {
             let payload = moth_format::board::snapshot(&scene).unwrap();
             let mut bytes = Vec::new();
             moth_format::board::initialize(&mut bytes).unwrap();
+            moth_format::board::append(&mut bytes, 16, 1, original).unwrap();
             let offset = bytes.len() as u64;
             moth_format::board::append(&mut bytes, offset, 3, &payload).unwrap();
             let loaded = moth_format::board::read(&mut std::io::Cursor::new(bytes)).unwrap();

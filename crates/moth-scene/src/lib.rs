@@ -104,6 +104,40 @@ impl Rect {
         local[0].abs() <= self.width / 2.0 && local[1].abs() <= self.height / 2.0
     }
 }
+/// Per-image sampling may inherit the current canvas preference.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Sampling {
+    /// Follow the user's canvas preference.
+    #[default]
+    Default = 0,
+    /// Smooth interpolation for photographs and downscaled references.
+    Smooth = 1,
+    /// Keep resident texels sharp when magnifying pixel art.
+    Nearest = 2,
+    /// Switch to sharp texels at or above two screen pixels per source pixel.
+    Automatic = 3,
+}
+impl Sampling {
+    /// Persisted values are validated at the format and settings boundaries.
+    pub fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::Default),
+            1 => Some(Self::Smooth),
+            2 => Some(Self::Nearest),
+            3 => Some(Self::Automatic),
+            _ => None,
+        }
+    }
+    /// Automatic uses original pixel scale, independent of the currently resident mip.
+    pub fn nearest(self, default: Self, pixel_scale: f32) -> bool {
+        match if self == Self::Default { default } else { self } {
+            Self::Nearest => true,
+            Self::Automatic => pixel_scale >= 2.,
+            _ => false,
+        }
+    }
+}
 /// How item content sits inside its frame, plus the frame's own rotation.
 /// Content stays clipped by the frame, so scaling never grows an item's footprint.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -114,6 +148,12 @@ pub struct Transform {
     pub opacity: f32,
     /// Displays luminance while preserving the original colors.
     pub grayscale: bool,
+    /// Image interpolation override; Default follows the canvas setting.
+    pub sampling: Sampling,
+    /// Fixed note font size in world units; zero migrates legacy height-derived sizing.
+    pub note_font_size: f32,
+    /// A fixed-width note wraps instead of expanding to fit its text.
+    pub note_wrap: bool,
     /// Mirrors content horizontally, then vertically, before `content_rotation`.
     pub flip: [bool; 2],
     /// Pans content inside the frame, in frame widths and heights.
@@ -129,6 +169,9 @@ impl Default for Transform {
             rotation: 0.0,
             opacity: 1.0,
             grayscale: false,
+            sampling: Sampling::Default,
+            note_font_size: 0.,
+            note_wrap: false,
             flip: [false; 2],
             content_offset: [0.0; 2],
             content_scale: 1.0,
@@ -142,6 +185,9 @@ impl Transform {
         Self {
             opacity: self.opacity,
             grayscale: self.grayscale,
+            sampling: self.sampling,
+            note_font_size: self.note_font_size,
+            note_wrap: self.note_wrap,
             ..Self::default()
         }
     }
@@ -158,6 +204,9 @@ impl Transform {
         .iter()
         .all(|v| v.is_finite() && v.abs() <= 1e9)
             && self.content_scale > 0.0
+            && self.note_font_size.is_finite()
+            && (0.0..=1e9).contains(&self.note_font_size)
+            && (!self.note_wrap || self.note_font_size > 0.)
             && self.opacity.is_finite()
             && (0.0..=1.0).contains(&self.opacity)
     }
@@ -232,6 +281,25 @@ impl Item {
         match self.content {
             Content::Image(blob) => Some(blob),
             Content::Text(_) => None,
+        }
+    }
+    /// Legacy notes derive text scale from their unwrapped height until first edited.
+    pub fn note_font_size(&self) -> f32 {
+        if self.transform.note_font_size > 0. {
+            self.transform.note_font_size
+        } else {
+            self.rect.height / (self.note().unwrap_or_default().lines().count().max(1) as f32 * 1.3)
+        }
+    }
+    /// Proportional transforms scale note text with the frame; manual widths do not.
+    pub fn scaled_note_transform(&self, factor: f32) -> Transform {
+        if self.note().is_some() {
+            Transform {
+                note_font_size: self.note_font_size() * factor,
+                ..self.transform
+            }
+        } else {
+            self.transform
         }
     }
     /// The note text, or `None` for images.
@@ -478,6 +546,31 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     #[test]
+    fn sampling_inheritance_and_automatic_threshold_use_original_pixels() {
+        assert!(!Sampling::Default.nearest(Sampling::Smooth, 10.));
+        assert!(Sampling::Default.nearest(Sampling::Nearest, 0.5));
+        assert!(!Sampling::Smooth.nearest(Sampling::Nearest, 10.));
+        assert!(Sampling::Nearest.nearest(Sampling::Smooth, 0.5));
+        assert!(!Sampling::Automatic.nearest(Sampling::Smooth, 1.99));
+        assert!(Sampling::Automatic.nearest(Sampling::Smooth, 2.));
+        assert!(Sampling::Default.nearest(Sampling::Automatic, 2.));
+        assert_eq!(Sampling::from_code(4), None);
+        assert!(
+            !Transform {
+                note_font_size: f32::NAN,
+                ..Default::default()
+            }
+            .valid()
+        );
+        assert!(
+            !Transform {
+                note_wrap: true,
+                ..Default::default()
+            }
+            .valid()
+        );
+    }
+    #[test]
     fn source_mapping_undoes_crop_rotation_and_flip() {
         let mut item = Item::image(
             blake3::hash(b"mapping"),
@@ -529,12 +622,12 @@ mod tests {
         assert_eq!(scene.bounds(), None);
     }
     proptest! {
-     #[test] fn apply_undo_identity(x in -10000f32..10000., y in -10000f32..10000., w in 1f32..4096., h in 1f32..4096., rot in -10f32..10., scale in 0.01f32..100., dx in -10f32..10., dy in -10f32..10., opacity in 0f32..=1., grayscale in any::<bool>()) {
+     #[test] fn apply_undo_identity(x in -10000f32..10000., y in -10000f32..10000., w in 1f32..4096., h in 1f32..4096., rot in -10f32..10., scale in 0.01f32..100., dx in -10f32..10., dy in -10f32..10., opacity in 0f32..=1., grayscale in any::<bool>(), sampling in 0u8..4, note_font_size in 1f32..200., note_wrap in any::<bool>()) {
       let mut scene=Scene::default(); let item=Item::image(blake3::hash(b"image"),Rect{x,y,width:w,height:h},None);
       let id=item.id; let inverse=scene.apply(Command::Insert(item.clone())).unwrap();
       let snapshot=scene.query(item.rect).into_iter().cloned().collect::<Vec<_>>();
       let undo=scene.apply(Command::SetRect{id,rect:Rect{x:x+10.,..item.rect}}).unwrap(); scene.apply(undo).unwrap();
-      let transform=Transform{opacity,grayscale,rotation:rot,content_offset:[dx,dy],content_scale:scale,..Transform::default()};
+      let transform=Transform{opacity,grayscale,sampling:Sampling::from_code(sampling).unwrap(),note_font_size,note_wrap,rotation:rot,content_offset:[dx,dy],content_scale:scale,..Transform::default()};
       let undo=scene.apply(Command::SetTransform{id,transform}).unwrap();
       prop_assert_eq!(scene.get(id).unwrap().transform,transform);
       scene.apply(undo).unwrap();

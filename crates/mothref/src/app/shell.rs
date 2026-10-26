@@ -21,6 +21,7 @@ pub(super) struct Frame {
     pub viewport: egui::Rect,
     /// View-only grayscale, never changes board content.
     pub grayscale: bool,
+    pub sampling: moth_scene::Sampling,
 }
 
 /// How a render attempt ended, so the caller can react without reaching into the GPU.
@@ -172,6 +173,7 @@ impl Shell {
         // Resize events can lag window.inner_size(); clip to the acquired attachment.
         let size = texture.texture.size();
         gpu.registry.grayscale = frame.grayscale;
+        gpu.registry.sampling = frame.sampling;
         let jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);
         let screen = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [size.width, size.height],

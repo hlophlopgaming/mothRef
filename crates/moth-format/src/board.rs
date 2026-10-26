@@ -7,7 +7,9 @@ use std::{
     io::{self, SeekFrom, Write},
 };
 
-const HEADER: &[u8; 16] = b"MOTH\x04\0\0\0\0\0\0\0\0\0\0\0";
+const HEADER: &[u8; 16] = b"MOTH\x05\0\0\0\0\0\0\0\0\0\0\0";
+/// Schema-4 boards predate sampling and fixed-width notes.
+const HEADER_V4: &[u8; 16] = b"MOTH\x04\0\0\0\0\0\0\0\0\0\0\0";
 /// Schema-3 boards predate appearance and source names.
 const HEADER_V3: &[u8; 16] = b"MOTH\x03\0\0\0\0\0\0\0\0\0\0\0";
 /// Schema-2 boards predate notes; the reader still accepts them.
@@ -19,12 +21,12 @@ const FOOTER_SIZE: u64 = 96;
 /// Bounds allocations even for malicious input lengths.
 pub const MAX_RECORD: u64 = 256 * 1024 * 1024;
 /// Longest accepted image command payload: the largest fractional index plus its fixed fields.
-const MAX_COMMAND: u64 = 5213;
+const MAX_COMMAND: u64 = 5219;
 /// Bytes of fixed command fields after the tag, before a schema-2 insert's fractional index.
 const INSERT_V2_FIXED: usize = 86;
 /// Bytes of fixed fields before a text insert's fractional index: tag, id, u32 length,
 /// rectangle and transform (the UTF-8 text sits between the length and the rectangle).
-const INSERT_TEXT_FIXED: usize = 1 + 16 + 4 + 16 + 26;
+const INSERT_TEXT_FIXED: usize = 1 + 16 + 4 + 16 + 32;
 /// Longest accepted text insert or SetText command (text plus a fractional index).
 const MAX_TEXT_COMMAND: u64 =
     INSERT_TEXT_FIXED as u64 + moth_scene::MAX_NOTE_BYTES as u64 + 4096 + 1026;
@@ -97,7 +99,7 @@ pub fn encode(command: &Command) -> Vec<u8> {
     match command {
         Command::Insert(item) => match &item.content {
             Content::Image(blob) => {
-                bytes.push(8);
+                bytes.push(11);
                 bytes.extend_from_slice(item.id.as_bytes());
                 bytes.extend_from_slice(blob.as_bytes());
                 rect_bytes(&mut bytes, item.rect);
@@ -107,7 +109,7 @@ pub fn encode(command: &Command) -> Vec<u8> {
                 bytes.extend_from_slice(item.z.as_bytes());
             }
             Content::Text(text) => {
-                bytes.push(9);
+                bytes.push(12);
                 bytes.extend_from_slice(item.id.as_bytes());
                 bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
                 bytes.extend_from_slice(text.as_bytes());
@@ -128,7 +130,7 @@ pub fn encode(command: &Command) -> Vec<u8> {
             rect_bytes(&mut bytes, *rect);
         }
         Command::SetTransform { id, transform } => {
-            bytes.push(10);
+            bytes.push(13);
             bytes.extend_from_slice(id.as_bytes());
             transform_bytes(&mut bytes, *transform);
         }
@@ -191,6 +193,9 @@ fn transform_bytes(bytes: &mut Vec<u8>, t: Transform) {
     bytes.extend_from_slice(&t.content_rotation.to_le_bytes());
     bytes.extend_from_slice(&t.opacity.to_le_bytes());
     bytes.push(t.grayscale as u8);
+    bytes.push(t.sampling as u8);
+    bytes.extend_from_slice(&t.note_font_size.to_le_bytes());
+    bytes.push(t.note_wrap as u8);
 }
 fn decode(bytes: &[u8]) -> Result<Command, Error> {
     let id =
@@ -205,7 +210,7 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
         ))
     };
     let rect = || -> Result<Rect, Error> {
-        let start = if matches!(bytes[0], 1 | 4 | 8) {
+        let start = if matches!(bytes[0], 1 | 4 | 8 | 11) {
             49
         } else {
             17
@@ -221,13 +226,33 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
         let flags = *bytes.get(start + 4).ok_or(Error::Invalid)?;
         Ok(Transform {
             rotation: float(start, 0)?,
-            opacity: if matches!(bytes[0], 8..=10) {
+            opacity: if matches!(bytes[0], 8..=13) {
                 float(start + 21, 0)?
             } else {
                 1.0
             },
-            grayscale: if matches!(bytes[0], 8..=10) {
+            grayscale: if matches!(bytes[0], 8..=13) {
                 match bytes.get(start + 25) {
+                    Some(0) => false,
+                    Some(1) => true,
+                    _ => return Err(Error::Invalid),
+                }
+            } else {
+                false
+            },
+            sampling: if matches!(bytes[0], 11..=13) {
+                moth_scene::Sampling::from_code(*bytes.get(start + 26).ok_or(Error::Invalid)?)
+                    .ok_or(Error::Invalid)?
+            } else {
+                moth_scene::Sampling::Default
+            },
+            note_font_size: if matches!(bytes[0], 11..=13) {
+                float(start + 27, 0)?
+            } else {
+                0.
+            },
+            note_wrap: if matches!(bytes[0], 11..=13) {
+                match bytes.get(start + 31) {
                     Some(0) => false,
                     Some(1) => true,
                     _ => return Err(Error::Invalid),
@@ -271,12 +296,12 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             z: fractional_index::FractionalIndex::from_bytes(bytes[65..].to_vec())
                 .map_err(|_| Error::Invalid)?,
         })),
-        4 | 8
-            if bytes.len() > INSERT_V2_FIXED + if bytes[0] == 8 { 5 } else { 0 }
+        4 | 8 | 11
+            if bytes.len() > INSERT_V2_FIXED + if bytes[0] >= 8 { 5 } else { 0 }
                 && bytes.len() as u64 <= MAX_COMMAND =>
         {
-            let (name, index) = if bytes[0] == 8 {
-                name_index(91)?
+            let (name, index) = if bytes[0] >= 8 {
+                name_index(if bytes[0] == 11 { 97 } else { 91 })?
             } else {
                 (String::new(), 86)
             };
@@ -292,8 +317,16 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
                     .map_err(|_| Error::Invalid)?,
             }))
         }
-        6 | 9
-            if bytes.len() > INSERT_TEXT_FIXED - if bytes[0] == 6 { 5 } else { 0 }
+        6 | 9 | 12
+            if bytes.len()
+                > INSERT_TEXT_FIXED
+                    - if bytes[0] == 6 {
+                        11
+                    } else if bytes[0] == 9 {
+                        6
+                    } else {
+                        0
+                    }
                 && bytes.len() as u64 <= MAX_TEXT_COMMAND =>
         {
             let text_len =
@@ -312,8 +345,8 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
                 height: float(rect_start, 3)?,
             };
             let transform_start = rect_start + 16;
-            let (name, index) = if bytes[0] == 9 {
-                name_index(transform_start + 26)?
+            let (name, index) = if bytes[0] >= 9 {
+                name_index(transform_start + if bytes[0] == 12 { 32 } else { 26 })?
             } else {
                 (String::new(), transform_start + 21)
             };
@@ -329,7 +362,15 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
         }
         2 if bytes.len() == 17 => Ok(Command::Remove(id)),
         3 if bytes.len() == 33 => Ok(Command::SetRect { id, rect: rect()? }),
-        5 | 10 if bytes.len() == SET_TRANSFORM_LEN + if bytes[0] == 10 { 5 } else { 0 } => {
+        5 | 10 | 13
+            if bytes.len()
+                == SET_TRANSFORM_LEN
+                    + match bytes[0] {
+                        13 => 11,
+                        10 => 5,
+                        _ => 0,
+                    } =>
+        {
             Ok(Command::SetTransform {
                 id,
                 transform: transform(17)?,
@@ -357,7 +398,12 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
     reader.seek(SeekFrom::Start(0))?;
     let mut header = [0; 16];
     reader.read_exact(&mut header)?;
-    if &header != HEADER && &header != HEADER_V3 && &header != HEADER_V2 && &header != HEADER_V1 {
+    if &header != HEADER
+        && &header != HEADER_V4
+        && &header != HEADER_V3
+        && &header != HEADER_V2
+        && &header != HEADER_V1
+    {
         return Err(Error::Invalid);
     }
     let length = reader.seek(SeekFrom::End(0))?;
@@ -638,8 +684,58 @@ mod tests {
     #[test]
     fn unsupported_schema_is_rejected() {
         let (mut bytes, _) = base();
-        bytes[4] = 5;
+        bytes[4] = 6;
         assert!(matches!(read(&mut Cursor::new(bytes)), Err(Error::Invalid)));
+    }
+    #[test]
+    fn schema_five_fixture_keeps_sampling_and_wrapped_note_metrics() {
+        let bytes = include_bytes!("../../../corpus/moth/v5.moth");
+        assert_eq!(bytes[4], 5);
+        let board = read(&mut Cursor::new(bytes.as_slice())).unwrap();
+        assert!(board.scene.items().any(|item| item.blob().is_some()
+            && item.transform.sampling == moth_scene::Sampling::Nearest));
+        assert!(board.scene.items().any(|item| item.note().is_some()
+            && item.transform.note_wrap
+            && item.transform.note_font_size == 24.));
+        let restored = restore(&snapshot(&board.scene).unwrap(), &board.blobs).unwrap();
+        for item in board.scene.items() {
+            assert_eq!(restored.get(item.id), Some(item));
+        }
+    }
+    #[test]
+    fn schema_four_migrates_without_losing_appearance_or_text() {
+        let bytes = include_bytes!("../../../corpus/moth/v4.moth");
+        assert_eq!(bytes[4], 4);
+        let old = read(&mut Cursor::new(bytes.as_slice())).unwrap();
+        let migrated = restore(&snapshot(&old.scene).unwrap(), &old.blobs).unwrap();
+        for item in old.scene.items() {
+            assert_eq!(item.transform.sampling, moth_scene::Sampling::Default);
+            assert_eq!(item.transform.note_font_size, 0.);
+            assert!(!item.transform.note_wrap);
+            assert_eq!(migrated.get(item.id), Some(item));
+        }
+    }
+    #[test]
+    fn invalid_schema_five_sampling_and_note_fields_are_rejected() {
+        let (_, item) = base();
+        let transform = Transform {
+            note_font_size: 24.,
+            note_wrap: true,
+            ..Default::default()
+        };
+        let valid = encode(&Command::SetTransform {
+            id: item.id,
+            transform,
+        });
+        assert!(decode(&valid).is_ok());
+        for (offset, value) in [(17 + 26, 4), (17 + 31, 2)] {
+            let mut invalid = valid.clone();
+            invalid[offset] = value;
+            assert!(decode(&invalid).is_err());
+        }
+        for cut in 0..valid.len() {
+            assert!(decode(&valid[..cut]).is_err());
+        }
     }
     #[test]
     fn schema_three_migrates_appearance_and_names() {
@@ -680,6 +776,9 @@ mod tests {
             content_offset: [-0.25, 1.5],
             content_scale: 2.5,
             content_rotation: -0.5,
+            sampling: moth_scene::Sampling::Nearest,
+            note_font_size: 24.,
+            note_wrap: true,
             ..Transform::default()
         };
         let mut scene = read(&mut Cursor::new(&bytes)).unwrap().scene;
@@ -795,10 +894,10 @@ mod tests {
     }
     proptest! {
         #[test]
-        fn scene_roundtrip(x in -10000f32..10000., y in -10000f32..10000., rotation in -10f32..10., scale in 0.01f32..100., dx in -5f32..5., dy in -5f32..5., mirror in any::<bool>(), spin in -10f32..10., opacity in 0f32..=1., grayscale in any::<bool>(), name in "[a-zA-Z0-9_]{0,40}[.]png") {
+        fn scene_roundtrip(x in -10000f32..10000., y in -10000f32..10000., rotation in -10f32..10., scale in 0.01f32..100., dx in -5f32..5., dy in -5f32..5., mirror in any::<bool>(), spin in -10f32..10., opacity in 0f32..=1., grayscale in any::<bool>(), sampling in 0u8..4, note_font_size in 1f32..200., note_wrap in any::<bool>(), name in "[a-zA-Z0-9_]{0,40}[.]png") {
             let (mut bytes,mut item)=base();
             item.rect.x=x; item.rect.y=y; item.name=name;
-            item.transform=Transform{opacity,grayscale,rotation,flip:[mirror,!mirror],content_offset:[dx,dy],content_scale:scale,content_rotation:spin};
+            item.transform=Transform{opacity,grayscale,sampling:moth_scene::Sampling::from_code(sampling).unwrap(),note_font_size,note_wrap,rotation,flip:[mirror,!mirror],content_offset:[dx,dy],content_scale:scale,content_rotation:spin};
             let offset=bytes.len() as u64;
             append(&mut bytes,offset,2,&encode(&Command::Remove(item.id))).unwrap();
             let offset=bytes.len() as u64;

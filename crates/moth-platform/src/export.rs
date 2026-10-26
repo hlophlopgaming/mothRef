@@ -84,7 +84,7 @@ pub enum Target {
         point: [f32; 2],
     },
 }
-/// A single slot bounds viewer copies to one original across boards (MAX_RECORD bytes).
+/// A single slot bounds viewer copies to one original per board (MAX_RECORD bytes).
 fn viewer_image(
     storage: &DesktopStorage,
     sources: &HashMap<BlobId, Handle>,
@@ -102,7 +102,7 @@ fn viewer_image(
             "This original cannot be opened in a system viewer; export it as PNG",
         ));
     }
-    let directory = storage.base_directory()?.join("viewer");
+    let directory = storage.recovery_directory()?.join("viewer");
     std::fs::create_dir_all(&directory)?;
     let path = directory.join(format!("{hash}.{extension}"));
     // Recreate the slot so a viewer's edits can never masquerade as the board original.
@@ -247,7 +247,11 @@ pub(super) fn image_geometry(
                 commands.push(moth_scene::Command::SetRect { id: *id, rect });
                 commands.push(moth_scene::Command::SetTransform {
                     id: *id,
-                    transform: item.transform.reset_geometry(),
+                    transform: moth_scene::Transform {
+                        note_font_size: moth_scene::NOTE_FONT_SIZE,
+                        note_wrap: false,
+                        ..item.transform.reset_geometry()
+                    },
                 });
             }
             continue;
@@ -598,6 +602,68 @@ fn bounds(items: &[&Item], region: Option<Rect>) -> io::Result<Rect> {
         .then_some(rect)
         .ok_or_else(|| error("Export bounds exceed budget"))
 }
+fn note_export_lines(
+    text: &str,
+    size: f32,
+    width: f32,
+    options: &resvg::usvg::Options,
+) -> io::Result<Vec<String>> {
+    let measure = |line: &str| -> io::Result<f32> {
+        let source = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><text xml:space="preserve" y="{size}" font-family="Noto Sans" font-size="{size}">{}</text></svg>"#,
+            escape(line)
+        );
+        let tree = resvg::usvg::Tree::from_str(&source, options).map_err(error)?;
+        Ok(tree.root().abs_bounding_box().width())
+    };
+    let mut lines = Vec::new();
+    for paragraph in text.split('\n') {
+        if paragraph.is_empty() {
+            lines.push(String::new());
+            continue;
+        }
+        let ends: Vec<_> = paragraph
+            .char_indices()
+            .map(|(i, c)| i + c.len_utf8())
+            .collect();
+        let mut start = 0;
+        while start < ends.len() {
+            let begin = if start == 0 { 0 } else { ends[start - 1] };
+            // Exponential probing bounds shaping work even for a 32 KiB line in a narrow frame.
+            let mut fit = start + 1;
+            let mut high = fit;
+            while high < ends.len() && measure(&paragraph[begin..ends[high - 1]])? <= width {
+                fit = high;
+                high = (start + (high - start) * 2).min(ends.len());
+            }
+            if measure(&paragraph[begin..ends[high - 1]])? <= width {
+                fit = high;
+            } else {
+                while high > fit + 1 {
+                    let middle = fit + (high - fit) / 2;
+                    if measure(&paragraph[begin..ends[middle - 1]])? <= width {
+                        fit = middle;
+                    } else {
+                        high = middle;
+                    }
+                }
+            }
+            if fit < ends.len()
+                && let Some(boundary) = (start..fit).rev().find(|&i| {
+                    paragraph[..ends[i]]
+                        .chars()
+                        .next_back()
+                        .is_some_and(char::is_whitespace)
+                })
+            {
+                fit = boundary + 1;
+            }
+            lines.push(paragraph[begin..ends[fit - 1]].to_owned());
+            start = fit;
+        }
+    }
+    Ok(lines)
+}
 fn svg(
     storage: &DesktopStorage,
     sources: &HashMap<BlobId, Handle>,
@@ -612,6 +678,15 @@ fn svg(
         r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{width}" height="{height}" viewBox="{} {} {} {}"><defs><filter id="gray" color-interpolation-filters="linearRGB"><feColorMatrix type="saturate" values="0"/></filter></defs>"#,
         bounds.x, bounds.y, bounds.width, bounds.height
     );
+    let mut note_options = resvg::usvg::Options::default();
+    if items
+        .iter()
+        .any(|item| item.note().is_some() && item.transform.note_wrap)
+    {
+        note_options
+            .fontdb_mut()
+            .load_font_data(include_bytes!("../../moth-ui/fonts/NotoSans-Regular.ttf").to_vec());
+    }
     for (index, item) in items.iter().enumerate() {
         let r = item.rect;
         let t = item.transform;
@@ -633,12 +708,16 @@ fn svg(
                 decoded.original[0] as f32 * fit,
                 decoded.original[1] as f32 * fit,
             );
-            svg.push_str(&format!(r#"<g transform="rotate({}) translate({} {}) scale({} {})"><image x="{}" y="{}" width="{w}" height="{h}" {} xlink:href="data:image/png;base64,{}"/></g>"#,t.content_rotation.to_degrees(),t.content_offset[0]*r.width,t.content_offset[1]*r.height,if t.flip[0]{-1}else{1},if t.flip[1]{-1}else{1},-w/2.,-h/2.,if t.grayscale{r#"filter="url(#gray)""#}else{""},STANDARD.encode(png)));
+            svg.push_str(&format!(r#"<g transform="rotate({}) translate({} {}) scale({} {})"><image x="{}" y="{}" width="{w}" height="{h}" image-rendering="{}" {} xlink:href="data:image/png;base64,{}"/></g>"#,t.content_rotation.to_degrees(),t.content_offset[0]*r.width,t.content_offset[1]*r.height,if t.flip[0]{-1}else{1},if t.flip[1]{-1}else{1},-w/2.,-h/2.,if t.sampling.nearest(moth_scene::Sampling::Smooth, fit * scale){"optimizeSpeed"}else{"optimizeQuality"},if t.grayscale{r#"filter="url(#gray)""#}else{""},STANDARD.encode(png)));
         } else if let Some(text) = item.note() {
-            let rows = text.lines().count().max(1) as f32;
-            let size = r.height / (rows * 1.3);
+            let size = item.note_font_size();
+            let lines: Vec<String> = if t.note_wrap {
+                note_export_lines(text, size, r.width, &note_options)?
+            } else {
+                text.split('\n').map(str::to_owned).collect()
+            };
             svg.push_str(&format!(r##"<rect x="{}" y="{}" width="{}" height="{}" fill="#272a32" fill-opacity="0.9215686" stroke="#30343c"/><text fill="#e0e2e7" font-family="Noto Sans" font-size="{size}">"##,-r.width/2.,-r.height/2.,r.width,r.height));
-            for (row, line) in text.lines().enumerate() {
+            for (row, line) in lines.iter().enumerate() {
                 svg.push_str(&format!(
                     r#"<tspan x="{}" y="{}">{}</tspan>"#,
                     -r.width / 2.,
@@ -714,6 +793,22 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    fn wrapped_note_export_uses_fixed_font_and_preserves_unicode_text() {
+        let text = "one two three four пять шесть\nlast line";
+        let mut options = resvg::usvg::Options::default();
+        options
+            .fontdb_mut()
+            .load_font_data(include_bytes!("../../moth-ui/fonts/NotoSans-Regular.ttf").to_vec());
+        let lines = note_export_lines(text, 24., 100., &options).unwrap();
+        assert!(lines.len() > 2);
+        assert_eq!(lines.concat(), text.replace('\n', ""));
+        let narrow = note_export_lines("Русский", 24., 0.001, &options).unwrap();
+        assert_eq!(narrow.len(), 7);
+        assert_eq!(narrow.concat(), "Русский");
+        let empty = note_export_lines("\n", 24., 100., &options).unwrap();
+        assert_eq!(empty, ["", ""]);
+    }
+    #[test]
     fn color_formats_cover_hue_gray_and_black() {
         assert_eq!(
             color([255, 0, 0]),
@@ -751,6 +846,7 @@ mod tests {
             content_rotation: 0.5,
             opacity: 0.4,
             grayscale: true,
+            ..Default::default()
         };
         let id = item.id;
         let mut scene = Scene::default();

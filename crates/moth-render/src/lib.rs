@@ -45,7 +45,7 @@ struct Instance {
     region: [f32; 4],
     layer: u32,
     lod: f32,
-    appearance: [f32; 3],
+    appearance: [f32; 4],
 }
 /// Content geometry of one item, shared by rendering and the scene-level hit tests.
 struct Content {
@@ -159,6 +159,8 @@ pub enum RenderError {
 pub struct Registry {
     /// Optional view-only grayscale leaves image metadata unchanged.
     pub grayscale: bool,
+    /// Default interpolation for items without a persisted override.
+    pub sampling: moth_scene::Sampling,
     /// Low-quality mode keeps its preview ceiling instead of requesting original tiles.
     pub tile_detail: bool,
     /// Images whose longer side exceeds this are drawn from tiles
@@ -225,7 +227,7 @@ impl Registry {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{label:Some("quads"),layout:Some(&pipeline_layout),vertex:wgpu::VertexState{module:&shader,entry_point:Some("vs"),buffers:&[Some(wgpu::VertexBufferLayout{array_stride:std::mem::size_of::<Instance>() as u64,step_mode:wgpu::VertexStepMode::Instance,attributes:&wgpu::vertex_attr_array![0=>Float32x2,1=>Float32x2,2=>Float32x2,3=>Float32x2,4=>Float32x2,5=>Float32x2,6=>Float32x2,7=>Float32x2,8=>Float32x4,9=>Uint32,10=>Float32,11=>Float32x3]})],compilation_options:Default::default()},fragment:Some(wgpu::FragmentState{module:&shader,entry_point:Some("fs"),targets:&[Some(wgpu::ColorTargetState{format,blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})],compilation_options:wgpu::PipelineCompilationOptions{constants:&[("OUTPUT_SRGB",if format.is_srgb(){1.}else{0.})],..Default::default()}}),primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview_mask:None,cache:None});
+        let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{label:Some("quads"),layout:Some(&pipeline_layout),vertex:wgpu::VertexState{module:&shader,entry_point:Some("vs"),buffers:&[Some(wgpu::VertexBufferLayout{array_stride:std::mem::size_of::<Instance>() as u64,step_mode:wgpu::VertexStepMode::Instance,attributes:&wgpu::vertex_attr_array![0=>Float32x2,1=>Float32x2,2=>Float32x2,3=>Float32x2,4=>Float32x2,5=>Float32x2,6=>Float32x2,7=>Float32x2,8=>Float32x4,9=>Uint32,10=>Float32,11=>Float32x4]})],compilation_options:Default::default()},fragment:Some(wgpu::FragmentState{module:&shader,entry_point:Some("fs"),targets:&[Some(wgpu::ColorTargetState{format,blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})],compilation_options:wgpu::PipelineCompilationOptions{constants:&[("OUTPUT_SRGB",if format.is_srgb(){1.}else{0.})],..Default::default()}}),primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview_mask:None,cache:None});
         let grid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("canvas grid"),
             source: wgpu::ShaderSource::Wgsl(include_str!("grid.wgsl").into()),
@@ -273,6 +275,7 @@ impl Registry {
         });
         Self {
             grayscale: false,
+            sampling: moth_scene::Sampling::Smooth,
             tile_detail: true,
             tile_threshold: moth_io::MAX_SIDE,
             keep_all: false,
@@ -1035,6 +1038,13 @@ impl Registry {
             - item.transform.content_scale.log2())
         .max(slot.detail_lod)
         .min(slot.mips.saturating_sub(1) as f32);
+        let pixel_scale = (item.rect.width / slot.original[0] as f32)
+            .max(item.rect.height / slot.original[1] as f32)
+            * item.transform.content_scale
+            * camera.zoom
+            * scale;
+        let nearest = item.transform.sampling.nearest(self.sampling, pixel_scale);
+        let base_lod = if nearest { base_lod.round() } else { base_lod };
         let appearance = [
             item.transform.opacity,
             if item.transform.grayscale || self.grayscale {
@@ -1043,6 +1053,7 @@ impl Registry {
                 0.
             },
             0.,
+            if nearest { 1. } else { 0. },
         ];
         let clip = target.clip.map_or(
             [0., 0., target.screen[0], target.screen[1]],
@@ -1125,7 +1136,7 @@ impl Registry {
                 region,
                 layer: layer as u32,
                 lod: 0.,
-                appearance: [appearance[0], appearance[1], continuous],
+                appearance: [appearance[0], appearance[1], continuous, appearance[3]],
             });
             classes.push(class);
         }

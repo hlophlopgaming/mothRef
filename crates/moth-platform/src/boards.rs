@@ -377,7 +377,7 @@ impl State {
         file.seek(SeekFrom::Start(0))?;
         let mut header = [0u8; 16];
         file.read_exact(&mut header)?;
-        if header[4] < 4 {
+        if header[4] < 5 {
             drop(file);
             let handle = self.storage.register(path.clone())?;
             let result = board::compact(self.storage.as_ref(), handle).map_err(error);
@@ -1243,7 +1243,7 @@ mod tests {
             ))
             .unwrap();
         state.request(Request::Save(path.clone())).unwrap();
-        assert_eq!(std::fs::read(&path).unwrap()[4], 4);
+        assert_eq!(std::fs::read(&path).unwrap()[4], 5);
         let loaded = board::read(&mut File::open(path).unwrap()).unwrap();
         assert_eq!(loaded.scene.get(original.id).unwrap().transform, transform);
         state.journal = None;

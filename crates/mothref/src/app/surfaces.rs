@@ -32,6 +32,12 @@ const NORMALIZE: &[Slot] = &[
     A(ResetScale),
     A(NormalizeScale),
 ];
+const SAMPLING: &[Slot] = &[
+    A(SamplingDefault),
+    A(SamplingSmooth),
+    A(SamplingNearest),
+    A(SamplingAutomatic),
+];
 const TRANSFORM: &[Slot] = &[
     A(RotateCw),
     A(RotateCcw),
@@ -76,6 +82,7 @@ const VIEW: &[Slot] = &[
 pub(super) const CONTEXT_MENU: &[Slot] = &[
     G(Text::CategoryView, VIEW),
     G(Text::Content, TRANSFORM),
+    G(Text::ImageSampling, SAMPLING),
     G(Text::Arrange, ARRANGE),
     G(Text::Normalize, NORMALIZE),
     G(Text::AlignGroup, ALIGN),
@@ -107,6 +114,7 @@ pub(super) enum SelectionKind {
     Note,
 }
 const IMAGE_BAR: &[Slot] = &[
+    G(Text::ImageSampling, SAMPLING),
     A(Focus),
     A(RotateCw),
     A(FlipHorizontal),

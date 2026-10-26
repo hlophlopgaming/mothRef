@@ -200,7 +200,7 @@ fn killtest_impl(count: usize, loading: bool) -> anyhow::Result<()> {
 }
 pub fn fixture() -> anyhow::Result<()> {
     std::fs::create_dir_all("corpus/moth")?;
-    // corpus/moth/v1.moth through v3.moth are frozen migration fixtures;
+    // corpus/moth/v1.moth through v4.moth are frozen migration fixtures;
     // regenerating them with the current writer would erase that coverage.
     let mut bytes = Vec::new();
     board::initialize(&mut bytes)?;
@@ -216,11 +216,13 @@ pub fn fixture() -> anyhow::Result<()> {
         content_rotation: -0.5,
         opacity: 0.4,
         grayscale: true,
+        sampling: moth_scene::Sampling::Nearest,
+        ..Default::default()
     };
     item.name = "rows.png".into();
     scene.apply(Command::Insert(item))?;
-    scene.apply(Command::Insert(Item::text(
-        "a note",
+    let mut note = Item::text(
+        "a note that wraps to a fixed frame width",
         Rect {
             x: 10.,
             y: 20.,
@@ -228,10 +230,13 @@ pub fn fixture() -> anyhow::Result<()> {
             height: 40.,
         },
         None,
-    )))?;
+    );
+    note.transform.note_font_size = 24.;
+    note.transform.note_wrap = true;
+    scene.apply(Command::Insert(note))?;
     let offset = bytes.len() as u64;
     board::append(&mut bytes, offset, 3, &board::snapshot(&scene)?)?;
-    std::fs::write("corpus/moth/v4.moth", bytes)?;
+    std::fs::write("corpus/moth/v5.moth", bytes)?;
     Ok(())
 }
 pub fn roundtrip(path: &Path) -> anyhow::Result<()> {

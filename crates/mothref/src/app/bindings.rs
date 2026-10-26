@@ -128,6 +128,10 @@ actions! {
     ExportOriginal, ExportOriginal, "", None;
     ExportOriginals, ExportOriginals, "", None;
     ExportZip, ExportZip, "", None;
+    SamplingDefault, SamplingDefault, "", None;
+    SamplingSmooth, SamplingSmooth, "", None;
+    SamplingNearest, SamplingNearest, "", None;
+    SamplingAutomatic, SamplingAutomatic, "", None;
     OpenOriginal, OpenOriginal, "", Some(moth_ui::icons::Icon::ImagePlus);
     CopyImage, CopyImage, "", None;
     ClearDiskCache, ClearDiskCache, "", Some(moth_ui::icons::Icon::Close);

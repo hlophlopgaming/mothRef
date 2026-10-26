@@ -17,7 +17,7 @@ Unit tests check area averaging, Adam7 equivalence, DCT preview allocation,
 scratch-record identity/checksum and truncation at every byte.
 
 - `moth/v1.moth`: schema-one checkpoint with one UUIDv7 image and its original
-  `rows.png` bytes. Regenerate intentionally with `cargo xtask fixture`.
+  `rows.png` bytes. This migration fixture is frozen.
 
 `cargo xtask corpus` decodes every image fixture and round-trips every `.moth`
 fixture, comparing all item metadata. `.bee` and `.pur` fixtures arrive in M2.
@@ -74,3 +74,8 @@ PureRef 2.1.2), intentionally excluded from the committed corpus. Run
 `cargo xtask pur FemaleFighterPosesPack.pur` to check the real storage worker,
 `.moth` save/reload, original blob identities and grouped undo/redo. The schema
 column-order regression is represented in unit tests without redistributing art.
+
+Frozen board migrations: `moth/v1.moth` through `moth/v4.moth` retain their
+original layouts. `moth/v5.moth` exercises per-image nearest-neighbor sampling
+and fixed-width text with an explicit font size. `cargo xtask fixture` regenerates
+only `v5.moth`; older fixtures must stay unchanged.

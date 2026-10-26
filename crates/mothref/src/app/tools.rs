@@ -37,6 +37,7 @@ pub(super) struct Tools {
     pub arrange_open: bool,
     pub export_open: bool,
     pub picker_open: bool,
+    pub viewer_open: bool,
 }
 impl Default for Tools {
     fn default() -> Self {
@@ -72,6 +73,7 @@ impl Default for Tools {
             arrange_open: false,
             export_open: false,
             picker_open: false,
+            viewer_open: false,
         }
     }
 }
@@ -132,7 +134,12 @@ impl Tools {
         enabled: &[bool],
         registry: &Registry,
     ) -> Vec<Intent> {
-        if !self.inspector && !self.arrange_open && !self.export_open && !self.picker_open {
+        if !self.inspector
+            && !self.arrange_open
+            && !self.export_open
+            && !self.picker_open
+            && !self.viewer_open
+        {
             return Vec::new();
         }
         let mut intents = Vec::new();
@@ -161,7 +168,18 @@ impl Tools {
                                 return;
                             };
                             ui.label(&item.name);
+                            let previous_width = frame.width;
                             rect(ui, frame);
+                            if item.note().is_some() {
+                                if t.note_font_size == 0. {
+                                    t.note_font_size = item.note_font_size();
+                                }
+                                if frame.width != previous_width {
+                                    t.note_wrap = true;
+                                }
+                                ui.checkbox(&mut t.note_wrap, text(Text::NoteWrap));
+                                number(ui, Text::NoteFontSize, &mut t.note_font_size, 0.001..=1e9);
+                            }
                             let mut degrees = t.rotation.to_degrees();
                             number(ui, Text::Rotation, &mut degrees, -36000.0..=36000.0);
                             t.rotation = degrees.to_radians();
@@ -184,6 +202,29 @@ impl Tools {
                                 item.blob().is_some(),
                                 egui::Checkbox::new(&mut t.flip[1], text(Text::FlipVertical)),
                             );
+                            if item.blob().is_some() {
+                                let labels = [
+                                    Text::SamplingDefault,
+                                    Text::SamplingSmooth,
+                                    Text::SamplingNearest,
+                                    Text::SamplingAutomatic,
+                                ];
+                                egui::ComboBox::from_id_salt("image_sampling")
+                                    .selected_text(text(labels[t.sampling as usize]))
+                                    .show_ui(ui, |ui| {
+                                        for (index, label) in labels.into_iter().enumerate() {
+                                            if let Some(sampling) =
+                                                moth_scene::Sampling::from_code(index as u8)
+                                            {
+                                                ui.selectable_value(
+                                                    &mut t.sampling,
+                                                    sampling,
+                                                    text(label),
+                                                );
+                                            }
+                                        }
+                                    });
+                            }
                             ui.add_enabled_ui(item.blob().is_some(), |ui| {
                                 ui.collapsing(text(Text::Content), |ui| {
                                     number(
@@ -274,6 +315,13 @@ impl Tools {
                 }
             });
         self.arrange_open = open;
+        let mut open = self.viewer_open;
+        egui::Window::new(text(Text::OpenOriginal))
+            .open(&mut open)
+            .show(ui.ctx(), |ui| {
+                export_feedback(ui, board);
+            });
+        self.viewer_open = open;
         let mut open = self.export_open;
         egui::Window::new(text(Text::Export))
             .open(&mut open)

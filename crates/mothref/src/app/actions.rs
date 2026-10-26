@@ -105,6 +105,21 @@ impl App {
         if matches!(action, Export | SampleColor | CoordinatePicker) {
             return self.workspace.board.idle() && !self.workspace.board.scene.is_empty();
         }
+        if matches!(
+            action,
+            SamplingDefault | SamplingSmooth | SamplingNearest | SamplingAutomatic
+        ) {
+            return self.workspace.board.idle()
+                && !self.tools.locked
+                && !self.workspace.board.selection.is_empty()
+                && self.workspace.board.selection.iter().all(|id| {
+                    self.workspace
+                        .board
+                        .scene
+                        .get(*id)
+                        .is_some_and(|item| item.blob().is_some())
+                });
+        }
         if action == EditNote {
             return self.workspace.board.idle()
                 && !self.tools.locked
@@ -283,13 +298,44 @@ impl App {
                 self.tools.picker_open = true;
                 return;
             }
+            SamplingDefault | SamplingSmooth | SamplingNearest | SamplingAutomatic => {
+                let sampling = match action {
+                    SamplingSmooth => moth_scene::Sampling::Smooth,
+                    SamplingNearest => moth_scene::Sampling::Nearest,
+                    SamplingAutomatic => moth_scene::Sampling::Automatic,
+                    _ => moth_scene::Sampling::Default,
+                };
+                Intent::Commands(
+                    items
+                        .iter()
+                        .filter(|item| item.transform.sampling != sampling)
+                        .map(|item| Command::SetTransform {
+                            id: item.id,
+                            transform: Transform {
+                                sampling,
+                                ..item.transform
+                            },
+                        })
+                        .collect(),
+                )
+            }
             ApplyItem => {
-                let Some((id, rect, transform)) = self.tools.draft else {
+                let Some((id, mut rect, transform)) = self.tools.draft else {
                     return;
                 };
                 let Some(item) = self.workspace.board.scene.get(id) else {
                     return;
                 };
+                if let Some(text) = item.note() {
+                    let [width, height] = canvas::measure_note_frame(
+                        self.shell.context(),
+                        text,
+                        transform.note_font_size.max(0.001),
+                        transform.note_wrap.then_some(rect.width),
+                    );
+                    rect.width = width;
+                    rect.height = height;
+                }
                 if !rect.valid() || !transform.valid() {
                     return;
                 }
@@ -345,6 +391,7 @@ impl App {
                 let path = std::path::PathBuf::from(&self.tools.path);
                 let target = match action {
                     OpenOriginal => {
+                        self.tools.viewer_open = true;
                         let [item] = items.as_slice() else {
                             return;
                         };

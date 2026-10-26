@@ -97,11 +97,10 @@ destinations are refused. Coordinate picking reports original-pixel X/Y, image n
 and dimensions in the status bar; the selection badge supplies selection dimensions.
 
 The overall M2 checkbox remains open. Remaining command-level gaps include file-path
-ordering/provenance and opening sources, per-image/default/automatic nearest-neighbor
-sampling, automatic bring-to-front, optional scrollbars/menu visibility, picking outside
+ordering/provenance and opening source locations, automatic bring-to-front, optional scrollbars/menu visibility, picking outside
 the window, color-gamut visualization, linked-image relinking, optional import downscale,
-and manual note wrapping. The picker rows remain unchecked because outside-window sampling
-and source information are not implemented. System-viewer launch is also still open.
+and source-location workflows. The picker rows remain unchecked because outside-window sampling
+and source information are not implemented. System-viewer launch is implemented below; native OS qualification is pending.
 
 Native Windows/macOS, physical touch/pen, native clipboard/color copying and native
 viewer workflows are not manually qualified by this follow-up. Tier-3 gates remain
@@ -164,3 +163,44 @@ Existing board positions change only when the user applies an arrangement again.
 Mosaic validation: all 84 tests in `mothref` and `moth-ui` passed, including the
 regression for equal horizontal/vertical edge spacing. Formatting and Clippy also
 passed. Manual GUI inspection was not performed.
+
+
+## M2 follow-up — 2026-10-26
+
+- Open original: one selected image, through the context menu, export window or
+  palette. The storage worker streams and verifies a copy; OS associations launch
+  through `moth-platform::Platform`. A small feedback window shows progress and
+  immediate failures. The private viewer cache is one original (at most 256 MiB)
+  per board. Unsupported original encodings can still be exported as PNG.
+  Linux/macOS launcher waits are capped at 100 ms on storage, with at most four
+  background child waiters. Later launcher failures are logged.
+- Sampling: Settings › Canvas owns the default; selection/context menus and the
+  item editor own overrides. Smooth stays the default. Automatic uses nearest
+  neighbor at two screen pixels per original pixel. Both filters reuse residency,
+  mip selection and tile coordinates; no extra texture or cache is introduced.
+- Notes: auto-size on creation/editing; dragging a single note's corner or changing
+  its width in the editor enables wrapping without shrinking its font. Grouped
+  scaling scales frames and fonts together. The editor also exposes wrapping and
+  text size. Journaled command groups retain Undo/Redo; released previews keep the
+  final text layout until acknowledgment. Exports use fixed fonts and wrapped lines.
+- Schema 5: see FORMAT.md for the 4 → 5 migration. Frozen schemas 1–4 remain in
+  the corpus; the generator writes only the new schema-5 fixture.
+
+Added regression coverage: sampling inheritance and threshold, a mixed smooth/sharp
+headless image comparison, preference persistence, schema-4 migration, malformed
+schema-5 fields and truncation, scene undo/checkpoint properties, note editor and
+paint layout, single-note wrapping, grouped text scaling, Unicode export wrapping,
+and viewer-copy source preservation.
+
+Validation: `cargo fmt --all --check`, workspace Clippy with warnings denied, and
+`cargo deny check` passed; deny reports existing duplicate-dependency warnings.
+`cargo xtask fixture` generated the new fixture. Tests, corpus round trips, fuzzing,
+kill tests, soak and benchmarks were not run under AGENTS.md §3. Before release,
+run the affected format/corpus tests, 90-second moth_reader fuzzing, headless image
+checks, the short benchmark and five-minute soak; persistence also needs the
+50-kill check. Tier-3 evidence belongs to CI/the maintainer.
+
+No native system-viewer or GUI qualification was performed on Linux, Windows or
+macOS for this change. Export text uses the bundled Noto Sans font; fallback glyphs
+can differ from the canvas. Viewer copies are disposable; export a file to retain
+external edits. Old builds cannot read schema-5 saves.

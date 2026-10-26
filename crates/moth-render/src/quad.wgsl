@@ -7,7 +7,7 @@ struct Out {
     @location(2) @interpolate(flat) region: vec4<f32>,
     @location(3) @interpolate(flat) layer: u32,
     @location(4) @interpolate(flat) lod: f32,
-    @location(5) @interpolate(flat) appearance: vec3<f32>,
+    @location(5) @interpolate(flat) appearance: vec4<f32>,
 }
 @group(0) @binding(0) var images: texture_2d_array<f32>;
 @group(0) @binding(1) var linear_sampler: sampler;
@@ -24,7 +24,7 @@ struct Out {
     @location(8) region: vec4<f32>,
     @location(9) layer: u32,
     @location(10) lod: f32,
-    @location(11) appearance: vec3<f32>,
+    @location(11) appearance: vec4<f32>,
 ) -> Out {
     // Two triangles over four corners; the CPU supplies rotated positions, so the shader
     // only picks one per vertex.
@@ -47,17 +47,21 @@ struct Out {
 }
 fn sample_mip(in: Out, level: f32) -> vec4<f32> {
     let size = vec2<f32>(textureDimensions(images, i32(level)));
+    var uv: vec2<f32>;
     if (in.appearance.z > 0.5) {
         // Missing tile cells share one continuous base-preview coordinate system.
-        let uv = (vec2(0.5) + in.region.xy + in.local * in.region.zw) / size;
-        return textureSampleLevel(images, linear_sampler, uv, i32(in.layer), 0.);
+        uv = (vec2(0.5) + in.region.xy + in.local * in.region.zw) / size;
+    } else {
+        let step = in.region.zw / exp2(level);
+        let pixels = max(vec2(1.), floor(abs(step)));
+        // Padded mips and mirrored content retain the same coordinates for both filters.
+        uv = (in.region.xy / exp2(level)
+            + (vec2(0.5) + in.local * (pixels - vec2(1.))) * sign(step)) / size;
     }
-    let step = in.region.zw / exp2(level);
-    let pixels = max(vec2(1.), floor(abs(step)));
-    // Each padded level has its own valid pixel extent, especially for odd dimensions.
-    // A negative step mirrors the source, which is how flipped content is drawn.
-    let uv = (in.region.xy / exp2(level)
-        + (vec2(0.5) + in.local * (pixels - vec2(1.))) * sign(step)) / size;
+    if (in.appearance.w > 0.5) {
+        let pixel = vec2<i32>(clamp(floor(uv * size), vec2(0.), size - vec2(1.)));
+        return textureLoad(images, pixel, i32(in.layer), i32(level));
+    }
     return textureSampleLevel(images, linear_sampler, uv, i32(in.layer), level);
 }
 @fragment fn fs(in: Out) -> @location(0) vec4<f32> {

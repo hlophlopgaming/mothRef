@@ -114,6 +114,7 @@ schema! {
             .and_then(|v| v.parse().ok())
             .filter(|v| *v < 3)
             .unwrap_or(0);
+    sampling: u8 = 0, "sampling", Canvas, ImageSampling, Kind::Choice(&[Text::SamplingSmooth,Text::SamplingNearest,Text::SamplingAutomatic]), |s| s.sampling.to_string(), |values: &BTreeMap<String,String>| values.get("sampling").and_then(|v| v.parse().ok()).filter(|v| *v < 3).unwrap_or(0);
     smooth_zoom: bool = true, "smooth_zoom", Canvas, SmoothZoom, Kind::Toggle, |s| s.smooth_zoom.to_string(), |values: &BTreeMap<String,String>| values
             .get("smooth_zoom")
             .and_then(|v| v.parse().ok())
@@ -573,6 +574,26 @@ impl SettingsWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sampling_preference_roundtrips_and_rejects_unknown_modes() {
+        for code in 0..3 {
+            let mut settings = Settings::default();
+            settings.load(&BTreeMap::from([("sampling".into(), code.to_string())]));
+            assert_eq!(settings.sampling, code);
+            let mut restored = Settings::default();
+            restored.load(
+                &settings
+                    .preferences()
+                    .into_iter()
+                    .map(|(key, value)| (key.to_owned(), value))
+                    .collect(),
+            );
+            assert_eq!(restored.sampling, code);
+        }
+        let mut settings = Settings::default();
+        settings.load(&BTreeMap::from([("sampling".into(), "255".into())]));
+        assert_eq!(settings.sampling, 0);
+    }
     #[test]
     fn paper_default_preserves_an_explicit_theme_preference() {
         let mut settings = Settings::default();

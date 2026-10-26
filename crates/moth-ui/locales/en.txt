@@ -338,3 +338,10 @@ ToggleDrag = Toggle selection (click or rectangle)
 
 OpenOriginal = Open original in viewer
 ViewerOpened = Image opened in system viewer
+ImageSampling = Image smoothing
+SamplingDefault = Use canvas setting
+SamplingSmooth = Smooth
+SamplingNearest = Sharp pixels (nearest neighbor)
+SamplingAutomatic = Automatic: sharp pixels at 200% and above
+NoteWrap = Wrap text to frame width
+NoteFontSize = Text size
