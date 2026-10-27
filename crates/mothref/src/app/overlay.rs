@@ -120,6 +120,7 @@ impl Overlay {
             }
             _ => return Ok(()),
         };
+        let mut drag_window = false;
         let mut output = self
             .ctx
             .run_ui(self.state.take_egui_input(&self.window), |ui| {
@@ -130,10 +131,27 @@ impl Overlay {
                             .inner_margin(moth_ui::tokens(&self.ctx).space_s as i8),
                     )
                     .show(ui, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            if icons::button(ui, Icon::Pan, text(Text::Pan), false).drag_started() {
-                                let _ = self.window.drag_window();
-                            }
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                if icons::button(ui, Icon::Pan, text(Text::Pan), false)
+                                    .drag_started()
+                                {
+                                    drag_window = true;
+                                }
+                                let caps = moth_platform::Desktop.window_capabilities(&self.window);
+                                ui.add_enabled_ui(caps.click_through, |ui| {
+                                    ui.toggle_value(
+                                        &mut self.click_through,
+                                        text(Text::ClickThrough),
+                                    );
+                                });
+                                ui.add_enabled_ui(caps.on_top, |ui| {
+                                    ui.toggle_value(&mut self.on_top, text(Text::OnTop));
+                                });
+                                self.exit |=
+                                    icons::button(ui, Icon::Close, text(Text::ExitOverlay), false)
+                                        .clicked();
+                            });
                             super::window_mode::controls(
                                 ui,
                                 &mut self.appearance,
@@ -141,19 +159,17 @@ impl Overlay {
                                     .window_capabilities(&self.window)
                                     .blur,
                             );
-                            let caps = moth_platform::Desktop.window_capabilities(&self.window);
-                            ui.add_enabled_ui(caps.click_through, |ui| {
-                                ui.toggle_value(&mut self.click_through, text(Text::ClickThrough));
-                            });
-                            ui.add_enabled_ui(caps.on_top, |ui| {
-                                ui.toggle_value(&mut self.on_top, text(Text::OnTop));
-                            });
-                            self.exit |=
-                                icons::button(ui, Icon::Close, text(Text::ExitOverlay), false)
-                                    .clicked();
                         });
                     });
             });
+        if drag_window {
+            match self.window.drag_window() {
+                Ok(()) => {
+                    super::input::release_window_pointer(&self.ctx, self.state.egui_input_mut())
+                }
+                Err(error) => tracing::warn!(%error, "overlay controller move failed"),
+            }
+        }
         self.state
             .handle_platform_output(&self.window, output.platform_output);
         let size = self.window.inner_size();

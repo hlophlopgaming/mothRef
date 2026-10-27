@@ -206,3 +206,189 @@ against the canonical destination. The aliased fixture reproduced the macOS
 failure on Linux before the expectation was corrected, then passed with all
 original checks for source preservation, journal archival and durable resaving
 still enabled. No recovery behavior or board format changed.
+
+### Linux window-mode follow-up — 2026-10-27
+
+Qualification used isolated data/config directories under
+`/tmp/mothref-window-qualification*`, synthetic `rows.png` and `alpha.webp`
+corpus images, and the release binary built locally from the working tree.
+The host runs Linux 6.18.49-2-lts, KDE Plasma Wayland with XWayland; the driven
+windows used XWayland (`WAYLAND_DISPLAY` and `WAYLAND_SOCKET` unset). These
+observations do not qualify a standalone X11 session or native Wayland.
+
+Observed before and during the fix:
+
+- On an empty board, Tab entered View. Ctrl+T created the independent Over
+  controller; Escape in that controller returned the board to View.
+- The default 530 × 220 controller clipped appearance controls and the exit
+  button. Appearance controls now stack vertically, recovery controls come
+  first, and short controller windows scroll. The rebuilt controller showed
+  click-through, on-top and exit at its default size; at 360 × 360 the
+  three opacity controls, background selector and images-only switch fit.
+- Glass displayed the explicit translucent fallback in the initial controller.
+  A native slider interaction changed the rebuilt controller's displayed
+  master opacity from 1.000 to 0.11. This verifies input/display response,
+  not pixel-accurate compositing or the full opacity matrix.
+- A native bottom-right drag changed the Collect window geometry from
+  900 × 650 to 1112 × 605 after the compositor settled. Exact drag-distance
+  correspondence, all edges/corners and repeated transitions remain unqualified.
+
+The main window now draws the existing compact window bar in Over, with top-edge
+reveal, the persistent touch button, minimize/maximize and the existing actions.
+Dragging the corner button or spare bar area starts native window movement;
+double-clicking the spare area runs the registered maximize action. Reveal
+retains the actual wrapped bar height so moving onto a second row does not hide
+its controls. Mouse, pen and touch resize requests use normalized pointer events,
+with theme-sized edge targets and native compositor resizing. Fullscreen and
+maximized windows do not intercept edge presses. The independent controller
+remains available when the board explicitly passes clicks through.
+
+Regression coverage was added for appearance layout inside a horizontal parent
+and resize hit testing (eight directions, interior, out-of-bounds and wider touch
+targets). Formatting and `cargo clippy -p mothref --all-targets -- -D warnings`
+passed; tests were compiled, not executed, under AGENTS.md §3.
+
+Still pending: final top-bar hover/hide and drag qualification, minimize/restore,
+click-through recovery, opacity compositing with overlapping images/notes,
+per-board persistence, software adapters, mixed DPI, native Wayland, Windows
+and macOS (including native macOS blur). Keep the roadmap qualification checkbox
+open. No board format, scene commands or undo history were changed.
+
+### Tab freeze regression — 2026-10-27
+
+The maintainer reported that Tab made the application stop responding. The
+follow-up reproduced a live but unresponsive process: the last Collect frame
+remained visible, and further input did not produce an Over controller. The
+cause was a recursive egui context lock introduced in the reveal-height change:
+`context.input(...)` called `context.content_rect()`, which takes that same lock.
+Reveal now reads the content rectangle from the already borrowed input state.
+
+`cargo test -p mothref view_bar_hover_does_not_deadlock_the_frame -- --nocapture`
+failed deterministically with a two-second timeout before the fix. The same
+regression passes after the fix and checks hover over both rows, leaving the bar
+and explicit reveal. The appearance-layout test also needed to clear its unused
+egui texture deltas; its initial failure was test cleanup, not the native freeze.
+
+On the maintainer's explicit test request:
+
+- `cargo test -p mothref -p moth-ui`: 138 passed, no failures or ignored tests.
+- `cargo test --workspace`: 332 passed, no failures or ignored tests. The first
+  sandboxed run failed local-socket/recovery-root tests; the successful full run
+  used lifted sandbox restrictions and isolated `/tmp` application data.
+- A rebuilt release binary completed three XWayland input sequences containing
+  Tab, top-edge pointer movement, Ctrl+T and controller Escape without hanging.
+  Each sequence required an Over controller to appear within a timeout and then
+  disappear on Escape. Screenshots and stderr are retained under
+  `/tmp/mothref-window-qualification-tab-fixed` for this session.
+
+This supersedes the deferred-test note for the changes above. Native Wayland,
+Windows/macOS, mixed DPI, accurate opacity composition and the full movement /
+resize qualification matrix remain pending; no complete cross-platform
+qualification is claimed.
+
+### Native Wayland gesture ownership — 2026-10-27
+
+The maintainer reported movement/resizing that required another attempt and
+non-working side edges with a mouse in View/Over. XWayland alone did not reproduce
+this: consecutive moves and each side edge passed, including short gestures.
+A native KDE Wayland run did reproduce alternating success/failure. The sequence
+was move: pass, move: fail, left: pass, right: fail, top: pass, bottom: fail.
+Temporary input tracing confirmed that the compositor consumed the release after
+each successful native gesture. The next press arrived while the application
+still considered the previous mouse button held and was discarded.
+
+All main-window native movement paths and edge resizing now share the same
+handoff: after a successful native request, clear the normalized mouse capture,
+queued egui pointer buttons and egui's active pointer/drag. Failed requests retain
+their error handling. The independent controller also clears egui capture when
+its own native movement starts. No synthetic board click/release is generated.
+
+A second native check exposed a separate compact-bar layout bug: the spare drag
+area requested the full width of a wrapping row and moved to the next row. It now
+uses the width available before wrapping. The layout regression failed before
+that change and passed afterward.
+
+Final native checks used temporary KWin EIS input and geometry probes limited to
+a disposable process, with isolated `/tmp` app data. Both View and Over passed:
+
+- Two consecutive corner-handle moves, starting from the first press.
+- A move using the spare space beside the window-bar controls.
+- Left, right, top and bottom edge resizing, without retry clicks.
+
+For the Over run, the 800 × 600 window moved twice, moved by the spare bar, then
+resized through 771 × 600, 742 × 600, 742 × 571 and 742 × 542. The View run passed
+the same sequence. Input was sent in small 120 Hz steps; the earlier ten-step,
+80 ms synthetic movement visibly jumped and was not evidence of application
+frame pacing. Actual frame pacing has not been quantitatively qualified.
+
+`cargo test --workspace` passed all 335 tests, including missing-release
+regressions for the normalized adapter and egui, the compact drag layout and the
+Tab deadlock. The full run used isolated `/tmp` data and local socket access;
+there were no ignored tests. Workspace Clippy, formatting and diff checks passed.
+Temporary input tracing was removed. The rebuilt release binary contains both
+fixes. Windows/macOS, other compositors, pen/touch, mixed DPI and the remaining
+opacity/recovery matrix still require native qualification.
+
+## Remaining parity controls implementation
+
+The following notes describe the new parity work, separately from earlier native
+test results above.
+
+UI placement:
+
+- View › Window, in the normal menu and compact View appearance popover: bottom
+  stacking, position lock, click-through, floating selection, resize to selection
+  or all items, opacity up/down. The command palette exposes the same actions.
+- Settings › Appearance: background (surface), canvas and selection RGB colors,
+  each with a reset to the active light/dark palette.
+- Settings › Window: retain position lock while maximized (default on), disable
+  click-through on activation (default on), system shortcuts (default off).
+- Local opacity chords are Ctrl/Command+Alt+Up/Down and remain rebindable.
+  System chords are fixed Ctrl+Alt+Shift with T (Over), C (click-through),
+  Up/Down (opacity). Registration conflicts report an error and turn the setting
+  off for the current session.
+
+Floating image windows share the main device and registry, including the texture
+budget, original pixels, on-demand decode scheduling and device-loss recovery.
+Opening more than 32 views is rejected with a localized message. Repeat the
+action with those images selected, close the native window, or press Escape to
+close them. Drag anywhere to move, or use edges/corners to resize; pointer input
+uses the mouse/touch/pen adapter. Changing boards closes the transient views.
+Board contents, journaling and undo history are unaffected.
+
+Bottom stacking and position locking are disabled when the compositor cannot
+provide them. Wayland cannot register the supplied system chords; the separate
+Over controller remains usable. X11 shortcuts block on native events and a
+shutdown descriptor, without timer polling. Windows/macOS registration stays on
+the native event-loop thread, as required by their APIs.
+
+Added regression coverage (executed for alpha.13):
+opacity endpoint/reversal checks, floating-camera framing and a software-adapter
+golden for shared pixels/letterboxing/opacity, color validation for
+both palettes, preference round-trips/defaults and malformed X11 keymaps.
+
+Still required before qualification/release:
+
+- Linux X11: stack under other apps; locked move attempts; maximize/restore with
+  both lock settings; conflicts and CapsLock/NumLock handling for global chords;
+  release all registrations when disabling shortcuts. Repeat on a non-Latin
+  keyboard layout and after changing keyboard mappings.
+- Linux Wayland: unsupported operations disabled; compact popover and independent
+  controller remain reachable; repeated floating-window moves/resizes.
+- Windows and macOS: all native behaviors above, especially global registration
+  and cleanup, focus/activation click-through recovery, monitor/DPI changes,
+  surface loss and software-adapter floating views. Neither OS was run here.
+- Every backend: selected/all-item framing with rotations, monitor size limits,
+  transparent images and 32-window rejection; closing/deleting referenced items,
+  switching boards, suspend/resume and renderer recovery.
+- Alpha.13 local checks: 341 workspace tests passed with 0 failures and
+  0 ignored; the floating golden also passed explicitly on SwiftShader. The
+  quick benchmark passed: RX 5700 XT, 10,000 images, 100 frames, p99 6.540 ms,
+  13.32 MiB textures. Five-minute soak was stopped at the maintainer's request
+  and is deferred to release 1.0. Native window qualification remains open.
+  Tier-3 reliability/performance qualification remains CI/maintainer-only.
+
+Open design limits: global chords are fixed rather than individually rebindable;
+Wayland portal shortcuts are not implemented. Floating windows are temporary
+views rather than independent saved boards. Native system move requests are
+corrected to the captured coordinates while position lock is active.

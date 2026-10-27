@@ -391,3 +391,34 @@ BackgroundTranslucent = Translucent
 BackgroundGlass = Glass
 GlassFallback = Glass uses a translucent tint here; native blur is unavailable.
 ImagesOnly = Images only
+
+OnBottom = Always on bottom
+
+LockWindowPosition = Lock window position
+
+LockWhileMaximized = Keep position locked while maximized
+
+ResizeSelection = Resize window to selection
+
+ResizeAll = Resize window to all items
+
+OpacityUp = Increase window opacity
+
+OpacityDown = Decrease window opacity
+
+BackgroundColor = Background color
+
+CanvasColor = Canvas color
+
+SelectionColor = Selection color
+
+OverlaySelection = Overlay selection
+OverlayWindowLimit = Close floating images before opening more (maximum 32).
+
+GlobalShortcuts = System shortcuts: Ctrl+Alt+Shift + T (Over), C (click-through), ↑/↓ (opacity)
+
+DisableClickThroughOnActivate = Disable click-through when activated
+
+GlobalShortcutsUnavailable = System shortcuts are unavailable on this compositor. Use the Over controller.
+
+ResetColor = Reset color

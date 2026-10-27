@@ -68,13 +68,14 @@ Run these **one at a time, in the foreground, with no build, fuzzer or other ben
 
 ```sh
 cargo xtask killtest 50               # journal / autosave
-cargo xtask soak 300 5                # long-lived data: 5-minute smoke, RSS sampled every 5 s
 cargo +nightly fuzz run moth_reader  -- -max_total_time=90   # .moth reader changes
 cargo +nightly fuzz run image_reader -- -max_total_time=90   # decoder changes
 cargo +nightly fuzz run bee_reader   -- -max_total_time=90   # BeeRef import changes
 cargo +nightly fuzz run pur_reader   -- -max_total_time=90   # PureRef import changes
 cargo xtask bench --quick             # render, io, scene
 ```
+
+The five-minute soak (`cargo xtask soak 300 5`) is reserved for preparation of release 1.0. Skip it during development and intermediate releases, including changes to long-lived data.
 
 For agent sessions, one 90-second fuzz run per affected target is sufficient; longer runs belong to the tier-3 release gate.
 
@@ -187,7 +188,7 @@ Per the maintainer, these images are licensed under Creative Commons; artwork in
 | `.bee` / `.pur` import or `.pur` export | New corpus files for the case, round-trip test, fuzz run |
 | Decoding / LOD / caches | Tier-2 benchmark run; `dhat` allocation check on the hot path |
 | Rendering | Headless golden-image test (with tolerance); tier-2 benchmark run |
-| Anything holding long-lived data | `cargo xtask soak 300 5` smoke run; the 30-minute plateau check is tier 3 and runs in the Reliability workflow |
+| Anything holding long-lived data | At release 1.0 only: `cargo xtask soak 300 5`; longer plateau checks remain tier 3 in the Reliability workflow |
 | Platform code | Manual test notes in the PR for each OS you could not run in CI |
 
 Bug fixes include a regression test that reproduces the bug. Execute it only under the policy in section 3; the run requirements in this table apply at that time.

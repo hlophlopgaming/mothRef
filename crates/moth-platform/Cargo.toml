@@ -32,6 +32,8 @@ sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_Globalization", "Win32_UI_WindowsAndMessaging", "Win32_UI_Accessibility", "Win32_UI_Shell", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Console"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", features = ["xkb"] }
+rustix = { version = "1", features = ["event"] }
 wayland-client = "0.31"
 wayland-backend = { version = "0.3", features = ["client_system", "dlopen"] }
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
@@ -39,3 +41,6 @@ wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 wayland-server = "0.31"
 wayland-protocols = { version = "0.32", features = ["server"] }
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+global-hotkey = "0.9"

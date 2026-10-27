@@ -101,6 +101,12 @@ pub struct Adapter {
     native: Option<wayland::Native>,
 }
 impl Adapter {
+    /// Native window gestures can consume the release instead of returning it to the app.
+    pub fn release_mouse(&mut self) {
+        self.button = None;
+        self.pan = false;
+    }
+
     /// Supplements winit where the native backend supplies richer input.
     pub fn attach(
         &mut self,
@@ -235,8 +241,7 @@ impl Adapter {
                 });
             }
             WindowEvent::Focused(false) => {
-                self.button = None;
-                self.pan = false;
+                self.release_mouse();
                 Pointer {
                     id: 0,
                     kind: Kind::Mouse,
@@ -346,6 +351,25 @@ fn pair(t: &[(u64, [f32; 2])]) -> Option<([f32; 2], f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_window_handoff_does_not_swallow_the_next_mouse_press() {
+        let mut adapter = Adapter::default();
+        for button in [MouseButton::Left, MouseButton::Middle] {
+            let down = WindowEvent::MouseInput {
+                device_id: winit::event::DeviceId::dummy(),
+                state: ElementState::Pressed,
+                button,
+            };
+            for _ in 0..3 {
+                assert!(
+                    matches!(adapter.event(&down, 1.), Some(Input::Pointer(p)) if p.phase == Phase::Down)
+                );
+                adapter.release_mouse();
+                assert!(!adapter.pan);
+            }
+        }
+    }
+
     #[test]
     fn mouse_button_identity_survives_move_and_release_for_custom_bindings() {
         for (button, expected) in [

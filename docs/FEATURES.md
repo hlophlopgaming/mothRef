@@ -142,14 +142,14 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 ### Window modes (M3)
 - [x] Always on top (PR, BR)
 - [ ] Always on top of a chosen application (PR) — Windows done (pin above a clicked window); X11 open; P2 on macOS/Wayland
-- [ ] Always on bottom — use the board as an interactive wallpaper (PR)
-- [ ] Lock window position; option to stay locked while maximized (PR)
-- [ ] Transparent to mouse (click-through), with a system-global shortcut and "disable on activate" (PR; BeeRef #100) — click-through works on X11; global shortcut, "disable on activate" and Windows/macOS open
-- [ ] Overlay selection — every selected image gets its own borderless floating window (PR)
-- [x] Master window opacity (PR) — window opacity in the View popover and Over panel (0.1.0-alpha.10); up/down shortcuts still open
-- [ ] Resize window to selection or to all items (PR)
+- [x] Always on bottom — use the board as an interactive wallpaper (PR); capability-gated on Wayland, native qualification pending
+- [x] Lock window position; option to stay locked while maximized (PR); requires native window coordinates (unavailable on Wayland)
+- [ ] Transparent to mouse (click-through), with a system-global shortcut and "disable on activate" (PR; BeeRef #100) — click-through works on X11; opt-in global shortcuts and "disable on activate" implemented; Windows/macOS native qualification and Wayland global shortcuts open
+- [x] Overlay selection — every selected image gets its own borderless floating window (PR); shared texture budget, up to 32 windows; repeat the action to close the selected floating views
+- [x] Master window opacity (PR) — window opacity in the View popover and Over panel (0.1.0-alpha.10); Ctrl/⌘+Alt+Up/Down steps added
+- [x] Resize window to selection or to all items (PR); rotated bounds, clamped to the current monitor
 - [x] Toggle title bar, window border, fullscreen (PR, BR); move window by hotkey (PR, BR) — modifier+drag with its own cursor still open
-- [ ] Appearance: background, canvas and selection colors; "glass" theme with a transparent canvas (PR) — solid / translucent / glass board background done (0.1.0-alpha.10); custom colors open
+- [x] Appearance: background, canvas and selection colors; "glass" theme with a transparent canvas (PR) — custom RGB colors and per-color reset in Settings › Appearance; native blur qualification remains separate
 
 ### Pickers and info (M2)
 - [ ] Color picker: RGB / HSV / HEX, copy value, keep picking outside the window while the button is held, ignores image opacity (PR, BR) — all done except picking outside the window

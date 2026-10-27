@@ -72,13 +72,24 @@ const INSERT: &[Slot] = &[A(Images), A(Paste), A(Note)];
 const FILE: &[Slot] = &[A(New), A(Open), A(Save), A(Library)];
 pub(super) const VIEW_WINDOW: &[Action] =
     &[Pin, Overlay, MoveWindow, Minimize, Maximize, CloseWindow];
-const VIEW: &[Slot] = &[
+const WINDOW_MODES: &[Slot] = &[
+    A(Bottom),
+    A(LockWindow),
+    A(ClickThrough),
+    A(OverlaySelection),
+    A(ResizeSelection),
+    A(ResizeAll),
+    A(OpacityUp),
+    A(OpacityDown),
+];
+pub(super) const VIEW: &[Slot] = &[
     A(ToggleView),
     A(Fit),
     A(Focus),
     A(Lock),
     A(Grayscale),
     A(Overlay),
+    G(Text::WindowSettings, WINDOW_MODES),
     A(Shortcuts),
     A(Palette),
 ];

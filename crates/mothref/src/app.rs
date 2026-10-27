@@ -21,6 +21,7 @@ use winit::{
 #[derive(Debug)]
 pub enum Wake {
     Shutdown,
+    Global(moth_platform::shortcuts::Shortcut),
     Ready,
     Repaint(Duration),
 }
@@ -49,6 +50,7 @@ mod camera_motion;
 mod canvas;
 mod chrome;
 mod document;
+mod floating;
 mod input;
 mod intent;
 mod item_motion;
@@ -80,11 +82,16 @@ pub struct App {
     settings: settings::Settings,
     settings_window: settings::SettingsWindow,
     shortcuts: shortcuts::Shortcuts,
+    global_shortcuts: Option<moth_platform::shortcuts::Shortcuts>,
     overlay: Option<overlay::Overlay>,
+    floating: Vec<floating::ImageWindow>,
     window_preferences: std::collections::BTreeMap<String, String>,
     applied_background: Option<(WindowId, bool, bool)>,
     window_preferences_dirty: bool,
     pinned: bool,
+    bottom: bool,
+    resize_bounds: Option<Rect>,
+    locked_position: Option<winit::dpi::PhysicalPosition<i32>>,
     target_pin: bool,
     picking_window: bool,
     moving_window: bool,
@@ -145,11 +152,16 @@ impl App {
             settings: settings::Settings::default(),
             settings_window: settings::SettingsWindow::default(),
             shortcuts: shortcuts::Shortcuts::default(),
+            global_shortcuts: None,
             overlay: None,
+            floating: Vec::new(),
             window_preferences: Default::default(),
             applied_background: None,
             window_preferences_dirty: false,
             pinned: false,
+            bottom: false,
+            resize_bounds: None,
+            locked_position: None,
             target_pin: false,
             picking_window: false,
             moving_window: false,
@@ -208,6 +220,9 @@ impl App {
         }
     }
     fn apply_pin(&mut self, enabled: bool) {
+        if enabled {
+            self.bottom = false;
+        }
         self.applied_background = None;
         let Some(window) = &self.shell.window else {
             return;
@@ -223,7 +238,12 @@ impl App {
             moth_platform::Desktop.pin_target(&mut self.pin, window, enabled && self.target_pin)
         })();
         match result {
-            Ok(()) => self.pinned = enabled,
+            Ok(()) => {
+                self.pinned = enabled;
+                if self.bottom {
+                    moth_platform::Desktop.window_bottom(window, true);
+                }
+            }
             Err(error) => {
                 self.pinned = false;
                 self.workspace.board.message = error.into();
@@ -249,6 +269,7 @@ impl App {
                 self.workspace.board.appearance.over = false;
             }
         } else if self.shell.gpu.as_ref().is_some_and(|gpu| gpu.transparent) {
+            self.bottom = false;
             match overlay::Overlay::new(
                 event_loop,
                 self.shell.wake(),
@@ -289,6 +310,7 @@ impl App {
     }
 
     fn reset_board_ui(&mut self) {
+        self.floating.clear();
         if !self.workspace.board.loading {
             self.remember_appearance();
         }
@@ -371,11 +393,17 @@ impl App {
             || egui::Popup::is_any_open(self.shell.context())
     }
     fn redraw(&self) {
+        for image in &self.floating {
+            image.window.request_redraw();
+        }
         if let Some(w) = &self.shell.window {
             w.request_redraw();
         }
     }
     fn reset_renderer_ui(&mut self) {
+        for image in &mut self.floating {
+            image.surface = None;
+        }
         self.input.native_pressed = None;
         // A recreated device starts with empty video memory.
         self.workspace.board.reset_preload();
@@ -707,17 +735,11 @@ impl App {
                     moth_platform::settings::trim_board_windows(&mut self.window_preferences);
                     self.restore_appearance();
                     self.settings.load(&values);
+                    self.configure_global_shortcuts();
                     if !self.shortcuts.registry.load(&values) {
                         self.workspace.board.message = moth_ui::Text::InvalidBinding.into();
                     }
-                    moth_ui::theme::apply(
-                        self.shell.context(),
-                        &if self.settings.dark {
-                            moth_ui::Tokens::DARK
-                        } else {
-                            moth_ui::Tokens::LIGHT
-                        },
-                    );
+                    moth_ui::theme::apply(self.shell.context(), &self.settings.tokens());
                     self.shell.context().set_zoom_factor(self.settings.ui_scale);
                 }
             }
@@ -829,7 +851,12 @@ impl App {
         let before = self.workspace.board.view.camera;
         match intent {
             Intent::Action(action) => self.run_action(action, event_loop),
-            Intent::View(view) => self.workspace.board.view = view,
+            Intent::View(mut view) => {
+                if let Some(bounds) = self.resize_bounds.take() {
+                    view.fit_bounds(Some(bounds));
+                }
+                self.workspace.board.view = view;
+            }
             Intent::NoteFocused => {
                 if let Some(editing) = &mut self.editing {
                     editing.focus = false;
@@ -952,13 +979,7 @@ impl App {
                 self.request_close(false);
             }
             Intent::CloseWindow => self.request_close(true),
-            Intent::Drag => {
-                if let Some(window) = &self.shell.window
-                    && let Err(error) = window.drag_window()
-                {
-                    self.workspace.board.message = error.to_string().into();
-                }
-            }
+            Intent::Drag => self.drag_window(None),
             Intent::Minimize => {
                 if let Some(window) = &self.shell.window {
                     window.set_minimized(true);
@@ -1097,15 +1118,14 @@ impl App {
             }
             Intent::SettingsRow(index) => self.settings_window.open_row(index),
             Intent::PreferencesDirty => {
+                if !self.settings.lock_maximized
+                    && self.shell.window.as_ref().is_some_and(|w| w.is_maximized())
+                {
+                    self.locked_position = None;
+                }
+                self.configure_global_shortcuts();
                 self.adapt_gpu_budget();
-                moth_ui::theme::apply(
-                    self.shell.context(),
-                    &if self.settings.dark {
-                        moth_ui::Tokens::DARK
-                    } else {
-                        moth_ui::Tokens::LIGHT
-                    },
-                );
+                moth_ui::theme::apply(self.shell.context(), &self.settings.tokens());
                 self.shell.context().set_zoom_factor(self.settings.ui_scale);
                 for tab in &mut self.workspace.tabs {
                     let values = std::collections::BTreeMap::from([(
@@ -1209,6 +1229,17 @@ impl App {
         }
     }
     fn pointer(&mut self, input: Input) {
+        if let Input::Pointer(p) = &input
+            && p.phase == Phase::Down
+            && p.button == 1
+            && self.moving.is_none()
+            && self.drag.is_none()
+            && self.resizing.is_none()
+            && let Some(edge) = self.resize_edge(p.position, p.kind)
+        {
+            self.drag_window(Some(edge));
+            return;
+        }
         if self.moving_window {
             if let Input::Pointer(p) = &input
                 && p.phase == Phase::Down
@@ -1216,11 +1247,7 @@ impl App {
                 && !self.shell.context().egui_wants_pointer_input()
             {
                 self.moving_window = false;
-                if let Some(window) = &self.shell.window
-                    && let Err(error) = window.drag_window()
-                {
-                    self.workspace.board.message = error.to_string().into();
-                }
+                self.drag_window(None);
             }
             return;
         }
@@ -1722,8 +1749,11 @@ impl App {
                 self.workspace.board.appearance.over = self.overlay.is_some();
             }
         }
-        if let Some(overlay) = &mut self.overlay {
+        if let Some(overlay) = &mut self.overlay
+            && overlay.appearance != self.workspace.board.appearance
+        {
             overlay.appearance = self.workspace.board.appearance;
+            overlay.window.request_redraw();
         }
         self.workspace.board.view.compact = self.compact();
         if self.workspace.board.view.compact && self.workspace.board.appearance.images_only {
@@ -1870,7 +1900,7 @@ impl App {
                 self.workspace.board.preload_progress(),
             )
         });
-        let output = {
+        let mut output = {
             let state = self.shell.egui.as_mut();
             let gpu = self.shell.gpu.as_ref();
             let (Some(state), Some(gpu)) = (state, gpu) else {
@@ -1896,28 +1926,24 @@ impl App {
                         });
                     });
                 }
-                let chrome = if self.overlay.is_none() {
-                    chrome::chrome(
-                        ui,
-                        chrome::Chrome {
-                            compact: compact_mode,
-                            zoom_increment: self.settings.zoom_increment,
-                            board: &mut self.workspace.board,
-                            tabs: &self.workspace.tabs,
-                            gpu,
-                            library: self.workspace.library,
-                            pinned: self.pinned,
-                            target_pin: self.target_pin,
-                            catalog: &mut self.library_screen.catalog,
-                            cards: &self.library_screen.cards,
-                            window,
-                            enabled: &enabled,
-                            registry: &self.shortcuts.registry,
-                        },
-                    )
-                } else {
-                    Vec::new()
-                };
+                let chrome = chrome::chrome(
+                    ui,
+                    chrome::Chrome {
+                        compact: compact_mode,
+                        zoom_increment: self.settings.zoom_increment,
+                        board: &mut self.workspace.board,
+                        tabs: &self.workspace.tabs,
+                        gpu,
+                        library: self.workspace.library,
+                        pinned: self.pinned,
+                        target_pin: self.target_pin,
+                        catalog: &mut self.library_screen.catalog,
+                        cards: &self.library_screen.cards,
+                        window,
+                        enabled: &enabled,
+                        registry: &self.shortcuts.registry,
+                    },
+                );
                 if !self.workspace.library {
                     intents.extend(canvas::canvas(
                         ui,
@@ -1998,6 +2024,21 @@ impl App {
                 ));
             })
         };
+        if self.moving.is_none()
+            && self.drag.is_none()
+            && self.resizing.is_none()
+            && let Some(position) = ctx.pointer_hover_pos()
+            && let Some(edge) =
+                self.resize_edge([position.x, position.y], moth_platform::input::Kind::Mouse)
+        {
+            use winit::window::ResizeDirection::*;
+            output.platform_output.cursor_icon = match edge {
+                East | West => egui::CursorIcon::ResizeHorizontal,
+                North | South => egui::CursorIcon::ResizeVertical,
+                NorthEast | SouthWest => egui::CursorIcon::ResizeNeSw,
+                NorthWest | SouthEast => egui::CursorIcon::ResizeNwSe,
+            };
+        }
         Some((output, intents))
     }
     fn render(&mut self, output: egui::FullOutput) -> anyhow::Result<()> {
@@ -2099,6 +2140,26 @@ impl App {
                 self.workspace.library,
                 output.pixels_per_point,
                 self.camera_motion.target(camera),
+                &self
+                    .floating
+                    .iter()
+                    .filter_map(|image| {
+                        let item = self.workspace.board.scene.get(image.item)?;
+                        let size = image.window.inner_size();
+                        let screen = [size.width as f32, size.height as f32];
+                        if screen[0] == 0. || screen[1] == 0. {
+                            return None;
+                        }
+                        let e = item.rect.rotated_envelope(item.transform.rotation);
+                        let bounds = Rect {
+                            x: e.lower()[0],
+                            y: e.lower()[1],
+                            width: e.upper()[0] - e.lower()[0],
+                            height: e.upper()[1] - e.lower()[1],
+                        };
+                        Some((item, floating::fit_image(bounds, screen), screen))
+                    })
+                    .collect::<Vec<_>>(),
             );
         }
         match self.shell.render(output, &visible, camera, frame)? {
@@ -2169,6 +2230,9 @@ impl ApplicationHandler<Wake> for App {
         self.input.super_key = false;
         self.input.held.clear();
         self.input.pending_focus = None;
+        for image in &mut self.floating {
+            image.surface = None;
+        }
         self.shell.gpu = None;
         self.shell.egui = None;
     }
@@ -2176,7 +2240,32 @@ impl ApplicationHandler<Wake> for App {
         tracing::trace!(?event, "wake");
         match event {
             Wake::Shutdown => event_loop.exit(),
+            Wake::Global(shortcut) => {
+                if self.settings.global_shortcuts {
+                    use bindings::Action;
+                    use moth_platform::shortcuts::Shortcut;
+                    self.run_action(
+                        match shortcut {
+                            Shortcut::Overlay => Action::Overlay,
+                            Shortcut::ClickThrough => Action::ClickThrough,
+                            Shortcut::OpacityUp => Action::OpacityUp,
+                            Shortcut::OpacityDown => Action::OpacityDown,
+                        },
+                        event_loop,
+                    );
+                    self.redraw();
+                }
+            }
             Wake::Ready => {
+                if let Some(error) = self
+                    .global_shortcuts
+                    .as_ref()
+                    .and_then(|keys| keys.errors.try_recv().ok())
+                {
+                    self.workspace.board.message = error.into();
+                    self.settings.global_shortcuts = false;
+                    self.global_shortcuts = None;
+                }
                 self.native_input();
                 self.results();
                 if self.workspace.board.discarded
@@ -2197,6 +2286,9 @@ impl ApplicationHandler<Wake> for App {
         }
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        if self.floating_event(id, &event) {
+            return;
+        }
         if self
             .overlay
             .as_ref()
@@ -2244,6 +2336,9 @@ impl ApplicationHandler<Wake> for App {
         let Some(window) = self.shell.window.clone() else {
             return;
         };
+        if window.id() != id {
+            return;
+        }
         self.input.modifiers_event(&event);
         let egui_events_before = self
             .shell
@@ -2287,7 +2382,19 @@ impl ApplicationHandler<Wake> for App {
                     }
                 }
             }
+            WindowEvent::Moved(position) => {
+                if self.window_position_locked()
+                    && !window.is_maximized()
+                    && let Some(locked) = self.locked_position
+                    && position != locked
+                {
+                    window.set_outer_position(locked);
+                }
+            }
             WindowEvent::Resized(size) => {
+                if window.is_maximized() && !self.settings.lock_maximized {
+                    self.locked_position = None;
+                }
                 if let Some(gpu) = &mut self.shell.gpu {
                     gpu.resize(size.width, size.height);
                 }
@@ -2301,6 +2408,14 @@ impl ApplicationHandler<Wake> for App {
                 self.redraw();
             }
             WindowEvent::CloseRequested => self.request_close(true),
+            WindowEvent::Focused(true) => {
+                if self.settings.disable_click_through_on_activate
+                    && let Some(overlay) = &mut self.overlay
+                {
+                    overlay.click_through = false;
+                    overlay.window.request_redraw();
+                }
+            }
             WindowEvent::Focused(false) => {
                 if let (Some((kind, id)), Some(state)) =
                     (self.input.native_pressed, &mut self.shell.egui)

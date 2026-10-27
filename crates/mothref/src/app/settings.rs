@@ -59,6 +59,7 @@ impl Section {
 }
 pub(super) enum Kind {
     Toggle,
+    Color,
     Language,
     VideoLimit,
     Number(f64, f64, &'static str),
@@ -86,6 +87,13 @@ macro_rules! schema {
     }
 }
 schema! {
+    global_shortcuts: bool = false, "global_shortcuts", Window, GlobalShortcuts, Kind::Toggle, |s| s.global_shortcuts.to_string(), |values: &BTreeMap<String,String>| values.get("global_shortcuts").and_then(|v|v.parse().ok()).unwrap_or(false);
+    disable_click_through_on_activate: bool = true, "disable_click_through_on_activate", Window, DisableClickThroughOnActivate, Kind::Toggle, |s| s.disable_click_through_on_activate.to_string(), |values: &BTreeMap<String,String>| values.get("disable_click_through_on_activate").and_then(|v|v.parse().ok()).unwrap_or(true);
+    background_color: Option<[u8; 3]> = None, "background_color", Appearance, BackgroundColor, Kind::Color, |s| moth_ui::theme::encode_color(s.background_color), |values: &BTreeMap<String,String>| values.get("background_color").and_then(|v| moth_ui::theme::decode_color(v));
+    canvas_color: Option<[u8; 3]> = None, "canvas_color", Appearance, CanvasColor, Kind::Color, |s| moth_ui::theme::encode_color(s.canvas_color), |values: &BTreeMap<String,String>| values.get("canvas_color").and_then(|v| moth_ui::theme::decode_color(v));
+    selection_color: Option<[u8; 3]> = None, "selection_color", Appearance, SelectionColor, Kind::Color, |s| moth_ui::theme::encode_color(s.selection_color), |values: &BTreeMap<String,String>| values.get("selection_color").and_then(|v| moth_ui::theme::decode_color(v));
+    lock_maximized: bool = true, "lock_maximized", Window, LockWhileMaximized, Kind::Toggle, |s| s.lock_maximized.to_string(), |values: &BTreeMap<String,String>| values.get("lock_maximized").and_then(|v|v.parse().ok()).unwrap_or(true);
+
     language: moth_ui::Locale = moth_ui::locale(), "language", General, Language, Kind::Language, |s| s.language.code().to_owned(), |values: &BTreeMap<String,String>| values.get("language").and_then(|v|moth_ui::Locale::from_code(v)).unwrap_or_else(moth_ui::locale);
 
     shortcut_feedback: bool = true, "shortcut_feedback", Keys, ShortcutFeedback, Kind::Toggle, |s| s.shortcut_feedback.to_string(), |values: &BTreeMap<String,String>| values
@@ -198,6 +206,19 @@ schema! {
             .unwrap_or(0);
 }
 impl Settings {
+    pub fn tokens(&self) -> moth_ui::Tokens {
+        let mut tokens = if self.dark {
+            moth_ui::Tokens::DARK
+        } else {
+            moth_ui::Tokens::LIGHT
+        };
+        tokens.custom_colors(
+            self.background_color,
+            self.canvas_color,
+            self.selection_color,
+        );
+        tokens
+    }
     pub fn preferences(&self) -> Vec<(&'static str, String)> {
         SCHEMA
             .iter()
@@ -410,6 +431,38 @@ impl SettingsWindow {
                                                             }
                                                         });
                                                     next = language.code().to_owned();
+                                                }
+                                                Kind::Color => {
+                                                    ui.label(label);
+                                                    let defaults = if settings.dark {
+                                                        moth_ui::Tokens::DARK
+                                                    } else {
+                                                        moth_ui::Tokens::LIGHT
+                                                    };
+                                                    let fallback = match entry.key {
+                                                        "background_color" => defaults.surface,
+                                                        "selection_color" => defaults.selection,
+                                                        _ => defaults.canvas,
+                                                    }
+                                                    .to_array();
+                                                    let mut rgb =
+                                                        moth_ui::theme::decode_color(&value)
+                                                            .unwrap_or([
+                                                                fallback[0],
+                                                                fallback[1],
+                                                                fallback[2],
+                                                            ]);
+                                                    if ui.color_edit_button_srgb(&mut rgb).changed()
+                                                    {
+                                                        next =
+                                                            moth_ui::theme::encode_color(Some(rgb));
+                                                    }
+                                                    if ui
+                                                        .small_button(text(Text::ResetColor))
+                                                        .clicked()
+                                                    {
+                                                        next.clear();
+                                                    }
                                                 }
                                                 Kind::Toggle => {
                                                     let mut v = value == "true";
@@ -798,5 +851,41 @@ mod tests {
         for entry in SCHEMA {
             assert!(keys.insert(entry.key));
         }
+    }
+}
+
+#[cfg(test)]
+mod window_preferences_tests {
+    use super::*;
+    #[test]
+    fn custom_colors_and_native_shortcut_preferences_round_trip() {
+        let mut settings = Settings {
+            background_color: Some([1, 2, 3]),
+            canvas_color: Some([4, 5, 6]),
+            selection_color: Some([7, 8, 9]),
+            global_shortcuts: true,
+            lock_maximized: false,
+            disable_click_through_on_activate: false,
+            ..Default::default()
+        };
+        let values = settings
+            .preferences()
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v))
+            .collect();
+        let mut restored = Settings::default();
+        restored.load(&values);
+        assert_eq!(settings.tokens(), restored.tokens());
+        assert!(restored.global_shortcuts);
+        assert!(!restored.lock_maximized);
+        assert!(!restored.disable_click_through_on_activate);
+        settings.load(&BTreeMap::from([
+            ("canvas_color".into(), "oops".into()),
+            ("global_shortcuts".into(), "oops".into()),
+        ]));
+        assert_eq!(settings.canvas_color, None);
+        assert!(!settings.global_shortcuts);
+        assert!(settings.lock_maximized);
+        assert!(settings.disable_click_through_on_activate);
     }
 }

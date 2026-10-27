@@ -391,3 +391,34 @@ BackgroundTranslucent = Полупрозрачный
 BackgroundGlass = Стекло
 GlassFallback = Размытие недоступно; стекло использует полупрозрачную заливку.
 ImagesOnly = Только изображения
+
+OnBottom = Всегда снизу
+
+LockWindowPosition = Закрепить положение окна
+
+LockWhileMaximized = Сохранять закрепление при разворачивании
+
+ResizeSelection = Размер окна по выделению
+
+ResizeAll = Размер окна по всем элементам
+
+OpacityUp = Увеличить непрозрачность окна
+
+OpacityDown = Уменьшить непрозрачность окна
+
+BackgroundColor = Цвет фона
+
+CanvasColor = Цвет холста
+
+SelectionColor = Цвет выделения
+
+OverlaySelection = Выделение в отдельных окнах
+OverlayWindowLimit = Закройте плавающие изображения перед открытием новых (не более 32).
+
+GlobalShortcuts = Глобальные клавиши: Ctrl+Alt+Shift + T (Over), C (сквозные клики), ↑/↓ (непрозрачность)
+
+DisableClickThroughOnActivate = Отключать сквозные клики при активации
+
+GlobalShortcutsUnavailable = Глобальные клавиши недоступны в этом оконном окружении. Используйте панель Over.
+
+ResetColor = Сбросить цвет

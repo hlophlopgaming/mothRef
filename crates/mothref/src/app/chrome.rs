@@ -64,31 +64,31 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
                     .fill(tokens.surface)
                     .inner_margin(tokens.space_s as i8)
                     .show(ui, |ui| {
-                        if moth_ui::icons::button(
+                        let button = moth_ui::icons::button(
                             ui,
                             moth_ui::icons::Icon::Maximize,
                             text(Text::WindowControls),
                             explicit,
                         )
-                        .clicked()
-                        {
+                        .interact(egui::Sense::click_and_drag());
+                        if button.clicked() {
                             explicit = !explicit;
+                        }
+                        if button.drag_started() {
+                            intents.push(Intent::Drag);
                         }
                     });
             });
-        let show = explicit
-            || egui::Popup::is_any_open(&context)
-            || context.memory(|m| m.focused().is_some())
-            || context.input(|i| {
-                i.pointer
-                    .hover_pos()
-                    .is_some_and(|p| p.y < tokens.space_header as f32 * 2.)
-            });
+        let height = context
+            .data(|d| d.get_temp::<f32>(id.with("height")))
+            .unwrap_or(tokens.space_header as f32 * 2.);
+        let show = reveal_window_bar(
+            &context,
+            explicit,
+            height.max(tokens.space_header as f32 * 2.),
+        );
         let reveal = context.animate_bool(id.with("reveal"), show);
         if reveal > 0. {
-            let height = context
-                .data(|d| d.get_temp::<f32>(id.with("height")))
-                .unwrap_or(tokens.space_header as f32 * 2.);
             let position = context.content_rect().left_top()
                 + egui::vec2(handle.response.rect.width(), -height * (1. - reveal));
             let bar = egui::Area::new(id)
@@ -121,7 +121,7 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
                                     );
                                     super::surfaces::menu(
                                         ui,
-                                        &[super::surfaces::Slot::Action(Action::ToggleView)],
+                                        super::surfaces::VIEW,
                                         ctx.enabled,
                                         ctx.registry,
                                         &mut intents,
@@ -141,6 +141,13 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
                                     ) {
                                         intents.push(Intent::Action(*action));
                                     }
+                                }
+                                let drag = window_drag_area(ui);
+                                if drag.drag_started() {
+                                    intents.push(Intent::Drag);
+                                }
+                                if drag.double_clicked() {
+                                    intents.push(Intent::Action(Action::Maximize));
                                 }
                             });
                         });
@@ -210,4 +217,77 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
     }
     intents.extend(super::intent::intents_from_actions(actions));
     intents
+}
+
+fn window_drag_area(ui: &mut egui::Ui) -> egui::Response {
+    ui.allocate_response(
+        egui::vec2(
+            ui.available_size_before_wrap().x,
+            ui.spacing().interact_size.y,
+        ),
+        egui::Sense::click_and_drag(),
+    )
+}
+
+fn reveal_window_bar(context: &egui::Context, explicit: bool, height: f32) -> bool {
+    explicit
+        || egui::Popup::is_any_open(context)
+        || context.memory(|m| m.focused().is_some())
+        || context.input(|i| {
+            i.pointer
+                .hover_pos()
+                .is_some_and(|p| p.y < i.content_rect().top() + height)
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_drag_target_uses_the_free_space_on_the_same_row() {
+        let context = egui::Context::default();
+        let mut output = context.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    let button = ui.button("Window controls");
+                    let drag = window_drag_area(ui);
+                    assert!(drag.rect.left() >= button.rect.right());
+                    assert_eq!(drag.rect.top(), button.rect.top());
+                });
+            });
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn view_bar_hover_does_not_deadlock_the_frame() {
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let context = egui::Context::default();
+            for (pointer, explicit, expected) in [
+                (egui::pos2(100., 10.), false, true),
+                (egui::pos2(100., 50.), false, true),
+                (egui::pos2(100., 200.), false, false),
+                (egui::pos2(100., 200.), true, true),
+            ] {
+                let mut output = context.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(800., 600.),
+                        )),
+                        events: vec![egui::Event::PointerMoved(pointer)],
+                        ..Default::default()
+                    },
+                    |_| assert_eq!(reveal_window_bar(&context, explicit, 64.), expected),
+                );
+                output.textures_delta.clear();
+            }
+            let _ = send.send(());
+        });
+        receive
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("View bar hover must finish a frame without recursively locking egui");
+    }
 }

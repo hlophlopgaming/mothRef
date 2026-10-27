@@ -39,6 +39,92 @@ pub(super) fn canvas_navigation(
     !tools_open && viewport.contains(egui::pos2(position[0], position[1]))
 }
 
+impl super::App {
+    pub(super) fn drag_window(&mut self, edge: Option<winit::window::ResizeDirection>) {
+        let Some(window) = self.shell.window.clone() else {
+            return;
+        };
+        if edge.is_none() && self.window_position_locked() {
+            return;
+        }
+        let result = match edge {
+            Some(edge) => window.drag_resize_window(edge),
+            None => window.drag_window(),
+        };
+        match result {
+            Ok(()) => {
+                self.cancel_drag();
+                self.input.adapter.release_mouse();
+                let context = self.shell.context().clone();
+                if let Some(state) = &mut self.shell.egui {
+                    release_window_pointer(&context, state.egui_input_mut());
+                }
+            }
+            Err(error) => self.workspace.board.message = error.to_string().into(),
+        }
+    }
+
+    pub(super) fn resize_edge(
+        &self,
+        position: [f32; 2],
+        kind: Kind,
+    ) -> Option<winit::window::ResizeDirection> {
+        let window = self.shell.window.as_ref()?;
+        if !window.is_resizable() || window.is_maximized() || window.fullscreen().is_some() {
+            return None;
+        }
+        let tokens = moth_ui::tokens(self.shell.context());
+        let border = if kind == Kind::Mouse {
+            tokens.space_s
+        } else {
+            tokens.space_xl
+        };
+        let size = window.inner_size();
+        let scale = self.shell.context().pixels_per_point();
+        window_edge(
+            position,
+            [size.width as f32 / scale, size.height as f32 / scale],
+            f32::from(border),
+        )
+    }
+}
+
+pub(super) fn release_window_pointer(context: &egui::Context, pending: &mut egui::RawInput) {
+    // The compositor now owns the gesture and may consume its release event.
+    pending
+        .events
+        .retain(|event| !matches!(event, egui::Event::PointerButton { .. }));
+    context.input_mut(|input| input.pointer = Default::default());
+    context.stop_dragging();
+}
+
+fn window_edge(
+    [x, y]: [f32; 2],
+    [width, height]: [f32; 2],
+    border: f32,
+) -> Option<winit::window::ResizeDirection> {
+    use winit::window::ResizeDirection::*;
+    if x < 0. || y < 0. || x >= width || y >= height {
+        return None;
+    }
+    match (
+        x < border,
+        x >= width - border,
+        y < border,
+        y >= height - border,
+    ) {
+        (true, _, true, _) => Some(NorthWest),
+        (_, true, true, _) => Some(NorthEast),
+        (true, _, _, true) => Some(SouthWest),
+        (_, true, _, true) => Some(SouthEast),
+        (true, _, _, _) => Some(West),
+        (_, true, _, _) => Some(East),
+        (_, _, true, _) => Some(North),
+        (_, _, _, true) => Some(South),
+        _ => None,
+    }
+}
+
 impl InputState {
     /// Match native pointer coordinates to the points used by the canvas and egui.
     pub fn event(
@@ -161,6 +247,66 @@ mod tests {
     use super::super::bindings::{Action, Registry};
     use super::*;
     use egui::Key;
+    #[test]
+    fn native_window_handoff_releases_egui_without_a_button_up() {
+        let context = egui::Context::default();
+        let press = egui::Event::PointerButton {
+            pos: egui::pos2(30., 30.),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        };
+        for _ in 0..3 {
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    events: vec![
+                        egui::Event::PointerMoved(egui::pos2(30., 30.)),
+                        press.clone(),
+                    ],
+                    ..Default::default()
+                },
+                |_| {},
+            );
+            output.textures_delta.clear();
+            assert!(context.input(|input| input.pointer.primary_down()));
+            context.set_dragged_id(egui::Id::new("native titlebar"));
+            let mut pending = egui::RawInput {
+                events: vec![press.clone(), egui::Event::PointerGone],
+                ..Default::default()
+            };
+            release_window_pointer(&context, &mut pending);
+            assert!(!context.input(|input| input.pointer.any_down()));
+            assert!(context.dragged_id().is_none());
+            assert!(matches!(
+                pending.events.as_slice(),
+                [egui::Event::PointerGone]
+            ));
+        }
+    }
+
+    #[test]
+    fn frameless_resize_edges_include_corners_and_leave_the_canvas_alone() {
+        use winit::window::ResizeDirection::*;
+        for (position, expected) in [
+            ([1., 1.], Some(NorthWest)),
+            ([799., 1.], Some(NorthEast)),
+            ([1., 599.], Some(SouthWest)),
+            ([799., 599.], Some(SouthEast)),
+            ([400., 1.], Some(North)),
+            ([400., 599.], Some(South)),
+            ([1., 300.], Some(West)),
+            ([799., 300.], Some(East)),
+            ([400., 300.], None),
+            ([8., 8.], None),
+            ([-1., 0.], None),
+            ([800., 300.], None),
+        ] {
+            assert_eq!(window_edge(position, [800., 600.], 8.), expected);
+        }
+        assert_eq!(window_edge([16., 300.], [800., 600.], 24.), Some(West));
+        assert_eq!(window_edge([400., 300.], [0., 0.], 8.), None);
+    }
+
     #[test]
     fn physical_modifiers_do_not_block_selection_or_pan_chords() {
         let registry = Registry::default();

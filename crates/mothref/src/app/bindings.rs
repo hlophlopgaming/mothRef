@@ -34,6 +34,14 @@ actions! {
     ToggleView, ToggleView, "Tab", Some(moth_ui::icons::Icon::Image);
     Overlay, Overlay, "Cmd+T", Some(moth_ui::icons::Icon::Overlay);
     Pin, OnTop, "Cmd+Shift+T", Some(moth_ui::icons::Icon::Pin);
+    ClickThrough, ClickThrough, "", None;
+    OverlaySelection, OverlaySelection, "", None;
+    Bottom, OnBottom, "", None;
+    LockWindow, LockWindowPosition, "", None;
+    ResizeSelection, ResizeSelection, "", None;
+    ResizeAll, ResizeAll, "", None;
+    OpacityUp, OpacityUp, "Cmd+Alt+ArrowUp", None;
+    OpacityDown, OpacityDown, "Cmd+Alt+ArrowDown", None;
     MoveWindow, MoveWindow, "Cmd+Shift+M", None;
     Fullscreen, Fullscreen, "F11", None;
     Minimize, Minimize, "", Some(moth_ui::icons::Icon::Minus);
@@ -167,7 +175,10 @@ impl Action {
             }
             Palette | BindingSettings | Shortcuts | New | Open | Images | Save | Library
             | CloseTab | NextTab | Overlay | Pin | Minimize | Maximize | MoveWindow
-            | Fullscreen | Settings | CloseWindow => Text::CategoryBoard,
+            | Fullscreen | Settings | CloseWindow | OverlaySelection | ClickThrough | Bottom
+            | LockWindow | ResizeSelection | ResizeAll | OpacityUp | OpacityDown => {
+                Text::CategoryBoard
+            }
             _ => Text::CategoryEdit,
         }
     }

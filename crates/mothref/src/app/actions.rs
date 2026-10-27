@@ -33,6 +33,14 @@ impl App {
             }
             _ => {}
         }
+        if action == ClickThrough {
+            return self.overlay.is_some()
+                && self
+                    .shell
+                    .window
+                    .as_ref()
+                    .is_some_and(|w| moth_platform::Desktop.window_capabilities(w).click_through);
+        }
         if self.editing.is_some() {
             return false;
         }
@@ -52,7 +60,6 @@ impl App {
                 | Overlay
                 | Minimize
                 | Maximize
-                | MoveWindow
                 | Fullscreen
         ) {
             return true;
@@ -60,7 +67,42 @@ impl App {
         if action == ClearDiskCache {
             return !self.tools.disk_cache_busy && !self.tools.clear_disk_cache;
         }
-        if action == Pin {
+        if action == MoveWindow {
+            return !self.window_position_locked();
+        }
+        if action == LockWindow {
+            return self
+                .shell
+                .window
+                .as_ref()
+                .is_some_and(|w| w.outer_position().is_ok());
+        }
+        if action == OverlaySelection {
+            return !self.workspace.library
+                && !self.workspace.board.loading
+                && self.workspace.board.selection.iter().any(|id| {
+                    self.workspace
+                        .board
+                        .scene
+                        .get(*id)
+                        .is_some_and(|item| item.blob().is_some())
+                });
+        }
+        if matches!(action, ResizeSelection | ResizeAll) {
+            return !self.workspace.library
+                && !self.workspace.board.loading
+                && !self.workspace.board.scene.is_empty()
+                && (action == ResizeAll || !self.workspace.board.selection.is_empty())
+                && self
+                    .shell
+                    .window
+                    .as_ref()
+                    .is_some_and(|w| w.fullscreen().is_none() && !w.is_maximized());
+        }
+        if matches!(action, OpacityUp | OpacityDown) {
+            return !self.workspace.library;
+        }
+        if matches!(action, Pin | Bottom) {
             return self.overlay.is_none()
                 && self
                     .shell
@@ -471,6 +513,52 @@ impl App {
             }
             Overlay => Intent::Overlay,
             Pin => Intent::Pin,
+            ClickThrough => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.click_through = !overlay.click_through;
+                    overlay.window.request_redraw();
+                }
+                return;
+            }
+            OverlaySelection => {
+                self.float_selection(event_loop);
+                return;
+            }
+            Bottom => {
+                let enabled = !self.bottom;
+                self.apply_pin(false);
+                self.bottom = enabled;
+                if let Some(window) = &self.shell.window {
+                    moth_platform::Desktop.window_bottom(window, enabled);
+                }
+                return;
+            }
+            LockWindow => {
+                self.locked_position = if self.locked_position.is_some() {
+                    None
+                } else {
+                    self.shell
+                        .window
+                        .as_ref()
+                        .and_then(|w| w.outer_position().ok())
+                };
+                self.cancel_window_mode();
+                return;
+            }
+            ResizeSelection | ResizeAll => {
+                self.resize_to_items(action == ResizeSelection);
+                return;
+            }
+            OpacityUp | OpacityDown => {
+                let appearance = &mut self.workspace.board.appearance;
+                appearance.window =
+                    window_mode::adjust_opacity(appearance.window, action == OpacityUp);
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.appearance = *appearance;
+                }
+                self.remember_appearance();
+                return;
+            }
             MoveWindow => {
                 self.cancel_drag();
                 let moving = !self.moving_window;

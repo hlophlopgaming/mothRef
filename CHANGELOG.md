@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.13 — 2026-10-27
+
+- Add View › Window actions for always on bottom, locking window position, floating selected images, sizing the window to selected/all items, and opacity steps (Ctrl/⌘+Alt+Up/Down). Floating views share board textures and are limited to 32 windows.
+- Add custom background, canvas and selection colors in Settings › Appearance, with individual reset controls.
+- Add opt-in system shortcuts in Settings › Window: Ctrl+Alt+Shift+T for Over, C for click-through, and Up/Down for opacity. X11 waits for native events; Windows/macOS use native registrations. Wayland retains the Over controller. Click-through can turn off when the board is activated.
+
+- Keep the compact titlebar drag target beside its controls instead of wrapping it onto another row.
+- Release application pointer capture when the compositor takes over moving or resizing a window, so consecutive gestures work on the first attempt on Wayland.
+
+- Fix a freeze when Tab switches to View or the compact window bar reveals under the pointer.
+
 - Reveal the window bar at the top of Over as well as View; drag its corner handle or free area to move the board, and resize frameless windows by their edges and corners in every mode.
 - Keep Over appearance controls and the exit button reachable at the default controller size; scroll controls in short windows.
 

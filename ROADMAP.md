@@ -268,7 +268,7 @@ Navigation, shortcuts, the command palette, batch editing and board conversion a
 - [ ] Overlay HUD: opacity slider, click-through toggle, always-on-top toggle, exit button, one-time hint with the exit shortcut — compare with the Over panel from 0.1.0-alpha.10 and tick what it already covers
 - [ ] Overlay grab handle that always receives clicks, so the overlay can be left without a global hotkey (Wayland and Flatpak fallback)
 - [ ] Attach to another application's window: Windows and X11 (macOS and Wayland are P2)
-- [ ] Remaining window-mode parity items in [FEATURES.md](docs/FEATURES.md#window-modes-m3): always on bottom, lock window position, overlay selection (each selected image in its own window), resize window to selection, opacity up/down shortcuts, custom appearance colors, system-global shortcuts
+- [ ] Native qualification of the added parity controls: bottom stacking, position lock/maximize, floating image surfaces, resize-to-content, opacity keys, custom colors and system-global shortcuts; see [validation notes](docs/M3-WINDOW-VALIDATION.md#remaining-parity-controls-implementation)
 
 **Window reliability**
 
@@ -290,6 +290,8 @@ Navigation, shortcuts, the command palette, batch editing and board conversion a
 
 <details>
 <summary>Done</summary>
+
+- [x] Remaining window-mode parity controls: bottom stacking, position lock (with a maximized-window preference), floating selected images, resize to selected/all items, opacity shortcuts, custom colors and opt-in system-global shortcuts. Native backend qualification remains open above; Wayland uses the Over controller rather than global grabs.
 
 - [x] Consistent multi-selection editing: move, scale, rotate, flip, duplicate, delete, reorder and arrange selected items together; show the affected selection and make each batch action one undo step
 - [x] Canvas multi-selection: Ctrl/Command-click and rectangle toggle, Shift-click and rectangle add; preserve group moves and expose bindings in the shortcut cheat sheet. Touch multi-select mode is planned in [SHORTCUTS.md](docs/SHORTCUTS.md).
@@ -541,6 +543,7 @@ Checks that need real hardware or long runs. They do not block the next alpha un
 
 - [ ] M0: real touch devices, other desktop pens and native end-to-end paste ([M0 validation](docs/M0-VALIDATION.md); Huion pen and Wayland drops are done)
 - [ ] M1: truncated-file recovery and reader fuzzing at release length; 1,000× `kill -9` ([M1 validation](docs/M1-VALIDATION.md))
+- [ ] 1.0 release only: five-minute smoke soak (`cargo xtask soak 300 5`); omitted from intermediate releases per maintainer instruction on 2026-10-27
 - [ ] 1.2 or later: full eight-hour combined render/persistence soak (CI / maintainer only)
 - [ ] 1.2 or later: native Windows/macOS manual save, recovery, clipboard, close and OS-shutdown checks
 

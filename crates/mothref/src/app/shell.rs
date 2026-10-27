@@ -76,6 +76,14 @@ impl Shell {
     pub(super) fn context(&self) -> &egui::Context {
         &self.ctx
     }
+    pub(super) fn shortcut_wake(
+        &self,
+    ) -> Arc<dyn Fn(Option<moth_platform::shortcuts::Shortcut>) + Send + Sync> {
+        let proxy = self.proxy.clone();
+        Arc::new(move |shortcut| {
+            let _ = proxy.send_event(shortcut.map_or(Wake::Ready, Wake::Global));
+        })
+    }
     pub(super) fn wake(&self) -> Arc<dyn Fn() + Send + Sync> {
         self.wake.clone()
     }

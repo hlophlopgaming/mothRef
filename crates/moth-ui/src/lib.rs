@@ -5,6 +5,38 @@ use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Restore one color to the current theme.
+    ResetColor,
+    /// Localized native shortcut preference.
+    GlobalShortcutsUnavailable,
+    /// Localized native shortcut preference.
+    DisableClickThroughOnActivate,
+    /// Localized native shortcut preference.
+    GlobalShortcuts,
+    /// Independent floating views of selected images.
+    OverlaySelection,
+    /// Bounded native window resource limit.
+    OverlayWindowLimit,
+    /// Localized window appearance control.
+    SelectionColor,
+    /// Localized window appearance control.
+    CanvasColor,
+    /// Localized window appearance control.
+    BackgroundColor,
+    /// Localized window appearance control.
+    OpacityDown,
+    /// Localized window appearance control.
+    OpacityUp,
+    /// Localized window appearance control.
+    ResizeAll,
+    /// Localized window appearance control.
+    ResizeSelection,
+    /// Localized window appearance control.
+    LockWhileMaximized,
+    /// Localized window appearance control.
+    LockWindowPosition,
+    /// Localized window appearance control.
+    OnBottom,
     /// Toggle board presentation chrome.
     ToggleView,
     /// View appearance popover.

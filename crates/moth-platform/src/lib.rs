@@ -19,6 +19,8 @@ pub mod lod_store;
 pub mod memory;
 /// Plain-text app preferences.
 pub mod settings;
+/// Event-driven system shortcuts and backend capability checks.
+pub mod shortcuts;
 mod source;
 mod viewer;
 use moth_format::{Handle, ReadSeek, Storage};
@@ -407,6 +409,20 @@ pub trait Platform {
     fn capabilities(&self) -> Capabilities;
     /// Compositors can reject topmost windows while still supporting transparent surfaces.
     fn window_capabilities(&self, window: &winit::window::Window) -> WindowCapabilities;
+    /// Global shortcuts require desktop registration; Wayland retains the Over controller.
+    fn global_shortcuts_available(&self, window: &winit::window::Window) -> bool {
+        shortcuts::available(window)
+    }
+    /// Uses native stacking only on compositors which expose it.
+    fn window_bottom(&self, window: &winit::window::Window, enabled: bool) {
+        if self.window_capabilities(window).on_top {
+            window.set_window_level(if enabled {
+                winit::window::WindowLevel::AlwaysOnBottom
+            } else {
+                winit::window::WindowLevel::Normal
+            });
+        }
+    }
     /// Validates the remembered target before restoring a pin.
     fn pin_target_available(&self, pin: &pin::Pin) -> bool {
         pin.available()

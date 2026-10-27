@@ -303,8 +303,9 @@ impl Document {
         library: bool,
         pixels_per_point: f32,
         target: Camera,
+        floating: &[(&Item, Camera, [f32; 2])],
     ) {
-        if library {
+        if library && floating.is_empty() {
             self.decode.requests.schedule([]);
             registry.retain_tiles(&HashSet::new());
             return;
@@ -422,6 +423,60 @@ impl Document {
                         },
                         area,
                         distance,
+                    ));
+                }
+            }
+        }
+        for &(item, camera, screen) in floating {
+            let Some(blob) = item.blob() else { continue };
+            let Some(&handle) = self.sources.get(&blob) else {
+                continue;
+            };
+            if self.failed.contains(&handle) {
+                continue;
+            }
+            let mut side =
+                moth_render::preview_side(item.rect.width.max(item.rect.height) * camera.zoom)
+                    .min(self.decode.cache().max_side());
+            if registry.original_dimensions(blob).is_none() || registry.tile_detail {
+                side = side.min(moth_io::tiles::SIDE);
+            }
+            let request = moth_io::Request {
+                tile: None,
+                handle,
+                side,
+                format: registry.image_format(),
+                blob: Some(blob),
+            };
+            if !registry.resident(blob, side) {
+                candidates
+                    .entry((blob, None))
+                    .and_modify(|entry| {
+                        entry.0.side = entry.0.side.max(side);
+                        entry.1 = entry.1.max(screen[0] * screen[1]);
+                        entry.2 = 0.;
+                    })
+                    .or_insert((request, screen[0] * screen[1], 0.));
+            }
+            for tile in
+                registry.visible_tiles(item, camera, screen, [0., 0., screen[0], screen[1]], 1.)
+            {
+                let key = tile.key(blob);
+                wanted_tiles.insert(key);
+                for levels in 1..=moth_render::PARENT_LEVELS {
+                    if let Some(parent) = tile.parent(levels) {
+                        wanted_tiles.insert(parent.key(blob));
+                    }
+                }
+                if !registry.resident(key, moth_io::tiles::SIDE) {
+                    candidates.entry((blob, Some(tile))).or_insert((
+                        moth_io::Request {
+                            tile: Some(tile),
+                            side: moth_io::tiles::SIDE,
+                            ..request
+                        },
+                        screen[0] * screen[1],
+                        0.,
                     ));
                 }
             }

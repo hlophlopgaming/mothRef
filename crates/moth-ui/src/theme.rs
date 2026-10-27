@@ -365,3 +365,58 @@ mod tests {
         }
     }
 }
+
+/// Stable, optional RGB preference; an empty value restores the active palette.
+pub fn encode_color(value: Option<[u8; 3]>) -> String {
+    value.map_or_else(String::new, |[r, g, b]| format!("{r:02X}{g:02X}{b:02X}"))
+}
+/// Rejects malformed preferences before they can reach the theme.
+pub fn decode_color(value: &str) -> Option<[u8; 3]> {
+    if value.len() != 6 || !value.is_ascii() {
+        return None;
+    }
+    Some([
+        u8::from_str_radix(&value[0..2], 16).ok()?,
+        u8::from_str_radix(&value[2..4], 16).ok()?,
+        u8::from_str_radix(&value[4..6], 16).ok()?,
+    ])
+}
+impl Tokens {
+    /// Applies user colors to the semantic roles used by both palettes.
+    pub fn custom_colors(
+        &mut self,
+        background: Option<[u8; 3]>,
+        canvas: Option<[u8; 3]>,
+        selection: Option<[u8; 3]>,
+    ) {
+        if let Some([r, g, b]) = background {
+            self.surface = Color32::from_rgb(r, g, b);
+        }
+        if let Some([r, g, b]) = canvas {
+            self.canvas = Color32::from_rgb(r, g, b);
+        }
+        if let Some([r, g, b]) = selection {
+            self.selection = Color32::from_rgb(r, g, b);
+            self.accent = self.selection;
+        }
+    }
+}
+
+#[cfg(test)]
+mod custom_color_tests {
+    use super::*;
+    #[test]
+    fn colors_validate_and_override_both_palettes() {
+        let color = Some([16, 128, 255]);
+        assert_eq!(decode_color(&encode_color(color)), color);
+        for bad in ["", "#FFFFFF", "GGFFFF", "ＦＦ", "00000", "0000000"] {
+            assert_eq!(decode_color(bad), None);
+        }
+        for mut tokens in [Tokens::LIGHT, Tokens::DARK] {
+            tokens.custom_colors(color, color, color);
+            assert_eq!(tokens.canvas.to_array(), [16, 128, 255, 255]);
+            assert_eq!(tokens.surface, tokens.canvas);
+            assert_eq!(tokens.selection, tokens.canvas);
+        }
+    }
+}

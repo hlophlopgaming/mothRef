@@ -2,6 +2,8 @@
 use std::sync::{Arc, atomic::AtomicBool};
 use winit::window::Window;
 pub struct Gpu {
+    instance: wgpu::Instance,
+    native_adapter: wgpu::Adapter,
     pub surface: wgpu::Surface<'static>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -61,6 +63,8 @@ impl Gpu {
         );
         let lost = moth_render::watch_device(&device, wake);
         Ok(Self {
+            instance,
+            native_adapter: adapter,
             surface,
             device,
             queue,
@@ -84,5 +88,33 @@ impl Gpu {
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
         }
+    }
+}
+
+impl Gpu {
+    pub fn image_surface(
+        &self,
+        window: Arc<Window>,
+    ) -> anyhow::Result<(wgpu::Surface<'static>, wgpu::SurfaceConfiguration)> {
+        let surface = self.instance.create_surface(window.clone())?;
+        let caps = surface.get_capabilities(&self.native_adapter);
+        anyhow::ensure!(
+            caps.formats.contains(&self.config.format),
+            "Incompatible image window surface"
+        );
+        let size = window.inner_size();
+        let mut config = self.config.clone();
+        config.width = size.width.max(1);
+        config.height = size.height.max(1);
+        config.alpha_mode = if caps
+            .alpha_modes
+            .contains(&wgpu::CompositeAlphaMode::PreMultiplied)
+        {
+            wgpu::CompositeAlphaMode::PreMultiplied
+        } else {
+            wgpu::CompositeAlphaMode::Auto
+        };
+        surface.configure(&self.device, &config);
+        Ok((surface, config))
     }
 }
