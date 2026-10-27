@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix packing occasionally leaving rotated images unmoved when rounding exhausts the layout search; retain strict fit checks and original image sizes.
+
 ## 0.1.0-alpha.11 — 2026-10-26
 
 - Unblock Windows CI by decoding recovery paths with fixed-size byte chunks. Check canonical save destinations in recovery tests, including symlink aliases, so macOS temporary-directory aliases do not fail a valid restore.

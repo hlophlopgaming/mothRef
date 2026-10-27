@@ -276,7 +276,8 @@ fn pack(
     let mut low = sizes
         .iter()
         .fold(area.sqrt(), |side, s| side.max(s[0]).max(s[1]));
-    let limit: f64 = sizes.iter().map(|s| s[0].max(s[1])).sum();
+    // Leave slack so subtraction rounding cannot reject the final search bin.
+    let limit = sizes.iter().map(|s| s[0].max(s[1])).sum::<f64>() * 2.;
     let mut high = low;
     let mut positions = loop {
         if let Some(positions) = pack_square(&sizes, &order, high, choice, split) {
@@ -864,6 +865,38 @@ mod tests {
                             "{choice:?} {split:?} overlap {r:?} vs {o:?}"
                         );
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn packing_rotated_images_survives_rounding_at_the_search_limit() {
+        let mut items = [item(1, 51.27531, 269.77512), item(2, 180.6287, 194.46127)];
+        items[0].transform.rotation = -1.3824722;
+        items[1].transform.rotation = 2.1351492;
+        let refs: Vec<_> = items.iter().collect();
+        for mode in [Arrange::Optimal, Arrange::Grid] {
+            for choice in FreeRectChoice::ALL {
+                for split in GuillotineSplit::ALL {
+                    let out = rects(&arrange(&refs, mode, 0., choice, split));
+                    assert_eq!(out.len(), items.len(), "{choice:?} {split:?}");
+                    for (rect, item) in out.iter().zip(&items) {
+                        assert!(rect.valid());
+                        assert_eq!(
+                            (rect.width, rect.height),
+                            (item.rect.width, item.rect.height)
+                        );
+                    }
+                    let a = out[0].rotated_envelope(items[0].transform.rotation);
+                    let b = out[1].rotated_envelope(items[1].transform.rotation);
+                    assert!(
+                        a.upper()[0] <= b.lower()[0] + 0.001
+                            || b.upper()[0] <= a.lower()[0] + 0.001
+                            || a.upper()[1] <= b.lower()[1] + 0.001
+                            || b.upper()[1] <= a.lower()[1] + 0.001,
+                        "{choice:?} {split:?} overlap {a:?} vs {b:?}"
+                    );
                 }
             }
         }
