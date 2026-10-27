@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.12 — 2026-10-27
+
+- Reveal the window bar at the top of Over as well as View; drag its corner handle or free area to move the board, and resize frameless windows by their edges and corners in every mode.
+- Keep Over appearance controls and the exit button reachable at the default controller size; scroll controls in short windows.
+
 - Fix packing occasionally leaving rotated images unmoved when rounding exhausts the layout search; retain strict fit checks and original image sizes.
 
 ## 0.1.0-alpha.11 — 2026-10-26
