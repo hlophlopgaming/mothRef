@@ -10,6 +10,7 @@
 **कलाकारों के लिए एक तेज़ और क्रैश से सुरक्षित रेफ़रेंस बोर्ड।**<br>
 तस्वीरें एक अनंत कैनवस पर छोड़ें, उन्हें सजाएँ और काम करते समय नज़र के सामने रखें।
 
+[![Listed on Remade](https://remade.wiki/badges/listed-on-remade-classic.svg)](https://remade.wiki/projects/mothref/)
 [![Latest release](https://img.shields.io/github/v/release/hlophlopgaming/mothRef?include_prereleases&label=release&color=a6c47a)](https://github.com/hlophlopgaming/mothRef/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/hlophlopgaming/mothRef/ci.yml?branch=main&label=CI)](https://github.com/hlophlopgaming/mothRef/actions/workflows/ci.yml)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
