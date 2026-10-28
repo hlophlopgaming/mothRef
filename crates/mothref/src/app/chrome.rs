@@ -9,6 +9,7 @@ use super::{Document, Intent};
 /// Read-only inputs the chrome draws from; bundled to keep the call small.
 pub(super) struct Chrome<'a> {
     pub compact: bool,
+    pub controls_right: bool,
     pub board: &'a mut Document,
     pub tabs: &'a [Document],
     pub gpu: &'a Gpu,
@@ -50,14 +51,15 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
     ordered.sort_unstable_by_key(|(id, _)| *id);
     let tab_labels: Vec<_> = ordered.into_iter().map(|(_, tab)| tab).collect();
     if ctx.compact {
-        use super::bindings::Action;
         use moth_ui::{Text, text};
         let context = ui.ctx().clone();
         let tokens = moth_ui::tokens(&context);
         let id = egui::Id::new("view_window_bar");
         let mut explicit = context.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
+        let (edge, pivot, layout) = window_bar_edge(context.content_rect(), ctx.controls_right);
         let handle = egui::Area::new(id.with("handle"))
-            .fixed_pos(context.content_rect().left_top())
+            .pivot(pivot)
+            .fixed_pos(edge)
             .order(egui::Order::Foreground)
             .show(&context, |ui| {
                 egui::Frame::new()
@@ -89,9 +91,14 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
         );
         let reveal = context.animate_bool(id.with("reveal"), show);
         if reveal > 0. {
-            let position = context.content_rect().left_top()
-                + egui::vec2(handle.response.rect.width(), -height * (1. - reveal));
+            let direction = if ctx.controls_right { -1. } else { 1. };
+            let position = edge
+                + egui::vec2(
+                    direction * handle.response.rect.width(),
+                    -height * (1. - reveal),
+                );
             let bar = egui::Area::new(id)
+                .pivot(pivot)
                 .fixed_pos(position)
                 .order(egui::Order::Foreground)
                 .show(&context, |ui| {
@@ -103,7 +110,9 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
                         .fill(tokens.surface)
                         .inner_margin(tokens.space_s as i8)
                         .show(ui, |ui| {
-                            ui.horizontal_wrapped(|ui| {
+                            ui.with_layout(layout, |ui| {
+                                window_buttons(ui, ctx.enabled, ctx.registry, &mut intents);
+                                pin_menu(ui, &ctx, &mut intents);
                                 ui.menu_button(ctx.board.title(), |ui| {
                                     for tab in &tab_labels {
                                         if ui.selectable_label(tab.active, tab.title).clicked() {
@@ -130,24 +139,12 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
                                 if appearance != ctx.board.appearance {
                                     intents.push(Intent::Appearance(appearance));
                                 }
-                                for action in super::surfaces::VIEW_WINDOW {
-                                    if super::surfaces::button(
-                                        ui,
-                                        *action,
-                                        ctx.enabled,
-                                        ctx.registry,
-                                        true,
-                                        *action == Action::Pin && ctx.pinned,
-                                    ) {
-                                        intents.push(Intent::Action(*action));
-                                    }
-                                }
                                 let drag = window_drag_area(ui);
                                 if drag.drag_started() {
                                     intents.push(Intent::Drag);
                                 }
                                 if drag.double_clicked() {
-                                    intents.push(Intent::Action(Action::Maximize));
+                                    intents.push(Intent::Action(super::bindings::Action::Maximize));
                                 }
                             });
                         });
@@ -219,6 +216,78 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
     intents
 }
 
+fn window_bar_edge(rect: egui::Rect, right: bool) -> (egui::Pos2, egui::Align2, egui::Layout) {
+    if right {
+        (
+            rect.right_top(),
+            egui::Align2::RIGHT_TOP,
+            egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
+        )
+    } else {
+        (
+            rect.left_top(),
+            egui::Align2::LEFT_TOP,
+            egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
+        )
+    }
+}
+
+fn window_buttons(
+    ui: &mut egui::Ui,
+    enabled: &[bool],
+    registry: &super::bindings::Registry,
+    intents: &mut Vec<Intent>,
+) {
+    ui.horizontal(|ui| {
+        let actions = super::surfaces::VIEW_WINDOW;
+        for i in 0..actions.len() {
+            let action = if ui.layout().main_dir() == egui::Direction::RightToLeft {
+                actions[actions.len() - 1 - i]
+            } else {
+                actions[i]
+            };
+            if super::surfaces::button(ui, action, enabled, registry, true, false) {
+                intents.push(Intent::Action(action));
+            }
+        }
+    });
+}
+
+fn pin_menu(ui: &mut egui::Ui, ctx: &Chrome<'_>, intents: &mut Vec<Intent>) {
+    use moth_ui::{Text, text};
+    let caps = moth_platform::Desktop.window_capabilities(ctx.window);
+    ui.add_enabled_ui(caps.on_top || caps.above_window, |ui| {
+        if super::surfaces::button(
+            ui,
+            super::bindings::Action::Pin,
+            ctx.enabled,
+            ctx.registry,
+            true,
+            ctx.pinned,
+        ) {
+            intents.push(Intent::Action(super::bindings::Action::Pin));
+        }
+        ui.menu_button("▾", |ui| {
+            for (target, available, label) in [
+                (false, caps.on_top, Text::AboveAll),
+                (true, caps.above_window, Text::AboveWindow),
+            ] {
+                if ui
+                    .add_enabled(
+                        available,
+                        egui::Button::new(text(label))
+                            .selected(ctx.pinned && ctx.target_pin == target),
+                    )
+                    .clicked()
+                {
+                    intents.push(Intent::PinChoice(target));
+                    ui.close();
+                }
+            }
+        });
+    });
+}
+
 fn window_drag_area(ui: &mut egui::Ui) -> egui::Response {
     ui.allocate_response(
         egui::vec2(
@@ -243,6 +312,53 @@ fn reveal_window_bar(context: &egui::Context, explicit: bool, height: f32) -> bo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_controls_stay_on_the_chosen_edge_before_long_titles() {
+        let registry = super::super::bindings::Registry::default();
+        let enabled = vec![true; super::super::bindings::ACTIONS.len()];
+        for width in [320., 800., 1440.] {
+            for right in [false, true] {
+                let context = egui::Context::default();
+                moth_ui::theme(&context, &moth_ui::Tokens::DARK);
+                let viewport =
+                    egui::Rect::from_min_size(egui::pos2(10., 20.), egui::vec2(width, 600.));
+                let (edge, pivot, layout) = window_bar_edge(viewport, right);
+                assert_eq!(
+                    edge,
+                    if right {
+                        viewport.right_top()
+                    } else {
+                        viewport.left_top()
+                    }
+                );
+                assert_eq!(
+                    pivot,
+                    if right {
+                        egui::Align2::RIGHT_TOP
+                    } else {
+                        egui::Align2::LEFT_TOP
+                    }
+                );
+                let mut output = context.run_ui(egui::RawInput {
+                    screen_rect: Some(viewport),
+                    ..Default::default()
+                }, |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        ui.with_layout(layout, |ui| {
+                            let edge = if right { ui.cursor().right() } else { ui.cursor().left() };
+                            let controls = ui.scope(|ui| window_buttons(ui, &enabled, &registry, &mut Vec::new()));
+                            assert_eq!(if right { controls.response.rect.right() } else { controls.response.rect.left() }, edge);
+                            assert!(controls.response.rect.width() < width);
+                            assert!(controls.response.rect.height() <= ui.spacing().interact_size.y.max(44.));
+                            ui.label("A very long board title that must never displace window controls");
+                        });
+                    });
+                });
+                output.textures_delta.clear();
+            }
+        }
+    }
 
     #[test]
     fn window_drag_target_uses_the_free_space_on_the_same_row() {

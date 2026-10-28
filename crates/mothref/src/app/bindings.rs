@@ -22,7 +22,7 @@ actions! {
     Shortcuts, CheatSheet, "Slash", None;
     BindingSettings, Shortcuts, "", None;
     New, NewBoard, "Cmd+N", Some(moth_ui::icons::Icon::Plus);
-    Open, Open, "Cmd+O", Some(moth_ui::icons::Icon::Folder);
+    Open, Open, "", Some(moth_ui::icons::Icon::Folder);
     Images, InsertImages, "", Some(moth_ui::icons::Icon::ImagePlus);
     Save, Save, "Cmd+S", Some(moth_ui::icons::Icon::Save);
     Library, Library, "Cmd+L", Some(moth_ui::icons::Icon::Home);
@@ -46,7 +46,7 @@ actions! {
     Fullscreen, Fullscreen, "F11", None;
     Minimize, Minimize, "", Some(moth_ui::icons::Icon::Minus);
     Maximize, Maximize, "", Some(moth_ui::icons::Icon::Maximize);
-    Settings, Settings, "Cmd+Comma", Some(moth_ui::icons::Icon::Settings);
+    Settings, Settings, "Cmd+O", Some(moth_ui::icons::Icon::Settings);
     Deselect, Deselect, "", None;
     Select, Select, "V", Some(moth_ui::icons::Icon::Select);
     Fit, Fit, "Home", Some(moth_ui::icons::Icon::Fit);
@@ -430,7 +430,14 @@ impl Registry {
     }
     pub fn load(&mut self, values: &BTreeMap<String, String>) -> bool {
         let mut candidate = Self::default();
+        let old_menu_bindings = values
+            .get("binding_Settings")
+            .is_some_and(|v| v == "Cmd+Comma")
+            && values.get("binding_Open").is_some_and(|v| v == "Cmd+O");
         for action in ACTIONS {
+            if old_menu_bindings && matches!(action, Action::Settings | Action::Open) {
+                continue;
+            }
             if let Some(value) = values.get(&format!("binding_{}", action.id())) {
                 let chord = if value.is_empty() {
                     None
@@ -509,6 +516,27 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn settings_uses_command_o_and_migrates_the_old_default_pair() {
+        let mut registry = Registry::default();
+        let modifiers = Mods {
+            command: true,
+            ..Mods::default()
+        };
+        assert_eq!(registry.key(Key::O, modifiers), Some(Action::Settings));
+        assert!(registry.get(Action::Open).is_none());
+        let mut values = registry.preferences();
+        values.insert("binding_Settings".into(), "Cmd+Comma".into());
+        values.insert("binding_Open".into(), "Cmd+O".into());
+        assert!(registry.load(&values));
+        assert_eq!(registry.key(Key::O, modifiers), Some(Action::Settings));
+        assert!(registry.get(Action::Open).is_none());
+        values.insert("binding_Settings".into(), "Alt+S".into());
+        assert!(registry.load(&values));
+        assert_eq!(registry.key(Key::O, modifiers), Some(Action::Open));
+        assert_eq!(registry.get(Action::Settings).unwrap().encode(), "Alt+S");
+    }
+
     #[test]
     fn shortcut_labels_use_symbols_without_changing_persisted_chords() {
         let mut registry = Registry::default();

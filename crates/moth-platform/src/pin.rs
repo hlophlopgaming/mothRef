@@ -7,26 +7,42 @@ use winit::window::Window;
 pub struct Pin {
     #[cfg(target_os = "windows")]
     native: native::Pin,
+    #[cfg(target_os = "linux")]
+    native: x11::Pin,
 }
 impl Pin {
+    /// Wakes the event loop when a native target closes, without polling idle boards.
+    pub fn new(wake: std::sync::Arc<dyn Fn() + Send + Sync>) -> Self {
+        #[cfg(target_os = "linux")]
+        {
+            Self {
+                native: x11::Pin::new(wake),
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = wake;
+            Self::default()
+        }
+    }
     /// Checks whether the saved target still exists before enabling it again.
     pub(crate) fn available(&self) -> bool {
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
             self.native.available()
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         {
             false
         }
     }
     /// Installs a foreground notification, with no polling while pinned.
     pub(crate) fn enable(&mut self, window: &Window, enabled: bool) -> Result<(), String> {
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
             self.native.enable(window, enabled)
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         {
             let _ = window;
             if enabled {
@@ -38,11 +54,11 @@ impl Pin {
     }
     /// Samples only during explicit selection; Escape cancels even outside the app.
     pub(crate) fn pick(&mut self, window: &Window) -> Option<bool> {
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
             self.native.pick(window)
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         {
             let _ = window;
             Some(false)
@@ -206,3 +222,7 @@ mod native {
         }
     }
 }
+
+#[cfg(target_os = "linux")]
+#[path = "pin_x11.rs"]
+mod x11;

@@ -141,7 +141,7 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 
 ### Window modes (M3)
 - [x] Always on top (PR, BR)
-- [ ] Always on top of a chosen application (PR) — Windows done (pin above a clicked window); X11 open; P2 on macOS/Wayland
+- [ ] Always on top of a chosen application (PR) — Windows and X11 implemented (pin above a selected window); native qualification open; macOS/Wayland open
 - [x] Always on bottom — use the board as an interactive wallpaper (PR); capability-gated on Wayland, native qualification pending
 - [x] Lock window position; option to stay locked while maximized (PR); requires native window coordinates (unavailable on Wayland)
 - [ ] Transparent to mouse (click-through), with a system-global shortcut and "disable on activate" (PR; BeeRef #100) — click-through works on X11; opt-in global shortcuts and "disable on activate" implemented; Windows/macOS native qualification and Wayland global shortcuts open

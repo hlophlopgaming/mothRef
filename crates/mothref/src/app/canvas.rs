@@ -340,43 +340,39 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                 }
                 if bounds.is_finite() {
                     moth_ui::canvas::selection_badge(ui.ctx(), view.viewport, count, bounds.size());
-                    if !compact && marquee.is_none() && !board.selection.is_empty() {
+                    if marquee.is_none() && !board.selection.is_empty() {
                         let screen = |p: egui::Pos2| {
                             let p = view.camera.screen([p.x, p.y]);
                             egui::pos2(p[0], p[1])
                         };
                         let frame =
                             egui::Rect::from_min_max(screen(bounds.min), screen(bounds.max));
-                        if board.selection.len() > 1 && settings.show_outlines {
-                            moth_ui::canvas::selection(
-                                ui,
-                                [
-                                    frame.left_top(),
-                                    frame.right_top(),
-                                    frame.left_bottom(),
-                                    frame.right_bottom(),
-                                ],
-                            );
-                        }
-                        let kind = if board.selection.len() > 1 {
-                            super::surfaces::SelectionKind::Several
-                        } else if board
-                            .selection
-                            .iter()
-                            .any(|id| board.scene.get(*id).is_some_and(|i| i.note().is_some()))
-                        {
-                            super::surfaces::SelectionKind::Note
-                        } else {
-                            super::surfaces::SelectionKind::Image
-                        };
-                        intents.extend(super::surfaces::selection(
-                            ui.ctx(),
+                        selection_frame(
+                            ui,
                             frame,
-                            view.viewport,
-                            kind,
-                            enabled,
-                            registry,
-                        ));
+                            board.selection.len() > 1,
+                            settings.show_outlines,
+                        );
+                        if !compact {
+                            let kind =
+                                if board.selection.len() > 1 {
+                                    super::surfaces::SelectionKind::Several
+                                } else if board.selection.iter().any(|id| {
+                                    board.scene.get(*id).is_some_and(|i| i.note().is_some())
+                                }) {
+                                    super::surfaces::SelectionKind::Note
+                                } else {
+                                    super::surfaces::SelectionKind::Image
+                                };
+                            intents.extend(super::surfaces::selection(
+                                ui.ctx(),
+                                frame,
+                                view.viewport,
+                                kind,
+                                enabled,
+                                registry,
+                            ));
+                        }
                     }
                 }
             }
@@ -512,6 +508,20 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
     intents.insert(0, Intent::View(view));
     intents.extend(super::intent::intents_from_actions(actions));
     intents
+}
+
+fn selection_frame(ui: &mut egui::Ui, frame: egui::Rect, multiple: bool, show: bool) {
+    if multiple && show {
+        moth_ui::canvas::selection(
+            ui,
+            [
+                frame.left_top(),
+                frame.right_top(),
+                frame.left_bottom(),
+                frame.right_bottom(),
+            ],
+        );
+    }
 }
 
 /// Outlines share the displayed geometry, including sway, lift and transitions.
@@ -918,6 +928,24 @@ mod tests {
                 assert_eq!(scene.get(source.id).unwrap().rect, source.rect);
             }
         }
+    }
+
+    #[test]
+    fn view_mode_keeps_multiple_selection_visible() {
+        let context = egui::Context::default();
+        moth_ui::theme(&context, &moth_ui::Tokens::DARK);
+        let frame = egui::Rect::from_min_size(egui::pos2(20., 30.), egui::vec2(100., 80.));
+        let mut output = context.run_ui(Default::default(), |ui| {
+            selection_frame(ui, frame, true, true);
+        });
+        output.textures_delta.clear();
+        assert!(
+            output
+                .shapes
+                .iter()
+                .any(|shape| matches!(shape.shape, egui::Shape::Path(_))),
+            "Tab mode must paint a selection frame"
+        );
     }
 
     #[test]

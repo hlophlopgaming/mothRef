@@ -422,3 +422,5 @@ DisableClickThroughOnActivate = Disable click-through when activated
 GlobalShortcutsUnavailable = System shortcuts are unavailable on this compositor. Use the Over controller.
 
 ResetColor = Reset color
+
+ViewControlsRight = Window controls on the right in View mode (Tab)

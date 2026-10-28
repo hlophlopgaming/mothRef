@@ -66,7 +66,7 @@ impl Pass {
                 entry_point: Some("fs"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: None,
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),

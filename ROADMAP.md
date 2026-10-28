@@ -267,7 +267,7 @@ Navigation, shortcuts, the command palette, batch editing and board conversion a
 - [ ] Transparent overlay with adjustable opacity and click-through (BeeRef #100) — X11 qualified; Windows / macOS and controller-recovery checks open
 - [ ] Overlay HUD: opacity slider, click-through toggle, always-on-top toggle, exit button, one-time hint with the exit shortcut — compare with the Over panel from 0.1.0-alpha.10 and tick what it already covers
 - [ ] Overlay grab handle that always receives clicks, so the overlay can be left without a global hotkey (Wayland and Flatpak fallback)
-- [ ] Attach to another application's window: Windows and X11 (macOS and Wayland are P2)
+- [ ] Attach to another application's window: Windows and X11 implemented; native qualification open. macOS and Wayland (KDE Plasma / GNOME integrations) remain open.
 - [ ] Native qualification of the added parity controls: bottom stacking, position lock/maximize, floating image surfaces, resize-to-content, opacity keys, custom colors and system-global shortcuts; see [validation notes](docs/M3-WINDOW-VALIDATION.md#remaining-parity-controls-implementation)
 
 **Window reliability**
@@ -314,6 +314,7 @@ Navigation, shortcuts, the command palette, batch editing and board conversion a
 - [x] After opening a foreign board, offer “Save as .moth to continue working in MothRef” with Save As and Continue without saving; the first Save opens the `.moth` destination chooser, and closing an unsaved conversion prompts to save or discard
 - [x] Explain conversion before saving: retain original image bytes and supported layout/edits, list unsupported content, and keep the original `.bee` / `.pur` available; test import → `.moth` save → reopen and crash recovery
 - [x] Separate board-file admission from individual-image limits: `.pur`, `.moth` and `.bee` must not inherit the image-import byte cap; use bounded streaming and explicit board-specific limits, retaining checksum, dimension, decoded-memory and corrupt-file protections
+- [x] MothRef application menu for File and Settings; compass navigation menu in the bottom action list; configurable View window controls (right by default) and pin-mode picker
 - [x] Always-on-top, frameless window, move window by hotkey
 - [x] Auto-reveal window bar: minimize, maximize/restore, close and pin controls appear on pointer approach; also reveal through keyboard focus and an explicit touch action
 - [x] Collect/View action, automatic narrow-window View, sliding bar and touch reveal, shared appearance controls, per-board local presentation history, and Over controller integration

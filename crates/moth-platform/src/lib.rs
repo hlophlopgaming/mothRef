@@ -487,7 +487,7 @@ impl Platform for Desktop {
         WindowCapabilities {
             blur: cfg!(target_os = "macos"),
             on_top: !wayland,
-            above_window: cfg!(target_os = "windows"),
+            above_window: cfg!(target_os = "windows") || (cfg!(target_os = "linux") && !wayland),
             click_through: true,
         }
     }

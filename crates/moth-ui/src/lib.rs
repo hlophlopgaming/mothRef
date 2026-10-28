@@ -734,6 +734,8 @@ pub enum Text {
     MoveWindowHint,
     /// Explicit titlebar reveal.
     WindowControls,
+    /// Place compact window controls on the right edge.
+    ViewControlsRight,
     /// Pin choice and its current state.
     AboveAll,
     /// Pin to a foreign window.

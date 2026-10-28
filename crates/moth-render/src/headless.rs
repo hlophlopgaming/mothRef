@@ -453,12 +453,12 @@ pub async fn golden_transform(software: bool) -> Result<(), String> {
 }
 /// Compares every pixel against a two-image overlap golden with channel tolerance.
 pub async fn golden(software: bool) -> Result<(), String> {
-    golden_view(software, 1., false, false).await
+    golden_view(software, 1., wgpu::Color::BLACK, false).await
 }
 async fn golden_view(
     software: bool,
     opacity: f32,
-    transparent: bool,
+    clear: wgpu::Color,
     grid: bool,
 ) -> Result<(), String> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -522,54 +522,63 @@ async fn golden_view(
         width: 64.,
         height: 64.,
     });
-    registry
-        .draw(
-            &device,
-            &queue,
-            crate::Target {
-                opacity,
-                grid,
-                view: &view,
-                screen: [64., 64.],
-                clip: None,
-                clear: if transparent {
-                    wgpu::Color::TRANSPARENT
-                } else {
-                    wgpu::Color::BLACK
+    // Reuse the opacity attachment while panning, then return to the original camera.
+    for pan in if grid { &[0][..] } else { &[0, 8, 16, 0][..] } {
+        let pan = *pan;
+        registry
+            .draw(
+                &device,
+                &queue,
+                crate::Target {
+                    opacity,
+                    grid,
+                    view: &view,
+                    screen: [64., 64.],
+                    clip: None,
+                    clear,
                 },
-            },
-            &items,
-            Camera::default(),
-        )
-        .map_err(|error| error.to_string())?;
-    let bytes = readback(&device, &queue, &texture, 256)?;
-    for y in 0..64 {
-        for x in 0..64 {
-            let mut expected: [f32; 4] = if (48..56).contains(&x) && y < 8 {
-                [0., 255., 0., 255.]
-            } else if (16..48).contains(&x) && (16..48).contains(&y) {
-                [0., 0., 255., 255.]
-            } else if x < 32 && y < 32 {
-                [120., 90., 60., 255.]
-            } else if grid {
-                let distance = (((x as f32 + 0.5) % 40. - 20.).powi(2)
-                    + ((y as f32 + 0.5) % 40. - 20.).powi(2))
-                .sqrt();
-                let t = ((distance - 0.5) / 0.5).clamp(0., 1.);
-                let dot = 1. - t * t * (3. - 2. * t);
-                [17. + 26. * dot, 19. + 27. * dot, 23. + 29. * dot, 255.]
-            } else {
-                [0., 0., 0., if transparent { 0. } else { 255. }]
-            };
-            for channel in &mut expected {
-                *channel *= opacity;
-            }
-            let expected = expected.map(|v| v.round() as u8);
-            let pixel = &bytes[(y * 256 + x * 4)..(y * 256 + x * 4 + 4)];
-            if pixel.iter().zip(expected).any(|(&a, b)| a.abs_diff(b) > 2) {
-                return Err(format!(
-                    "golden mismatch at ({x},{y}): {pixel:?} != {expected:?}"
-                ));
+                &items,
+                Camera {
+                    origin: [pan as f32; 2],
+                    ..Camera::default()
+                },
+            )
+            .map_err(|error| error.to_string())?;
+        let bytes = readback(&device, &queue, &texture, 256)?;
+        for y in 0..64 {
+            for x in 0..64 {
+                let world_x = x + pan;
+                let world_y = y + pan;
+                let mut expected: [f32; 4] = if (48..56).contains(&world_x) && world_y < 8 {
+                    [0., 255., 0., 255.]
+                } else if (16..48).contains(&world_x) && (16..48).contains(&world_y) {
+                    [0., 0., 255., 255.]
+                } else if world_x < 32 && world_y < 32 {
+                    [120., 90., 60., 255.]
+                } else if grid {
+                    let distance = (((x as f32 + 0.5) % 40. - 20.).powi(2)
+                        + ((y as f32 + 0.5) % 40. - 20.).powi(2))
+                    .sqrt();
+                    let t = ((distance - 0.5) / 0.5).clamp(0., 1.);
+                    let dot = 1. - t * t * (3. - 2. * t);
+                    [17. + 26. * dot, 19. + 27. * dot, 23. + 29. * dot, 255.]
+                } else {
+                    [0.; 4]
+                };
+                let alpha = expected[3] / 255. * opacity;
+                for (channel, background) in expected
+                    .iter_mut()
+                    .zip([clear.r, clear.g, clear.b, clear.a])
+                {
+                    *channel = *channel * opacity + background as f32 * 255. * (1. - alpha);
+                }
+                let expected = expected.map(|v| v.round() as u8);
+                let pixel = &bytes[(y * 256 + x * 4)..(y * 256 + x * 4 + 4)];
+                if pixel.iter().zip(expected).any(|(&a, b)| a.abs_diff(b) > 2) {
+                    return Err(format!(
+                        "golden mismatch at ({x},{y}): {pixel:?} != {expected:?}"
+                    ));
+                }
             }
         }
     }
@@ -1340,11 +1349,31 @@ mod tests {
     }
     #[test]
     fn transparent_overlay_preserves_premultiplied_alpha_and_item_order() {
-        pollster::block_on(super::golden_view(false, 0.55, true, false)).unwrap();
+        pollster::block_on(super::golden_view(
+            false,
+            0.55,
+            wgpu::Color::TRANSPARENT,
+            false,
+        ))
+        .unwrap();
+    }
+    #[test]
+    fn view_image_opacity_preserves_canvas_background() {
+        for alpha in [0.4, 1.] {
+            for opacity in [0., 0.55, 1.] {
+                let clear = wgpu::Color {
+                    r: 0.8 * alpha,
+                    g: 0.6 * alpha,
+                    b: 0.4 * alpha,
+                    a: alpha,
+                };
+                pollster::block_on(super::golden_view(false, opacity, clear, false)).unwrap();
+            }
+        }
     }
     #[test]
     fn canvas_grid_stays_behind_opaque_images() {
-        pollster::block_on(super::golden_view(false, 1., false, true)).unwrap();
+        pollster::block_on(super::golden_view(false, 1., wgpu::Color::BLACK, true)).unwrap();
     }
     #[test]
     fn rotated_cropped_and_mirrored_content_matches_the_scene() {

@@ -422,3 +422,5 @@ DisableClickThroughOnActivate = Отключать сквозные клики �
 GlobalShortcutsUnavailable = Глобальные клавиши недоступны в этом оконном окружении. Используйте панель Over.
 
 ResetColor = Сбросить цвет
+
+ViewControlsRight = Кнопки окна справа в режиме просмотра (Tab)

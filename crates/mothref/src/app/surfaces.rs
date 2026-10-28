@@ -70,8 +70,7 @@ pub(super) const EXPORT: &[Slot] = &[
 ];
 const INSERT: &[Slot] = &[A(Images), A(Paste), A(Note)];
 const FILE: &[Slot] = &[A(New), A(Open), A(Save), A(Library)];
-pub(super) const VIEW_WINDOW: &[Action] =
-    &[Pin, Overlay, MoveWindow, Minimize, Maximize, CloseWindow];
+pub(super) const VIEW_WINDOW: &[Action] = &[Minimize, Maximize, CloseWindow, Overlay];
 const WINDOW_MODES: &[Slot] = &[
     A(Bottom),
     A(LockWindow),
@@ -121,6 +120,7 @@ const TOOLBAR: &[Slot] = &[
     S,
     A(Fit),
     Slot::Zoom,
+    G(Text::CategoryView, VIEW),
 ];
 pub(super) enum SelectionKind {
     Image,
@@ -265,9 +265,21 @@ fn row(
                 ui.separator();
             }
             G(label, children) => {
-                ui.menu_button(format!("{} ▾", text(*label)), |ui| {
-                    menu(ui, children, enabled, registry, intents)
-                });
+                if *label == Text::CategoryView {
+                    let response = moth_ui::icons::button(
+                        ui,
+                        moth_ui::icons::Icon::Compass,
+                        text(*label),
+                        false,
+                    );
+                    egui::Popup::menu(&response).show(|ui| {
+                        menu(ui, children, enabled, registry, intents);
+                    });
+                } else {
+                    ui.menu_button(format!("{} ▾", text(*label)), |ui| {
+                        menu(ui, children, enabled, registry, intents)
+                    });
+                }
             }
             Slot::Zoom => {
                 if button(ui, ZoomOut, enabled, registry, true, false) {
@@ -298,15 +310,10 @@ pub(super) fn window_menu(
     registry: &Registry,
     intents: &mut Vec<Intent>,
 ) {
-    ui.horizontal(|ui| {
-        for (label, slots) in [(Text::FileMenu, FILE), (Text::CategoryView, VIEW)] {
-            ui.menu_button(text(label), |ui| {
-                menu(ui, slots, enabled, registry, intents)
-            });
-        }
-        if button(ui, Settings, enabled, registry, true, false) {
-            intents.push(Intent::Action(Settings));
-        }
+    ui.menu_button(text(Text::Title), |ui| {
+        menu(ui, FILE, enabled, registry, intents);
+        ui.separator();
+        menu(ui, &[A(Settings)], enabled, registry, intents);
     });
 }
 
@@ -325,7 +332,9 @@ pub(super) fn toolbar(
         .show(ctx, |ui| {
             ui.set_max_width((viewport.width() - 24.).max(1.));
             egui::Frame::popup(ui.style()).show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| row(ui, TOOLBAR, enabled, registry, &mut intents, zoom));
+                ui.horizontal_wrapped(|ui| {
+                    row(ui, TOOLBAR, enabled, registry, &mut intents, zoom);
+                });
             });
         });
     intents
@@ -457,6 +466,36 @@ pub(super) fn added(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn application_menu_replaces_top_level_file_and_view_buttons() {
+        let context = egui::Context::default();
+        moth_ui::theme(&context, &moth_ui::Tokens::DARK);
+        let registry = Registry::default();
+        let enabled = vec![true; super::super::bindings::ACTIONS.len()];
+        let mut output = context.run_ui(Default::default(), |ui| {
+            window_menu(ui, &enabled, &registry, &mut Vec::new());
+        });
+        let labels: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(shape) => Some(shape.galley.text()),
+                _ => None,
+            })
+            .collect();
+        assert!(labels.contains(&text(Text::Title)));
+        assert!(!labels.contains(&text(Text::FileMenu)));
+        assert!(!labels.contains(&text(Text::CategoryView)));
+        assert!(
+            TOOLBAR
+                .iter()
+                .any(|slot| matches!(slot, G(Text::CategoryView, _)))
+        );
+        assert_eq!(&VIEW_WINDOW[..3], &[Minimize, Maximize, CloseWindow]);
+        assert!(!VIEW_WINDOW.contains(&MoveWindow));
+        output.textures_delta.clear();
+    }
+
     #[test]
     fn editor_action_rows_leave_their_window_open_for_feedback() {
         let ctx = egui::Context::default();

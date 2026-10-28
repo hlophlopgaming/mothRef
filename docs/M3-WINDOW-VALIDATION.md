@@ -392,3 +392,33 @@ Open design limits: global chords are fixed rather than individually rebindable;
 Wayland portal shortcuts are not implemented. Floating windows are temporary
 views rather than independent saved boards. Native system move requests are
 corrected to the captured coordinates while position lock is active.
+
+## Application menu, compact controls and X11 pinning
+
+New board, Open, Save, Library and Settings live directly in MothRef; Navigation and view is the compass menu in the
+bottom action list. View anchors its handle and non-wrapping minimize, maximize,
+close and overlay group to the right by default. Settings › Window and overlay
+can switch the compact bar to the left; this preference is persisted. Both Collect and View expose all-window and target-window
+pin choices; the unused titlebar area remains draggable.
+
+X11 target selection watches `_NET_ACTIVE_WINDOW`, ignores MothRef windows and
+grabs Escape only during selection. A dedicated worker raises the board without
+activation when the target becomes active, monitors target destruction, validates
+the saved PID on re-enable, and waits on native events and a shutdown descriptor.
+It never reparents or moves either window. Cancellation preserves the previous
+target. Closing the board or disabling pinning drops the worker connection and grabs.
+
+Added regression coverage for the application-menu surface, compact controls on both edges at
+320/800/1440 points, and malformed Escape keymaps. Release-preparation test results are recorded in the alpha.14 release notes.
+
+Manual qualification remains open: X11 selection/cancel/reselect, alternate apps,
+minimize/restore, target close, rapid pin toggles, idle CPU, and moving/resizing both
+windows. The first X11 implementation raises in the normal stacking layer; targets
+already marked always-on-top or fullscreen require further qualification/handling.
+Windows/macOS native checks were not run. macOS target attachment and Wayland
+KDE Plasma/GNOME integrations remain unimplemented; Wayland is deferred per the
+maintainer's follow-up.
+
+Protocol reference: [EWMH stacking and active-window rules](https://specifications.freedesktop.org/wm/latest-single/).
+
+Settings now uses Ctrl/Command+O. Loading the old standard Settings/Open pair migrates it to the new defaults; custom pairs remain intact. Multiple-selection frames draw in View independently of the editing toolbar.

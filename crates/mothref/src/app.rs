@@ -165,7 +165,7 @@ impl App {
             target_pin: false,
             picking_window: false,
             moving_window: false,
-            pin: Default::default(),
+            pin: moth_platform::pin::Pin::new(shell.wake()),
             library_screen: library::LibraryScreen::new(library_worker),
             modal: modal::Modal::default(),
             camera_motion: camera_motion::CameraMotion::default(),
@@ -1930,6 +1930,7 @@ impl App {
                     ui,
                     chrome::Chrome {
                         compact: compact_mode,
+                        controls_right: self.settings.view_controls_right,
                         zoom_increment: self.settings.zoom_increment,
                         board: &mut self.workspace.board,
                         tabs: &self.workspace.tabs,

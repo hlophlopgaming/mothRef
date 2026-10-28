@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.14 — 2026-10-28
+
+- Default View (Tab) window controls to the right edge; add a persistent switch in Settings › Window and overlay to place them on the left.
+
+- Put New board, Open, Save, Library and Settings directly in the MothRef menu. Move Navigation and view into a compass menu on the bottom toolbar. Keep View window controls together, remove the Move window button, and expose both pin modes in View.
+- Use Ctrl/Command+O for Settings, migrate the previous default shortcut pair, and keep Open available from the application menu. Preserve custom shortcut assignments.
+- Restore multiple-selection frames in View (Tab) without revealing the editing toolbar.
+- Add X11 pinning above a selected application window using native foreground events on a worker, with Escape cancellation and cleanup when the target closes.
+
+- Fix View image/window opacity replacing the canvas background with black or transparent pixels when adjusting appearance and panning.
+
 ## 0.1.0-alpha.13 — 2026-10-27
 
 - Add View › Window actions for always on bottom, locking window position, floating selected images, sizing the window to selected/all items, and opacity steps (Ctrl/⌘+Alt+Up/Down). Floating views share board textures and are limited to 32 windows.

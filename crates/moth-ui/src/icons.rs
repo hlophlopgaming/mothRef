@@ -39,6 +39,8 @@ pub enum Icon {
     Home,
     /// Select canvas items.
     Select,
+    /// Open navigation and view controls.
+    Compass,
     /// Move the camera.
     Pan,
     /// Clipboard import.
@@ -238,6 +240,10 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
         }
         Icon::Select | Icon::Pointer => {
             line(&[(3., 2.), (15., 8.), (10., 10.), (8., 16.), (3., 2.)])
+        }
+        Icon::Compass => {
+            ui.painter().circle_stroke(p(9., 9.), 8., stroke);
+            line(&[(12., 5.), (10., 11.), (6., 13.), (8., 7.), (12., 5.)]);
         }
         Icon::Pan => {
             line(&[

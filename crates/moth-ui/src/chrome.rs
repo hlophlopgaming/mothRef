@@ -124,25 +124,17 @@ pub fn toolbar(
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = crate::tokens(ui.ctx()).space_xs as f32;
-                if !compact {
-                    let (logo, _) =
-                        ui.allocate_exact_size(egui::vec2(14., 20.), egui::Sense::hover());
-                    ui.painter()
-                        .circle_filled(logo.center(), 6., crate::tokens(ui.ctx()).accent);
-                    ui.label(
-                        egui::RichText::new(text(Text::Title))
-                            .family(egui::FontFamily::Name("Bricolage Grotesque".into())),
-                    );
-                    ui.add_space(crate::tokens(ui.ctx()).space_header as f32);
-                    if status.library {
-                        ui.label(
-                            egui::RichText::new(text(Text::Library))
-                                .color(crate::tokens(ui.ctx()).text_muted)
-                                .monospace(),
-                        );
-                    }
-                }
+                let (logo, _) = ui.allocate_exact_size(egui::vec2(14., 20.), egui::Sense::hover());
+                ui.painter()
+                    .circle_filled(logo.center(), 6., crate::tokens(ui.ctx()).accent);
                 menus(ui);
+                if !compact && status.library {
+                    ui.label(
+                        egui::RichText::new(text(Text::Library))
+                            .color(crate::tokens(ui.ctx()).text_muted)
+                            .monospace(),
+                    );
+                }
                 let summary = format!(
                     "{} · {}",
                     text(if status.dirty || status.path.is_empty() {
