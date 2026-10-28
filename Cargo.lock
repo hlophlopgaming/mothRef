@@ -1849,6 +1849,7 @@ dependencies = [
  "moth-import",
  "moth-io",
  "moth-scene",
+ "objc2-app-kit 0.3.2",
  "resvg",
  "rustix 1.1.5",
  "rustls-native-certs",
@@ -3559,7 +3560,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
  "windows-sys 0.61.2",

@@ -64,6 +64,12 @@ impl App {
         ) {
             return true;
         }
+        if action == ShellIntegration {
+            return matches!(
+                moth_platform::Desktop.shell_integration(),
+                moth_platform::ShellIntegration::Missing | moth_platform::ShellIntegration::Pending
+            );
+        }
         if action == ClearDiskCache {
             return !self.tools.disk_cache_busy && !self.tools.clear_disk_cache;
         }
@@ -104,11 +110,14 @@ impl App {
         }
         if matches!(action, Pin | Bottom) {
             return self.overlay.is_none()
-                && self
-                    .shell
-                    .window
-                    .as_ref()
-                    .is_some_and(|w| moth_platform::Desktop.window_capabilities(w).on_top);
+                && self.shell.window.as_ref().is_some_and(|w| {
+                    let caps = moth_platform::Desktop.window_capabilities(w);
+                    if action == Pin {
+                        caps.on_top || caps.above_window
+                    } else {
+                        caps.bottom
+                    }
+                });
         }
         if self.workspace.library {
             return false;
@@ -326,6 +335,11 @@ impl App {
             CloseWindow => Intent::CloseWindow,
             ClearDiskCache => {
                 self.tools.clear_disk_cache = true;
+                return;
+            }
+            ShellIntegration => {
+                moth_platform::Desktop.install_shell_integration();
+                self.workspace.board.message = moth_ui::Text::ShellIntegrationInstalling.into();
                 return;
             }
             EditNote => {

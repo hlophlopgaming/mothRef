@@ -267,7 +267,8 @@ Navigation, shortcuts, the command palette, batch editing and board conversion a
 - [ ] Transparent overlay with adjustable opacity and click-through (BeeRef #100) — X11 qualified; Windows / macOS and controller-recovery checks open
 - [ ] Overlay HUD: opacity slider, click-through toggle, always-on-top toggle, exit button, one-time hint with the exit shortcut — compare with the Over panel from 0.1.0-alpha.10 and tick what it already covers
 - [ ] Overlay grab handle that always receives clicks, so the overlay can be left without a global hotkey (Wayland and Flatpak fallback)
-- [ ] Attach to another application's window: Windows and X11 implemented; native qualification open. macOS and Wayland (KDE Plasma / GNOME integrations) remain open.
+- [ ] Attach to another application's window: Windows, X11 and KDE Plasma Wayland (KWin script) implemented; native qualification open. macOS and GNOME remain open.
+- [ ] Always on top on Wayland ([decision 0019](docs/decisions/0019-wayland-window-stacking.md)): KWin scripts on KDE Plasma, bundled GNOME Shell extension with an install button in Settings › Window and overlay — implemented; native qualification on Plasma 5/6 and GNOME 45–49 open
 - [ ] Native qualification of the added parity controls: bottom stacking, position lock/maximize, floating image surfaces, resize-to-content, opacity keys, custom colors and system-global shortcuts; see [validation notes](docs/M3-WINDOW-VALIDATION.md#remaining-parity-controls-implementation)
 
 **Window reliability**

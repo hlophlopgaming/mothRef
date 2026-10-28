@@ -118,7 +118,7 @@ images, notes, overlapping items and an undo history; save a baseline first.
 | macOS terminal, `MothRef.app/Contents/MacOS/mothref` and redirected stderr | Diagnostic output remains usable | Pending |
 | Windows target pin | Click another app, cancel inside/outside MothRef, toggle last choice, switch targets, close target, activate unrelated app | Pending |
 | Windows / macOS / X11 above-all | Toggle pin with button and a rebound shortcut; overlay exit restores the prior pin | Pending |
-| Wayland | Unsupported pin choices disabled; frameless drag and reveal remain usable | Pending |
+| Wayland | KDE Plasma / GNOME with extension: pin choices work (see "Wayland stacking" below); other compositors: pin choices disabled; frameless drag and reveal remain usable | Pending |
 | All desktops, mouse/keyboard/touch | Approach/leave, Tab/Shift+Tab, explicit reveal/hide, all four controls reachable at narrow sizes | Pending |
 
 On Windows, perform at least 30 cycles of each path independently:
@@ -422,3 +422,54 @@ maintainer's follow-up.
 Protocol reference: [EWMH stacking and active-window rules](https://specifications.freedesktop.org/wm/latest-single/).
 
 Settings now uses Ctrl/Command+O. Loading the old standard Settings/Open pair migrates it to the new defaults; custom pairs remain intact. Multiple-selection frames draw in View independently of the editing toolbar.
+
+## Wayland stacking, macOS Spaces and Windows topmost targets — 2026-10-28
+
+Implementation per [decision 0019](decisions/0019-wayland-window-stacking.md):
+
+- KDE Plasma Wayland: above all, Over (board and controller) and floating views
+  use generated KWin scripts; above a chosen window uses an activation-following
+  KWin script. Target selection takes the next activated non-MothRef window;
+  Cancel or Escape inside MothRef cancels. Closing the target turns the pin off.
+- GNOME Wayland: Settings › Window and overlay explains the missing extension
+  and offers **Install GNOME window integration**. After the next login, above
+  all, Over and floating views use the extension. Above a chosen window stays
+  disabled on GNOME.
+- Always on bottom is disabled on every Wayland compositor.
+- macOS: above all also sets `CanJoinAllSpaces | FullScreenAuxiliary` and
+  removes it when the pin is turned off.
+- Windows: a topmost target lifts the board into the topmost band while the
+  target is active; activating any other application, or turning the pin off,
+  returns the board to the normal band just below the new foreground window.
+
+Evidence from this Linux session (no Plasma, GNOME, macOS or Windows desktop
+was available):
+
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`
+  and `cargo deny check` passed. The macOS module and the Windows pin module
+  passed Clippy for `aarch64-apple-darwin` and `x86_64-pc-windows-msvc` in an
+  isolated crate (the full workspace cannot cross-compile here because of C
+  build scripts).
+- With the maintainer's agreement, the new D-Bus client and script tests ran:
+  `cargo test -p moth-platform --lib -- dbus:: compositor::` passed 7 tests,
+  including calls, replies, errors and name queries through a real
+  `dbus-daemon`, truncated/mutated message rejection and script escaping.
+- The generated KWin scripts ran in Node against a mocked Plasma 6 and Plasma 5
+  `workspace` (late-mapped windows, picking that ignores MothRef and panels,
+  activation following, target removal). The GNOME extension passed
+  `node --check`. Neither replaces a run inside KWin or GNOME Shell.
+
+Native checks still required (record Plasma/GNOME version and session type):
+
+- [ ] Plasma 6 and Plasma 5 Wayland: toggle above all with the button and the
+  shortcut; Over keeps board and controller above Krita/Blender/a browser; exit
+  Over restores the previous pin; floating views stay on top.
+- [ ] Plasma Wayland target pin: pick Krita, switch Krita ⇄ another app ⇄ MothRef,
+  cancel selection, re-pick, close the target, toggle with the shortcut.
+- [ ] GNOME 45–49 Wayland: install from Settings, log out/in, check the hint
+  disappears, then repeat the above-all and Over checks. Check a session with
+  user extensions disabled shows a usable message.
+- [ ] macOS: above all over a full-screen app and on another Space; turning the
+  pin off returns normal Space behavior; F11 fullscreen still works.
+- [ ] Windows: target pin with a topmost target (for example a video player set
+  to "always on top"), switching away, turning the pin off, then above all.

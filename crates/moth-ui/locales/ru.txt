@@ -424,3 +424,8 @@ GlobalShortcutsUnavailable = Глобальные клавиши недосту�
 ResetColor = Сбросить цвет
 
 ViewControlsRight = Кнопки окна справа в режиме просмотра (Tab)
+
+InstallShellIntegration = Установить интеграцию с GNOME
+ShellIntegrationMissing = Чтобы держать окна поверх других, GNOME нужно расширение MothRef.
+ShellIntegrationPending = Расширение GNOME установлено. Выйдите из сеанса и войдите снова, чтобы включить его.
+ShellIntegrationInstalling = Устанавливается интеграция с GNOME…

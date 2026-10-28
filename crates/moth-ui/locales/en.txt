@@ -424,3 +424,8 @@ GlobalShortcutsUnavailable = System shortcuts are unavailable on this compositor
 ResetColor = Reset color
 
 ViewControlsRight = Window controls on the right in View mode (Tab)
+
+InstallShellIntegration = Install GNOME window integration
+ShellIntegrationMissing = GNOME needs the MothRef window extension to keep windows on top.
+ShellIntegrationPending = The GNOME extension is installed. Log out and back in to turn it on.
+ShellIntegrationInstalling = Installing the GNOME window integration…

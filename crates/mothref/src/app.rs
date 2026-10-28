@@ -201,8 +201,8 @@ impl App {
             return;
         }
         let result = moth_platform::Desktop
-            .window_effects(window, false, false, false)
-            .and_then(|()| moth_platform::Desktop.pin_target(&mut self.pin, window, false));
+            .pin_target(&mut self.pin, window, false)
+            .and_then(|()| moth_platform::Desktop.window_effects(window, false, false, false));
         match result {
             Ok(()) => {
                 self.cancel_drag();
@@ -228,14 +228,16 @@ impl App {
             return;
         };
         let enabled = enabled && moth_platform::Desktop.window_capabilities(window).on_top;
+        // Release the target pin first: leaving it may reset stacking that
+        // above-all mode is about to set.
         let result = (|| {
+            moth_platform::Desktop.pin_target(&mut self.pin, window, enabled && self.target_pin)?;
             moth_platform::Desktop.window_effects(
                 window,
                 self.overlay.is_some(),
                 enabled && !self.target_pin,
                 false,
-            )?;
-            moth_platform::Desktop.pin_target(&mut self.pin, window, enabled && self.target_pin)
+            )
         })();
         match result {
             Ok(()) => {
@@ -283,12 +285,12 @@ impl App {
                     self.workspace.board.appearance.over = true;
                     overlay.appearance = self.workspace.board.appearance;
                     if let Err(error) =
-                        moth_platform::Desktop.window_effects(&window, true, overlay.on_top, false)
+                        moth_platform::Desktop.pin_target(&mut self.pin, &window, false)
                     {
                         self.workspace.board.message = error.into();
                     }
                     if let Err(error) =
-                        moth_platform::Desktop.pin_target(&mut self.pin, &window, false)
+                        moth_platform::Desktop.window_effects(&window, true, overlay.on_top, false)
                     {
                         self.workspace.board.message = error.into();
                     }
@@ -1792,6 +1794,9 @@ impl App {
         if self.pinned && self.target_pin && !moth_platform::Desktop.pin_target_available(&self.pin)
         {
             self.apply_pin(false);
+        }
+        if let Some(error) = moth_platform::Desktop.take_window_error() {
+            self.workspace.board.message = error.into();
         }
         self.results();
         if let Some(gpu) = &mut self.shell.gpu {

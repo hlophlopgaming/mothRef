@@ -3,8 +3,13 @@
 /// Background persistence and recovery for native boards.
 pub mod boards;
 mod clipboard_web;
+/// Compositor scripting for window stacking on Wayland (KWin, GNOME Shell).
+#[cfg(target_os = "linux")]
+mod compositor;
 /// Native shutdown and bounded local crash reports.
 pub mod crash;
+#[cfg(target_os = "linux")]
+mod dbus;
 pub mod export;
 /// Video-memory detection for the texture limit.
 pub mod gpu;
@@ -15,6 +20,8 @@ pub mod library;
 pub mod locale;
 /// Disk backend for the rebuildable LOD cache.
 pub mod lod_store;
+#[cfg(target_os = "macos")]
+mod macos;
 /// Background sampling of available physical RAM for bounded image residency.
 pub mod memory;
 /// Plain-text app preferences.
@@ -415,13 +422,40 @@ pub trait Platform {
     }
     /// Uses native stacking only on compositors which expose it.
     fn window_bottom(&self, window: &winit::window::Window, enabled: bool) {
-        if self.window_capabilities(window).on_top {
+        if self.window_capabilities(window).bottom {
             window.set_window_level(if enabled {
                 winit::window::WindowLevel::AlwaysOnBottom
             } else {
                 winit::window::WindowLevel::Normal
             });
         }
+    }
+    /// Failures of asynchronous window requests, shown once to the user.
+    fn take_window_error(&self) -> Option<String> {
+        #[cfg(target_os = "linux")]
+        {
+            compositor::take_error()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+    /// Whether Settings should offer the desktop-shell integration (GNOME on Wayland).
+    fn shell_integration(&self) -> ShellIntegration {
+        #[cfg(target_os = "linux")]
+        {
+            compositor::shell_integration()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            ShellIntegration::NotNeeded
+        }
+    }
+    /// Installs the desktop-shell integration on a worker; only on explicit user action.
+    fn install_shell_integration(&self) {
+        #[cfg(target_os = "linux")]
+        compositor::install_gnome();
     }
     /// Validates the remembered target before restoring a pin.
     fn pin_target_available(&self, pin: &pin::Pin) -> bool {
@@ -451,13 +485,28 @@ pub trait Platform {
         click_through: bool,
     ) -> Result<(), String>;
 }
+/// State of the optional desktop-shell integration that some compositors need
+/// before MothRef can keep its windows on top.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShellIntegration {
+    /// Not needed: stacking works natively or cannot be added on this desktop.
+    NotNeeded,
+    /// GNOME on Wayland without the MothRef Shell extension.
+    Missing,
+    /// Installed; GNOME on Wayland loads it after the next login.
+    Pending,
+    /// The extension is running.
+    Active,
+}
 /// Native window affordances are independent of GPU alpha support.
 #[derive(Clone, Copy)]
 pub struct WindowCapabilities {
     /// The native backend implements background blur.
     pub blur: bool,
-    /// Wayland compositors control stacking, so the app cannot promise topmost behavior.
+    /// Keeping windows above others; on Wayland only through compositor scripting.
     pub on_top: bool,
+    /// Keeping the window below others; Wayland compositors do not offer it.
+    pub bottom: bool,
     /// Selecting a foreign window is supported by this backend.
     pub above_window: bool,
     /// The backend supports an empty input region.
@@ -480,14 +529,17 @@ impl Platform for Desktop {
         }
     }
     fn window_capabilities(&self, window: &winit::window::Window) -> WindowCapabilities {
-        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        let wayland = window
-            .window_handle()
-            .is_ok_and(|h| matches!(h.as_raw(), RawWindowHandle::Wayland(_)));
+        let wayland = wayland(window);
+        #[cfg(target_os = "linux")]
+        let (kwin, gnome) = (compositor::kwin(), compositor::gnome());
+        #[cfg(not(target_os = "linux"))]
+        let (kwin, gnome) = (false, false);
         WindowCapabilities {
             blur: cfg!(target_os = "macos"),
-            on_top: !wayland,
-            above_window: cfg!(target_os = "windows") || (cfg!(target_os = "linux") && !wayland),
+            on_top: !wayland || kwin || gnome,
+            bottom: !wayland,
+            above_window: cfg!(target_os = "windows")
+                || (cfg!(target_os = "linux") && (!wayland || kwin)),
             click_through: true,
         }
     }
@@ -503,11 +555,19 @@ impl Platform for Desktop {
         click_through: bool,
     ) -> Result<(), String> {
         let caps = self.window_capabilities(window);
-        window.set_window_level(if on_top && caps.on_top {
+        let on_top = on_top && caps.on_top;
+        window.set_window_level(if on_top {
             winit::window::WindowLevel::AlwaysOnTop
         } else {
             winit::window::WindowLevel::Normal
         });
+        // winit cannot stack Wayland windows; the compositor does it by title.
+        #[cfg(target_os = "linux")]
+        if caps.on_top && wayland(window) {
+            compositor::keep_above(window.title(), on_top);
+        }
+        #[cfg(target_os = "macos")]
+        macos::float_everywhere(window, on_top);
         // Keep the normal window frameless too; the application owns its titlebar.
         window.set_decorations(false);
         window.set_transparent(overlay);
@@ -515,6 +575,13 @@ impl Platform for Desktop {
             .set_cursor_hittest(!click_through)
             .map_err(|error| error.to_string())
     }
+}
+/// Wayland windows cannot be stacked through winit.
+pub(crate) fn wayland(window: &winit::window::Window) -> bool {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    window
+        .window_handle()
+        .is_ok_and(|h| matches!(h.as_raw(), RawWindowHandle::Wayland(_)))
 }
 /// Worker messages keep staging and disposal in order.
 pub enum ClipboardRequest {

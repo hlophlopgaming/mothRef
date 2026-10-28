@@ -9,14 +9,18 @@ pub struct Pin {
     native: native::Pin,
     #[cfg(target_os = "linux")]
     native: x11::Pin,
+    #[cfg(target_os = "linux")]
+    kwin: kwin::Pin,
 }
 impl Pin {
     /// Wakes the event loop when a native target closes, without polling idle boards.
     pub fn new(wake: std::sync::Arc<dyn Fn() + Send + Sync>) -> Self {
         #[cfg(target_os = "linux")]
         {
+            crate::compositor::start(wake.clone());
             Self {
                 native: x11::Pin::new(wake),
+                kwin: kwin::Pin::default(),
             }
         }
         #[cfg(not(target_os = "linux"))]
@@ -27,6 +31,10 @@ impl Pin {
     }
     /// Checks whether the saved target still exists before enabling it again.
     pub(crate) fn available(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        if let Some(available) = self.kwin.available() {
+            return available;
+        }
         #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
             self.native.available()
@@ -38,6 +46,10 @@ impl Pin {
     }
     /// Installs a foreground notification, with no polling while pinned.
     pub(crate) fn enable(&mut self, window: &Window, enabled: bool) -> Result<(), String> {
+        #[cfg(target_os = "linux")]
+        if crate::wayland(window) {
+            return self.kwin.enable(window, enabled);
+        }
         #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
             self.native.enable(window, enabled)
@@ -54,6 +66,10 @@ impl Pin {
     }
     /// Samples only during explicit selection; Escape cancels even outside the app.
     pub(crate) fn pick(&mut self, window: &Window) -> Option<bool> {
+        #[cfg(target_os = "linux")]
+        if crate::wayland(window) {
+            return self.kwin.pick(window);
+        }
         #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
             self.native.pick(window)
@@ -69,7 +85,7 @@ impl Pin {
 #[cfg(target_os = "windows")]
 mod native {
     use super::*;
-    use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
     use windows_sys::Win32::{
         Foundation::HWND,
         UI::{
@@ -87,11 +103,52 @@ mod native {
         target: usize,
         process: u32,
         hook: usize,
+        board: usize,
     }
     fn handle(window: &Window) -> Option<HWND> {
         match window.window_handle().ok()?.as_raw() {
             RawWindowHandle::Win32(h) => Some(h.hwnd.get() as HWND),
             _ => None,
+        }
+    }
+    /// Set while the board borrowed the topmost band to stay above a topmost target.
+    static TOPMOST: AtomicBool = AtomicBool::new(false);
+    fn place(board: HWND, after: HWND) {
+        // SAFETY: handles are validated by Windows; failure leaves stacking unchanged.
+        unsafe {
+            SetWindowPos(
+                board,
+                after,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
+    }
+    fn topmost(window: HWND) -> bool {
+        // SAFETY: reading a style of a possibly destroyed window returns zero.
+        unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST != 0 }
+    }
+    /// Raises the board above the target. A topmost target (another reference or
+    /// video app) can only be covered from the topmost band, which the board leaves
+    /// as soon as anything else is activated.
+    fn raise(board: HWND, target: HWND) {
+        if topmost(target) {
+            TOPMOST.store(true, Ordering::Relaxed);
+            place(board, HWND_TOPMOST);
+        } else {
+            place(board, HWND_TOP);
+        }
+    }
+    /// Gives the topmost band back, staying just below the newly active window.
+    fn lower(board: HWND, foreground: HWND) {
+        if TOPMOST.swap(false, Ordering::Relaxed) {
+            place(board, HWND_NOTOPMOST);
+            if !foreground.is_null() && !topmost(foreground) {
+                place(board, foreground);
+            }
         }
     }
     // SAFETY: Windows invokes this on the registering event-loop thread; no Rust panics or borrows cross FFI.
@@ -104,29 +161,19 @@ mod native {
         _: u32,
         _: u32,
     ) {
+        let board = BOARD.load(Ordering::Relaxed) as HWND;
+        let mut process = 0;
+        // SAFETY: the output pointer is valid; a destroyed window returns zero.
+        unsafe {
+            GetWindowThreadProcessId(window, &mut process);
+        }
         if window as usize == TARGET.load(Ordering::Relaxed) {
-            let mut process = 0;
-            // SAFETY: the output pointer is valid; a destroyed window returns zero.
-            unsafe {
-                GetWindowThreadProcessId(window, &mut process);
-            }
             if process == 0 || process != PROCESS.load(Ordering::Relaxed) {
                 return;
             }
-            let board = BOARD.load(Ordering::Relaxed) as HWND;
-            // shortcut: normal z-order targets only; qualify topmost targets before extending this mode.
-            // SAFETY: handles are validated by Windows; failure leaves stacking unchanged.
-            unsafe {
-                SetWindowPos(
-                    board,
-                    HWND_TOP,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-                );
-            }
+            raise(board, window);
+        } else if process != std::process::id() {
+            lower(board, window);
         }
     }
     impl Pin {
@@ -167,18 +214,8 @@ mod native {
                 return Err(std::io::Error::last_os_error().to_string());
             }
             self.hook = hook as usize;
-            // SAFETY: this is our own live top-level window; this never transfers ownership.
-            unsafe {
-                SetWindowPos(
-                    board,
-                    HWND_TOP,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-                );
-            }
+            self.board = board as usize;
+            raise(board, self.target as HWND);
             Ok(())
         }
         pub(super) fn pick(&mut self, window: &Window) -> Option<bool> {
@@ -207,6 +244,11 @@ mod native {
         }
         fn disable(&mut self) {
             TARGET.store(0, Ordering::Relaxed);
+            // Leaving the pin must not leave the board in the topmost band.
+            if self.board != 0 {
+                lower(self.board as HWND, std::ptr::null_mut());
+                self.board = 0;
+            }
             if self.hook != 0 {
                 // SAFETY: this hook was created and is removed on the same event-loop thread.
                 unsafe {
@@ -226,3 +268,70 @@ mod native {
 #[cfg(target_os = "linux")]
 #[path = "pin_x11.rs"]
 mod x11;
+
+/// KDE Plasma on Wayland: a KWin script follows window activation instead of X11 events.
+#[cfg(target_os = "linux")]
+mod kwin {
+    use crate::compositor;
+    use winit::window::Window;
+
+    #[derive(Default)]
+    pub(super) struct Pin {
+        /// KWin's per-window UUID; it is never reused, unlike native handles.
+        target: Option<String>,
+        attached: bool,
+        picking: bool,
+    }
+    impl Pin {
+        /// `None` when no Wayland target was chosen, so X11 state decides.
+        pub(super) fn available(&self) -> Option<bool> {
+            let target = self.target.as_deref()?;
+            Some(!compositor::target_closed(target))
+        }
+        pub(super) fn enable(&mut self, window: &Window, enabled: bool) -> Result<(), String> {
+            if self.picking {
+                self.picking = false;
+                compositor::cancel_pick();
+            }
+            if !compositor::kwin() {
+                return if enabled {
+                    Err("Window attachment is unavailable".into())
+                } else {
+                    Ok(())
+                };
+            }
+            if !enabled {
+                if self.attached {
+                    self.attached = false;
+                    compositor::attach(window.title(), None);
+                }
+                return Ok(());
+            }
+            let target = self.target.clone().ok_or("No target window selected")?;
+            if compositor::target_closed(&target) {
+                return Err("The chosen window has closed".into());
+            }
+            self.attached = true;
+            compositor::attach(window.title(), Some(target));
+            Ok(())
+        }
+        pub(super) fn pick(&mut self, window: &Window) -> Option<bool> {
+            if !compositor::kwin() {
+                return Some(false);
+            }
+            if !self.picking {
+                self.picking = true;
+                compositor::pick(window.title());
+            }
+            let picked = compositor::take_picked()?;
+            self.picking = false;
+            match picked {
+                Some(target) => {
+                    self.target = Some(target);
+                    Some(true)
+                }
+                None => Some(false),
+            }
+        }
+    }
+}

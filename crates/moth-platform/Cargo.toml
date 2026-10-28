@@ -33,7 +33,7 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32
 
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version = "0.13", features = ["xkb"] }
-rustix = { version = "1", features = ["event"] }
+rustix = { version = "1", features = ["event", "process"] }
 wayland-client = "0.31"
 wayland-backend = { version = "0.3", features = ["client_system", "dlopen"] }
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
@@ -44,3 +44,6 @@ wayland-protocols = { version = "0.32", features = ["server"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 global-hotkey = "0.9"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSView", "NSWindow"] }

@@ -152,6 +152,7 @@ actions! {
     OpenOriginal, OpenOriginal, "", Some(moth_ui::icons::Icon::ImagePlus);
     CopyImage, CopyImage, "", None;
     ClearDiskCache, ClearDiskCache, "", Some(moth_ui::icons::Icon::Close);
+    ShellIntegration, InstallShellIntegration, "", None;
 
 }
 impl Action {
@@ -176,9 +177,8 @@ impl Action {
             Palette | BindingSettings | Shortcuts | New | Open | Images | Save | Library
             | CloseTab | NextTab | Overlay | Pin | Minimize | Maximize | MoveWindow
             | Fullscreen | Settings | CloseWindow | OverlaySelection | ClickThrough | Bottom
-            | LockWindow | ResizeSelection | ResizeAll | OpacityUp | OpacityDown => {
-                Text::CategoryBoard
-            }
+            | LockWindow | ResizeSelection | ResizeAll | OpacityUp | OpacityDown
+            | ShellIntegration => Text::CategoryBoard,
             _ => Text::CategoryEdit,
         }
     }

@@ -5,6 +5,14 @@ use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Installs the GNOME Shell extension that keeps windows on top on Wayland.
+    InstallShellIntegration,
+    /// GNOME on Wayland cannot keep windows on top without the extension.
+    ShellIntegrationMissing,
+    /// GNOME loads newly installed extensions after the next login.
+    ShellIntegrationPending,
+    /// The extension is being copied in the background.
+    ShellIntegrationInstalling,
     /// Restore one color to the current theme.
     ResetColor,
     /// Localized native shortcut preference.

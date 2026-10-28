@@ -561,6 +561,31 @@ impl SettingsWindow {
                                             intents.push(Intent::Action(Action::BindingSettings));
                                         }
                                         if section == Section::Window {
+                                            use moth_platform::{Platform, ShellIntegration};
+                                            let integration =
+                                                moth_platform::Desktop.shell_integration();
+                                            match integration {
+                                                ShellIntegration::Missing => {
+                                                    ui.label(text(Text::ShellIntegrationMissing));
+                                                }
+                                                ShellIntegration::Pending => {
+                                                    ui.label(text(Text::ShellIntegrationPending));
+                                                }
+                                                _ => {}
+                                            }
+                                            if integration == ShellIntegration::Missing
+                                                && ui
+                                                    .add_enabled(
+                                                        enabled[Action::ShellIntegration as usize],
+                                                        egui::Button::new(text(
+                                                            Text::InstallShellIntegration,
+                                                        )),
+                                                    )
+                                                    .clicked()
+                                            {
+                                                intents
+                                                    .push(Intent::Action(Action::ShellIntegration));
+                                            }
                                             for action in
                                                 [Action::Overlay, Action::Pin, Action::Fullscreen]
                                             {

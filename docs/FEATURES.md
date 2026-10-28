@@ -140,8 +140,8 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 - [x] Scale the scene with the window on resize, as a setting (PR)
 
 ### Window modes (M3)
-- [x] Always on top (PR, BR)
-- [ ] Always on top of a chosen application (PR) — Windows and X11 implemented (pin above a selected window); native qualification open; macOS/Wayland open
+- [x] Always on top (PR, BR) — also on KDE Plasma and GNOME Wayland (decision 0019; GNOME needs the bundled extension)
+- [ ] Always on top of a chosen application (PR) — Windows, X11 and KDE Plasma Wayland implemented (pin above a selected window); native qualification open; macOS/GNOME open
 - [x] Always on bottom — use the board as an interactive wallpaper (PR); capability-gated on Wayland, native qualification pending
 - [x] Lock window position; option to stay locked while maximized (PR); requires native window coordinates (unavailable on Wayland)
 - [ ] Transparent to mouse (click-through), with a system-global shortcut and "disable on activate" (PR; BeeRef #100) — click-through works on X11; opt-in global shortcuts and "disable on activate" implemented; Windows/macOS native qualification and Wayland global shortcuts open
