@@ -260,7 +260,10 @@ fn window_controls(ui: &mut egui::Ui, status: &Status<'_>, a: &mut Actions) {
             let show = tapped
                 || focused
                 || egui::Popup::is_any_open(ui.ctx())
-                || ui.input(|i| i.pointer.hover_pos().is_some_and(|p| near.contains(p)));
+                || ui.input(|i| {
+                    i.key_pressed(egui::Key::Tab)
+                        || i.pointer.hover_pos().is_some_and(|p| near.contains(p))
+                });
             let reveal = ui.ctx().animate_bool(id.with("reveal"), show);
             let group = ui.scope(|ui| {
                 if reveal <= 0. {

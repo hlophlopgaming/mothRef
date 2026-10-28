@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn long_board_titles_are_shortened_in_the_view_bar() {
         assert_eq!(short_title("Refs", true), "Refs");
-        assert_eq!(short_title("Character references", true), "Character …");
+        assert_eq!(short_title("Character references", true), "Character r…");
         assert_eq!(
             short_title("Персонажи и окружение", true).chars().count(),
             12
