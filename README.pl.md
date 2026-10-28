@@ -163,7 +163,7 @@ Pełny plan, listy funkcji i cele wydajności są w [ROADMAP.md](ROADMAP.md) (po
 
 ## Kompilacja ze źródeł
 
-Potrzebujesz [Rusta](https://rustup.rs) w wersji 1.95 lub nowszej. Na Linuksie zainstaluj też nagłówki X11/Wayland (`libxkbcommon-dev` i `libwayland-dev` w Debianie/Ubuntu).
+Potrzebujesz [Rusta](https://rustup.rs) w wersji 1.95 lub nowszej. Na Linuksie zainstaluj też nagłówki X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` i `libwayland-dev` w Debianie/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

@@ -8,8 +8,6 @@ mod clipboard_web;
 mod compositor;
 /// Native shutdown and bounded local crash reports.
 pub mod crash;
-#[cfg(target_os = "linux")]
-mod dbus;
 pub mod export;
 /// Video-memory detection for the texture limit.
 pub mod gpu;

@@ -163,7 +163,7 @@
 
 ## Сборка из исходников
 
-Нужен [Rust](https://rustup.rs) версии 1.95 или новее. В Linux также установите заголовки X11/Wayland (`libxkbcommon-dev` и `libwayland-dev` в Debian/Ubuntu).
+Нужен [Rust](https://rustup.rs) версии 1.95 или новее. В Linux также установите заголовки X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` и `libwayland-dev` в Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

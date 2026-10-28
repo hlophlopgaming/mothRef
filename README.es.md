@@ -163,7 +163,7 @@ El plan completo, las listas de funciones y los objetivos de rendimiento están 
 
 ## Compilar desde el código
 
-Necesitas [Rust](https://rustup.rs) 1.95 o posterior. En Linux, instala también las cabeceras de X11/Wayland (`libxkbcommon-dev` y `libwayland-dev` en Debian/Ubuntu).
+Necesitas [Rust](https://rustup.rs) 1.95 o posterior. En Linux, instala también las cabeceras de X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` y `libwayland-dev` en Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

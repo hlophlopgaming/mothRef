@@ -163,7 +163,7 @@ Tam plan, özellik listeleri ve performans hedefleri [ROADMAP.md](ROADMAP.md) do
 
 ## Kaynaktan derleme
 
-[Rust](https://rustup.rs) 1.95 veya daha yenisi gerekir. Linux'ta ayrıca X11/Wayland başlık dosyalarını kurun (Debian/Ubuntu'da `libxkbcommon-dev` ve `libwayland-dev`).
+[Rust](https://rustup.rs) 1.95 veya daha yenisi gerekir. Linux'ta ayrıca X11/Wayland başlık dosyalarını kurun (Debian/Ubuntu'da `libxkbcommon-dev`, `libdbus-1-dev` ve `libwayland-dev`).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

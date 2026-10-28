@@ -163,7 +163,7 @@ Le plan complet, les listes de fonctionnalités et les objectifs de performance 
 
 ## Compiler depuis les sources
 
-Il vous faut [Rust](https://rustup.rs) 1.95 ou plus récent. Sous Linux, installez aussi les en-têtes X11/Wayland (`libxkbcommon-dev` et `libwayland-dev` sous Debian/Ubuntu).
+Il vous faut [Rust](https://rustup.rs) 1.95 ou plus récent. Sous Linux, installez aussi les en-têtes X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` et `libwayland-dev` sous Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

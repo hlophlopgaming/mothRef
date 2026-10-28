@@ -163,7 +163,7 @@ macOS पर <kbd>Ctrl</kbd> की जगह <kbd>Cmd</kbd> इस्तेम�
 
 ## सोर्स से बनाएँ
 
-आपको [Rust](https://rustup.rs) 1.95 या नया चाहिए। Linux पर X11/Wayland हेडर भी इंस्टॉल करें (Debian/Ubuntu पर `libxkbcommon-dev` और `libwayland-dev`)।
+आपको [Rust](https://rustup.rs) 1.95 या नया चाहिए। Linux पर X11/Wayland हेडर भी इंस्टॉल करें (Debian/Ubuntu पर `libxkbcommon-dev`, `libdbus-1-dev` और `libwayland-dev`)।
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

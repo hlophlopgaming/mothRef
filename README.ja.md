@@ -163,7 +163,7 @@ macOS では <kbd>Ctrl</kbd> の代わりに <kbd>Cmd</kbd> を使います。�
 
 ## ソースからビルド
 
-[Rust](https://rustup.rs) 1.95 以降が必要です。Linux では X11/Wayland のヘッダーもインストールしてください（Debian/Ubuntu では `libxkbcommon-dev` と `libwayland-dev`）。
+[Rust](https://rustup.rs) 1.95 以降が必要です。Linux では X11/Wayland のヘッダーもインストールしてください（Debian/Ubuntu では `libxkbcommon-dev`, `libdbus-1-dev` と `libwayland-dev`）。
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

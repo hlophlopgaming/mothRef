@@ -163,7 +163,7 @@ O plano completo, as listas de recursos e as metas de desempenho estão em [ROAD
 
 ## Compilar a partir do código-fonte
 
-Você precisa do [Rust](https://rustup.rs) 1.95 ou mais recente. No Linux, instale também os cabeçalhos do X11/Wayland (`libxkbcommon-dev` e `libwayland-dev` no Debian/Ubuntu).
+Você precisa do [Rust](https://rustup.rs) 1.95 ou mais recente. No Linux, instale também os cabeçalhos do X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` e `libwayland-dev` no Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

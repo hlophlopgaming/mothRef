@@ -163,7 +163,7 @@
 
 ## 从源码构建
 
-需要 [Rust](https://rustup.rs) 1.95 或更新版本。在 Linux 上还需安装 X11/Wayland 头文件（Debian/Ubuntu 上为 `libxkbcommon-dev` 和 `libwayland-dev`）。
+需要 [Rust](https://rustup.rs) 1.95 或更新版本。在 Linux 上还需安装 X11/Wayland 头文件（Debian/Ubuntu 上为 `libxkbcommon-dev`, `libdbus-1-dev` 和 `libwayland-dev`）。
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

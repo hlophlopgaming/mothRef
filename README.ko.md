@@ -163,7 +163,7 @@ macOS에서는 <kbd>Ctrl</kbd> 대신 <kbd>Cmd</kbd>를 사용하세요. 전체 
 
 ## 소스에서 빌드
 
-[Rust](https://rustup.rs) 1.95 이상이 필요합니다. Linux에서는 X11/Wayland 헤더도 설치하세요(Debian/Ubuntu에서는 `libxkbcommon-dev`와 `libwayland-dev`).
+[Rust](https://rustup.rs) 1.95 이상이 필요합니다. Linux에서는 X11/Wayland 헤더도 설치하세요(Debian/Ubuntu에서는 `libxkbcommon-dev`, `libdbus-1-dev`와 `libwayland-dev`).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

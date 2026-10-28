@@ -163,7 +163,7 @@ Il piano completo, le liste di funzioni e gli obiettivi di prestazione sono in [
 
 ## Compilare dai sorgenti
 
-Serve [Rust](https://rustup.rs) 1.95 o successivo. Su Linux installa anche gli header di X11/Wayland (`libxkbcommon-dev` e `libwayland-dev` su Debian/Ubuntu).
+Serve [Rust](https://rustup.rs) 1.95 o successivo. Su Linux installa anche gli header di X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` e `libwayland-dev` su Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

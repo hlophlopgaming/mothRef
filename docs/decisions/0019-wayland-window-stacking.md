@@ -20,8 +20,9 @@ Each compositor offers a different, non-standard way in:
   extension can call `Meta.Window.make_above()`.
 
 Both talk over D-Bus. `zbus` 5 is flagged unmaintained by `cargo deny`
-(RUSTSEC-2026-0370) and `zbus` 6, released twelve days earlier, removed the
-blocking API in favour of a new async runtime.
+(RUSTSEC-2026-0370), `zbus` 6, released twelve days earlier, removed the
+blocking API in favour of a new async runtime, and an in-tree client would be
+protocol code to maintain ourselves.
 
 ## Decision
 
@@ -47,10 +48,11 @@ blocking API in favour of a new async runtime.
   user action; the files go to the user's extension folder and are enabled
   with `gnome-extensions`). GNOME on Wayland loads it after the next login.
   Without it, pin choices stay disabled as before.
-- **D-Bus:** a minimal in-tree client (`moth-platform::dbus`) instead of a
-  library: method calls with basic arguments, replies to incoming calls, a
-  blocking reader thread, bounded and checked parsing. Maintainer decision on
-  2026-10-28 over `zbus` 6 and an advisory exception for `zbus` 5.
+- **D-Bus:** the `dbus` crate over the system `libdbus-1` (maintainer decision
+  on 2026-10-28, after weighing an in-tree client, `zbus` 6 and an advisory
+  exception for `zbus` 5). The worker enables libdbus socket watching and
+  sleeps in `poll` on the bus socket and a wake socket, so the app stays idle
+  between requests while still answering KWin's callbacks.
 - Bottom stacking is a separate capability (`WindowCapabilities::bottom`)
   and stays unavailable on Wayland.
 - macOS "above all" also joins all Spaces and full-screen Spaces
@@ -62,6 +64,9 @@ blocking API in favour of a new async runtime.
 
 - Plasma and GNOME users get the same pin and Over behavior as X11, after a
   one-time extension install on GNOME.
+- Linux builds need `libdbus-1-dev`, and the Linux binary links
+  `libdbus-1.so.3`, which every desktop distribution ships. CI installs the
+  headers; Flatpak and AppImage packaging must include or depend on it.
 - The KWin scripting API and GNOME Shell extension API are not stable
   contracts. Each Plasma or GNOME major release needs a native check, and the
   extension's `shell-version` list must be extended.

@@ -165,7 +165,7 @@
 
 ## البناء من المصدر
 
-تحتاج إلى [Rust](https://rustup.rs) بالإصدار 1.95 أو أحدث. على Linux ثبّت أيضًا ترويسات X11/Wayland (`libxkbcommon-dev` و`libwayland-dev` على Debian/Ubuntu).
+تحتاج إلى [Rust](https://rustup.rs) بالإصدار 1.95 أو أحدث. على Linux ثبّت أيضًا ترويسات X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` و`libwayland-dev` على Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

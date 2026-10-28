@@ -3,15 +3,25 @@
 //! to the compositor's own scripting surface over the session bus: KWin scripts on
 //! KDE Plasma and the bundled MothRef Shell extension on GNOME.
 //!
-//! Everything here runs on one worker thread. The main thread only queues requests
-//! and reads atomics, so a slow or missing compositor never stalls a frame.
-use crate::{ShellIntegration, dbus};
+//! Everything here runs on one worker thread that talks to the bus through the
+//! system libdbus. The main thread only queues requests and reads atomics, so a
+//! slow or missing compositor never stalls a frame. The worker sleeps in `poll`
+//! on the bus socket and a wake socket, so an idle app does no work.
+use crate::ShellIntegration;
+use dbus::blocking::{Connection, Proxy};
+use dbus::channel::{Channel, MatchingReceiver, Sender as _};
+use dbus::message::MatchRule;
 use std::collections::{HashMap, HashSet};
+use std::io::{Read as _, Write as _};
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex, OnceLock,
     atomic::{AtomicBool, AtomicU8, Ordering},
 };
+use std::time::Duration;
+
+const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Bus name of the bundled GNOME Shell extension.
 const GNOME_SERVICE: &str = "org.mothref.Shell";
@@ -45,6 +55,8 @@ enum Request {
 
 struct Shared {
     requests: crossbeam_channel::Sender<Request>,
+    /// One byte per request wakes the worker from `poll`.
+    notify: UnixStream,
     wake: Arc<dyn Fn() + Send + Sync>,
     kwin: AtomicBool,
     gnome: AtomicU8,
@@ -58,49 +70,74 @@ static SHARED: OnceLock<Arc<Shared>> = OnceLock::new();
 
 /// Starts the worker once; later calls keep the first wake callback.
 pub(crate) fn start(wake: Arc<dyn Fn() + Send + Sync>) {
-    SHARED.get_or_init(|| {
-        // A small queue is enough: requests follow explicit user actions.
-        let (requests, receiver) = crossbeam_channel::bounded(16);
-        let shared = Arc::new(Shared {
-            requests,
-            wake,
-            kwin: AtomicBool::new(false),
-            gnome: AtomicU8::new(0),
-            error: Mutex::new(None),
-            picked: Mutex::new(None),
-            closed: Mutex::new(HashSet::new()),
-            kwin_owner: Mutex::new(None),
-        });
-        let worker = shared.clone();
-        let spawned = std::thread::Builder::new()
-            .name("compositor".into())
-            .spawn(move || {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    Worker::new(worker.clone()).map(|mut w| w.run(receiver))
-                }));
-                match result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => {
-                        tracing::info!(%error, "Compositor integration is unavailable")
-                    }
-                    Err(_) => tracing::error!("Compositor integration stopped unexpectedly"),
-                }
-            });
-        if let Err(error) = spawned {
-            tracing::warn!(%error, "Cannot start compositor integration");
-        } else {
-            let _ = shared.requests.try_send(Request::Probe);
+    if SHARED.get().is_some() {
+        return;
+    }
+    match spawn(wake, || {
+        Channel::get_private(dbus::channel::BusType::Session)
+    }) {
+        Ok(shared) => {
+            let _ = SHARED.set(shared);
+            send(Request::Probe);
         }
-        shared
+        Err(error) => tracing::warn!(%error, "Cannot start compositor integration"),
+    }
+}
+/// Starts a worker on the bus `open` connects to; tests pass a private bus.
+fn spawn(
+    wake: Arc<dyn Fn() + Send + Sync>,
+    open: impl FnOnce() -> Result<Channel, dbus::Error> + Send + 'static,
+) -> std::io::Result<Arc<Shared>> {
+    // A small queue is enough: requests follow explicit user actions.
+    let (requests, receiver) = crossbeam_channel::bounded(16);
+    let (notify, wakeup) = UnixStream::pair()?;
+    notify.set_nonblocking(true)?;
+    wakeup.set_nonblocking(true)?;
+    let shared = Arc::new(Shared {
+        requests,
+        notify,
+        wake,
+        kwin: AtomicBool::new(false),
+        gnome: AtomicU8::new(0),
+        error: Mutex::new(None),
+        picked: Mutex::new(None),
+        closed: Mutex::new(HashSet::new()),
+        kwin_owner: Mutex::new(None),
     });
+    let worker = shared.clone();
+    std::thread::Builder::new()
+        .name("compositor".into())
+        .spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                Worker::new(worker.clone(), open).and_then(|mut w| w.run(&receiver, wakeup))
+            }));
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::info!(%error, "Compositor integration is unavailable")
+                }
+                Err(_) => tracing::error!("Compositor integration stopped unexpectedly"),
+            }
+            // Later requests fail visibly instead of waiting forever.
+            worker.kwin.store(false, Ordering::Release);
+            worker.gnome.store(0, Ordering::Release);
+            (worker.wake)();
+        })?;
+    Ok(shared)
 }
 
 fn send(request: Request) {
-    if let Some(shared) = SHARED.get()
-        && shared.requests.try_send(request).is_err()
-    {
-        report(shared, "The window manager is not responding".into());
+    if let Some(shared) = SHARED.get() {
+        enqueue(shared, request);
     }
+}
+fn enqueue(shared: &Shared, request: Request) {
+    if shared.requests.try_send(request).is_err() {
+        report(shared, "The window manager is not responding".into());
+        return;
+    }
+    // A full wake socket already holds an unread wake-up.
+    let _ = (&shared.notify).write(&[1]);
 }
 fn report(shared: &Shared, error: String) {
     tracing::warn!(%error, "Compositor request failed");
@@ -169,26 +206,26 @@ pub(crate) fn take_error() -> Option<String> {
 }
 
 /// Answers KWin's `callDBus` reports. Only KWin may report; other clients are refused.
-fn callback(shared: &Shared, message: &dbus::Message) -> Result<Vec<dbus::Arg>, String> {
+fn callback(shared: &Shared, message: &dbus::Message) -> Result<(), String> {
     let owner = shared.kwin_owner.lock().ok().and_then(|o| o.clone());
-    if message.sender.is_none() || message.sender != owner {
+    let sender = message.sender().map(|s| s.to_string());
+    if sender.is_none() || sender != owner {
         return Err("Only the compositor may report window events".into());
     }
-    if message.path.as_deref() != Some(CALLBACK_PATH)
+    if message.path().as_deref() != Some(CALLBACK_PATH)
         || message
-            .interface
-            .as_deref()
-            .is_some_and(|i| i != CALLBACK_INTERFACE)
+            .interface()
+            .is_some_and(|i| &*i != CALLBACK_INTERFACE)
     {
         return Err("Unknown object".into());
     }
-    let [dbus::Arg::Str(id)] = message.args.as_slice() else {
-        return Err("Expected one string".into());
-    };
-    match message.member.as_deref() {
+    let id: String = message
+        .read1()
+        .map_err(|_| "Expected one string".to_owned())?;
+    match message.member().as_deref() {
         Some("Picked") => {
             if let Ok(mut picked) = shared.picked.lock() {
-                *picked = Some((!id.is_empty()).then(|| id.clone()));
+                *picked = Some((!id.is_empty()).then_some(id));
             }
         }
         Some("TargetClosed") => {
@@ -197,18 +234,18 @@ fn callback(shared: &Shared, message: &dbus::Message) -> Result<Vec<dbus::Arg>, 
                 if closed.len() >= 256 {
                     closed.clear();
                 }
-                closed.insert(id.clone());
+                closed.insert(id);
             }
         }
         _ => return Err("Unknown method".into()),
     }
     (shared.wake)();
-    Ok(Vec::new())
+    Ok(())
 }
 
 struct Worker {
     shared: Arc<Shared>,
-    bus: dbus::Bus,
+    bus: Connection,
     /// Loaded script per slot, so a new request replaces the previous one.
     scripts: HashMap<String, PathBuf>,
     /// Titles raised in this process; lowering anything else is a no-op.
@@ -218,9 +255,32 @@ struct Worker {
 }
 
 impl Worker {
-    fn new(shared: Arc<Shared>) -> Result<Self, dbus::Error> {
+    fn new(
+        shared: Arc<Shared>,
+        open: impl FnOnce() -> Result<Channel, dbus::Error>,
+    ) -> Result<Self, String> {
+        let mut channel = open().map_err(|e| e.to_string())?;
+        // Exposes the socket so the worker can sleep in poll() between messages.
+        channel.set_watch_enabled(true);
+        let bus = Connection::from(channel);
         let handler = shared.clone();
-        let bus = dbus::Bus::session(Box::new(move |message| callback(&handler, message)))?;
+        bus.start_receive(
+            MatchRule::new_method_call(),
+            Box::new(move |message, bus| {
+                let answer = callback(&handler, &message);
+                if !message.get_no_reply() {
+                    let reply = match answer {
+                        Ok(()) => message.method_return(),
+                        Err(text) => message.error(
+                            &"org.freedesktop.DBus.Error.Failed".into(),
+                            &std::ffi::CString::new(text).unwrap_or_default(),
+                        ),
+                    };
+                    let _ = bus.send(reply);
+                }
+                true
+            }),
+        );
         Ok(Self {
             shared,
             bus,
@@ -230,11 +290,49 @@ impl Worker {
             serial: 0,
         })
     }
-    fn run(&mut self, requests: crossbeam_channel::Receiver<Request>) {
-        while let Ok(request) = requests.recv() {
-            if let Err(error) = self.handle(request) {
-                report(&self.shared, error);
+    /// Alternates between bus messages and queued requests, sleeping in between.
+    fn run(
+        &mut self,
+        requests: &crossbeam_channel::Receiver<Request>,
+        mut wakeup: UnixStream,
+    ) -> Result<(), String> {
+        use rustix::event::{PollFd, PollFlags, poll};
+        let fd = self.bus.channel().watch().fd;
+        loop {
+            let mut busy = false;
+            // Drains messages libdbus already buffered, then whatever the socket has.
+            while self
+                .bus
+                .process(Duration::ZERO)
+                .map_err(|e| e.to_string())?
+            {
+                busy = true;
             }
+            while let Ok(request) = requests.try_recv() {
+                busy = true;
+                if let Err(error) = self.handle(request) {
+                    report(&self.shared, error);
+                }
+            }
+            if busy {
+                continue;
+            }
+            self.bus.channel().flush();
+            // SAFETY: the descriptor belongs to `self.bus`, which outlives this borrow.
+            let socket = unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) };
+            let mut fds = [
+                PollFd::new(&socket, PollFlags::IN),
+                PollFd::new(&wakeup, PollFlags::IN),
+            ];
+            match poll(&mut fds, None) {
+                Ok(_) | Err(rustix::io::Errno::INTR) => {}
+                Err(error) => return Err(error.to_string()),
+            }
+            if fds[0].revents().intersects(PollFlags::ERR | PollFlags::HUP) {
+                return Err("Session bus closed".into());
+            }
+            let mut drain = [0u8; 64];
+            while matches!(wakeup.read(&mut drain), Ok(n) if n > 0) {}
         }
     }
     fn handle(&mut self, request: Request) -> Result<(), String> {
@@ -262,10 +360,18 @@ impl Worker {
         }
     }
     fn service(&self) -> String {
-        self.bus.unique_name().to_owned()
+        self.bus.unique_name().to_string()
+    }
+    fn proxy<'a>(&'a self, destination: &'a str, path: &'a str) -> Proxy<'a, &'a Connection> {
+        self.bus.with_proxy(destination, path, CALL_TIMEOUT)
+    }
+    fn bus_proxy(&self) -> Proxy<'_, &Connection> {
+        self.proxy("org.freedesktop.DBus", "/org/freedesktop/DBus")
     }
     fn has_owner(&self, name: &str) -> bool {
-        self.bus.has_owner(name)
+        self.bus_proxy()
+            .method_call("org.freedesktop.DBus", "NameHasOwner", (name,))
+            .is_ok_and(|(owned,): (bool,)| owned)
     }
     fn probe(&mut self) {
         let kwin = self.has_owner("org.kde.KWin");
@@ -306,17 +412,11 @@ impl Worker {
         // A window created a moment ago may not be mapped yet; retry briefly.
         for delay in [0, 50, 100, 200, 400, 800, 1600] {
             std::thread::sleep(std::time::Duration::from_millis(delay));
-            let reply = self
-                .bus
-                .call(
-                    GNOME_SERVICE,
-                    "/org/mothref/Shell",
-                    "org.mothref.Shell1",
-                    "SetKeepAbove",
-                    &[title.into(), above.into()],
-                )
+            let (count,): (u32,) = self
+                .proxy(GNOME_SERVICE, "/org/mothref/Shell")
+                .method_call("org.mothref.Shell1", "SetKeepAbove", (title, above))
                 .map_err(|e| e.to_string())?;
-            if !matches!(reply.as_slice(), [dbus::Arg::U32(0)]) {
+            if count > 0 {
                 return Ok(());
             }
         }
@@ -352,24 +452,12 @@ impl Worker {
             }
         }
     }
-    fn kwin_call(
-        &self,
-        path: &str,
-        interface: &str,
-        method: &str,
-        args: &[dbus::Arg],
-    ) -> Result<Vec<dbus::Arg>, dbus::Error> {
-        self.bus.call("org.kde.KWin", path, interface, method, args)
-    }
     fn unload(&mut self, slot: &str) -> Result<(), String> {
         let name = plugin_name(slot);
-        self.kwin_call(
-            "/Scripting",
-            "org.kde.kwin.Scripting",
-            "unloadScript",
-            &[name.as_str().into()],
-        )
-        .map_err(|e| e.to_string())?;
+        let _: (bool,) = self
+            .proxy("org.kde.KWin", "/Scripting")
+            .method_call("org.kde.kwin.Scripting", "unloadScript", (name.as_str(),))
+            .map_err(|e| e.to_string())?;
         if let Some(path) = self.scripts.remove(slot) {
             let _ = std::fs::remove_file(path);
         }
@@ -378,7 +466,10 @@ impl Worker {
     /// Replaces the script in `slot`. Scripts stay loaded until replaced, because
     /// KWin evaluates them asynchronously and waiting ones listen for new windows.
     fn kwin_script(&mut self, slot: &str, source: &str) -> Result<(), String> {
-        let owner = self.bus.owner("org.kde.KWin").map_err(|e| e.to_string())?;
+        let (owner,): (String,) = self
+            .bus_proxy()
+            .method_call("org.freedesktop.DBus", "GetNameOwner", ("org.kde.KWin",))
+            .map_err(|e| e.to_string())?;
         if let Ok(mut slot) = self.shared.kwin_owner.lock() {
             *slot = Some(owner);
         }
@@ -392,31 +483,25 @@ impl Worker {
         write_new(&path, source).map_err(|e| e.to_string())?;
         self.scripts.insert(slot.to_owned(), path.clone());
         let file = path.to_str().ok_or("Script path is not UTF-8")?;
-        let reply = self
-            .kwin_call(
-                "/Scripting",
+        let (id,): (i32,) = self
+            .proxy("org.kde.KWin", "/Scripting")
+            .method_call(
                 "org.kde.kwin.Scripting",
                 "loadScript",
-                &[file.into(), plugin_name(slot).as_str().into()],
+                (file, plugin_name(slot).as_str()),
             )
             .map_err(|e| e.to_string())?;
-        let [dbus::Arg::I32(id)] = reply.as_slice() else {
-            return Err("Unexpected reply from KWin".into());
-        };
-        let id = *id;
         if id < 0 {
             return Err("KWin refused the window script".into());
         }
         // Plasma 6 and Plasma 5 export loaded scripts under different paths.
-        self.kwin_call(
-            &format!("/Scripting/Script{id}"),
-            "org.kde.kwin.Script",
-            "run",
-            &[],
-        )
-        .or_else(|_| self.kwin_call(&format!("/{id}"), "org.kde.kwin.Script", "run", &[]))
-        .map_err(|e| e.to_string())?;
-        Ok(())
+        let run = |path: String| -> Result<(), dbus::Error> {
+            self.proxy("org.kde.KWin", &path)
+                .method_call("org.kde.kwin.Script", "run", ())
+        };
+        run(format!("/Scripting/Script{id}"))
+            .or_else(|_| run(format!("/{id}")))
+            .map_err(|e| e.to_string())
     }
     fn install_gnome(&mut self) -> Result<(), String> {
         let directory = gnome_directory().ok_or("Cannot find the GNOME extension folder")?;
@@ -598,6 +683,136 @@ if (!windows().some(function (w) {{ return id(w) === target; }})) {{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::BufRead as _;
+
+    fn private(address: &str) -> Connection {
+        let mut channel = Channel::open_private(address).unwrap();
+        channel.register().unwrap();
+        Connection::from(channel)
+    }
+    /// The worker against a real `dbus-daemon` and a stand-in for KWin's
+    /// scripting service, when `dbus-daemon` is installed.
+    #[test]
+    fn worker_loads_scripts_and_accepts_only_kwin_callbacks() {
+        let Ok(mut daemon) = std::process::Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--print-address"])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+        else {
+            return;
+        };
+        let mut address = String::new();
+        std::io::BufReader::new(daemon.stdout.take().unwrap())
+            .read_line(&mut address)
+            .unwrap();
+        let address = address.trim().to_owned();
+
+        // Stand-in KWin: answers the scripting calls and records the script.
+        let (scripts, loaded) = crossbeam_channel::unbounded::<String>();
+        let stop = Arc::new(AtomicBool::new(false));
+        let kwin_stop = stop.clone();
+        let kwin_address = address.clone();
+        let (ready, kwin_ready) = crossbeam_channel::bounded(1);
+        let kwin = std::thread::spawn(move || {
+            let kwin = private(&kwin_address);
+            kwin.request_name("org.kde.KWin", false, true, false)
+                .unwrap();
+            kwin.start_receive(
+                MatchRule::new_method_call(),
+                Box::new(move |message, bus| {
+                    let reply = match message.member().as_deref() {
+                        Some("unloadScript") => message.method_return().append1(true),
+                        Some("loadScript") => {
+                            let (file, _name): (String, String) = message.read2().unwrap();
+                            scripts
+                                .send(std::fs::read_to_string(file).unwrap())
+                                .unwrap();
+                            message.method_return().append1(3i32)
+                        }
+                        Some("run") if message.path().as_deref() == Some("/Scripting/Script3") => {
+                            message.method_return()
+                        }
+                        _ => message.error(
+                            &"org.freedesktop.DBus.Error.UnknownMethod".into(),
+                            c"unknown",
+                        ),
+                    };
+                    let _ = bus.send(reply);
+                    true
+                }),
+            );
+            ready.send(()).unwrap();
+            while !kwin_stop.load(Ordering::Relaxed) {
+                kwin.process(Duration::from_millis(20)).unwrap();
+            }
+        });
+        kwin_ready.recv().unwrap();
+
+        let (woke, wakes) = crossbeam_channel::unbounded();
+        let worker_address = address.clone();
+        let shared = spawn(
+            Arc::new(move || {
+                let _ = woke.send(());
+            }),
+            move || {
+                let mut channel = Channel::open_private(&worker_address)?;
+                channel.register()?;
+                Ok(channel)
+            },
+        )
+        .unwrap();
+        let wait = || wakes.recv_timeout(Duration::from_secs(5)).unwrap();
+        enqueue(&shared, Request::Probe);
+        wait();
+        assert!(shared.kwin.load(Ordering::Acquire));
+        assert_eq!(shared.gnome.load(Ordering::Acquire), 0);
+
+        enqueue(
+            &shared,
+            Request::Pick {
+                title: "MothRef".into(),
+            },
+        );
+        let script = loaded.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(script.contains("const title = \"MothRef\";"));
+        let service = script
+            .split("callDBus(\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap()
+            .to_owned();
+
+        // Another client cannot pretend to be KWin.
+        let stranger = private(&address);
+        let refused: Result<(), dbus::Error> = stranger
+            .with_proxy(service.as_str(), CALLBACK_PATH, CALL_TIMEOUT)
+            .method_call(CALLBACK_INTERFACE, "Picked", ("{evil}",));
+        assert!(refused.is_err());
+        assert_eq!(take_picked_from(&shared), None);
+
+        // KWin's report reaches the app and wakes it.
+        stop.store(true, Ordering::Relaxed);
+        kwin.join().unwrap();
+        let kwin = private(&address);
+        // The stand-in released the name; claim it again for the callback.
+        kwin.request_name("org.kde.KWin", false, true, false)
+            .unwrap();
+        *shared.kwin_owner.lock().unwrap() = Some(kwin.unique_name().to_string());
+        let picked: Result<(), dbus::Error> = kwin
+            .with_proxy(service.as_str(), CALLBACK_PATH, CALL_TIMEOUT)
+            .method_call(CALLBACK_INTERFACE, "Picked", ("{target}",));
+        picked.unwrap();
+        wait();
+        assert_eq!(take_picked_from(&shared), Some(Some("{target}".into())));
+        assert!(shared.error.lock().unwrap().is_none());
+
+        drop((kwin, stranger));
+        let _ = daemon.kill();
+        let _ = daemon.wait();
+    }
+    fn take_picked_from(shared: &Shared) -> Option<Option<String>> {
+        shared.picked.lock().unwrap().take()
+    }
     #[test]
     fn script_strings_cannot_escape_their_literal() {
         assert_eq!(js_string("MothRef"), "\"MothRef\"");

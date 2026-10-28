@@ -163,7 +163,7 @@ Den vollständigen Plan, Funktionslisten und Leistungsziele findest du in [ROADM
 
 ## Aus dem Quellcode bauen
 
-Du brauchst [Rust](https://rustup.rs) 1.95 oder neuer. Unter Linux zusätzlich die X11/Wayland-Header installieren (`libxkbcommon-dev` und `libwayland-dev` unter Debian/Ubuntu).
+Du brauchst [Rust](https://rustup.rs) 1.95 oder neuer. Unter Linux zusätzlich die X11/Wayland-Header installieren (`libxkbcommon-dev`, `libdbus-1-dev` und `libwayland-dev` unter Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

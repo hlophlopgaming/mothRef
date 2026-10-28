@@ -163,7 +163,7 @@
 
 ## Μεταγλώττιση από τον πηγαίο κώδικα
 
-Χρειάζεστε [Rust](https://rustup.rs) 1.95 ή νεότερο. Στο Linux εγκαταστήστε και τα headers των X11/Wayland (`libxkbcommon-dev` και `libwayland-dev` σε Debian/Ubuntu).
+Χρειάζεστε [Rust](https://rustup.rs) 1.95 ή νεότερο. Στο Linux εγκαταστήστε και τα headers των X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` και `libwayland-dev` σε Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

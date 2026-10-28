@@ -450,10 +450,12 @@ was available):
   passed Clippy for `aarch64-apple-darwin` and `x86_64-pc-windows-msvc` in an
   isolated crate (the full workspace cannot cross-compile here because of C
   build scripts).
-- With the maintainer's agreement, the new D-Bus client and script tests ran:
-  `cargo test -p moth-platform --lib -- dbus:: compositor::` passed 7 tests,
-  including calls, replies, errors and name queries through a real
-  `dbus-daemon`, truncated/mutated message rejection and script escaping.
+- With the maintainer's agreement, the compositor tests ran:
+  `cargo test -p moth-platform --lib -- compositor::` passed 3 tests. One runs
+  the worker against a real `dbus-daemon` and a stand-in for KWin's scripting
+  service: probe, script load and run, a refused callback from another client
+  and an accepted `Picked` callback that wakes the app. D-Bus goes through the
+  `dbus` crate and the system libdbus (`libdbus-1-dev` was installed for this).
 - The generated KWin scripts ran in Node against a mocked Plasma 6 and Plasma 5
   `workspace` (late-mapped windows, picking that ignores MothRef and panels,
   activation following, target removal). The GNOME extension passed

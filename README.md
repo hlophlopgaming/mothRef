@@ -160,7 +160,7 @@ The full plan, feature checklists and performance targets live in [ROADMAP.md](R
 ## Build from source
 
 You need [Rust](https://rustup.rs) 1.95 or newer. On Linux, also install the X11/Wayland headers
-(`libxkbcommon-dev` and `libwayland-dev` on Debian/Ubuntu).
+(`libxkbcommon-dev`, `libdbus-1-dev` and `libwayland-dev` on Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

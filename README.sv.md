@@ -163,7 +163,7 @@ Hela planen, funktionslistor och prestandamål finns i [ROADMAP.md](ROADMAP.md) 
 
 ## Bygga från källkod
 
-Du behöver [Rust](https://rustup.rs) 1.95 eller nyare. På Linux installerar du även X11/Wayland-headers (`libxkbcommon-dev` och `libwayland-dev` på Debian/Ubuntu).
+Du behöver [Rust](https://rustup.rs) 1.95 eller nyare. På Linux installerar du även X11/Wayland-headers (`libxkbcommon-dev`, `libdbus-1-dev` och `libwayland-dev` på Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git
