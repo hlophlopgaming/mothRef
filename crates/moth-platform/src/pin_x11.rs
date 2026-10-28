@@ -126,7 +126,6 @@ fn run(
     picking: bool,
     selection: crossbeam_channel::Sender<(u32, Option<u32>)>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use rustix::event::{PollFd, PollFlags, poll};
     let (connection, screen) = x11rb::connect(None)?;
     let root = connection.setup().roots[screen].root;
     let active = connection
@@ -134,6 +133,20 @@ fn run(
         .reply()?
         .atom;
     let pid = connection.intern_atom(false, b"_NET_WM_PID")?.reply()?.atom;
+    let mut layers = Layers {
+        root,
+        state: connection
+            .intern_atom(false, b"_NET_WM_STATE")?
+            .reply()?
+            .atom,
+        above: connection
+            .intern_atom(false, b"_NET_WM_STATE_ABOVE")?
+            .reply()?
+            .atom,
+        board,
+        raised: false,
+        lifted: None,
+    };
     connection
         .change_window_attributes(
             root,
@@ -173,7 +186,6 @@ fn run(
                 &ChangeWindowAttributesAux::new().event_mask(EventMask::STRUCTURE_NOTIFY),
             )?
             .check()?;
-        raise(&connection, board)?;
         None
     };
     connection.flush()?;
@@ -189,38 +201,90 @@ fn run(
             return Ok(());
         }
     }
+    // Some(false) for the chosen window, Some(true) for another window of its app.
+    type Related = Result<Option<bool>, Box<dyn std::error::Error>>;
+    let related = |connection: &RustConnection, window: u32| -> Related {
+        Ok(if window == target {
+            Some(false)
+        } else if window != 0 && process.is_some() && property(connection, window, pid)? == process
+        {
+            Some(true)
+        } else {
+            None
+        })
+    };
+    let own =
+        |connection: &RustConnection, window: u32| -> Result<bool, Box<dyn std::error::Error>> {
+            Ok(window == board || property(connection, window, pid)? == Some(std::process::id()))
+        };
+    if !picking {
+        let foreground = property(&connection, root, active)?.unwrap_or(0);
+        layers.follow(
+            &connection,
+            foreground,
+            related(&connection, foreground)?,
+            foreground == 0 || own(&connection, foreground)?,
+        )?;
+        connection.flush()?;
+    }
+    let result = watch(&connection, &quit, |event| {
+        match event {
+            Event::KeyPress(event) if Some(event.detail) == escape => {
+                let _ = selection.try_send((0, None));
+                return Ok(true);
+            }
+            Event::DestroyNotify(event) if event.window == target && !picking => {
+                return Err("The chosen window has closed".into());
+            }
+            Event::PropertyNotify(event) if event.window == root && event.atom == active => {
+                let foreground = property(&connection, root, active)?.unwrap_or(0);
+                if picking
+                    && foreground != 0
+                    && foreground != board
+                    && property(&connection, foreground, pid)? != Some(std::process::id())
+                {
+                    let _ =
+                        selection.try_send((foreground, property(&connection, foreground, pid)?));
+                    return Ok(true);
+                }
+                if !picking {
+                    layers.follow(
+                        &connection,
+                        foreground,
+                        related(&connection, foreground)?,
+                        foreground == 0 || own(&connection, foreground)?,
+                    )?;
+                    connection.flush()?;
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
+    });
+    // Leaving the pin must not leave the board, or the app's popup, on top.
+    if !picking {
+        let _ = layers.release(&connection);
+        let _ = connection.flush();
+    }
+    result
+}
+/// Handles events until `handle` returns true, the quit descriptor fires or the
+/// connection fails; waits in poll() in between, without timers.
+fn watch(
+    connection: &RustConnection,
+    quit: &UnixStream,
+    mut handle: impl FnMut(Event) -> Result<bool, Box<dyn std::error::Error>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use rustix::event::{PollFd, PollFlags, poll};
     loop {
         while let Some(event) = connection.poll_for_event()? {
-            match event {
-                Event::KeyPress(event) if Some(event.detail) == escape => {
-                    let _ = selection.try_send((0, None));
-                    return Ok(());
-                }
-                Event::DestroyNotify(event) if event.window == target && !picking => {
-                    return Err("The chosen window has closed".into());
-                }
-                Event::PropertyNotify(event) if event.window == root && event.atom == active => {
-                    let foreground = property(&connection, root, active)?.unwrap_or(0);
-                    if picking
-                        && foreground != 0
-                        && foreground != board
-                        && property(&connection, foreground, pid)? != Some(std::process::id())
-                    {
-                        let _ = selection
-                            .try_send((foreground, property(&connection, foreground, pid)?));
-                        return Ok(());
-                    }
-                    if !picking && foreground == target {
-                        raise(&connection, board)?;
-                        connection.flush()?;
-                    }
-                }
-                _ => {}
+            if handle(event)? {
+                return Ok(());
             }
         }
         let mut fds = [
             PollFd::new(connection.stream(), PollFlags::IN),
-            PollFd::new(&quit, PollFlags::IN),
+            PollFd::new(quit, PollFlags::IN),
         ];
         match poll(&mut fds, None) {
             Err(rustix::io::Errno::INTR) => continue,
@@ -235,15 +299,94 @@ fn run(
         }
     }
 }
-fn raise(connection: &RustConnection, board: u32) -> Result<(), Box<dyn std::error::Error>> {
-    // shortcut: normal-layer targets only, extend stacking layers after native qualification.
-    connection
-        .configure_window(
-            board,
-            &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
-        )?
-        .check()?;
-    Ok(())
+/// Window managers keep a dialog directly above its main window, so the board
+/// cannot be restacked between them. Instead it uses the EWMH "above" state
+/// while the chosen app is active, and lifts the app's active popup or dialog
+/// into the same layer above it until something else is activated. Requests go
+/// through the window manager as a pager would send them.
+struct Layers {
+    root: u32,
+    state: u32,
+    above: u32,
+    board: u32,
+    raised: bool,
+    lifted: Option<u32>,
+}
+impl Layers {
+    fn follow(
+        &mut self,
+        connection: &RustConnection,
+        foreground: u32,
+        related: Option<bool>,
+        own: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(lifted) = self.lifted.filter(|&w| w != foreground) {
+            self.lifted = None;
+            self.set(connection, lifted, false)?;
+        }
+        if let Some(popup) = related {
+            self.raise(connection, true)?;
+            // The chosen window stays under the board; only its popups are lifted.
+            if popup && self.lifted.is_none() && !self.has_above(connection, foreground)? {
+                self.set(connection, foreground, true)?;
+                self.lifted = Some(foreground);
+            }
+        } else if !own {
+            self.raise(connection, false)?;
+        }
+        Ok(())
+    }
+    fn release(&mut self, connection: &RustConnection) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(lifted) = self.lifted.take() {
+            self.set(connection, lifted, false)?;
+        }
+        self.raise(connection, false)
+    }
+    fn raise(
+        &mut self,
+        connection: &RustConnection,
+        on: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if self.raised != on {
+            self.raised = on;
+            self.set(connection, self.board, on)?;
+        }
+        Ok(())
+    }
+    fn has_above(
+        &self,
+        connection: &RustConnection,
+        window: u32,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        Ok(connection
+            .get_property(false, window, self.state, AtomEnum::ATOM, 0, 32)?
+            .reply()?
+            .value32()
+            .is_some_and(|mut states| states.any(|s| s == self.above)))
+    }
+    fn set(
+        &self,
+        connection: &RustConnection,
+        window: u32,
+        on: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        const PAGER: u32 = 2;
+        let event = ClientMessageEvent::new(
+            32,
+            window,
+            self.state,
+            [u32::from(on), self.above, 0, PAGER, 0],
+        );
+        connection
+            .send_event(
+                false,
+                self.root,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                event,
+            )?
+            .check()?;
+        Ok(())
+    }
 }
 fn escape_key(first: u8, width: u8, symbols: &[u32]) -> Option<u8> {
     if width == 0 || !symbols.len().is_multiple_of(width as usize) {

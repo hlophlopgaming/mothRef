@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fix the board disappearing behind the chosen app when that app opens a popup, dialog or floating panel while pinned above it (KDE Plasma, X11, Windows). The app's own windows now count as the app, its active popup stays visible above the board, and only another application's window or dialog lowers the board.
+- Fix pinning above a chosen window on X11 having no effect under window managers that ignore restack requests from inactive clients; MothRef now uses the EWMH above state through the window manager.
+
 - Rework the window chrome. View shows only images: a floating window bar slides in at the top edge (drag grip, board switcher, View, pin, overlay, window buttons) and folds rarer controls into "⋯" on narrow windows; the permanent corner button is gone, and touch uses "Window controls" in the context menu. In Collect, window controls fade in over the top bar without a separate toggle button, maximized windows show a restore icon, and tabs are chips with their close button inside.
 
 - Keep MothRef above other windows on KDE Plasma and GNOME Wayland: above all windows, the Over overlay and floating views now stay on top. GNOME needs the MothRef window extension, which Settings › Window and overlay can install (log out and back in once).
