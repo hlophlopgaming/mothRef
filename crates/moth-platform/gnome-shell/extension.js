@@ -4,6 +4,7 @@
 // limited to windows owned by the calling process.
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Meta from 'gi://Meta';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const BUS_NAME = 'org.mothref.Shell';
@@ -19,9 +20,33 @@ const INTERFACE = `<node>
   </interface>
 </node>`;
 
+// Mutter 49 dropped the flags argument.
+function unmaximize(window) {
+    try {
+        window.unmaximize();
+    } catch {
+        window.unmaximize(Meta.MaximizeFlags.BOTH);
+    }
+}
+
+// A window that is not shown yet gets stacked below the focused window when
+// Mutter maps it without focus, which would hide an overlay controller under
+// its board. `shown` is emitted after that, so raising there wins.
+function raiseWhenShown(window) {
+    const handler = window.connect('shown', () => window.raise());
+    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
+        try {
+            window.disconnect(handler);
+        } catch {
+            // The window is already gone.
+        }
+        return GLib.SOURCE_REMOVE;
+    });
+}
+
 class Service {
     get Version() {
-        return 1;
+        return 4;
     }
 
     // The caller is identified by the bus, never by an argument, so another
@@ -45,9 +70,16 @@ class Service {
                         const window = actor.get_meta_window();
                         if (!window || window.get_pid() !== pid || window.get_title() !== title)
                             continue;
-                        if (above)
+                        if (above) {
+                            // Mutter keeps maximized windows in the normal layer
+                            // even when marked above, so the request would do nothing.
+                            if (window.get_maximized())
+                                unmaximize(window);
                             window.make_above();
-                        else
+                            // Raise within the top layer so the latest request wins.
+                            window.raise();
+                            raiseWhenShown(window);
+                        } else
                             window.unmake_above();
                         count++;
                     }

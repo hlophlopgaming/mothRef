@@ -475,3 +475,55 @@ Native checks still required (record Plasma/GNOME version and session type):
   pin off returns normal Space behavior; F11 fullscreen still works.
 - [ ] Windows: target pin with a topmost target (for example a video player set
   to "always on top"), switching away, turning the pin off, then above all.
+
+### Native run under KWin 5.27 and GNOME Shell 46 — 2026-10-28
+
+The release binary (`--software`, lavapipe) ran as a native Wayland client
+inside this container under Ubuntu 24.04's `kwin_wayland` 5.27.11 (X11 backend
+in Xvfb, with Xwayland) and `gnome-shell --nested` 46.0. Window state was read
+from the compositor itself: a KWin script printing `keepAbove`, activation and
+stacking order, and a test-only GNOME extension listing `is_above`, maximized
+state, layer and focus. Two xterm windows titled "Krita" and "Firefox" stood
+in for other applications; input came from `xdotool` on the host display.
+
+KDE Plasma 5.27 — all passed after the fixes below:
+
+- Ctrl+Shift+T: MothRef `keepAbove` and stays on top while "Krita" is active;
+  toggling again lets "Krita" cover it.
+- Window bar ▾ › Above a chosen window, then activating "Krita": the KWin pick
+  script reports back, MothRef is above while "Krita" is active, drops when
+  "Firefox" is activated, returns when "Krita" is; closing "Krita" turns the
+  pin off and the pin button.
+- Over: board and controller stay above the active "Firefox"; the controller's
+  On top toggles the board; leaving Over restores the previous pin.
+
+GNOME Shell 46 — all passed after the fixes below:
+
+- Settings › Window and overlay shows the hint and the install button; "On
+  top" is disabled. Installing writes the extension, enables it through
+  `gnome-extensions`, and the hint changes to "log out and back in". After
+  restarting the shell, MothRef detects it (`gnome=3`).
+- An outdated installed extension is detected through its `Version` property
+  and the install button returns.
+- Ctrl+Shift+T on a maximized board: the board is restored, moves to the top
+  layer and stays above the active "Krita"; toggling again returns it.
+- Over, five times in a row: board and controller in the top layer above the
+  active "Firefox", controller above the board.
+
+Bugs found by these runs and fixed:
+
+- KWin 5 numbers loaded scripts by list length, so after an unload a new
+  script's id named a script still loaded, and `run` on `/<id>` started the
+  wrong one: the attach script never ran. Scripts now start through
+  `org.kde.kwin.Scripting.start`.
+- The class fallback for sandboxed builds also matched windows of a second
+  MothRef instance; it now applies only when no window has our PID.
+- Mutter ignores "above" for maximized windows; the extension restores a
+  maximized window before keeping it above.
+- On GNOME, the Over controller appeared under its board: Mutter stacks a
+  window that is mapped without focus below the focused window. The extension
+  raises the window again when it is shown, and the app re-pins the controller
+  after the board and after its first frame.
+
+Still open: Plasma 6, GNOME 47–49, real (non-nested) sessions with hardware
+GPUs, HiDPI, touch/pen paths, macOS and Windows.

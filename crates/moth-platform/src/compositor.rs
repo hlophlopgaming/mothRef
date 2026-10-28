@@ -27,6 +27,8 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 const GNOME_SERVICE: &str = "org.mothref.Shell";
 /// Directory name the GNOME Shell extension is installed under.
 pub(crate) const GNOME_UUID: &str = "mothref-windows@hlophlopgaming.github.io";
+/// Matches `Version` in `gnome-shell/extension.js`; bump both on behavior changes.
+const GNOME_VERSION: u32 = 4;
 const GNOME_METADATA: &str = include_str!("../gnome-shell/metadata.json");
 const GNOME_EXTENSION: &str = include_str!("../gnome-shell/extension.js");
 /// Object path KWin scripts call back on with `callDBus`.
@@ -373,13 +375,24 @@ impl Worker {
             .method_call("org.freedesktop.DBus", "NameHasOwner", (name,))
             .is_ok_and(|(owned,): (bool,)| owned)
     }
+    fn gnome_version(&self) -> u32 {
+        use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
+        self.proxy(GNOME_SERVICE, "/org/mothref/Shell")
+            .get("org.mothref.Shell1", "Version")
+            .unwrap_or(0)
+    }
     fn probe(&mut self) {
         let kwin = self.has_owner("org.kde.KWin");
         self.shared.kwin.store(kwin, Ordering::Release);
         let gnome = if kwin || !self.has_owner("org.gnome.Shell") {
             0
         } else if self.has_owner(GNOME_SERVICE) {
-            3
+            // An older bundled extension is offered for reinstalling.
+            if self.gnome_version() >= GNOME_VERSION {
+                3
+            } else {
+                1
+            }
         } else if gnome_directory().is_some_and(|d| d.join("extension.js").is_file()) {
             2
         } else {
@@ -494,14 +507,13 @@ impl Worker {
         if id < 0 {
             return Err("KWin refused the window script".into());
         }
-        // Plasma 6 and Plasma 5 export loaded scripts under different paths.
-        let run = |path: String| -> Result<(), dbus::Error> {
-            self.proxy("org.kde.KWin", &path)
-                .method_call("org.kde.kwin.Script", "run", ())
-        };
-        run(format!("/Scripting/Script{id}"))
-            .or_else(|_| run(format!("/{id}")))
-            .map_err(|e| e.to_string())
+        // `start` runs every loaded script that is not running yet. Running by
+        // object path is unreliable: Plasma 5 numbers scripts by list length,
+        // so after an unload a new id can name a script that is still loaded.
+        let started: Result<(), dbus::Error> = self
+            .proxy("org.kde.KWin", "/Scripting")
+            .method_call("org.kde.kwin.Scripting", "start", ());
+        started.map_err(|e| e.to_string())
     }
     fn install_gnome(&mut self) -> Result<(), String> {
         let directory = gnome_directory().ok_or("Cannot find the GNOME extension folder")?;
@@ -613,8 +625,12 @@ function windows() {{
 const activated = workspace.windowActivated || workspace.clientActivated;
 const added = workspace.windowAdded || workspace.clientAdded;
 const removed = workspace.windowRemoved || workspace.clientRemoved;
-// Sandboxed builds see a different PID, so the class is a fallback.
-function mine(w) {{ return !!w && (w.pid === pid || String(w.resourceClass).toLowerCase().indexOf("mothref") >= 0); }}
+function ours(w) {{ return !!w && w.pid === pid; }}
+function mothref(w) {{ return !!w && String(w.resourceClass).toLowerCase().indexOf("mothref") >= 0; }}
+// Sandboxed builds see a different PID; only then fall back to the window class,
+// so a second MothRef instance is never moved by this one.
+const sandboxed = !windows().some(ours);
+function mine(w) {{ return ours(w) || (sandboxed && mothref(w)); }}
 function board(w) {{ return mine(w) && w.caption === title; }}
 function boards() {{ return windows().filter(board); }}
 function id(w) {{ return String(w.internalId); }}
@@ -729,9 +745,7 @@ mod tests {
                                 .unwrap();
                             message.method_return().append1(3i32)
                         }
-                        Some("run") if message.path().as_deref() == Some("/Scripting/Script3") => {
-                            message.method_return()
-                        }
+                        Some("start") => message.method_return(),
                         _ => message.error(
                             &"org.freedesktop.DBus.Error.UnknownMethod".into(),
                             c"unknown",

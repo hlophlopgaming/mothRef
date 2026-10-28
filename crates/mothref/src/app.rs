@@ -289,8 +289,9 @@ impl App {
                     {
                         self.workspace.board.message = error.into();
                     }
-                    if let Err(error) =
-                        moth_platform::Desktop.window_effects(&window, true, overlay.on_top, false)
+                    if let Err(error) = moth_platform::Desktop
+                        .window_effects(&window, true, overlay.on_top, false)
+                        .and_then(|()| overlay.restack())
                     {
                         self.workspace.board.message = error.into();
                     }
@@ -2323,6 +2324,9 @@ impl ApplicationHandler<Wake> for App {
                         overlay.click_through = false;
                     } else {
                         overlay.applied = (overlay.on_top, overlay.click_through);
+                        if let Err(error) = overlay.restack() {
+                            self.workspace.board.message = error.into();
+                        }
                     }
                 }
             }

@@ -14,6 +14,8 @@ pub(super) struct Overlay {
     pub(super) on_top: bool,
     pub(super) exit: bool,
     pub(super) applied: (bool, bool),
+    /// The controller is restacked once its first frame maps it.
+    shown: bool,
 }
 impl Overlay {
     pub(super) fn new(
@@ -59,7 +61,13 @@ impl Overlay {
             on_top,
             exit: false,
             applied: (on_top, false),
+            shown: false,
         })
+    }
+    /// Keeps the controller above the board: some compositors raise the
+    /// window that was pinned last, which would put the board over its controls.
+    pub(super) fn restack(&self) -> Result<(), String> {
+        moth_platform::Desktop.window_effects(&self.window, false, true, false)
     }
     pub(super) fn event(&mut self, event: &WindowEvent) {
         let _ = self.state.on_window_event(&self.window, event);
@@ -218,6 +226,14 @@ impl Overlay {
             gpu.registry.ui.free_texture(id);
         }
         output.textures_delta.clear();
+        if !self.shown {
+            self.shown = true;
+            // Compositors stack a window only once it is mapped, which happens
+            // with its first frame; earlier requests can leave it under the board.
+            if let Err(error) = self.restack() {
+                tracing::warn!(%error, "Cannot raise the overlay controller");
+            }
+        }
         Ok(())
     }
 }

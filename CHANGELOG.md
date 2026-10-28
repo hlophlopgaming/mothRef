@@ -4,6 +4,7 @@
 
 - Keep MothRef above other windows on KDE Plasma and GNOME Wayland: above all windows, the Over overlay and floating views now stay on top. GNOME needs the MothRef window extension, which Settings › Window and overlay can install (log out and back in once).
 - Pin the board above a chosen window on KDE Plasma Wayland.
+- GNOME: keeping a maximized board on top restores it first, since GNOME does not keep maximized windows above others. Settings offers to update an outdated window extension.
 - macOS: windows kept above all also appear on every desktop and next to full-screen apps.
 - Windows: pinning above a chosen window also works when that window is itself always on top.
 - Disable "always on bottom" on Wayland, where compositors cannot provide it.

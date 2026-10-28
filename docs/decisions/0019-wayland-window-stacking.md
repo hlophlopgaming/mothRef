@@ -39,12 +39,16 @@ protocol code to maintain ourselves.
   activation stay loaded until replaced. Callbacks are accepted only from the
   current owner of `org.kde.KWin`.
   This enables above all, Over and floating views on top, and above a chosen
-  window (activation-following `keepAbove`) on Plasma Wayland.
+  window (activation-following `keepAbove`) on Plasma Wayland. Scripts are
+  started with `Scripting.start`, not by object path: Plasma 5 reuses script
+  ids after unloads.
 - **GNOME:** MothRef bundles a GNOME Shell extension
   (`crates/moth-platform/gnome-shell/`, GNOME 45+) that exports
   `org.mothref.Shell1.SetKeepAbove(title, above)`. It identifies the caller by
   its bus credentials, never by an argument, so a client can only change its
-  own windows. Settings › Window and overlay offers to install it (an explicit
+  own windows. Mutter ignores "above" for maximized windows, so the
+  extension restores them first. Its `Version` property lets the app offer an
+  update. Settings › Window and overlay offers to install it (an explicit
   user action; the files go to the user's extension folder and are enabled
   with `gnome-extensions`). GNOME on Wayland loads it after the next login.
   Without it, pin choices stay disabled as before.
