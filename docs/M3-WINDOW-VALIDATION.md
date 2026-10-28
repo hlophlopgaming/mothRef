@@ -527,3 +527,22 @@ Bugs found by these runs and fixed:
 
 Still open: Plasma 6, GNOME 47–49, real (non-nested) sessions with hardware
 GPUs, HiDPI, touch/pen paths, macOS and Windows.
+
+### Window chrome rework — 2026-10-28
+
+The maintainer asked for a calmer, adaptive chrome without the "window
+controls" toggle. Decisions: Collect keeps hover reveal for the window
+controls; View uses a floating bar at the top edge with a context-menu path
+for touch (see DESIGN.md §4).
+
+Checked with the release binary under KWin 5.27 (native Wayland, software
+adapter) at 1300, 800 and 480 logical pixels, before and after: Collect with
+the pointer away from and over the top bar, View with the pointer away from
+and at the top edge, the narrow "⋯" menu and the canvas context menu. The
+first build froze on start because `read_response` and theme tokens were read
+inside egui `memory`/`input` closures (a recursive context lock, like the
+earlier Tab freeze); both now read outside the closures.
+
+Formatting and Clippy for `moth-ui` and `mothref` passed. The updated reveal
+and title-shortening tests were compiled, not executed, per AGENTS.md §3.
+Touch, pen, HiDPI, the dark theme, Windows and macOS were not checked here.

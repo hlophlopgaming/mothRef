@@ -89,6 +89,8 @@ pub struct App {
     applied_background: Option<(WindowId, bool, bool)>,
     window_preferences_dirty: bool,
     pinned: bool,
+    /// The View window bar was opened explicitly and stays until dismissed.
+    window_bar: bool,
     bottom: bool,
     resize_bounds: Option<Rect>,
     locked_position: Option<winit::dpi::PhysicalPosition<i32>>,
@@ -159,6 +161,7 @@ impl App {
             applied_background: None,
             window_preferences_dirty: false,
             pinned: false,
+            window_bar: false,
             bottom: false,
             resize_bounds: None,
             locked_position: None,
@@ -983,6 +986,7 @@ impl App {
             }
             Intent::CloseWindow => self.request_close(true),
             Intent::Drag => self.drag_window(None),
+            Intent::WindowBar(shown) => self.window_bar = shown,
             Intent::Minimize => {
                 if let Some(window) = &self.shell.window {
                     window.set_minimized(true);
@@ -1947,6 +1951,7 @@ impl App {
                         catalog: &mut self.library_screen.catalog,
                         cards: &self.library_screen.cards,
                         window,
+                        window_bar: &mut self.window_bar,
                         enabled: &enabled,
                         registry: &self.shortcuts.registry,
                     },

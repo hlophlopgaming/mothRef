@@ -103,11 +103,21 @@ Final mark, app icon and README logo are on hold (maintainer, 2026-10-25).
 - **Window modes (screens 15–17).** One board, three window modes; a mode changes
   only the chrome and the window, never the content.
   - *Collect* — Miro-like: bottom toolbar, Insert, notes, groups, layers drawer, tabs.
-  - *View* — PureRef-like: images only, frameless window; the window bar slides
-    in from the top edge with the board switcher, a "View" popover (image opacity,
-    board background solid / translucent / glass, whole-window opacity, "images
-    only"), pin and overlay. Editing works through the mouse, the context menu and
-    keys.
+  - *View* — PureRef-like: images only, frameless window, nothing drawn over the
+    images. A floating, rounded window bar slides in at the top centre when the
+    pointer reaches the top edge (also while a control in it has focus or a menu
+    is open): drag grip, board switcher, a "View" popover (image opacity, board
+    background solid / translucent / glass, whole-window opacity, "images only"),
+    pin ▾, overlay and minimize / maximize / close. Below 640 px the View popover,
+    pin choices and overlay fold into "⋯" so the bar stays one row. Touch opens
+    it with "Window controls" in the context menu (long press). There is no
+    permanent corner button (maintainer, 2026-10-28). Editing works through the
+    mouse, the context menu and keys.
+  - *Collect* window controls (pin ▾, minimize, maximize/restore, close) fade in
+    when the pointer is over the top bar, a control has focus, or after a tap on
+    the bar's free space; they keep their place while hidden so nothing shifts.
+    The free space drags the window; double-click maximizes. Tabs are rounded
+    chips with the close cross inside.
   - *Over* — window above another app: the same controls as the View popover,
     plus click-through and an always-clickable grab handle.
   - Keys: `Tab` toggles Collect ⇄ View (ignored in text fields); `Ctrl/⌘+T`

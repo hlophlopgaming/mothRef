@@ -153,6 +153,7 @@ actions! {
     CopyImage, CopyImage, "", None;
     ClearDiskCache, ClearDiskCache, "", Some(moth_ui::icons::Icon::Close);
     ShellIntegration, InstallShellIntegration, "", None;
+    WindowBar, WindowControls, "", None;
 
 }
 impl Action {
@@ -178,7 +179,7 @@ impl Action {
             | CloseTab | NextTab | Overlay | Pin | Minimize | Maximize | MoveWindow
             | Fullscreen | Settings | CloseWindow | OverlaySelection | ClickThrough | Bottom
             | LockWindow | ResizeSelection | ResizeAll | OpacityUp | OpacityDown
-            | ShellIntegration => Text::CategoryBoard,
+            | ShellIntegration | WindowBar => Text::CategoryBoard,
             _ => Text::CategoryEdit,
         }
     }

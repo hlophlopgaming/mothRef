@@ -64,6 +64,9 @@ impl App {
         ) {
             return true;
         }
+        if action == WindowBar {
+            return self.compact();
+        }
         if action == ShellIntegration {
             return matches!(
                 moth_platform::Desktop.shell_integration(),
@@ -335,6 +338,10 @@ impl App {
             CloseWindow => Intent::CloseWindow,
             ClearDiskCache => {
                 self.tools.clear_disk_cache = true;
+                return;
+            }
+            WindowBar => {
+                self.window_bar = !self.window_bar;
                 return;
             }
             ShellIntegration => {

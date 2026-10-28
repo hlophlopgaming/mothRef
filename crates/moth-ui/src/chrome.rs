@@ -148,18 +148,17 @@ pub fn toolbar(
                         status.count.saturating_sub(status.images)
                     )
                 );
-                let mut status_font = egui::TextStyle::Body.resolve(ui.style());
-                let color = crate::tokens(ui.ctx()).text;
+                let status_font = egui::TextStyle::Body.resolve(ui.style());
+                let color = crate::tokens(ui.ctx()).text_muted;
                 let status_width = ui
                     .fonts_mut(|fonts| {
                         fonts.layout_no_wrap(summary.clone(), status_font.clone(), color)
                     })
                     .size()
                     .x;
-                let available =
-                    (ui.max_rect().width() - f32::from(crate::tokens(ui.ctx()).space_xl)).max(1.);
-                status_font.size *= (available / status_width).min(1.);
-                let status_width = status_width.min(available);
+                // Below this the summary would crowd the tabs; it stays in the tooltip.
+                let show_summary = !compact && status_width * 2.5 < ui.max_rect().width();
+                let status_width = if show_summary { status_width } else { 0. };
                 if !tabs.is_empty()
                     && (!status.library
                         || status.dirty
@@ -174,9 +173,12 @@ pub fn toolbar(
                             status_width + ui.spacing().item_spacing.x
                         }
                         - if compact {
-                            160.
+                            0.
                         } else {
-                            7. * (ui.spacing().interact_size.x.max(36.) + 4.) + 44.
+                            // The window controls plus a little room to drag the window.
+                            6. * (ui.spacing().interact_size.x.max(36.)
+                                + ui.spacing().item_spacing.x)
+                                + f32::from(crate::tokens(ui.ctx()).space_xl) * 2.
                         })
                     .max(0.);
                     egui::ScrollArea::horizontal()
@@ -184,55 +186,26 @@ pub fn toolbar(
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 for tab in tabs {
-                                    let label = if tab.dirty {
-                                        format!("{}  •", tab.title)
-                                    } else {
-                                        tab.title.to_owned()
-                                    };
-                                    let response =
-                                        ui.selectable_label(tab.active && !status.library, label);
-                                    let emphasis = ui.ctx().animate_bool_with_time(
-                                        response.id.with("emphasis"),
-                                        response.hovered() || (tab.active && !status.library),
-                                        ui.style().animation_time,
-                                    );
-                                    if emphasis > 0. {
-                                        ui.painter().line_segment(
-                                            [response.rect.left_top(), response.rect.right_top()],
-                                            egui::Stroke::new(
-                                                2.,
-                                                crate::tokens(ui.ctx())
-                                                    .accent
-                                                    .gamma_multiply(emphasis),
-                                            ),
-                                        );
-                                    }
-                                    if response.clicked() {
-                                        a.tab = Some(tab.slot);
-                                    }
-                                    if icons::button(
-                                        ui,
-                                        Icon::Close,
-                                        &tooltip(ui.ctx(), Text::CloseTab),
-                                        false,
-                                    )
-                                    .clicked()
-                                    {
-                                        a.close_tab = Some(tab.slot);
+                                    if let Some(action) = tab_chip(ui, tab, status.library) {
+                                        match action {
+                                            TabAction::Open => a.tab = Some(tab.slot),
+                                            TabAction::Close => a.close_tab = Some(tab.slot),
+                                        }
                                     }
                                 }
                             });
                         });
                 }
-                if !status.library {
-                    let response = ui
-                        .add(
-                            egui::Label::new(egui::RichText::new(summary).font(status_font))
-                                .extend()
-                                .sense(egui::Sense::click()),
+                if !status.library && show_summary {
+                    let response = ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(summary).font(status_font).color(color),
                         )
-                        .on_hover_text(status.message);
+                        .extend()
+                        .sense(egui::Sense::click()),
+                    );
                     if !status.message.is_empty() {
+                        response.clone().on_hover_text(status.message);
                         egui::Popup::menu(&response).show(|ui| {
                             ui.label(status.message);
                         });
@@ -241,128 +214,227 @@ pub fn toolbar(
                 if compact {
                     ui.end_row();
                 }
-                let controls_width = ((if compact { 6. } else { 7. })
-                    * (ui.spacing().interact_size.x.max(36.) + ui.spacing().item_spacing.x))
-                    .min(ui.max_rect().width());
-                ui.allocate_ui_with_layout(
-                    egui::vec2(
-                        ui.available_size_before_wrap().x.max(controls_width),
-                        ui.spacing().interact_size.y,
-                    ),
-                    egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
-                    |ui| {
-                        let id = ui.id().with("window_controls");
-                        let mut explicit = ui
-                            .ctx()
-                            .data_mut(|d| d.get_temp::<bool>(id).unwrap_or(false));
-                        let reveal =
-                            icons::button(ui, Icon::Maximize, text(Text::WindowControls), explicit);
-                        if reveal.clicked() {
-                            explicit = !explicit;
-                            ui.ctx().data_mut(|d| d.insert_temp(id, explicit));
-                        }
-                        let bar_bottom = ui
-                            .ctx()
-                            .data(|d| d.get_temp::<f32>(egui::Id::new("window_bar_bottom")))
-                            .unwrap_or(ui.min_rect().top() + 56.);
-                        let show = explicit
-                            || reveal.has_focus()
-                            || ui.input(|i| {
-                                i.pointer
-                                    .hover_pos()
-                                    .is_some_and(|p| p.y < bar_bottom + 24.)
-                                    || i.key_pressed(egui::Key::Tab)
-                            })
-                            || ui.memory(|m| m.focused().is_some())
-                            || egui::Popup::is_any_open(ui.ctx());
-                        ui.scope(|ui| {
-                            if !show {
-                                ui.set_invisible();
-                            }
-                            a.close = icons::button(
-                                ui,
-                                Icon::Close,
-                                &tooltip(ui.ctx(), Text::CloseWindow),
-                                false,
-                            )
-                            .clicked();
-                            {
-                                a.maximize = icons::button(
-                                    ui,
-                                    Icon::Maximize,
-                                    &tooltip(
-                                        ui.ctx(),
-                                        if status.maximized {
-                                            Text::Restore
-                                        } else {
-                                            Text::Maximize
-                                        },
-                                    ),
-                                    false,
-                                )
-                                .clicked();
-                                a.minimize = icons::button(
-                                    ui,
-                                    Icon::Minus,
-                                    &tooltip(ui.ctx(), Text::Minimize),
-                                    false,
-                                )
-                                .clicked();
-                            }
-                            ui.add_enabled_ui(status.can_pin, |ui| {
-                                a.pin = icons::button(
-                                    ui,
-                                    Icon::Pin,
-                                    &tooltip(
-                                        ui.ctx(),
-                                        if status.target_pin {
-                                            Text::AboveWindow
-                                        } else {
-                                            Text::AboveAll
-                                        },
-                                    ),
-                                    status.pinned,
-                                )
-                                .clicked();
-                                ui.menu_button("▾", |ui| {
-                                    if ui
-                                        .selectable_label(!status.target_pin, text(Text::AboveAll))
-                                        .clicked()
-                                    {
-                                        a.pin_choice = Some(false);
-                                        ui.close();
-                                    }
-                                    if ui
-                                        .add_enabled(
-                                            status.can_attach,
-                                            egui::Button::new(text(Text::AboveWindow)),
-                                        )
-                                        .clicked()
-                                    {
-                                        a.pin_choice = Some(true);
-                                        ui.close();
-                                    }
-                                })
-                                .response
-                                .on_hover_text(text(Text::OnTop));
-                            });
-                        });
-                        let drag = ui.allocate_response(
-                            ui.available_size_before_wrap(),
-                            egui::Sense::drag(),
-                        );
-                        a.drag = drag.drag_started();
-                        a.maximize |= drag.double_clicked();
-                    },
-                );
+                window_controls(ui, &status, &mut a);
             });
         });
     ui.ctx().data_mut(|d| {
         d.insert_temp(
             egui::Id::new("window_bar_bottom"),
             brand.response.rect.bottom(),
-        )
+        );
+        d.insert_temp(
+            egui::Id::new("collect_window_controls").with("bar"),
+            brand.response.rect,
+        );
     });
 
     a
+}
+
+/// Pin, minimize, maximize and close stay out of the way until the pointer
+/// reaches the bar, a control has keyboard focus, or a tap on the bar asks for
+/// them (touch has no hover). They keep their space while hidden, so the bar
+/// never jumps; the free space beside them drags the window.
+fn window_controls(ui: &mut egui::Ui, status: &Status<'_>, a: &mut Actions) {
+    let size = ui.spacing().interact_size.x.max(36.) + ui.spacing().item_spacing.x;
+    let width = (6. * size).min(ui.max_rect().width());
+    ui.allocate_ui_with_layout(
+        egui::vec2(
+            ui.available_size_before_wrap().x.max(width),
+            ui.spacing().interact_size.y,
+        ),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            let id = egui::Id::new("collect_window_controls");
+            let tapped = ui.ctx().data(|d| d.get_temp::<bool>(id).unwrap_or(false));
+            let bar = ui
+                .ctx()
+                .data(|d| d.get_temp::<egui::Rect>(id.with("bar")))
+                .unwrap_or(ui.max_rect());
+            let focused = ui
+                .ctx()
+                .data(|d| d.get_temp::<bool>(id.with("focus")))
+                .unwrap_or(false);
+            // Resolve tokens outside `input`: reading them locks the context again.
+            let near = bar.expand(f32::from(tokens(ui.ctx()).space_s));
+            let show = tapped
+                || focused
+                || egui::Popup::is_any_open(ui.ctx())
+                || ui.input(|i| i.pointer.hover_pos().is_some_and(|p| near.contains(p)));
+            let reveal = ui.ctx().animate_bool(id.with("reveal"), show);
+            let group = ui.scope(|ui| {
+                if reveal <= 0. {
+                    ui.set_invisible();
+                } else {
+                    ui.multiply_opacity(reveal);
+                }
+                a.close = icons::button(
+                    ui,
+                    Icon::Close,
+                    &tooltip(ui.ctx(), Text::CloseWindow),
+                    false,
+                )
+                .clicked();
+                a.maximize = icons::button(
+                    ui,
+                    if status.maximized {
+                        Icon::Restore
+                    } else {
+                        Icon::Maximize
+                    },
+                    &tooltip(
+                        ui.ctx(),
+                        if status.maximized {
+                            Text::Restore
+                        } else {
+                            Text::Maximize
+                        },
+                    ),
+                    false,
+                )
+                .clicked();
+                a.minimize =
+                    icons::button(ui, Icon::Minus, &tooltip(ui.ctx(), Text::Minimize), false)
+                        .clicked();
+                ui.separator();
+                pin_controls(ui, status, a);
+            });
+            // Read the focus id first: `read_response` locks the context again.
+            let has_focus = ui
+                .ctx()
+                .memory(|m| m.focused())
+                .and_then(|f| ui.ctx().read_response(f))
+                .is_some_and(|r| group.response.rect.contains_rect(r.rect));
+            let drag = ui.allocate_response(
+                ui.available_size_before_wrap(),
+                egui::Sense::click_and_drag(),
+            );
+            a.drag = drag.drag_started();
+            a.maximize |= drag.double_clicked();
+            let mut tapped = tapped;
+            if drag.clicked() {
+                tapped = !tapped;
+            } else if tapped
+                && ui.input(|i| i.pointer.any_pressed())
+                && !ui.rect_contains_pointer(group.response.rect.union(drag.rect))
+            {
+                tapped = false;
+            }
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(id, tapped);
+                d.insert_temp(id.with("focus"), has_focus);
+            });
+        },
+    );
+}
+
+fn pin_controls(ui: &mut egui::Ui, status: &Status<'_>, a: &mut Actions) {
+    ui.add_enabled_ui(status.can_pin, |ui| {
+        ui.menu_button("▾", |ui| {
+            if ui
+                .selectable_label(status.pinned && !status.target_pin, text(Text::AboveAll))
+                .clicked()
+            {
+                a.pin_choice = Some(false);
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    status.can_attach,
+                    egui::Button::new(text(Text::AboveWindow))
+                        .selected(status.pinned && status.target_pin),
+                )
+                .clicked()
+            {
+                a.pin_choice = Some(true);
+                ui.close();
+            }
+        })
+        .response
+        .on_hover_text(text(Text::OnTop));
+        a.pin = icons::button(
+            ui,
+            Icon::Pin,
+            &tooltip(
+                ui.ctx(),
+                if status.target_pin {
+                    Text::AboveWindow
+                } else {
+                    Text::AboveAll
+                },
+            ),
+            status.pinned,
+        )
+        .clicked();
+    });
+}
+
+enum TabAction {
+    Open,
+    Close,
+}
+
+/// One rounded chip per board: the title opens it, the small cross inside closes it.
+fn tab_chip(ui: &mut egui::Ui, tab: &Tab<'_>, library: bool) -> Option<TabAction> {
+    let t = tokens(ui.ctx());
+    let active = tab.active && !library;
+    let height = ui.spacing().interact_size.y;
+    let title = if tab.dirty {
+        format!("{}  •", tab.title)
+    } else {
+        tab.title.to_owned()
+    };
+    let mut action = None;
+    let chip = egui::Frame::new()
+        .fill(if active { t.selection } else { t.surface })
+        .stroke(egui::Stroke::new(
+            1.,
+            if active { t.accent } else { t.border },
+        ))
+        .corner_radius(t.radius_s)
+        .inner_margin(egui::Margin {
+            left: t.space_m as i8,
+            right: t.space_xs as i8,
+            top: 0,
+            bottom: 0,
+        })
+        .show(ui, |ui| {
+            ui.set_min_height(height - 4.);
+            ui.spacing_mut().item_spacing.x = f32::from(t.space_xs);
+            let label = ui.add(
+                egui::Label::new(egui::RichText::new(title).color(t.text))
+                    .selectable(false)
+                    .sense(egui::Sense::click()),
+            );
+            if label.clicked() {
+                action = Some(TabAction::Open);
+            }
+            let side = f32::from(t.space_l) + f32::from(t.space_xs) * 2.;
+            let close = ui
+                .add(
+                    egui::Button::new("")
+                        .frame(false)
+                        .min_size(egui::Vec2::splat(side)),
+                )
+                .on_hover_text(tooltip(ui.ctx(), Text::CloseTab));
+            let color = if close.hovered() {
+                t.text
+            } else {
+                t.text_muted
+            };
+            icons::paint(
+                ui,
+                close.rect.shrink(f32::from(t.space_xs) / 2.),
+                Icon::Close,
+                color,
+            );
+            if close.clicked() {
+                action = Some(TabAction::Close);
+            }
+        });
+    let chip = chip.response.interact(egui::Sense::click());
+    if chip.clicked() && action.is_none() {
+        action = Some(TabAction::Open);
+    }
+    action
 }

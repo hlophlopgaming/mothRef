@@ -68,6 +68,8 @@ pub(super) enum Intent {
     CloseWindow,
     /// Native titlebar drag.
     Drag,
+    /// Show or hide the View window bar explicitly (touch, context menu).
+    WindowBar(bool),
     /// Native minimize.
     Minimize,
     /// Native maximize toggle.

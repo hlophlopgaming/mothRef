@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Rework the window chrome. View shows only images: a floating window bar slides in at the top edge (drag grip, board switcher, View, pin, overlay, window buttons) and folds rarer controls into "⋯" on narrow windows; the permanent corner button is gone, and touch uses "Window controls" in the context menu. In Collect, window controls fade in over the top bar without a separate toggle button, maximized windows show a restore icon, and tabs are chips with their close button inside.
+
 - Keep MothRef above other windows on KDE Plasma and GNOME Wayland: above all windows, the Over overlay and floating views now stay on top. GNOME needs the MothRef window extension, which Settings › Window and overlay can install (log out and back in once).
 - Pin the board above a chosen window on KDE Plasma Wayland.
 - GNOME: keeping a maximized board on top restores it first, since GNOME does not keep maximized windows above others. Settings offers to update an outdated window extension.

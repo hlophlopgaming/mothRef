@@ -85,6 +85,10 @@ pub enum Icon {
     Minus,
     /// Maximize a window.
     Maximize,
+    /// Restore a maximized window.
+    Restore,
+    /// Drag handle that moves the window.
+    Grip,
     /// Click-through control.
     Pointer,
 }
@@ -407,6 +411,23 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
                 stroke,
                 egui::StrokeKind::Inside,
             );
+        }
+        Icon::Restore => {
+            let radius = crate::tokens(ui.ctx()).radius_icon as f32;
+            ui.painter().rect_stroke(
+                Rect::from_min_max(p(3., 6.), p(12., 15.)),
+                radius,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+            line(&[(6., 6.), (6., 3.), (15., 3.), (15., 12.), (12., 12.)]);
+        }
+        Icon::Grip => {
+            for x in [7., 11.] {
+                for y in [5., 9., 13.] {
+                    ui.painter().circle_filled(p(x, y), 1.2, color);
+                }
+            }
         }
     }
 }

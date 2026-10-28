@@ -70,7 +70,7 @@ pub(super) const EXPORT: &[Slot] = &[
 ];
 const INSERT: &[Slot] = &[A(Images), A(Paste), A(Note)];
 const FILE: &[Slot] = &[A(New), A(Open), A(Save), A(Library)];
-pub(super) const VIEW_WINDOW: &[Action] = &[Minimize, Maximize, CloseWindow, Overlay];
+pub(super) const VIEW_WINDOW: &[Action] = &[Minimize, Maximize, CloseWindow];
 const WINDOW_MODES: &[Slot] = &[
     A(Bottom),
     A(LockWindow),
@@ -82,6 +82,7 @@ const WINDOW_MODES: &[Slot] = &[
     A(OpacityDown),
 ];
 pub(super) const VIEW: &[Slot] = &[
+    A(WindowBar),
     A(ToggleView),
     A(Fit),
     A(Focus),
