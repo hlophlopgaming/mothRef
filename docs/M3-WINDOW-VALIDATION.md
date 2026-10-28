@@ -546,3 +546,32 @@ earlier Tab freeze); both now read outside the closures.
 Formatting and Clippy for `moth-ui` and `mothref` passed. The updated reveal
 and title-shortening tests were compiled, not executed, per AGENTS.md §3.
 Touch, pen, HiDPI, the dark theme, Windows and macOS were not checked here.
+
+### Target pin and the chosen app's popups — 2026-10-28
+
+Maintainer report: with the board pinned above Krita, a Krita popup made the
+board disappear. Reproduced under KWin 5.27 with a test program that owns a
+main window "Krita" and a transient "Brush popup" in one process: when the
+popup became active, the attach script treated it as a foreign window, cleared
+the board's keepAbove, and KWin raised Krita's main window with its dialog
+over the board.
+
+Now windows of the chosen process (and transients of the chosen window) count
+as the app. While one of them is active the board stays above the app, and the
+active popup itself is lifted above the board until another window is
+activated, giving Krita < board < popup. Only another app's normal window or
+dialog lowers the board; panels, notifications and tooltips do not.
+
+The X11 path had a separate defect found by the same run: direct
+`ConfigureWindow` restacks were ignored by KWin for an inactive client, so the
+board never went above the target, and a sibling restack across frames raised
+BadMatch and stopped the worker. It now uses `_NET_WM_STATE_ABOVE` requests
+sent as a pager, with the same popup lifting, and releases both states when the
+pin stops. Windows uses the same rule: windows of the chosen process raise the
+board, and a popup places the board directly below it.
+
+Checked with the release binary on native Wayland and through XWayland (X11
+path) under KWin 5.27: pick Krita; open, close and reopen the popup; activate
+another app; click MothRef while the popup is open; unpin while the popup is
+open (both states released); the full earlier KDE scenario still passes. The
+Windows change passed Clippy for `x86_64-pc-windows-msvc` but was not run.

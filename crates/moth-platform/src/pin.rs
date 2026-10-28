@@ -167,11 +167,13 @@ mod native {
         unsafe {
             GetWindowThreadProcessId(window, &mut process);
         }
-        if window as usize == TARGET.load(Ordering::Relaxed) {
-            if process == 0 || process != PROCESS.load(Ordering::Relaxed) {
-                return;
-            }
+        let target = TARGET.load(Ordering::Relaxed);
+        let same_app = process != 0 && process == PROCESS.load(Ordering::Relaxed);
+        if window as usize == target && same_app {
             raise(board, window);
+        } else if same_app {
+            // A dialog or popup of the chosen app: sit just below it, above the app.
+            place(board, window);
         } else if process != std::process::id() {
             lower(board, window);
         }

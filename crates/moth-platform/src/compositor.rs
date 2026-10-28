@@ -671,18 +671,54 @@ fn attach_script(pid: u32, title: &str, target: &str, service: &str) -> String {
         r#"{prelude}
 const target = {target};
 function raise(above) {{ boards().forEach(function (w) {{ w.keepAbove = above; }}); }}
-if (!windows().some(function (w) {{ return id(w) === target; }})) {{
+const chosen = windows().find(function (w) {{ return id(w) === target; }});
+// Popups, dialogs and floating panels of the chosen app count as the app: they
+// must not drop the board behind it.
+function related(w) {{
+    if (id(w) === target) return true;
+    if (chosen && w.pid > 0 && w.pid === chosen.pid) return true;
+    let parent = w.transientFor;
+    for (let depth = 0; parent && depth < 8; depth++) {{
+        if (id(parent) === target) return true;
+        parent = parent.transientFor;
+    }}
+    return false;
+}}
+// Only another app's window or dialog lowers the board; panels, notifications,
+// tooltips and the desktop do not.
+function foreign(w) {{ return !mine(w) && (w.normalWindow || w.dialog); }}
+// The active popup or dialog of the chosen app is lifted over the board while
+// it stays active, so the board never hides it; any activation change undoes it.
+let lifted = null;
+function drop() {{
+    if (lifted) {{
+        try {{ lifted.keepAbove = false; }} catch (error) {{}}
+        lifted = null;
+    }}
+}}
+if (!chosen) {{
     report("TargetClosed", target);
 }} else {{
     const follow = function (w) {{
+        if (w !== lifted) drop();
         if (!w) return;
-        if (id(w) === target) raise(true);
-        else if (!mine(w)) raise(false);
+        if (related(w)) {{
+            raise(true);
+            if (id(w) !== target && !w.keepAbove) {{
+                w.keepAbove = true;
+                lifted = w;
+            }}
+        }} else if (foreign(w)) {{
+            raise(false);
+        }}
     }};
     const gone = function (w) {{
-        if (!w || id(w) !== target) return;
+        if (!w) return;
+        if (w === lifted) lifted = null;
+        if (id(w) !== target) return;
         activated.disconnect(follow);
         removed.disconnect(gone);
+        drop();
         raise(false);
         report("TargetClosed", target);
     }};
