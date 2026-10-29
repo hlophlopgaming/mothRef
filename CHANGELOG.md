@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Move board tabs between windows: drag a tab out of the tab strip to open it in its own window, or use the tab menu (right click or long press) to move it to a new or another window, or to gather all tabs into one window. On Windows, macOS and X11 a tab can also be dropped onto another window's tab strip. Each window has its own tabs, view mode, pin and video memory share.
+- Tabs: a "+" button for a new board (Ctrl/⌘+N), middle-click closes a tab, and boards never saved to a file are shown in italics.
+- Over shows a one-time hint on how to leave it; Settings › Window and overlay can show it again.
+- Pin the board above a chosen window on GNOME Wayland (with the MothRef window extension, which Settings offers to update) and on macOS, where the board follows the chosen application.
+
 ## 0.1.0-alpha.16 — 2026-10-29
 
 - Control the board with a pen tablet or pen display. Pen side buttons work while hovering: the lower button pans, the upper one opens the context menu (swap them in Settings › Keys and mouse). Ctrl/⌘ + middle button or lower pen button and drag up or down zooms. A pen or finger tap no longer nudges images by a few pixels, and touches that start while a pen is near the screen are ignored (palm rejection).

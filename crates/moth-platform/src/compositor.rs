@@ -663,7 +663,8 @@ function mothref(w) {{ return !!w && String(w.resourceClass).toLowerCase().index
 // so a second MothRef instance is never moved by this one.
 const sandboxed = !windows().some(ours);
 function mine(w) {{ return ours(w) || (sandboxed && mothref(w)); }}
-function board(w) {{ return mine(w) && w.caption === title; }}
+// KWin appends " <2>" to duplicate captions.
+function board(w) {{ return mine(w) && (w.caption === title || w.caption.indexOf(title + " <") === 0); }}
 function boards() {{ return windows().filter(board); }}
 function id(w) {{ return String(w.internalId); }}
 function report(method, value) {{ {report} }}

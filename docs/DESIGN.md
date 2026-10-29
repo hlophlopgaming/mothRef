@@ -117,7 +117,14 @@ Final mark, app icon and README logo are on hold (maintainer, 2026-10-25).
     when the pointer is over the top bar, a control has focus, or after a tap on
     the bar's free space; they keep their place while hidden so nothing shifts.
     The free space drags the window; double-click maximizes. Tabs are rounded
-    chips with the close cross inside.
+    chips with the close cross inside; "+" adds a board, middle click closes,
+    italics mark boards never saved to a file.
+  - *Several windows.* Dragging a tab out of the strip opens it in a window of
+    its own; the tab menu moves it to a new or another window or gathers all
+    tabs. Each window has its own tabs, mode, pin and share of video memory.
+    Wayland cannot tell which window a drag was released over, so there the
+    way back is the tab menu; Windows, macOS and X11 also accept a drop on
+    another window's tab strip.
   - *Over* — window above another app: the same controls as the View popover,
     plus click-through; the separate Over controller is the way back out of
     click-through (the grab handle was dropped, 2026-10-29).

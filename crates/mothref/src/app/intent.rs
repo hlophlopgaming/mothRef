@@ -70,6 +70,13 @@ pub(super) enum Intent {
     Drag,
     /// Show or hide the View window bar explicitly (touch, context menu).
     WindowBar(bool),
+    /// Move a tab into a new window (or onto another window's tab strip when a
+    /// drag ended at that position).
+    DetachTab(usize, Option<[f32; 2]>),
+    /// Move a tab into another existing window.
+    MoveTab(usize, usize),
+    /// Bring every other window's tabs into this one.
+    GatherTabs,
     /// Native minimize.
     Minimize,
     /// Native maximize toggle.
@@ -127,6 +134,15 @@ pub(super) fn intents_from_actions(actions: Actions) -> Vec<Intent> {
     let mut intents = Vec::new();
     if actions.settings {
         intents.push(Intent::Action(super::bindings::Action::Settings));
+    }
+    if let Some((slot, at)) = actions.detach_tab {
+        intents.push(Intent::DetachTab(slot, at));
+    }
+    if let Some((slot, window)) = actions.move_tab {
+        intents.push(Intent::MoveTab(slot, window));
+    }
+    if actions.gather {
+        intents.push(Intent::GatherTabs);
     }
     if actions.paste {
         intents.push(Intent::Action(super::bindings::Action::Paste));

@@ -5,6 +5,12 @@ use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Tab menu: open this board in a window of its own.
+    MoveToNewWindow,
+    /// Tab menu: followed by another window's board title.
+    MoveToWindow,
+    /// Tab menu: bring every other window's tabs here.
+    GatherTabs,
     /// Tooltip of a board that was never saved to a file.
     JournalOnlyTab,
     /// One-time Over hint, followed by the Over shortcut.
@@ -1244,6 +1250,7 @@ mod tests {
             can_attach: false,
             target_pin: false,
             maximized: false,
+            windows: &[],
         }
     }
     #[test]

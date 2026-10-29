@@ -62,6 +62,13 @@ pub struct Actions {
     pub maximize: bool,
     /// User picked a different interface language.
     pub language: Option<Locale>,
+    /// A tab goes to a new window; the position is where a drag ended (logical
+    /// points, possibly outside this window), `None` for the menu.
+    pub detach_tab: Option<(usize, Option<[f32; 2]>)>,
+    /// A tab moves to another window (index into `Status::windows`).
+    pub move_tab: Option<(usize, usize)>,
+    /// Every other window's tabs come into this window.
+    pub gather: bool,
 }
 /// Read-only status keeps UI independent of filesystem and GPU ownership.
 pub struct Status<'a> {
@@ -101,6 +108,8 @@ pub struct Status<'a> {
     pub target_pin: bool,
     /// Maximize uses a restore label while active.
     pub maximized: bool,
+    /// Titles of the other main windows, for moving tabs between windows.
+    pub windows: &'a [String],
 }
 /// Draws a custom titlebar and the active workspace's toolbar.
 pub fn toolbar(
@@ -187,11 +196,21 @@ pub fn toolbar(
                         .max_width(tab_width)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
+                                let several = tabs.len() > 1;
                                 for tab in tabs {
-                                    if let Some(action) = tab_chip(ui, tab, status.library) {
+                                    if let Some(action) =
+                                        tab_chip(ui, tab, status.library, several, status.windows)
+                                    {
                                         match action {
                                             TabAction::Open => a.tab = Some(tab.slot),
                                             TabAction::Close => a.close_tab = Some(tab.slot),
+                                            TabAction::Detach(at) => {
+                                                a.detach_tab = Some((tab.slot, at))
+                                            }
+                                            TabAction::MoveTo(window) => {
+                                                a.move_tab = Some((tab.slot, window))
+                                            }
+                                            TabAction::Gather => a.gather = true,
                                         }
                                     }
                                 }
@@ -384,10 +403,21 @@ fn pin_controls(ui: &mut egui::Ui, status: &Status<'_>, a: &mut Actions) {
 enum TabAction {
     Open,
     Close,
+    Detach(Option<[f32; 2]>),
+    MoveTo(usize),
+    Gather,
 }
 
 /// One rounded chip per board: the title opens it, the small cross inside closes it.
-fn tab_chip(ui: &mut egui::Ui, tab: &Tab<'_>, library: bool) -> Option<TabAction> {
+/// Dragging the title out of the tab strip moves the board into its own window;
+/// the context menu (right click or long press) moves it between windows.
+fn tab_chip(
+    ui: &mut egui::Ui,
+    tab: &Tab<'_>,
+    library: bool,
+    several: bool,
+    windows: &[String],
+) -> Option<TabAction> {
     let t = tokens(ui.ctx());
     let active = tab.active && !library;
     let height = ui.spacing().interact_size.y;
@@ -418,11 +448,60 @@ fn tab_chip(ui: &mut egui::Ui, tab: &Tab<'_>, library: bool) -> Option<TabAction
         .show(ui, |ui| {
             ui.set_min_height(height - 4.);
             ui.spacing_mut().item_spacing.x = f32::from(t.space_xs);
+            let ghost = title.clone();
             let mut label = ui.add(
                 egui::Label::new(title)
                     .selectable(false)
-                    .sense(egui::Sense::click()),
+                    .sense(egui::Sense::click_and_drag()),
             );
+            if label.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                if let Some(pointer) = ui.ctx().pointer_latest_pos() {
+                    egui::Area::new(label.id.with("ghost"))
+                        .order(egui::Order::Tooltip)
+                        .fixed_pos(pointer + egui::vec2(f32::from(t.space_s), f32::from(t.space_s)))
+                        .interactable(false)
+                        .show(ui.ctx(), |ui| {
+                            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                                ui.label(ghost);
+                            });
+                        });
+                }
+            }
+            if label.drag_stopped() {
+                // Released clearly below the tab strip, or outside the window.
+                let strip = ui.max_rect();
+                let screen = ui.ctx().content_rect();
+                let released = ui.ctx().pointer_latest_pos();
+                let away = released.is_none_or(|p| {
+                    !screen.contains(p) || p.y > strip.bottom() + f32::from(t.space_xl)
+                });
+                if away {
+                    action = Some(TabAction::Detach(released.map(|p| [p.x, p.y])));
+                }
+            }
+            label.context_menu(|ui| {
+                if ui
+                    .add_enabled(several, egui::Button::new(text(Text::MoveToNewWindow)))
+                    .clicked()
+                {
+                    action = Some(TabAction::Detach(None));
+                    ui.close();
+                }
+                for (index, window) in windows.iter().enumerate() {
+                    if ui
+                        .button(format!("{} {window}", text(Text::MoveToWindow)))
+                        .clicked()
+                    {
+                        action = Some(TabAction::MoveTo(index));
+                        ui.close();
+                    }
+                }
+                if !windows.is_empty() && ui.button(text(Text::GatherTabs)).clicked() {
+                    action = Some(TabAction::Gather);
+                    ui.close();
+                }
+            });
             if tab.journal_only {
                 label = label.on_hover_text(text(Text::JournalOnlyTab));
             }
@@ -454,11 +533,8 @@ fn tab_chip(ui: &mut egui::Ui, tab: &Tab<'_>, library: bool) -> Option<TabAction
                 action = Some(TabAction::Close);
             }
         });
-    let chip = chip.response.interact(egui::Sense::click());
-    if chip.middle_clicked() && action.is_none() {
-        action = Some(TabAction::Close);
-    } else if chip.clicked() && action.is_none() {
-        action = Some(TabAction::Open);
-    }
+    // No click handler on the chip itself: registered after the title, it would
+    // take the title's drag and context menu.
+    let _ = chip;
     action
 }

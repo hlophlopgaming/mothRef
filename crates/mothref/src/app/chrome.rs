@@ -23,6 +23,8 @@ pub(super) struct Chrome<'a> {
     /// The View bar was asked for explicitly (touch, context menu); it stays
     /// until a press lands outside it.
     pub window_bar: &'a mut bool,
+    /// Titles of the other main windows.
+    pub windows: &'a [String],
     pub enabled: &'a [bool],
     pub registry: &'a super::bindings::Registry,
 }
@@ -78,6 +80,7 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
             pinned: ctx.pinned,
             target_pin: ctx.target_pin,
             maximized: ctx.window.is_maximized(),
+            windows: ctx.windows,
             can_attach: moth_platform::Desktop
                 .window_capabilities(ctx.window)
                 .above_window,

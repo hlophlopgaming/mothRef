@@ -575,3 +575,38 @@ path) under KWin 5.27: pick Krita; open, close and reopen the popup; activate
 another app; click MothRef while the popup is open; unpin while the popup is
 open (both states released); the full earlier KDE scenario still passes. The
 Windows change passed Clippy for `x86_64-pc-windows-msvc` but was not run.
+
+### Several windows, tabs, Over hint, GNOME and macOS pinning — 2026-10-29
+
+Implementation:
+
+- Main windows: `app/panes.rs` keeps every main window but the current one
+  as a `Pane` (tabs, mode, Over, floating views, pin, input, egui context,
+  surface and texture registry) and swaps it in for that window's events.
+  Worker wake-ups, repaint requests and deadlines visit every window. The GPU
+  device is shared; each window has its own registry and an equal share of
+  the video-memory limit. Tab moves run after the frame that asked for them.
+  New windows get unique titles ("MothRef (2)") because compositor
+  integrations find windows by title.
+- GNOME: the Shell extension (v5) adds Pick, Attach and Detach with the same
+  rules as the KWin script, reports back over D-Bus and releases everything
+  when MothRef leaves the bus.
+- macOS: the board follows the chosen application through NSWorkspace
+  activation notifications (no polling) and is ordered in front of it
+  without activating MothRef.
+
+Checked with the desktop stand (`.claude/skills/desktop-stand`):
+
+- KWin 5.27: tab menu "Move to new window"; pin above all in the second
+  window only; dragging a tab out of the strip (ghost tab shown) opens a third
+  window; "Move to window" back closes the emptied window; "Gather all tabs
+  here" closes the others; closing a second window with × keeps the app
+  running, closing the last one exits. No panics.
+- GNOME Shell 46: pick "Krita", board above it, Krita's popup above the
+  board, another app covers both, re-pinning the last choice, closing the
+  target releases the pin.
+- The Over hint, tab chips, "+" and italics were checked visually on KWin.
+
+Not checked: Windows and macOS (Clippy for their targets only), drops onto
+another window's tab strip (X11/Windows/macOS), device loss with several
+windows, HiDPI. Tests were compiled, not run (AGENTS.md §3).

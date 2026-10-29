@@ -6,7 +6,7 @@
 #
 #   stand.sh install                      apt packages, kwin copy, helpers, release build
 #   stand.sh kde|gnome start              compositor + session bus (+ Xwayland)
-#   stand.sh kde|gnome app [x11]          MothRef (native Wayland, or XWayland with x11)
+#   stand.sh kde|gnome app [x11] [FILE…]  MothRef (native Wayland, or XWayland with x11), opening FILEs
 #   stand.sh kde|gnome apps               test windows: "Krita" (+ popup) and "Firefox"
 #   stand.sh kde|gnome list               windows bottom→top: title, above, focus, …
 #   stand.sh kde|gnome activate TITLE     focus a window by title
@@ -128,11 +128,14 @@ start() {
 app() {
     [ -x "$BIN" ] || die "build first: cargo build -p mothref --release"
     kill_name mothref; sleep 1
-    if [ "${1:-}" = x11 ]; then
+    local x11=
+    if [ "${1:-}" = x11 ]; then x11=1; shift; fi
+    # Remaining arguments (boards or images) are passed to MothRef.
+    if [ -n "$x11" ]; then
         (setsid env -u WAYLAND_DISPLAY DISPLAY="$(xwayland_display)" XAUTHORITY="$(xauthority)" \
-            RUST_LOG=mothref=info,moth_platform=info "$BIN" --software >"$DIR/app.log" 2>&1 &)
+            RUST_LOG=mothref=info,moth_platform=info "$BIN" --software "$@" >"$DIR/app.log" 2>&1 &)
     else
-        (setsid env RUST_LOG=mothref=info,moth_platform=info "$BIN" --software >"$DIR/app.log" 2>&1 &)
+        (setsid env RUST_LOG=mothref=info,moth_platform=info "$BIN" --software "$@" >"$DIR/app.log" 2>&1 &)
     fi
     sleep 8
     grep -o "Compositor integration probed.*" "$DIR/app.log" || true

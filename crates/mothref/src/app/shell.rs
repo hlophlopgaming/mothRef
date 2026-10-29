@@ -36,6 +36,17 @@ pub(super) enum Present {
     Skipped,
 }
 
+/// What a main window owns of the shell while another window is current; see
+/// `panes.rs`. The device stays in the current shell and is shared.
+pub(super) struct Parts {
+    pub(super) window: Option<Arc<Window>>,
+    pub(super) ctx: egui::Context,
+    pub(super) egui: Option<egui_winit::State>,
+    pub(super) deadline: Option<Instant>,
+    pub(super) refinements: moth_ui::motion::Refinements<moth_scene::BlobId>,
+    pub(super) gpu: Option<crate::gpu::WindowParts>,
+}
+
 /// Owns the window surface, GPU device, egui context and frame deadline.
 pub(super) struct Shell {
     pub(super) window: Option<Arc<Window>>,
@@ -75,6 +86,30 @@ impl Shell {
     }
     pub(super) fn context(&self) -> &egui::Context {
         &self.ctx
+    }
+    /// A fresh egui context with the app's repaint callback and the given theme.
+    pub(super) fn new_context(&self) -> egui::Context {
+        let ctx = egui::Context::default();
+        moth_ui::theme(&ctx, &moth_ui::tokens(&self.ctx));
+        ctx.set_zoom_factor(self.ctx.zoom_factor());
+        let proxy = self.proxy.clone();
+        ctx.set_request_repaint_callback(move |info| {
+            let _ = proxy.send_event(Wake::Repaint(info.delay));
+        });
+        ctx
+    }
+    /// Exchanges the window-specific parts with another main window's.
+    pub(super) fn swap_parts(&mut self, parts: &mut Parts) {
+        std::mem::swap(&mut self.window, &mut parts.window);
+        std::mem::swap(&mut self.ctx, &mut parts.ctx);
+        std::mem::swap(&mut self.egui, &mut parts.egui);
+        std::mem::swap(&mut self.deadline, &mut parts.deadline);
+        std::mem::swap(&mut self.refinements, &mut parts.refinements);
+        if let (Some(gpu), Some((surface, config, registry))) = (&mut self.gpu, &mut parts.gpu) {
+            std::mem::swap(&mut gpu.surface, surface);
+            std::mem::swap(&mut gpu.config, config);
+            std::mem::swap(&mut gpu.registry, registry);
+        }
     }
     pub(super) fn shortcut_wake(
         &self,

@@ -46,7 +46,7 @@ Latest release: **0.1.0-alpha.16** (2026-10-29). Pre-alpha builds for Windows, m
 | M2 BeeRef parity | 🟡 almost | App icon (on hold); a dozen small parity items |
 | M2.5 Zoom performance and memory modes | 🟡 almost | Measurements on reference hardware |
 | M2.6 UI architecture | ✅ done | Native and CI screenshot qualification |
-| M3 Everyday usability, window, overlay | 🟡 about half | Tabs, overlay HUD, window attach, native window qualification |
+| M3 Everyday usability, window, overlay | 🟡 mostly done | Native window qualification (Windows, macOS, Plasma 6, GNOME 47+) |
 | M4 PureRef 2 parity | ⚪ not started | Minimap is already done |
 | M5 Library | 🟡 first slice | Start screen, search, tags, pins and folder stacks exist; index, previews, trash, health open |
 | M6 Milanote-style elements | ⚪ not started | |
@@ -265,8 +265,7 @@ Navigation, shortcuts, the command palette, batch editing and board conversion a
   - [ ] Native qualification of mode transitions, opacity and blur on Linux, Windows and macOS
   - (Group-only viewing moved to M4 groups; it needs the scene group model)
 - [ ] Transparent overlay with adjustable opacity and click-through (BeeRef #100) — X11 qualified; Windows / macOS and controller-recovery checks open
-- [ ] Overlay HUD: opacity slider, click-through toggle, always-on-top toggle, exit button, one-time hint with the exit shortcut — compare with the Over panel from 0.1.0-alpha.10 and tick what it already covers
-- [ ] Attach to another application's window: Windows, X11 and KDE Plasma Wayland (KWin script) implemented; native qualification open. macOS and GNOME remain open.
+- [ ] Attach to another application's window: implemented on Windows, X11, KDE Plasma Wayland (KWin script), GNOME Wayland (Shell extension) and macOS (follows the chosen app); KDE 5.27 and GNOME 46 checked in nested sessions; native qualification on Windows, macOS, Plasma 6 and GNOME 47+ open
 - [ ] Always on top on Wayland ([decision 0019](docs/decisions/0019-wayland-window-stacking.md)): KWin scripts on KDE Plasma, bundled GNOME Shell extension with an install button in Settings › Window and overlay — implemented; Plasma 5.27 and GNOME 46 checked in nested sessions (see M3 window validation); Plasma 6, GNOME 47–49 and real sessions open
 - [ ] Native qualification of the added parity controls: bottom stacking, position lock/maximize, floating image surfaces, resize-to-content, opacity keys, custom colors and system-global shortcuts; see [validation notes](docs/M3-WINDOW-VALIDATION.md#remaining-parity-controls-implementation)
 
@@ -277,16 +276,15 @@ Navigation, shortcuts, the command palette, batch editing and board conversion a
 
 **Tabs**
 
-- [ ] Board tabs in one window; drag a tab out into its own window and back (four independent journaled tabs are done)
-- [ ] Tab state: unsaved marker for boards that live only in the journal, close button, middle-click to close, "+" for a new board
-
-**Collecting from outside**
-
+- [ ] Board tabs in one window; drag a tab out into its own window and back — implemented (drag out of the tab strip; tab menu: move to new / another window, gather all tabs; drop onto another window's tab strip on Windows, macOS and X11); checked under KWin 5.27; native qualification on Windows and macOS open
 
 **Foreign-format policy:** `.pur` writing/export and save-back are out of scope. A `.bee` export exception may be considered separately; it is not an M3 commitment or a normal Save action. If introduced, its dialog must recommend `.moth`, explain measured size benefits and warn that repeated editing/saving between applications has no guaranteed round-trip compatibility. It must report unsupported content before writing and preserve the original file.
 
 <details>
 <summary>Done</summary>
+
+- [x] Overlay HUD: opacity sliders, click-through, always on top, exit, and a one-time hint with the exit shortcut (Settings › Window and overlay brings it back); the always-clickable grab handle was dropped (maintainer, 2026-10-29)
+- [x] Tab state: italic title and an explanation for boards that live only in the journal, close button inside the tab, middle-click to close, "+" for a new board (Ctrl/⌘+N)
 
 - [x] Remaining window-mode parity controls: bottom stacking, position lock (with a maximized-window preference), floating selected images, resize to selected/all items, opacity shortcuts, custom colors and opt-in system-global shortcuts. Native backend qualification remains open above; Wayland uses the Over controller rather than global grabs.
 

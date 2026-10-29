@@ -58,6 +58,7 @@ mod library;
 mod modal;
 mod motion;
 mod overlay;
+mod panes;
 mod resize;
 mod selection;
 mod settings;
@@ -118,6 +119,12 @@ pub struct App {
     drag_pointer: Option<(moth_platform::input::Kind, u64)>,
     input: InputState,
     startup: Vec<std::path::PathBuf>,
+    /// The other main windows; see `panes.rs`.
+    panes: Vec<panes::Pane>,
+    /// This window's last board closed; it is dropped after the event.
+    window_closed: bool,
+    /// Tab moves between windows, run after the frame that requested them.
+    window_ops: Vec<(WindowId, panes::WindowOp)>,
 }
 impl App {
     /// Canvas texture format for decode requests; RGBA8 until the GPU exists.
@@ -190,6 +197,9 @@ impl App {
                 .filter(|a| a != "--software")
                 .map(std::path::PathBuf::from)
                 .collect(),
+            panes: Vec::new(),
+            window_closed: false,
+            window_ops: Vec::new(),
         })
     }
     fn pick_window(&mut self) {
@@ -383,7 +393,11 @@ impl App {
     fn finish_close(&mut self, event_loop: &ActiveEventLoop) -> anyhow::Result<()> {
         let change = self.workspace.finish_close()?;
         if matches!(change, workspace::TabChange::WindowClosed) {
-            event_loop.exit();
+            // Other windows keep running; `about_to_wait` drops this one.
+            self.window_closed = true;
+            if self.panes.is_empty() {
+                event_loop.exit();
+            }
         }
         self.tab_change(change);
         Ok(())
@@ -426,7 +440,9 @@ impl App {
     }
     fn recover(&mut self) -> anyhow::Result<()> {
         self.reset_renderer_ui();
-        self.shell.recover()
+        self.shell.recover()?;
+        self.rebuild_window_surfaces();
+        Ok(())
     }
     fn paste(&mut self) {
         if self.tools.locked || self.workspace.board.loading {
@@ -626,13 +642,16 @@ impl App {
         if !full && self.workspace.board.preload_started() {
             self.workspace.board.reset_preload();
         }
+        let windows = self.window_count();
         if let Some(gpu) = &mut self.shell.gpu {
             // Leave room for decoded imports awaiting their journal acknowledgement.
             let active = self.workspace.board.image_count > 0 || !self.workspace.board.idle();
+            // Main windows share one device, so they share its limit.
             let limit = self
                 .tools
                 .vram_limit(&self.settings)
-                .unwrap_or(moth_render::TEXTURE_BUDGET);
+                .unwrap_or(moth_render::TEXTURE_BUDGET)
+                / windows;
             gpu.registry.set_hard_limit(limit);
             let ceiling = if gpu.kind == moth_platform::gpu::AdapterKind::Discrete {
                 limit
@@ -994,6 +1013,15 @@ impl App {
             Intent::CloseWindow => self.request_close(true),
             Intent::Drag => self.drag_window(None),
             Intent::WindowBar(shown) => self.window_bar = shown,
+            // Switching the current window mid-frame would render this frame into
+            // another window; these run after the frame in `about_to_wait`.
+            Intent::DetachTab(slot, at) => self.queue_window_op(panes::WindowOp::Detach(slot, at)),
+            Intent::MoveTab(slot, index) => {
+                if let Some(target) = self.pane_window(index) {
+                    self.queue_window_op(panes::WindowOp::Move(slot, target));
+                }
+            }
+            Intent::GatherTabs => self.queue_window_op(panes::WindowOp::Gather),
             Intent::Minimize => {
                 if let Some(window) = &self.shell.window {
                     window.set_minimized(true);
@@ -1141,6 +1169,7 @@ impl App {
                 self.adapt_gpu_budget();
                 moth_ui::theme::apply(self.shell.context(), &self.settings.tokens());
                 self.shell.context().set_zoom_factor(self.settings.ui_scale);
+                self.restyle_windows();
                 for tab in &mut self.workspace.tabs {
                     let values = std::collections::BTreeMap::from([(
                         "undo_limit".to_owned(),
@@ -1988,6 +2017,7 @@ impl App {
                 self.workspace.board.preload_progress(),
             )
         });
+        let window_titles = self.window_titles();
         let mut output = {
             let state = self.shell.egui.as_mut();
             let gpu = self.shell.gpu.as_ref();
@@ -2030,6 +2060,7 @@ impl App {
                         cards: &self.library_screen.cards,
                         window,
                         window_bar: &mut self.window_bar,
+                        windows: &window_titles,
                         enabled: &enabled,
                         registry: &self.shortcuts.registry,
                     },
@@ -2267,13 +2298,7 @@ impl App {
 impl ApplicationHandler<Wake> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.shell.window.is_none() {
-            match event_loop.create_window(
-                Window::default_attributes()
-                    .with_title(moth_ui::text(moth_ui::Text::Title))
-                    .with_decorations(false)
-                    .with_transparent(true)
-                    .with_inner_size(winit::dpi::LogicalSize::new(1440., 900.)),
-            ) {
+            match event_loop.create_window(panes::attributes()) {
                 Ok(w) => self.shell.window = Some(Arc::new(w)),
                 Err(e) => {
                     tracing::error!(%e,"window creation failed");
@@ -2346,36 +2371,79 @@ impl ApplicationHandler<Wake> for App {
                     self.redraw();
                 }
             }
-            Wake::Ready => {
-                if let Some(error) = self
-                    .global_shortcuts
-                    .as_ref()
-                    .and_then(|keys| keys.errors.try_recv().ok())
-                {
-                    self.workspace.board.message = error.into();
-                    self.settings.global_shortcuts = false;
-                    self.global_shortcuts = None;
-                }
-                self.native_input();
-                self.results();
-                if self.workspace.board.discarded
-                    && let Err(error) = self.finish_close(event_loop)
-                {
-                    self.workspace.board.message = error.to_string().into();
-                }
-                self.redraw();
-            }
-            Wake::Repaint(delay) => {
+            Wake::Ready => self.each_pane(|app| app.ready(event_loop)),
+            Wake::Repaint(delay) => self.each_pane(|app| {
                 if delay.is_zero() {
-                    self.redraw();
+                    app.redraw();
                 } else if let Some(deadline) = Instant::now().checked_add(delay) {
-                    self.shell.deadline =
-                        Some(self.shell.deadline.map_or(deadline, |d| d.min(deadline)));
+                    app.shell.deadline =
+                        Some(app.shell.deadline.map_or(deadline, |d| d.min(deadline)));
                 }
-            }
+            }),
         }
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        if !self.enter(id) {
+            return;
+        }
+        self.current_window_event(event_loop, id, event);
+    }
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.run_window_ops(event_loop);
+        if !self.reap_windows() {
+            event_loop.exit();
+            return;
+        }
+        let mut next: Option<Instant> = None;
+        self.each_pane(|app| {
+            app.flush_appearance();
+            if let Some(deadline) = app.shell.deadline {
+                if deadline <= Instant::now() {
+                    app.shell.deadline = None;
+                    app.redraw();
+                } else {
+                    next = Some(next.map_or(deadline, |n| n.min(deadline)));
+                }
+            }
+        });
+        match next {
+            Some(deadline)
+                if deadline.duration_since(Instant::now()) < Duration::from_secs(3600) =>
+            {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+            }
+            _ => event_loop.set_control_flow(ControlFlow::Wait),
+        }
+    }
+}
+
+impl App {
+    /// Worker wake-up for the current window: native input and board results.
+    fn ready(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(error) = self
+            .global_shortcuts
+            .as_ref()
+            .and_then(|keys| keys.errors.try_recv().ok())
+        {
+            self.workspace.board.message = error.into();
+            self.settings.global_shortcuts = false;
+            self.global_shortcuts = None;
+        }
+        self.native_input();
+        self.results();
+        if self.workspace.board.discarded
+            && let Err(error) = self.finish_close(event_loop)
+        {
+            self.workspace.board.message = error.to_string().into();
+        }
+        self.redraw();
+    }
+    fn current_window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        id: WindowId,
+        event: WindowEvent,
+    ) {
         if self.floating_event(id, &event) {
             return;
         }
@@ -2634,22 +2702,6 @@ impl ApplicationHandler<Wake> for App {
                 }
             }
             _ => {}
-        }
-    }
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        self.flush_appearance();
-        if let Some(deadline) = self.shell.deadline {
-            if deadline <= Instant::now() {
-                self.shell.deadline = None;
-                self.redraw();
-                event_loop.set_control_flow(ControlFlow::Wait);
-            } else if deadline.duration_since(Instant::now()) < Duration::from_secs(3600) {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
-            } else {
-                event_loop.set_control_flow(ControlFlow::Wait);
-            }
-        } else {
-            event_loop.set_control_flow(ControlFlow::Wait);
         }
     }
 }

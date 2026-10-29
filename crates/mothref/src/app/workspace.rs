@@ -75,6 +75,40 @@ impl Workspace {
             wake,
         }
     }
+    /// Removes a board for another window. `None` for the only board: a window
+    /// always shows one.
+    pub(super) fn take(&mut self, slot: usize) -> Option<Document> {
+        if self.confirm_close || self.tabs.is_empty() || slot > self.tabs.len() {
+            return None;
+        }
+        let board = if slot == 0 {
+            let next = self.tabs.pop()?;
+            std::mem::replace(&mut self.board, next)
+        } else {
+            self.tabs.remove(slot - 1)
+        };
+        board.decode().requests.schedule([]);
+        self.library = false;
+        Some(board)
+    }
+    /// Shows a board from another window as the active tab.
+    pub(super) fn adopt(&mut self, board: Document) {
+        let previous = std::mem::replace(&mut self.board, board);
+        // A blank board that was never used is not worth a tab.
+        if previous.scene.is_empty() && previous.path.is_empty() && previous.idle() {
+            drop(previous);
+        } else {
+            self.tabs.push(previous);
+        }
+        self.library = false;
+    }
+    /// Every board of a window that is closing, except a blank unused one.
+    pub(super) fn into_documents(self) -> Vec<Document> {
+        std::iter::once(self.board)
+            .chain(self.tabs)
+            .filter(|b| !(b.scene.is_empty() && b.path.is_empty() && b.idle()))
+            .collect()
+    }
     pub(super) fn activate(&mut self, index: usize) -> TabChange {
         if self.confirm_close || index > self.tabs.len() || (index == 0 && !self.library) {
             return TabChange::None;

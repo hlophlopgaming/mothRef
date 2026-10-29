@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::sync::{Arc, atomic::AtomicBool};
 use winit::window::Window;
+/// The per-window part of the renderer: surface, its configuration and textures.
+pub type WindowParts = (
+    wgpu::Surface<'static>,
+    wgpu::SurfaceConfiguration,
+    moth_render::Registry,
+);
 pub struct Gpu {
     instance: wgpu::Instance,
     native_adapter: wgpu::Adapter,
@@ -92,6 +98,18 @@ impl Gpu {
 }
 
 impl Gpu {
+    /// Surface and texture registry for another main window on the same device.
+    /// Each window keeps its own registry: switching boards clears textures, and a
+    /// shared registry would empty the other window's board too.
+    pub fn window_parts(&self, window: Arc<Window>) -> anyhow::Result<WindowParts> {
+        let (surface, config) = self.image_surface(window)?;
+        let registry = moth_render::Registry::new(
+            &self.device,
+            config.format,
+            moth_render::pick_image_format(&self.native_adapter),
+        );
+        Ok((surface, config, registry))
+    }
     pub fn image_surface(
         &self,
         window: Arc<Window>,
