@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.16 — 2026-10-29
+
 - Control the board with a pen tablet or pen display. Pen side buttons work while hovering: the lower button pans, the upper one opens the context menu (swap them in Settings › Keys and mouse). Ctrl/⌘ + middle button or lower pen button and drag up or down zooms. A pen or finger tap no longer nudges images by a few pixels, and touches that start while a pen is near the screen are ignored (palm rejection).
 - Windows: pens are no longer treated as fingers; hover, pressure and the barrel button now reach MothRef.
 
