@@ -2,6 +2,8 @@
 //! Raw native pointer events stop here; gestures consume normalized events.
 #[cfg(target_os = "linux")]
 mod wayland;
+#[cfg(target_os = "windows")]
+mod windows;
 use winit::event::{ElementState, Force, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
 /// A pointer's source is preserved for touch-sized hit testing and pen behavior.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -99,6 +101,8 @@ pub struct Adapter {
     control: bool,
     #[cfg(target_os = "linux")]
     native: Option<wayland::Native>,
+    #[cfg(target_os = "windows")]
+    native: Option<windows::Native>,
 }
 impl Adapter {
     /// Native window gestures can consume the release instead of returning it to the app.
@@ -120,20 +124,27 @@ impl Adapter {
                 self.native = wayland::Native::new(window, display, wake)?;
             }
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        {
+            let _ = display;
+            if self.native.is_none() {
+                self.native = windows::Native::new(&window, wake)?;
+            }
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         let _ = (window, display, wake);
         Ok(())
     }
     /// Drains a bounded native queue without waiting for device or file I/O.
     pub fn native(&self) -> impl Iterator<Item = NativeEvent> + '_ {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
             self.native
                 .iter()
                 .flat_map(|native| native.events.try_iter())
                 .take(256)
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         std::iter::empty()
     }
     /// This is the only application code that reads raw native mouse events.

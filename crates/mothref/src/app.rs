@@ -1208,6 +1208,23 @@ impl App {
                     p.position = p
                         .position
                         .map(|value| value / self.shell.context().zoom_factor());
+                    if p.kind == moth_platform::input::Kind::Pen && self.settings.swap_pen_buttons {
+                        p.button = match p.button {
+                            2 => 3,
+                            3 => 2,
+                            other => other,
+                        };
+                    }
+                    self.input.pen(&p);
+                    if p.kind == moth_platform::input::Kind::Touch
+                        && self.input.reject_touch(
+                            p.id,
+                            p.phase == Phase::Down,
+                            matches!(p.phase, Phase::Up | Phase::Cancel),
+                        )
+                    {
+                        continue;
+                    }
                     let modifiers = self.shell.context().input(|input| input.modifiers);
                     if let Some(state) = &mut self.shell.egui {
                         pen_ui(
@@ -1522,6 +1539,12 @@ impl App {
                 {
                     return;
                 }
+                if self.input.pointer_action == Some(bindings::Action::ZoomDrag)
+                    && (p.phase == Phase::Down || self.input.zoom_drag.is_some())
+                {
+                    self.zoom_drag(p);
+                    return;
+                }
                 match p.phase {
                     Phase::Down
                         if self
@@ -1592,12 +1615,23 @@ impl App {
                         self.drag = Some((p.position, p.position, p.pan));
                         self.drag_anchor = Some(self.workspace.board.view.camera.world(p.position));
                         self.drag_pointer = Some((p.kind, p.id));
+                        self.input.engaged = p.kind == moth_platform::input::Kind::Mouse;
                     }
                     Phase::Move => {
                         if let Some((start, _, _)) = self.drag
                             && !self.input.focus_drag(start, p.position)
                         {
                             return;
+                        }
+                        if let Some((start, _, _)) = self.drag
+                            && !self.input.engaged
+                        {
+                            if (p.position[0] - start[0]).hypot(p.position[1] - start[1])
+                                < input::TAP_SLOP
+                            {
+                                return;
+                            }
+                            self.input.engaged = true;
                         }
                         if self.moving.is_some() {
                             self.motion.sample(p.position[0], Instant::now());
@@ -1622,6 +1656,12 @@ impl App {
                     }
                     Phase::Up => {
                         self.drag_pointer = None;
+                        // A pen or finger tap that stayed within the slop is a click.
+                        if !self.input.engaged
+                            && let Some((start, _, _)) = self.drag
+                        {
+                            p.position = start;
+                        }
                         if let Some((start, _, false)) = self.drag.take() {
                             if let Some((_id, _rect)) = self.moving.take() {
                                 let dx = (p.position[0] - start[0])
@@ -1690,6 +1730,37 @@ impl App {
                     _ => {}
                 }
             }
+        }
+    }
+    /// Vertical drag zooms around the press point: up zooms in, down zooms out.
+    /// Reachable with a mouse wheel button or a pen side button plus Ctrl/⌘.
+    fn zoom_drag(&mut self, p: moth_platform::input::Pointer) {
+        match p.phase {
+            Phase::Down
+                if self
+                    .workspace
+                    .board
+                    .view
+                    .viewport
+                    .contains(egui::pos2(p.position[0], p.position[1])) =>
+            {
+                self.camera_motion.stop();
+                self.input.zoom_drag = Some((p.position, p.position[1]));
+                self.drag_pointer = Some((p.kind, p.id));
+            }
+            Phase::Move => {
+                if let Some((anchor, last)) = &mut self.input.zoom_drag {
+                    let factor = ((*last - p.position[1]) * input::ZOOM_DRAG_RATE).exp();
+                    *last = p.position[1];
+                    self.workspace.board.view.camera.zoom_at(*anchor, factor);
+                    self.rebase_drag();
+                }
+            }
+            Phase::Up | Phase::Cancel => {
+                self.input.zoom_drag = None;
+                self.drag_pointer = None;
+            }
+            _ => {}
         }
     }
     /// Keeps a board-space drag glued to the board while the camera changes under it.
@@ -2355,6 +2426,18 @@ impl ApplicationHandler<Wake> for App {
             return;
         }
         self.input.modifiers_event(&event);
+        if let WindowEvent::Touch(touch) = &event
+            && self.input.reject_touch(
+                touch.id,
+                touch.phase == winit::event::TouchPhase::Started,
+                matches!(
+                    touch.phase,
+                    winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled
+                ),
+            )
+        {
+            return;
+        }
         let egui_events_before = self
             .shell
             .egui
@@ -2653,7 +2736,12 @@ fn pen_ui(
     if matches!(p.phase, Phase::Down | Phase::Up | Phase::Cancel) {
         input.events.push(egui::Event::PointerButton {
             pos,
-            button: egui::PointerButton::Primary,
+            // Pen side buttons arrive as secondary (context menu) and middle.
+            button: match p.button {
+                2 => egui::PointerButton::Secondary,
+                3 => egui::PointerButton::Middle,
+                _ => egui::PointerButton::Primary,
+            },
             pressed: p.phase == Phase::Down,
             modifiers,
         });
@@ -2757,6 +2845,30 @@ mod tests {
         );
     }
     use super::*;
+    #[test]
+    fn pen_side_buttons_reach_egui_as_secondary_and_middle() {
+        for (button, expected) in [
+            (1, egui::PointerButton::Primary),
+            (2, egui::PointerButton::Secondary),
+            (3, egui::PointerButton::Middle),
+        ] {
+            let mut raw = egui::RawInput::default();
+            let p = moth_platform::input::Pointer {
+                id: 5,
+                kind: moth_platform::input::Kind::Pen,
+                position: [10., 10.],
+                pressure: 0.,
+                phase: Phase::Down,
+                pan: false,
+                button,
+            };
+            pen_ui(&mut raw, p, egui::Modifiers::default(), &mut None);
+            assert!(raw.events.iter().any(|e| matches!(
+                e,
+                egui::Event::PointerButton { button, pressed: true, .. } if *button == expected
+            )));
+        }
+    }
     #[test]
     fn pen_hover_cancellation_does_not_release_another_pointer() {
         let p = moth_platform::input::Pointer {

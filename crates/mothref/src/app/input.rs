@@ -15,6 +15,57 @@ pub(super) struct InputState {
     pub pending_focus: Option<egui::Key>,
     pub pointer_action: Option<super::bindings::Action>,
     pub native_pressed: Option<(Kind, u64)>,
+    /// A pen is near the screen: touches meanwhile are a resting palm.
+    pub pen_near: Option<std::time::Instant>,
+    /// Touch contacts rejected at their start, ignored until they end.
+    pub rejected: std::collections::HashSet<u64>,
+    /// A pen or touch press moved past [`TAP_SLOP`] and became a drag.
+    pub engaged: bool,
+    /// Zoom drag: screen anchor and the last vertical position.
+    pub zoom_drag: Option<([f32; 2], f32)>,
+}
+
+/// A pen tip or finger always wobbles a little on a tap; below this distance in
+/// screen points the press is still a click and moves nothing.
+pub(super) const TAP_SLOP: f32 = 6.;
+/// Zoom factor per screen point of vertical zoom-drag movement (100 points ≈ 2.7×).
+pub(super) const ZOOM_DRAG_RATE: f32 = 0.01;
+/// A pen that sent nothing for this long is considered gone, even without a
+/// proximity-out event from the backend.
+const PEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+impl InputState {
+    /// Tracks pen proximity from its events; leaving proximity cancels hover.
+    pub fn pen(&mut self, p: &moth_platform::input::Pointer) {
+        if p.kind != Kind::Pen {
+            return;
+        }
+        self.pen_near = if p.phase == moth_platform::input::Phase::Cancel {
+            None
+        } else {
+            Some(std::time::Instant::now())
+        };
+    }
+    /// Palm rejection: a touch that starts while a pen is near is dropped for
+    /// its whole lifetime, both for the canvas and for the UI.
+    pub fn reject_touch(&mut self, id: u64, start: bool, end: bool) -> bool {
+        if start
+            && self
+                .pen_near
+                .is_some_and(|seen| seen.elapsed() < PEN_TIMEOUT)
+        {
+            self.rejected.insert(id);
+            // A bounded set: a broken backend cannot grow it indefinitely.
+            if self.rejected.len() > 64 {
+                self.rejected.clear();
+            }
+        }
+        let rejected = self.rejected.contains(&id);
+        if end {
+            self.rejected.remove(&id);
+        }
+        rejected
+    }
 }
 
 /// Physical chords remain usable with non-Latin layouts, as existing MothRef shortcuts did.
@@ -247,6 +298,30 @@ mod tests {
     use super::super::bindings::{Action, Registry};
     use super::*;
     use egui::Key;
+    #[test]
+    fn touches_that_start_while_a_pen_is_near_are_rejected_until_they_end() {
+        use moth_platform::input::{Phase, Pointer};
+        let mut state = InputState::default();
+        let pen = |phase| Pointer {
+            id: 9,
+            kind: Kind::Pen,
+            position: [0., 0.],
+            pressure: 0.,
+            phase,
+            pan: false,
+            button: 1,
+        };
+        assert!(!state.reject_touch(1, true, false));
+        state.pen(&pen(Phase::Move));
+        assert!(state.reject_touch(2, true, false));
+        // The palm stays rejected after the pen leaves, until it lifts.
+        state.pen(&pen(Phase::Cancel));
+        assert!(state.reject_touch(2, false, false));
+        assert!(state.reject_touch(2, false, true));
+        assert!(!state.reject_touch(2, true, false));
+        // A finger already down before the pen arrived keeps working.
+        assert!(!state.reject_touch(1, false, true));
+    }
     #[test]
     fn native_window_handoff_releases_egui_without_a_button_up() {
         let context = egui::Context::default();

@@ -5,6 +5,10 @@ use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Pointer binding: vertical drag zooms the board.
+    ZoomDrag,
+    /// Pen preference: lower side button opens the menu, upper pans.
+    SwapPenButtons,
     /// Installs the GNOME Shell extension that keeps windows on top on Wayland.
     InstallShellIntegration,
     /// GNOME on Wayland cannot keep windows on top without the extension.

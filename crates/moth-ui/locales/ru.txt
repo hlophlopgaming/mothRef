@@ -429,3 +429,5 @@ InstallShellIntegration = Установить интеграцию с GNOME
 ShellIntegrationMissing = Чтобы держать окна поверх других, GNOME нужно расширение MothRef.
 ShellIntegrationPending = Расширение GNOME установлено. Выйдите из сеанса и войдите снова, чтобы включить его.
 ShellIntegrationInstalling = Устанавливается интеграция с GNOME…
+ZoomDrag = Масштаб перетаскиванием вверх и вниз
+SwapPenButtons = Поменять кнопки пера местами (нижняя открывает меню, верхняя двигает доску)

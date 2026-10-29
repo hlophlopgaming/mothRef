@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Control the board with a pen tablet or pen display. Pen side buttons work while hovering: the lower button pans, the upper one opens the context menu (swap them in Settings › Keys and mouse). Ctrl/⌘ + middle button or lower pen button and drag up or down zooms. A pen or finger tap no longer nudges images by a few pixels, and touches that start while a pen is near the screen are ignored (palm rejection).
+- Windows: pens are no longer treated as fingers; hover, pressure and the barrel button now reach MothRef.
+
 - Fix the board disappearing behind the chosen app when that app opens a popup, dialog or floating panel while pinned above it (KDE Plasma, X11, Windows). The app's own windows now count as the app, its active popup stays visible above the board, and only another application's window or dialog lowers the board.
 - Fix pinning above a chosen window on X11 having no effect under window managers that ignore restack requests from inactive clients; MothRef now uses the EWMH above state through the window manager.
 

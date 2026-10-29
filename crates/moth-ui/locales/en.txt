@@ -429,3 +429,5 @@ InstallShellIntegration = Install GNOME window integration
 ShellIntegrationMissing = GNOME needs the MothRef window extension to keep windows on top.
 ShellIntegrationPending = The GNOME extension is installed. Log out and back in to turn it on.
 ShellIntegrationInstalling = Installing the GNOME window integration…
+ZoomDrag = Zoom by dragging up and down
+SwapPenButtons = Swap pen side buttons (lower opens the menu, upper pans)

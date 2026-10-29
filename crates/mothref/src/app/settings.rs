@@ -97,6 +97,7 @@ schema! {
 
     language: moth_ui::Locale = moth_ui::locale(), "language", General, Language, Kind::Language, |s| s.language.code().to_owned(), |values: &BTreeMap<String,String>| values.get("language").and_then(|v|moth_ui::Locale::from_code(v)).unwrap_or_else(moth_ui::locale);
 
+    swap_pen_buttons: bool = false, "swap_pen_buttons", Keys, SwapPenButtons, Kind::Toggle, |s| s.swap_pen_buttons.to_string(), |values: &BTreeMap<String,String>| values.get("swap_pen_buttons").and_then(|v|v.parse().ok()).unwrap_or(false);
     shortcut_feedback: bool = true, "shortcut_feedback", Keys, ShortcutFeedback, Kind::Toggle, |s| s.shortcut_feedback.to_string(), |values: &BTreeMap<String,String>| values
             .get("shortcut_feedback")
             .and_then(|v| v.parse().ok())

@@ -108,6 +108,7 @@ actions! {
     PanDrag, PanDrag, "Mouse3", None;
     PanSpaceDrag, PanSpaceDrag, "Space+Mouse1", None;
     PanAltDrag, PanAltDrag, "", None;
+    ZoomDrag, ZoomDrag, "Cmd+Mouse3", None;
     SaveAndClose, SaveClose, "", Some(moth_ui::icons::Icon::Save);
     Discard, Close, "", Some(moth_ui::icons::Icon::Close);
     KeepOpen, Keep, "", None;
@@ -170,7 +171,7 @@ impl Action {
         use Action::*;
         match self {
             MoveDrag | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag | PanSpaceDrag
-            | PanAltDrag => Text::CategoryPointer,
+            | PanAltDrag | ZoomDrag => Text::CategoryPointer,
             PanLeft | PanRight | PanUp | PanDown | Select | Fit | Focus | Previous | Next
             | ToggleView | ZoomIn | ZoomOut | ZoomReset | ResetCamera | Lock | Grayscale => {
                 Text::CategoryView
@@ -193,6 +194,7 @@ impl Action {
                 | Self::PanDrag
                 | Self::PanSpaceDrag
                 | Self::PanAltDrag
+                | Self::ZoomDrag
         )
     }
     pub fn repeat(self) -> bool {

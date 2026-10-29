@@ -730,7 +730,7 @@ impl App {
                 return;
             }
             MoveDrag | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag | PanSpaceDrag
-            | PanAltDrag => return,
+            | PanAltDrag | ZoomDrag => return,
         };
         self.apply(intent, event_loop);
     }

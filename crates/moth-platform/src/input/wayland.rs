@@ -117,29 +117,63 @@ struct Tool {
     kind: Option<Kind>,
     focused: bool,
     down: bool,
-    phases: std::collections::VecDeque<Phase>,
+    /// The tip or side button that started the current press.
+    press: Option<u8>,
+    phases: std::collections::VecDeque<(Phase, u8)>,
+}
+/// Side buttons in the portable numbering: upper acts as secondary (2), lower
+/// as middle (3), matching libinput's pointer emulation. Unknown buttons are
+/// ignored.
+fn side_button(code: u32) -> Option<u8> {
+    const BTN_STYLUS: u32 = 0x14b;
+    const BTN_STYLUS2: u32 = 0x14c;
+    match code {
+        BTN_STYLUS => Some(3),
+        BTN_STYLUS2 => Some(2),
+        _ => None,
+    }
 }
 impl Tool {
     fn phase(&mut self, phase: Phase) {
-        if self.phases.back() == Some(&Phase::Move) {
+        let button = self.press.unwrap_or(1);
+        self.queue(phase, button);
+    }
+    fn queue(&mut self, phase: Phase, button: u8) {
+        if self.phases.back().is_some_and(|(p, _)| *p == Phase::Move) {
             self.phases.pop_back();
         }
         if self.phases.len() < 8 {
-            self.phases.push_back(phase);
+            self.phases.push_back((phase, button));
         } else {
             self.phases.clear();
-            self.phases.push_back(Phase::Cancel);
+            self.phases.push_back((Phase::Cancel, button));
             self.focused = false;
             self.down = false;
+            self.press = None;
         }
     }
     fn cancel(&mut self) {
         self.down = false;
         self.phase(Phase::Cancel);
+        self.press = None;
+    }
+    /// The first of tip contact and side button starts a press; the others
+    /// are ignored until it ends, like a mouse holding one button.
+    fn press(&mut self, button: u8) {
+        if self.press.is_none() {
+            self.press = Some(button);
+            self.queue(Phase::Down, button);
+        }
+    }
+    fn release(&mut self, button: u8) {
+        if self.press == Some(button) {
+            self.press = None;
+            self.queue(Phase::Up, button);
+        }
     }
     fn frame(&mut self, id: u64) -> Option<Pointer> {
         let kind = self.kind?;
-        let phase = self.phases.pop_front()?;
+        let (phase, button) = self.phases.pop_front()?;
         Some(Pointer {
             id,
             kind,
@@ -155,7 +189,7 @@ impl Tool {
             },
             phase,
             pan: false,
-            button: 1,
+            button,
         })
     }
 }
@@ -548,6 +582,7 @@ impl Dispatch<tool::ZwpTabletToolV2, ()> for State {
             tool::Event::ProximityIn { surface, .. } => {
                 t.focused = surface.id().as_ptr() as usize == s.surface;
                 t.down = false;
+                t.press = None;
                 t.pressure = 0.;
             }
             tool::Event::Motion { x, y } if t.focused => {
@@ -564,18 +599,34 @@ impl Dispatch<tool::ZwpTabletToolV2, ()> for State {
             }
             tool::Event::Down { .. } if t.focused => {
                 t.down = true;
-                t.phase(Phase::Down);
+                t.press(1);
             }
             tool::Event::Up if t.focused => {
                 t.down = false;
-                t.phase(Phase::Up);
+                t.release(1);
+            }
+            tool::Event::Button {
+                button,
+                state: WEnum::Value(state),
+                ..
+            } if t.focused => {
+                if let Some(button) = side_button(button) {
+                    if state == tool::ButtonState::Pressed {
+                        t.press(button);
+                    } else {
+                        t.release(button);
+                    }
+                }
             }
             tool::Event::ProximityOut => {
-                if t.focused {
+                if t.focused && (t.down || t.press.is_some()) {
                     t.cancel();
+                } else if t.focused {
+                    t.phase(Phase::Cancel);
                 }
                 t.focused = false;
                 t.down = false;
+                t.press = None;
             }
             tool::Event::Frame { .. } => {
                 let mut pointers = Vec::new();
@@ -855,7 +906,7 @@ mod tests {
             pressure_capable: true,
             kind: Some(Kind::Pen),
             pressure: 0.25,
-            phases: [Phase::Down].into(),
+            phases: [(Phase::Down, 1)].into(),
             ..Tool::default()
         };
         let p = tool.frame(42).unwrap();
@@ -869,6 +920,37 @@ mod tests {
         tool.cancel();
         assert_eq!(tool.frame(42).unwrap().phase, Phase::Up);
         assert_eq!(tool.frame(42).unwrap().phase, Phase::Cancel);
+    }
+    #[test]
+    fn side_buttons_press_while_hovering_and_own_the_press_until_released() {
+        let mut tool = Tool {
+            focused: true,
+            kind: Some(Kind::Pen),
+            ..Tool::default()
+        };
+        let next = |tool: &mut Tool| {
+            let p = tool.frame(7).unwrap();
+            (p.phase, p.button)
+        };
+        // Lower button while hovering pans; the tip touching meanwhile is ignored.
+        tool.press(side_button(0x14b).unwrap());
+        tool.down = true;
+        tool.press(1);
+        tool.release(1);
+        tool.release(3);
+        assert_eq!(next(&mut tool), (Phase::Down, 3));
+        assert_eq!(next(&mut tool), (Phase::Up, 3));
+        assert!(tool.frame(7).is_none());
+        // A tip drag keeps button 1 even if a side button is pressed during it.
+        tool.press(1);
+        tool.press(side_button(0x14c).unwrap());
+        tool.release(2);
+        tool.release(1);
+        assert_eq!(next(&mut tool), (Phase::Down, 1));
+        assert_eq!(next(&mut tool), (Phase::Up, 1));
+        assert!(tool.frame(7).is_none());
+        assert_eq!(side_button(0x14c), Some(2));
+        assert_eq!(side_button(0x110), None);
     }
 }
 
