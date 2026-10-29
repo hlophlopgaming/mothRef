@@ -537,7 +537,7 @@ impl Platform for Desktop {
             on_top: !wayland || kwin || gnome,
             bottom: !wayland,
             above_window: cfg!(target_os = "windows")
-                || (cfg!(target_os = "linux") && (!wayland || kwin)),
+                || (cfg!(target_os = "linux") && (!wayland || kwin || gnome)),
             click_through: true,
         }
     }

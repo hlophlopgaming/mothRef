@@ -271,7 +271,7 @@ mod native {
 #[path = "pin_x11.rs"]
 mod x11;
 
-/// KDE Plasma on Wayland: a KWin script follows window activation instead of X11 events.
+/// Wayland: a KWin script or the GNOME Shell extension follows window activation.
 #[cfg(target_os = "linux")]
 mod kwin {
     use crate::compositor;
@@ -295,7 +295,7 @@ mod kwin {
                 self.picking = false;
                 compositor::cancel_pick();
             }
-            if !compositor::kwin() {
+            if !compositor::attach_supported() {
                 return if enabled {
                     Err("Window attachment is unavailable".into())
                 } else {
@@ -318,7 +318,7 @@ mod kwin {
             Ok(())
         }
         pub(super) fn pick(&mut self, window: &Window) -> Option<bool> {
-            if !compositor::kwin() {
+            if !compositor::attach_supported() {
                 return Some(false);
             }
             if !self.picking {

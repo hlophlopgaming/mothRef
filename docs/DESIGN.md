@@ -89,12 +89,12 @@ Final mark, app icon and README logo are on hold (maintainer, 2026-10-25).
 | 8 | Drawing | Tool group in the bottom toolbar; a pen strip with icons (pen, marker, highlighter, tape, stamp, eraser), widths, colors, eyedropper; Esc back to Select | M4 |
 | 9 | Insert and import | "Insert ▾" menu with icons (images, clipboard, PDF, note, heading, to-do, group, column, nested board, line, link, swatch, palette); banner for opened `.pur` boards with "Save as .moth" | M3–M6 |
 | 10 | Selection bar per type | Image, several items, GIF (player on the image itself), note (formatting), group, PDF page, review status | M4–M15 |
-| 11 | Compact window and overlay | Window bar slides in on hover, Tab or a corner tap; overlay HUD with opacity, click-through, exit, and a grab handle that always takes clicks | M3 |
+| 11 | Compact window and overlay | Window bar slides in on hover, Tab or a corner tap; overlay HUD with opacity, click-through and exit (grab handle dropped, 2026-10-29) | M3 |
 | 12, 12b | Drawing sessions | Full-screen session and a mini window over the editor that keeps the current image's aspect ratio while resized | M4 |
 | 14 | Groups | Ctrl/⌘+G: backdrop plus an inline title field focused at once; clicking the title selects the whole group; dragging the title moves it; layers in a slide-out drawer | M4 |
 | 15 | Window modes | Collect ⇄ View with `Tab`, Over with `Ctrl/⌘+T` | M3 |
 | 16 | View | Images only; window bar with a "View" popover for opacity and background | M3 |
-| 17 | Over | Glass background, three opacity controls, click-through, grab handle | M3 |
+| 17 | Over | Glass background, three opacity controls, click-through | M3 |
 
 ---
 
@@ -119,7 +119,8 @@ Final mark, app icon and README logo are on hold (maintainer, 2026-10-25).
     The free space drags the window; double-click maximizes. Tabs are rounded
     chips with the close cross inside.
   - *Over* — window above another app: the same controls as the View popover,
-    plus click-through and an always-clickable grab handle.
+    plus click-through; the separate Over controller is the way back out of
+    click-through (the grab handle was dropped, 2026-10-29).
   - Keys: `Tab` toggles Collect ⇄ View (ignored in text fields); `Ctrl/⌘+T`
     toggles Over; clicking a group title then `Tab` views only that group;
     `Ctrl/⌘+Shift+F` resizes the window to the selection. A window narrower than

@@ -88,6 +88,7 @@ macro_rules! schema {
 }
 schema! {
     view_controls_right: bool = true, "view_controls_right", Window, ViewControlsRight, Kind::Toggle, |s| s.view_controls_right.to_string(), |values: &BTreeMap<String,String>| values.get("view_controls_right").and_then(|v|v.parse().ok()).unwrap_or(true);
+    over_hint: bool = true, "over_hint", Window, OverHintSetting, Kind::Toggle, |s| s.over_hint.to_string(), |values: &BTreeMap<String,String>| values.get("over_hint").and_then(|v|v.parse().ok()).unwrap_or(true);
     global_shortcuts: bool = false, "global_shortcuts", Window, GlobalShortcuts, Kind::Toggle, |s| s.global_shortcuts.to_string(), |values: &BTreeMap<String,String>| values.get("global_shortcuts").and_then(|v|v.parse().ok()).unwrap_or(false);
     disable_click_through_on_activate: bool = true, "disable_click_through_on_activate", Window, DisableClickThroughOnActivate, Kind::Toggle, |s| s.disable_click_through_on_activate.to_string(), |values: &BTreeMap<String,String>| values.get("disable_click_through_on_activate").and_then(|v|v.parse().ok()).unwrap_or(true);
     background_color: Option<[u8; 3]> = None, "background_color", Appearance, BackgroundColor, Kind::Color, |s| moth_ui::theme::encode_color(s.background_color), |values: &BTreeMap<String,String>| values.get("background_color").and_then(|v| moth_ui::theme::decode_color(v));

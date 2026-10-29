@@ -5,6 +5,14 @@ use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Tooltip of a board that was never saved to a file.
+    JournalOnlyTab,
+    /// One-time Over hint, followed by the Over shortcut.
+    OverHint,
+    /// Dismisses a one-time hint.
+    GotIt,
+    /// Preference that shows the Over hint again.
+    OverHintSetting,
     /// Pointer binding: vertical drag zooms the board.
     ZoomDrag,
     /// Pen preference: lower side button opens the menu, upper pans.
@@ -1369,6 +1377,7 @@ mod tests {
                     .map(|slot| Tab {
                         title: "A reference board with a long title",
                         dirty: true,
+                        journal_only: slot == 1,
                         active: slot == 0,
                         slot,
                     })

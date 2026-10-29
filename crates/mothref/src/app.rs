@@ -282,6 +282,13 @@ impl App {
                 moth_platform::Desktop.window_capabilities(&window).on_top,
             ) {
                 Ok(mut overlay) => {
+                    if self.settings.over_hint {
+                        overlay.hint = Some(format!(
+                            "{} {}",
+                            moth_ui::text(moth_ui::Text::OverHint),
+                            self.shortcuts.registry.label(bindings::Action::Overlay)
+                        ));
+                    }
                     if self.workspace.board.appearance.background == 0 {
                         self.workspace.board.appearance.background = 2;
                     }
@@ -2382,6 +2389,18 @@ impl ApplicationHandler<Wake> for App {
                     if let Err(error) = overlay.frame() {
                         self.workspace.board.message = error.to_string().into();
                         overlay.exit = true;
+                    }
+                    if std::mem::take(&mut overlay.hint_dismissed) {
+                        self.settings.over_hint = false;
+                        self.workspace
+                            .persist(moth_platform::boards::Request::Preferences(
+                                self.settings
+                                    .preferences()
+                                    .into_iter()
+                                    .map(|(k, v)| (k.to_owned(), v))
+                                    .chain(self.shortcuts.registry.preferences())
+                                    .collect(),
+                            ));
                     }
                 } else {
                     overlay.event(&event);

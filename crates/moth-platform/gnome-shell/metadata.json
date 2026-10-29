@@ -4,5 +4,5 @@
   "description": "Lets MothRef keep its own windows above other windows on GNOME Wayland. It only changes windows that belong to the MothRef process that asks.",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
   "url": "https://github.com/hlophlopgaming/mothRef",
-  "version": 4
+  "version": 5
 }

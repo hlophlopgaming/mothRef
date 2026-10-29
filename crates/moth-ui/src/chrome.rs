@@ -10,6 +10,8 @@ pub struct Tab<'a> {
     pub title: &'a str,
     /// A journaled change still needs an explicit file save.
     pub dirty: bool,
+    /// Never saved to a file: the board lives only in the recovery journal.
+    pub journal_only: bool,
     /// Active state is independent of creation order.
     pub active: bool,
     /// Application session slot returned unchanged on activation.
@@ -193,6 +195,13 @@ pub fn toolbar(
                                         }
                                     }
                                 }
+                                a.new |= icons::button(
+                                    ui,
+                                    Icon::Plus,
+                                    &tooltip(ui.ctx(), Text::NewBoard),
+                                    false,
+                                )
+                                .clicked();
                             });
                         });
                 }
@@ -387,6 +396,11 @@ fn tab_chip(ui: &mut egui::Ui, tab: &Tab<'_>, library: bool) -> Option<TabAction
     } else {
         tab.title.to_owned()
     };
+    // Boards never saved to a file are set in italics and explain where they live.
+    let mut title = egui::RichText::new(title).color(t.text);
+    if tab.journal_only {
+        title = title.italics();
+    }
     let mut action = None;
     let chip = egui::Frame::new()
         .fill(if active { t.selection } else { t.surface })
@@ -404,12 +418,17 @@ fn tab_chip(ui: &mut egui::Ui, tab: &Tab<'_>, library: bool) -> Option<TabAction
         .show(ui, |ui| {
             ui.set_min_height(height - 4.);
             ui.spacing_mut().item_spacing.x = f32::from(t.space_xs);
-            let label = ui.add(
-                egui::Label::new(egui::RichText::new(title).color(t.text))
+            let mut label = ui.add(
+                egui::Label::new(title)
                     .selectable(false)
                     .sense(egui::Sense::click()),
             );
-            if label.clicked() {
+            if tab.journal_only {
+                label = label.on_hover_text(text(Text::JournalOnlyTab));
+            }
+            if label.middle_clicked() {
+                action = Some(TabAction::Close);
+            } else if label.clicked() {
                 action = Some(TabAction::Open);
             }
             let side = f32::from(t.space_l) + f32::from(t.space_xs) * 2.;
@@ -436,7 +455,9 @@ fn tab_chip(ui: &mut egui::Ui, tab: &Tab<'_>, library: bool) -> Option<TabAction
             }
         });
     let chip = chip.response.interact(egui::Sense::click());
-    if chip.clicked() && action.is_none() {
+    if chip.middle_clicked() && action.is_none() {
+        action = Some(TabAction::Close);
+    } else if chip.clicked() && action.is_none() {
         action = Some(TabAction::Open);
     }
     action

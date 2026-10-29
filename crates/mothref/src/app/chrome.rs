@@ -36,6 +36,7 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
         moth_ui::Tab {
             title: &active_title,
             dirty: ctx.board.dirty,
+            journal_only: ctx.board.path.is_empty(),
             active: true,
             slot: 0,
         },
@@ -46,6 +47,7 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
             moth_ui::Tab {
                 title: tab.title(),
                 dirty: tab.dirty,
+                journal_only: tab.path.is_empty(),
                 active: false,
                 slot: i + 1,
             },

@@ -1,0 +1,1 @@
+{"uuid": "inspect@mothref.test", "name": "MothRef test inspector", "description": "Test-only: lists and activates windows over D-Bus. Never ship.", "shell-version": ["45", "46", "47", "48", "49", "50"]}

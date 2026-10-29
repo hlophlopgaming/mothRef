@@ -14,6 +14,10 @@ pub(super) struct Overlay {
     pub(super) on_top: bool,
     pub(super) exit: bool,
     pub(super) applied: (bool, bool),
+    /// One-time explanation of how to leave Over; `None` once dismissed.
+    pub(super) hint: Option<String>,
+    /// The user dismissed the hint; the app turns the preference off.
+    pub(super) hint_dismissed: bool,
     /// The controller is restacked once its first frame maps it.
     shown: bool,
 }
@@ -61,6 +65,8 @@ impl Overlay {
             on_top,
             exit: false,
             applied: (on_top, false),
+            hint: None,
+            hint_dismissed: false,
             shown: false,
         })
     }
@@ -140,6 +146,23 @@ impl Overlay {
                     )
                     .show(ui, |ui| {
                         egui::ScrollArea::vertical().show(ui, |ui| {
+                            if let Some(hint) = &self.hint {
+                                let mut dismiss = false;
+                                egui::Frame::new()
+                                    .fill(moth_ui::tokens(&self.ctx).selection)
+                                    .corner_radius(moth_ui::tokens(&self.ctx).radius_s)
+                                    .inner_margin(moth_ui::tokens(&self.ctx).space_s as i8)
+                                    .show(ui, |ui| {
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label(hint);
+                                            dismiss = ui.button(text(Text::GotIt)).clicked();
+                                        });
+                                    });
+                                if dismiss {
+                                    self.hint = None;
+                                    self.hint_dismissed = true;
+                                }
+                            }
                             ui.horizontal_wrapped(|ui| {
                                 if icons::button(ui, Icon::Pan, text(Text::Pan), false)
                                     .drag_started()

@@ -431,3 +431,7 @@ ShellIntegrationPending = The GNOME extension is installed. Log out and back in 
 ShellIntegrationInstalling = Installing the GNOME window integration…
 ZoomDrag = Zoom by dragging up and down
 SwapPenButtons = Swap pen side buttons (lower opens the menu, upper pans)
+OverHint = This panel always takes clicks, even with click-through on. Leave Over with Esc here, the × button, or
+GotIt = Got it
+OverHintSetting = Show how to leave Over when it opens
+JournalOnlyTab = Not saved to a file yet: this board lives in the recovery journal. Save it to keep it in your library.

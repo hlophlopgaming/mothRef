@@ -28,7 +28,7 @@ const GNOME_SERVICE: &str = "org.mothref.Shell";
 /// Directory name the GNOME Shell extension is installed under.
 pub(crate) const GNOME_UUID: &str = "mothref-windows@hlophlopgaming.github.io";
 /// Matches `Version` in `gnome-shell/extension.js`; bump both on behavior changes.
-const GNOME_VERSION: u32 = 4;
+const GNOME_VERSION: u32 = 5;
 const GNOME_METADATA: &str = include_str!("../gnome-shell/metadata.json");
 const GNOME_EXTENSION: &str = include_str!("../gnome-shell/extension.js");
 /// Object path KWin scripts call back on with `callDBus`.
@@ -65,7 +65,7 @@ struct Shared {
     error: Mutex<Option<String>>,
     picked: Mutex<Option<Option<String>>>,
     closed: Mutex<HashSet<String>>,
-    kwin_owner: Mutex<Option<String>>,
+    reporter: Mutex<Option<String>>,
 }
 
 static SHARED: OnceLock<Arc<Shared>> = OnceLock::new();
@@ -104,7 +104,7 @@ fn spawn(
         error: Mutex::new(None),
         picked: Mutex::new(None),
         closed: Mutex::new(HashSet::new()),
-        kwin_owner: Mutex::new(None),
+        reporter: Mutex::new(None),
     });
     let worker = shared.clone();
     std::thread::Builder::new()
@@ -152,6 +152,10 @@ fn report(shared: &Shared, error: String) {
 /// KWin accepts window scripts, so above-all and window attachment both work.
 pub(crate) fn kwin() -> bool {
     SHARED.get().is_some_and(|s| s.kwin.load(Ordering::Acquire))
+}
+/// The compositor can pin the board above a chosen window (KWin or the GNOME extension).
+pub(crate) fn attach_supported() -> bool {
+    kwin() || gnome()
 }
 /// The GNOME extension is running and can keep windows above.
 pub(crate) fn gnome() -> bool {
@@ -209,7 +213,7 @@ pub(crate) fn take_error() -> Option<String> {
 
 /// Answers KWin's `callDBus` reports. Only KWin may report; other clients are refused.
 fn callback(shared: &Shared, message: &dbus::Message) -> Result<(), String> {
-    let owner = shared.kwin_owner.lock().ok().and_then(|o| o.clone());
+    let owner = shared.reporter.lock().ok().and_then(|o| o.clone());
     let sender = message.sender().map(|s| s.to_string());
     if sender.is_none() || sender != owner {
         return Err("Only the compositor may report window events".into());
@@ -345,10 +349,14 @@ impl Worker {
             }
             Request::Layer { title, above } => self.layer(title, above),
             Request::Pick { title } => {
-                let result = self.kwin_script(
-                    "pick",
-                    &pick_script(std::process::id(), &title, &self.service()),
-                );
+                let result = if self.gnome_active() {
+                    self.gnome_call("Pick", ())
+                } else {
+                    self.kwin_script(
+                        "pick",
+                        &pick_script(std::process::id(), &title, &self.service()),
+                    )
+                };
                 if result.is_err()
                     && let Ok(mut picked) = self.shared.picked.lock()
                 {
@@ -356,6 +364,7 @@ impl Worker {
                 }
                 result
             }
+            Request::CancelPick if self.gnome_active() => self.gnome_call("CancelPick", ()),
             Request::CancelPick => self.unload("pick"),
             Request::Attach { title, target } => self.attach(title, target),
             Request::InstallGnome => self.install_gnome(),
@@ -439,7 +448,30 @@ impl Worker {
             Ok(())
         }
     }
+    fn gnome_active(&self) -> bool {
+        !self.shared.kwin.load(Ordering::Acquire) && self.shared.gnome.load(Ordering::Acquire) == 3
+    }
+    /// Calls the GNOME extension and trusts its owner for the callbacks it sends.
+    fn gnome_call<A: dbus::arg::AppendAll>(&self, method: &str, args: A) -> Result<(), String> {
+        let (owner,): (String,) = self
+            .bus_proxy()
+            .method_call("org.freedesktop.DBus", "GetNameOwner", (GNOME_SERVICE,))
+            .map_err(|e| e.to_string())?;
+        if let Ok(mut slot) = self.shared.reporter.lock() {
+            *slot = Some(owner);
+        }
+        self.proxy(GNOME_SERVICE, "/org/mothref/Shell")
+            .method_call::<(), _, _, _>("org.mothref.Shell1", method, args)
+            .map_err(|e| e.to_string())
+    }
     fn attach(&mut self, title: String, target: Option<String>) -> Result<(), String> {
+        if self.gnome_active() {
+            self.raised.remove(&title);
+            return match target {
+                Some(target) => self.gnome_call("Attach", (title.as_str(), target.as_str())),
+                None => self.gnome_call("Detach", ()),
+            };
+        }
         match target {
             Some(target) => {
                 // Leave above-all first; the app's own lowering request arrives
@@ -483,7 +515,7 @@ impl Worker {
             .bus_proxy()
             .method_call("org.freedesktop.DBus", "GetNameOwner", ("org.kde.KWin",))
             .map_err(|e| e.to_string())?;
-        if let Ok(mut slot) = self.shared.kwin_owner.lock() {
+        if let Ok(mut slot) = self.shared.reporter.lock() {
             *slot = Some(owner);
         }
         self.unload(slot)?;
@@ -847,7 +879,7 @@ mod tests {
         // The stand-in released the name; claim it again for the callback.
         kwin.request_name("org.kde.KWin", false, true, false)
             .unwrap();
-        *shared.kwin_owner.lock().unwrap() = Some(kwin.unique_name().to_string());
+        *shared.reporter.lock().unwrap() = Some(kwin.unique_name().to_string());
         let picked: Result<(), dbus::Error> = kwin
             .with_proxy(service.as_str(), CALLBACK_PATH, CALL_TIMEOUT)
             .method_call(CALLBACK_INTERFACE, "Picked", ("{target}",));

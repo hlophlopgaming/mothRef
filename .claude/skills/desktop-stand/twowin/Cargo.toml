@@ -1,0 +1,11 @@
+[package]
+name = "twowin"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone test helper, not a workspace member.
+[workspace]
+
+[dependencies]
+x11rb = "0.13"
