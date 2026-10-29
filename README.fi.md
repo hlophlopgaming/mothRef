@@ -151,7 +151,7 @@ Käytä macOS:ssä <kbd>Cmd</kbd> <kbd>Ctrl</kbd>:n sijaan. Koko luettelo ja ver
 | --- | --- | --- | --- |
 | **0.1** esialfa | M1 | Ei hukkaa tietoja | alfaversiot julkaistu |
 | **0.3** julkinen alfa | M2, M2.5 | Korvaa BeeRefin, avaa `.bee`- ja `.pur`-tiedostot, zoomaa PureRefiä nopeammin | työn alla |
-| **0.7** beta | M3, M4 | Päällystila, selainlaajennus, PureRef 2:n ominaisuudet | suunniteltu |
+| **0.7** beta | M3, M4 | Päällystila, PureRef 2:n ominaisuudet | suunniteltu |
 | **1.0** | M5–M7 | Taulukirjasto pinoilla ja tunnisteilla, Milanote-tyyliset elementit, kaikki suorituskykytavoitteet | suunniteltu |
 | **2.0** | M8, M9 | Verkkoversio ja reaaliaikainen yhteistyö | myöhemmin |
 | — | — | Android-sovellus | suunniteltu |

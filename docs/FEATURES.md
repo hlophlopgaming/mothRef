@@ -38,7 +38,7 @@ Priorities: **P0** = no release without it, **P1** = required for 1.0, **P2** = 
 | Board tabs + tear-off windows | MothRef | P1 | M3 |
 | Transparent overlay, click-through (#100) | MothRef, PureRef | P1 | M3 |
 | Attach to another app's window | PureRef 2.0 | P2 | M3 |
-| Browser extension "Send to MothRef" | MothRef | P1 | M3 |
+| Browser extension "Send to MothRef" | MothRef | P2 | M14 (separate project, after 1.0) |
 | Groups and hierarchy tree | PureRef 2.0 | P1 | M4 |
 | Freehand drawing | PureRef 2.0 | P1 | M4 |
 | Shapes | PureRef 2.1 | P1 | M4 |
@@ -59,7 +59,7 @@ Priorities: **P0** = no release without it, **P1** = required for 1.0, **P2** = 
 | Web build | MothRef | P2 | M8 |
 | Real-time collaboration | MothRef | P2 | M9 |
 | Save-state chip (replaced the status bar), empty-board state, zoom field, selection badge | MothRef | P1 | M2 |
-| Watch folder import | MothRef | P1 | M3 |
+| Watch folder import | MothRef | — | dropped (maintainer, 2026-10-29) |
 | Overlay HUD and grab handle | MothRef | P1 | M3 |
 | Timed drawing sessions | MothRef | P1 | M4 |
 | Minimap / navigator | MothRef | P1 | M4 |
@@ -265,7 +265,7 @@ Inventory of [Milanote](https://milanote.com) features from its [help center](ht
 - [x] ZIP of all original images and files (M2, with "export all images")
 - Word export — **skip** (Markdown covers it)
 
-### Web clipper (M3, in the MothRef browser extension)
+### Web clipper (after 1.0, in the separate browser extension project)
 - [ ] "Save" button on hover over any image
 - [ ] Save selected text as a note: right-click menu or a button next to the selection (setting)
 - [ ] Choose the target: active board, one of the 10 most recent boards, or the board's unsorted tray

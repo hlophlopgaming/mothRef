@@ -151,7 +151,7 @@ macOS'ta <kbd>Ctrl</kbd> yerine <kbd>Cmd</kbd> kullanın. Tam liste ve PureRef i
 | --- | --- | --- | --- |
 | **0.1** ön alfa | M1 | Veri kaybetmez | alfa sürümleri yayında |
 | **0.3** genel alfa | M2, M2.5 | BeeRef'in yerini alır, `.bee` ve `.pur` açar, PureRef'ten hızlı yakınlaştırır | sürüyor |
-| **0.7** beta | M3, M4 | Kaplama modu, tarayıcı eklentisi, PureRef 2 ile özellik eşitliği | planlandı |
+| **0.7** beta | M3, M4 | Kaplama modu, PureRef 2 ile özellik eşitliği | planlandı |
 | **1.0** | M5–M7 | Yığınlar ve etiketlerle pano kitaplığı, Milanote tarzı öğeler, tüm performans hedefleri | planlandı |
 | **2.0** | M8, M9 | Web sürümü ve gerçek zamanlı ortak çalışma | daha sonra |
 | — | — | Android uygulaması | planlandı |

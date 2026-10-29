@@ -151,7 +151,7 @@ Sur macOS, utilisez <kbd>Cmd</kbd> au lieu de <kbd>Ctrl</kbd>. La liste complèt
 | --- | --- | --- | --- |
 | **0.1** pré-alpha | M1 | Ne perd pas de données | versions alpha publiées |
 | **0.3** alpha publique | M2, M2.5 | Remplace BeeRef, ouvre `.bee` et `.pur`, zoome plus vite que PureRef | en cours |
-| **0.7** bêta | M3, M4 | Mode superposition, extension de navigateur, parité de fonctionnalités avec PureRef 2 | prévu |
+| **0.7** bêta | M3, M4 | Mode superposition, parité de fonctionnalités avec PureRef 2 | prévu |
 | **1.0** | M5–M7 | Bibliothèque de tableaux avec piles et étiquettes, éléments façon Milanote, tous les objectifs de performance atteints | prévu |
 | **2.0** | M8, M9 | Version web et collaboration en temps réel | plus tard |
 | — | — | Application Android | prévu |

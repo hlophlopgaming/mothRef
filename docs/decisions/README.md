@@ -6,6 +6,7 @@ Moved from `ROADMAP.md` on 2026-10-26. Add new lines at the top of the table.
 
 | Date | Decision |
 | --- | --- |
+| 2026-10-29 | Watch folder import dropped. The browser extension and web clipper leave M3 for M14 as a separate project after 1.0, built on the `moth-bridge` local drop API |
 | 2026-10-28 | [Window stacking on Wayland](0019-wayland-window-stacking.md): KWin scripts and a bundled GNOME Shell extension keep MothRef above other windows on Plasma and GNOME; D-Bus through the `dbus` crate and system libdbus |
 | 2026-10-26 | Timed drawing sessions (gesture mode) stay in M4 and ship with 0.7 beta as a key feature, not later in 1.1 |
 | 2026-10-26 | Embedding vs linking image files and relinking missing files move from M2 to M5, next to Library health: it is a format change and does not block 0.3 |

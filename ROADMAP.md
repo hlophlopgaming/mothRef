@@ -46,7 +46,7 @@ Latest release: **0.1.0-alpha.16** (2026-10-29). Pre-alpha builds for Windows, m
 | M2 BeeRef parity | 🟡 almost | App icon (on hold); a dozen small parity items |
 | M2.5 Zoom performance and memory modes | 🟡 almost | Measurements on reference hardware |
 | M2.6 UI architecture | ✅ done | Native and CI screenshot qualification |
-| M3 Everyday usability, window, overlay, browser | 🟡 about half | Tabs, overlay HUD, watch folder, browser extension, window attach, native window qualification |
+| M3 Everyday usability, window, overlay | 🟡 about half | Tabs, overlay HUD, window attach, native window qualification |
 | M4 PureRef 2 parity | ⚪ not started | Minimap is already done |
 | M5 Library | 🟡 first slice | Start screen, search, tags, pins and folder stacks exist; index, previews, trash, health open |
 | M6 Milanote-style elements | ⚪ not started | |
@@ -253,7 +253,7 @@ Open:
 
 ## Next — toward 0.7 beta
 
-### M3 — Everyday usability, board conversion, window, overlay, browser
+### M3 — Everyday usability, board conversion, window, overlay
 
 **Exit criteria:** daily navigation and batch editing work without middle-click or wheel input; shortcuts are discoverable and rebindable; opened `.bee` / `.pur` boards save and reopen safely as `.moth`, with conversion prompts and reports of unsupported content; the overlay works on top of Krita, Photoshop and Blender on Windows, macOS and X11.
 
@@ -283,9 +283,6 @@ Navigation, shortcuts, the command palette, batch editing and board conversion a
 
 **Collecting from outside**
 
-- [ ] Watch folder: images that appear in a chosen folder (for example the OS screenshots folder) are imported into a chosen board's Inbox
-- [ ] Browser extension "Send to MothRef" + `moth-bridge` native host + "Inbox" board
-- [ ] Web clipper items from [FEATURES.md](docs/FEATURES.md#web-clipper-m3-in-the-mothref-browser-extension): Save button on hover, text clips, board picker, source URL kept
 
 **Foreign-format policy:** `.pur` writing/export and save-back are out of scope. A `.bee` export exception may be considered separately; it is not an M3 commitment or a normal Save action. If introduced, its dialog must recommend `.moth`, explain measured size benefits and warn that repeated editing/saving between applications has no guaranteed round-trip compatibility. It must report unsupported content before writing and preserve the original file.
 
@@ -496,11 +493,16 @@ A headless mode of the `mothref` binary, so agents, scripts and power users can 
 
 ### M14 — Capture integrations for third-party tools (target 1.5)
 
-PureRef has no plugin API, so its community built tools that push images into it from outside: browser clippers with a local helper (RefDrop, PureDrop), a ComfyUI connector, ShareX setups and hotkey scripts. MothRef offers this officially. The browser extension itself stays in M3; M14 opens the same path to other tools.
+PureRef has no plugin API, so its community built tools that push images into it from outside: browser clippers with a local helper (RefDrop, PureDrop), a ComfyUI connector, ShareX setups and hotkey scripts. MothRef offers this officially.
+
+The browser extension moved here from M3 (maintainer, 2026-10-29): it is a separate project with its own release cycle, built after 1.0 on top of the local drop API below.
+
+- [ ] Browser extension "Send to MothRef" (Firefox + Chromium, Manifest V3) as a separate project, talking to MothRef through `moth-bridge`; images land in the chosen board's Inbox
+- [ ] Web clipper items from [FEATURES.md](docs/FEATURES.md#web-clipper-after-10-in-the-separate-browser-extension-project): Save button on hover, text clips, board picker, source URL kept
 
 - [ ] Local drop API in `moth-bridge`: a running MothRef accepts image bytes or an image URL plus source metadata (page URL, title, tool name) and adds them to a chosen board or its Inbox through a `Command`. Off by default, enabled in settings; local connections only (named pipe / Unix socket, or loopback HTTP with a per-install token); fetching a URL counts as the user action required by the network rule
 - [ ] Documented protocol with ready-to-copy examples: `curl`, Python, AutoHotkey; the M13 CLI `add` covers the "app not running" case
-- [ ] ShareX custom destination (Windows) and examples for Flameshot and Spectacle (Linux) and the macOS screenshot folder (via the M3 watch folder)
+- [ ] ShareX custom destination (Windows) and examples for Flameshot and Spectacle (Linux)
 - [ ] ComfyUI custom node "Save to MothRef": generated images go to a chosen board in rows, with the workflow kept in the image metadata
 - [ ] "Send to MothRef" from the OS file manager: Explorer context menu, Nautilus and Dolphin actions, macOS Share / Services
 - [ ] Source and provenance shown on the item (where it came from, which tool sent it), feeding "Open image source"
@@ -595,6 +597,6 @@ All builds come from one GitHub Actions pipeline triggered by a release tag. Raw
 | Linux | Nix | nixpkgs | 1.0 |
 | Linux | Snap | Snap Store | after 1.0, on demand |
 | Browser | PWA | static hosting | M8 |
-| Extension | WebExtension (MV3) | addons.mozilla.org, Chrome Web Store | M3 |
+| Extension | WebExtension (MV3) | addons.mozilla.org, Chrome Web Store | M14 (separate project, after 1.0) |
 
 Known issues to plan for: macOS notarization needs a paid Apple Developer account; Windows signing (apply to a free OSS program such as SignPath Foundation early); Flatpak sandbox limits drag-and-drop sources, native messaging and overlays; the in-app update check is disabled in package-manager builds.

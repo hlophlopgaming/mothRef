@@ -151,7 +151,7 @@ Unter macOS <kbd>Cmd</kbd> statt <kbd>Ctrl</kbd> verwenden. Die vollständige Li
 | --- | --- | --- | --- |
 | **0.1** Pre-Alpha | M1 | Verliert keine Daten | Alpha-Builds erschienen |
 | **0.3** öffentliche Alpha | M2, M2.5 | Ersetzt BeeRef, öffnet `.bee` und `.pur`, zoomt schneller als PureRef | in Arbeit |
-| **0.7** Beta | M3, M4 | Overlay-Modus, Browser-Erweiterung, Funktionsgleichstand mit PureRef 2 | geplant |
+| **0.7** Beta | M3, M4 | Overlay-Modus, Funktionsgleichstand mit PureRef 2 | geplant |
 | **1.0** | M5–M7 | Board-Bibliothek mit Stapeln und Tags, Elemente im Milanote-Stil, alle Leistungsziele erreicht | geplant |
 | **2.0** | M8, M9 | Web-Version und Zusammenarbeit in Echtzeit | später |
 | — | — | Android-App | geplant |

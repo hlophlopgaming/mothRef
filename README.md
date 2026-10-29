@@ -149,7 +149,7 @@ PureRef, is in [docs/SHORTCUTS.md](docs/SHORTCUTS.md).
 | --- | --- | --- | --- |
 | **0.1** pre-alpha | M1 | Does not lose data | alpha builds out |
 | **0.3** public alpha | M2, M2.5 | Replaces BeeRef, opens `.bee` and `.pur`, zooms faster than PureRef | in progress |
-| **0.7** beta | M3, M4 | Overlay mode, browser extension, PureRef 2 feature parity | planned |
+| **0.7** beta | M3, M4 | Overlay mode, PureRef 2 feature parity | planned |
 | **1.0** | M5–M7 | Board library with stacks and tags, Milanote-style elements, all performance targets met | planned |
 | **2.0** | M8, M9 | Web build and real-time collaboration | later |
 | — | — | Android app | planned |
