@@ -7,6 +7,8 @@ use winit::window::Window;
 pub struct Pin {
     #[cfg(target_os = "windows")]
     native: native::Pin,
+    #[cfg(target_os = "macos")]
+    native: mac::Pin,
     #[cfg(target_os = "linux")]
     native: x11::Pin,
     #[cfg(target_os = "linux")]
@@ -23,7 +25,13 @@ impl Pin {
                 kwin: kwin::Pin::default(),
             }
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        {
+            Self {
+                native: mac::Pin::new(wake),
+            }
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = wake;
             Self::default()
@@ -35,11 +43,11 @@ impl Pin {
         if let Some(available) = self.kwin.available() {
             return available;
         }
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         {
             self.native.available()
         }
-        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
             false
         }
@@ -50,11 +58,11 @@ impl Pin {
         if crate::wayland(window) {
             return self.kwin.enable(window, enabled);
         }
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         {
             self.native.enable(window, enabled)
         }
-        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
             let _ = window;
             if enabled {
@@ -70,11 +78,11 @@ impl Pin {
         if crate::wayland(window) {
             return self.kwin.pick(window);
         }
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         {
             self.native.pick(window)
         }
-        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
             let _ = window;
             Some(false)
@@ -270,6 +278,10 @@ mod native {
 #[cfg(target_os = "linux")]
 #[path = "pin_x11.rs"]
 mod x11;
+
+#[cfg(target_os = "macos")]
+#[path = "pin_macos.rs"]
+mod mac;
 
 /// Wayland: a KWin script or the GNOME Shell extension follows window activation.
 #[cfg(target_os = "linux")]

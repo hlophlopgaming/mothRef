@@ -536,7 +536,7 @@ impl Platform for Desktop {
             blur: cfg!(target_os = "macos"),
             on_top: !wayland || kwin || gnome,
             bottom: !wayland,
-            above_window: cfg!(target_os = "windows")
+            above_window: cfg!(any(target_os = "windows", target_os = "macos"))
                 || (cfg!(target_os = "linux") && (!wayland || kwin || gnome)),
             click_through: true,
         }

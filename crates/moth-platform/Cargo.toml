@@ -48,4 +48,7 @@ wayland-protocols = { version = "0.32", features = ["server"] }
 global-hotkey = "0.9"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSView", "NSWindow"] }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSResponder", "NSView", "NSWindow", "NSWorkspace", "NSRunningApplication"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSNotification", "NSDictionary", "NSString", "NSOperation"] }
+block2 = "0.6"
