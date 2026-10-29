@@ -160,7 +160,8 @@ No format or feature change is intended. Native checks above remain unexecuted.
   tool frames/pressure/cancellation and reader shutdown. The maintainer confirmed
   a two-file Dolphin drop; Huion pen traces verify native identity and pressure.
   Real touchscreen hardware is unavailable, so this qualification item remains
-  open. Windows/macOS pen identification is also not provided by this backend.
+  open. Windows pens now arrive natively through a `WM_POINTER` subclass
+  (2026-10-29, untested on hardware); macOS and X11 pens still arrive as a mouse.
   See [device notes](M0-VALIDATION.md#td-09-native-wayland-drops-and-tablet-input).
 
 
@@ -184,6 +185,18 @@ No format or feature change is intended. Native checks above remain unexecuted.
   agree without discarding historical measurements or claiming unrun checks.
   Updated the architecture to current M1 persistence, PNG staging, batching,
   decode and queue budgets; retained historical validation measurements.
+
+## M3 window debt
+
+- [ ] **TD-12 — Background blur (Glass) on GNOME.**
+  Glass blurs on macOS, Windows 11 (acrylic system backdrop) and KDE Plasma
+  (KWin's Wayland blur protocol, or `_KDE_NET_WM_BLUR_BEHIND_REGION` on X11).
+  GNOME offers applications no blur request, so Glass falls back to a
+  translucent tint there. The bundled GNOME Shell extension could add a
+  `Shell.BlurEffect` in background mode to MothRef's window actor, as "Blur my
+  Shell" does for other applications; it needs an opt-in, a check of the cost on
+  large boards and a native GNOME run. Deferred by the maintainer (2026-10-29).
+  Windows 10 (no documented API) and other Wayland compositors also keep the tint.
 
 ## Already resolved or intentionally outside this backlog
 

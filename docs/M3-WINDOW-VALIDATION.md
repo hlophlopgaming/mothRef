@@ -610,3 +610,15 @@ Checked with the desktop stand (`.claude/skills/desktop-stand`):
 Not checked: Windows and macOS (Clippy for their targets only), drops onto
 another window's tab strip (X11/Windows/macOS), device loss with several
 windows, HiDPI. Tests were compiled, not run (AGENTS.md §3).
+
+### Glass blur on Windows 11 and KDE — 2026-10-29
+
+Glass now blurs on Windows 11 22H2+ (`DWMWA_SYSTEMBACKDROP_TYPE` acrylic),
+KDE Plasma on Wayland (winit's `org_kde_kwin_blur` request) and KDE on X11
+(`_KDE_NET_WM_BLUR_BEHIND_REGION`, set from the compositor worker). GNOME is
+TD-12. On the desktop stand (KWin 5.27, compositing off): through XWayland the
+property appears on the board window when Over turns Glass on; on native
+Wayland winit reports that this nested KWin offers no blur manager, as
+expected without compositing. The visual effect itself, Windows 11 and real
+Plasma sessions still need a native check. Windows passed Clippy for its
+target only.

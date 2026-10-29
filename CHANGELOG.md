@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Glass background blurs what is behind the window on Windows 11 (acrylic) and KDE Plasma (Wayland and X11), in addition to macOS. Other systems keep the translucent tint.
+
 - Move board tabs between windows: drag a tab out of the tab strip to open it in its own window, or use the tab menu (right click or long press) to move it to a new or another window, or to gather all tabs into one window. On Windows, macOS and X11 a tab can also be dropped onto another window's tab strip. Each window has its own tabs, view mode, pin and video memory share.
 - Tabs: a "+" button for a new board (Ctrl/⌘+N), middle-click closes a tab, and boards never saved to a file are shown in italics.
 - Over shows a one-time hint on how to leave it; Settings › Window and overlay can show it again.

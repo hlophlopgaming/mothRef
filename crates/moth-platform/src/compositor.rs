@@ -53,6 +53,11 @@ enum Request {
     },
     CancelPick,
     InstallGnome,
+    /// KWin on X11 blurs behind windows carrying `_KDE_NET_WM_BLUR_BEHIND_REGION`.
+    X11Blur {
+        window: u32,
+        on: bool,
+    },
 }
 
 struct Shared {
@@ -202,6 +207,10 @@ pub(crate) fn target_closed(target: &str) -> bool {
         .and_then(|s| s.closed.lock().ok().map(|c| c.contains(target)))
         .unwrap_or(false)
 }
+/// Asks KWin on X11 to blur behind (or stop blurring behind) a window.
+pub(crate) fn x11_blur(window: u32, on: bool) {
+    send(Request::X11Blur { window, on });
+}
 /// Copies the GNOME extension into the user's extension folder and enables it.
 pub(crate) fn install_gnome() {
     send(Request::InstallGnome);
@@ -258,6 +267,8 @@ struct Worker {
     raised: HashSet<String>,
     attached: Option<String>,
     serial: u64,
+    /// Opened on first use, only for KWin's X11 blur property.
+    x11: Option<x11rb::rust_connection::RustConnection>,
 }
 
 impl Worker {
@@ -294,6 +305,7 @@ impl Worker {
             raised: HashSet::new(),
             attached: None,
             serial: 0,
+            x11: None,
         })
     }
     /// Alternates between bus messages and queued requests, sleeping in between.
@@ -368,6 +380,7 @@ impl Worker {
             Request::CancelPick => self.unload("pick"),
             Request::Attach { title, target } => self.attach(title, target),
             Request::InstallGnome => self.install_gnome(),
+            Request::X11Blur { window, on } => self.x11_blur(window, on),
         }
     }
     fn service(&self) -> String {
@@ -447,6 +460,32 @@ impl Worker {
         } else {
             Ok(())
         }
+    }
+    fn x11_blur(&mut self, window: u32, on: bool) -> Result<(), String> {
+        use x11rb::connection::Connection as _;
+        use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, PropMode};
+        use x11rb::wrapper::ConnectionExt as _;
+        if self.x11.is_none() {
+            self.x11 = Some(x11rb::connect(None).map_err(|e| e.to_string())?.0);
+        }
+        let Some(x11) = &self.x11 else {
+            return Ok(());
+        };
+        let error = |e: &dyn std::fmt::Display| e.to_string();
+        let atom = x11
+            .intern_atom(false, b"_KDE_NET_WM_BLUR_BEHIND_REGION")
+            .map_err(|e| error(&e))?
+            .reply()
+            .map_err(|e| error(&e))?
+            .atom;
+        if on {
+            // An empty region blurs behind the whole window.
+            x11.change_property32(PropMode::REPLACE, window, atom, AtomEnum::CARDINAL, &[])
+                .map_err(|e| error(&e))?;
+        } else {
+            x11.delete_property(window, atom).map_err(|e| error(&e))?;
+        }
+        x11.flush().map_err(|e| error(&e))
     }
     fn gnome_active(&self) -> bool {
         !self.shared.kwin.load(Ordering::Acquire) && self.shared.gnome.load(Ordering::Acquire) == 3

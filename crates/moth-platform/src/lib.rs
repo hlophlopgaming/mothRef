@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Native paths and clipboard access stay on the desktop side of the boundary.
+#[cfg(target_os = "windows")]
+mod backdrop_windows;
 /// Background persistence and recovery for native boards.
 pub mod boards;
 mod clipboard_web;
@@ -532,8 +534,13 @@ impl Platform for Desktop {
         let (kwin, gnome) = (compositor::kwin(), compositor::gnome());
         #[cfg(not(target_os = "linux"))]
         let (kwin, gnome) = (false, false);
+        #[cfg(target_os = "windows")]
+        let windows_blur = backdrop_windows::supported();
+        #[cfg(not(target_os = "windows"))]
+        let windows_blur = false;
         WindowCapabilities {
-            blur: cfg!(target_os = "macos"),
+            // macOS, Windows 11 acrylic, and KWin (KDE) on Wayland and X11.
+            blur: cfg!(target_os = "macos") || windows_blur || kwin,
             on_top: !wayland || kwin || gnome,
             bottom: !wayland,
             above_window: cfg!(any(target_os = "windows", target_os = "macos"))
@@ -543,7 +550,24 @@ impl Platform for Desktop {
     }
     fn window_background(&self, window: &winit::window::Window, transparent: bool, blur: bool) {
         window.set_transparent(transparent);
-        window.set_blur(blur && self.window_capabilities(window).blur);
+        let blur = blur && self.window_capabilities(window).blur;
+        // winit covers macOS and KWin's Wayland blur protocol.
+        window.set_blur(blur);
+        #[cfg(target_os = "windows")]
+        backdrop_windows::set(window, blur);
+        // KWin on X11 reads a window property; set from a worker.
+        #[cfg(target_os = "linux")]
+        if !wayland(window) {
+            use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            let id = window.window_handle().ok().and_then(|h| match h.as_raw() {
+                RawWindowHandle::Xlib(h) => u32::try_from(h.window).ok(),
+                RawWindowHandle::Xcb(h) => Some(h.window.get()),
+                _ => None,
+            });
+            if let Some(id) = id {
+                compositor::x11_blur(id, blur);
+            }
+        }
     }
     fn window_effects(
         &self,
