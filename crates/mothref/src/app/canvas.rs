@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The infinite canvas: notes, selection frames, drag overlays and the tool rail.
+use super::document::View;
 use super::{Document, Editing, Intent};
 use crate::gpu::Gpu;
 use moth_scene::{Camera, Item, Rect, Uuid};
@@ -28,521 +29,596 @@ pub(super) struct Canvas<'a> {
 }
 
 /// Draws the canvas panel and the tools window, emitting intents for board edits.
-pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
+/// Layers paint in order: items, selection, canvas input, minimap, marquee.
+pub(super) fn canvas(ui: &mut egui::Ui, mut c: Canvas<'_>) -> Vec<Intent> {
     let mut actions = Actions::default();
     let mut intents = Vec::new();
-    let Canvas {
-        board,
-        tools,
-        tool,
-        settings,
-        enabled,
-        registry,
-        editing,
-        drag,
-        moving,
-        resizing,
-        pointer,
-        motion,
-        duplicate,
-        gpu,
-        compact,
-        overlay,
-        secondary_gesture,
-        activate,
-    } = ctx;
-    let mut view = board.view;
+    let mut view = c.board.view;
     moth_ui::canvas::clear_minimap(ui.ctx());
-    if !compact {
-        intents.extend(tools.show(ui, board, settings, tool, enabled, registry));
+    if !c.compact {
+        intents.extend(
+            c.tools
+                .show(ui, c.board, c.settings, c.tool, c.enabled, c.registry),
+        );
     }
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
-            let hover = pointer
-                .filter(|p| view.viewport.contains(egui::pos2(p[0], p[1])))
-                .and_then(|p| {
-                    let world = view.camera.world(p);
-                    board
-                        .scene
-                        .query(Rect {
-                            x: world[0],
-                            y: world[1],
-                            width: 1. / view.camera.zoom,
-                            height: 1. / view.camera.zoom,
-                        })
-                        .into_iter()
-                        .rev()
-                        .find(|item| {
-                            board.presented(item)
-                                && item.rect.contains_rotated(item.transform.rotation, world)
-                        })
-                        .map(|item| item.id)
-                });
-            let over_canvas =
-                pointer.is_some_and(|p| view.viewport.contains(egui::pos2(p[0], p[1])));
-            if over_canvas || drag.is_some() {
-                ui.ctx().set_cursor_icon(if resizing.is_some() {
-                    egui::CursorIcon::ResizeNwSe
-                } else if tool.picks() {
-                    egui::CursorIcon::Crosshair
-                } else if drag.is_some_and(|(_, _, pan)| pan) || moving.is_some() {
-                    egui::CursorIcon::Grabbing
-                } else if hover.is_some_and(|id| board.selection.contains(&id)) {
-                    egui::CursorIcon::Move
-                } else if hover.is_some() {
-                    egui::CursorIcon::Grab
-                } else {
-                    egui::CursorIcon::Default
-                });
+            let (hover_id, fade) = hover(ui, &c, &view);
+            layout(ui, &c, &mut view, &mut actions, &mut intents);
+            let returning = items(ui, &c, &view, hover_id, fade, &mut intents);
+            if !c.overlay {
+                selection(ui, &c, &view, &returning, &mut intents);
+                input(ui, &mut c, &view, &mut intents);
             }
-            let hover_key = egui::Id::new("canvas_hover_item");
-            if let Some(id) = hover {
-                ui.ctx().data_mut(|data| data.insert_temp(hover_key, id));
-            }
-            let fade = ui.ctx().animate_bool_with_time(
-                hover_key,
-                settings.show_outlines && hover.is_some() && moving.is_none(),
-                if settings.reduced_motion || !settings.show_outlines {
-                    0.
-                } else {
-                    0.09
-                },
-            );
-            let hover_id = ui.ctx().data(|data| data.get_temp::<Uuid>(hover_key));
-            let previous = view.viewport;
-            view.viewport = ui.max_rect();
-            if !compact {
-                intents.extend(super::surfaces::toolbar(
-                    ui.ctx(),
-                    view.viewport,
-                    enabled,
-                    registry,
-                    view.camera.zoom,
-                ));
-            }
-            view.safe_area = view.viewport;
-            view.selection_bar_visible = !compact && !board.selection.is_empty();
-            view.selection_bar_height = 0.;
-            if !compact {
-                let bar_bottom = ui
-                    .ctx()
-                    .data(|data| data.get_temp::<f32>(egui::Id::new("window_bar_bottom")));
-                let (toolbar, selection) = ui.ctx().memory(|memory| {
-                    (
-                        memory.area_rect(egui::Id::new("bottom_toolbar")),
-                        memory.area_rect(egui::Id::new("selection_bar")),
-                    )
-                });
-                view.safe_area.min.y = bar_bottom
-                    .unwrap_or(view.viewport.top())
-                    .max(view.viewport.top());
-                if let Some(toolbar) = toolbar {
-                    view.safe_area.max.y = toolbar.top().min(view.viewport.bottom());
-                }
-                view.selection_bar_height =
-                    selection.map_or(ui.spacing().interact_size.y, |rect| rect.height());
-            }
-
-            if settings.scale_with_window
-                && previous.is_positive()
-                && previous.size() != view.viewport.size()
-            {
-                let anchor = view
-                    .camera
-                    .world([previous.center().x, previous.center().y]);
-                view.camera.zoom = (view.camera.zoom
-                    * (view.viewport.width() / previous.width())
-                        .min(view.viewport.height() / previous.height()))
-                .clamp(0.01, 64.);
-                view.camera.origin = [
-                    anchor[0] - view.viewport.center().x / view.camera.zoom,
-                    anchor[1] - view.viewport.center().y / view.camera.zoom,
-                ];
-            }
-            if view.needs_fit && board.intake.in_flight == 0 {
-                view.fit(&board.scene);
-            }
-            if board.scene.is_empty() {
-                let empty = moth_ui::empty_board(ui);
-                actions.paste |= empty.paste;
-                if empty.open {
-                    intents.push(Intent::Action(super::bindings::Action::Images));
-                }
-            }
-            let origin = view
-                .camera
-                .world([view.viewport.min.x, view.viewport.min.y]);
-            let mut returning: std::collections::HashMap<_, _> = motion
-                .returning(motion.now(), settings.reduced_motion)
-                .into_iter()
-                .map(|item| (item.id, item))
-                .collect();
-            if let Some(resizing) = resizing {
-                returning.extend(resizing.previews().into_iter().map(|item| (item.id, item)));
-            }
-            let mut visible = board.scene.query(Rect {
-                x: origin[0],
-                y: origin[1],
-                width: view.viewport.width() / view.camera.zoom,
-                height: view.viewport.height() / view.camera.zoom,
-            });
-
-            let transitions = board.motion.copies(motion.now());
-            if moving.is_some() || !transitions.is_empty() || !returning.is_empty() {
-                let mut ids: std::collections::HashSet<_> =
-                    visible.iter().map(|item| item.id).collect();
-                for id in board
-                    .selection
-                    .iter()
-                    .filter(|_| moving.is_some())
-                    .copied()
-                    .chain(transitions.iter().map(|item| item.id))
-                    .chain(returning.keys().copied())
-                {
-                    if ids.insert(id)
-                        && let Some(item) = board.scene.get(id)
-                    {
-                        visible.push(item);
-                    }
-                }
-            }
-            let mut groups = Vec::new();
-            for item in visible.into_iter().filter(|item| board.presented(item)) {
-                let mut presented = board
-                    .motion
-                    .get(item.id, motion.now())
-                    .map(std::borrow::Cow::Owned)
-                    .unwrap_or(std::borrow::Cow::Borrowed(item));
-                if moving.is_some()
-                    && board.selection.contains(&item.id)
-                    && !tools.locked
-                    && !board.intake.loading
-                {
-                    presented = std::borrow::Cow::Owned(motion.preview(
-                        item,
-                        drag,
-                        view.camera.zoom,
-                        settings.reduced_motion,
-                    ));
-                    if duplicate && item.blob().is_none() {
-                        draw_note(ui, &view.camera, item);
-                    }
-                }
-                if moving.is_none()
-                    && let Some(returning) = returning.get(&item.id).cloned()
-                {
-                    presented = std::borrow::Cow::Owned(returning);
-                }
-                let item = &presented;
-                if item.is_group() {
-                    groups.push(item.as_ref().clone());
-                }
-                match item.blob() {
-                    // Non-resident images show a placeholder until decoded.
-                    Some(blob) if !gpu.registry.resident(blob, 1) => {
-                        let p = view.camera.screen([item.rect.x, item.rect.y]);
-                        let rect = egui::Rect::from_min_size(
-                            egui::pos2(p[0], p[1]),
-                            egui::vec2(
-                                item.rect.width * view.camera.zoom,
-                                item.rect.height * view.camera.zoom,
-                            ),
-                        );
-                        ui.painter().rect_filled(
-                            rect,
-                            moth_ui::tokens(ui.ctx()).radius_placeholder as f32,
-                            moth_ui::tokens(ui.ctx()).canvas,
-                        );
-                        ui.painter().rect_stroke(
-                            rect,
-                            moth_ui::tokens(ui.ctx()).radius_placeholder as f32,
-                            egui::Stroke::new(1., moth_ui::tokens(ui.ctx()).accent),
-                            egui::StrokeKind::Inside,
-                        );
-                    }
-                    // Notes are drawn by the UI layer in screen space.
-                    None => {
-                        if editing.as_ref().is_none_or(|e| e.id != item.id) {
-                            draw_note(ui, &view.camera, item);
-                        }
-                    }
-                    Some(_) => {}
-                }
-                if !overlay {
-                    outline(
-                        ui,
-                        &view.camera,
-                        item,
-                        board.selection.len() == 1
-                            && board.selection.contains(&item.id)
-                            && !(duplicate
-                                && moving.is_none()
-                                && !returning.is_empty()
-                                && !returning.contains_key(&item.id)),
-                        if hover_id == Some(item.id) { fade } else { 0. },
-                        settings.show_outlines,
-                    );
-                }
-            }
-            if !overlay && !compact {
-                intents.extend(super::groups::chips(ui, board, &view.camera, &mut groups));
-                if !board.scene.is_empty() {
-                    intents.extend(super::groups::layers(ui.ctx(), board, view.safe_area));
-                }
-            }
-            for ghost in returning.values().filter(|item| board.presented(item)) {
-                if ghost.blob().is_none() && board.scene.get(ghost.id).is_none() {
-                    draw_note(ui, &view.camera, ghost);
-                }
-                if !overlay && board.scene.get(ghost.id).is_none() {
-                    outline(ui, &view.camera, ghost, true, 0., settings.show_outlines);
-                }
-            }
-            for ghost in transitions.into_iter().filter(|item| board.presented(item)) {
-                if ghost.blob().is_none() && board.scene.get(ghost.id).is_none() {
-                    draw_note(ui, &view.camera, &ghost);
-                }
-            }
-            if !overlay {
-                let marquee =
-                    drag.filter(|(_, _, pan)| !pan && moving.is_none())
-                        .map(|(a, b, _)| {
-                            let a = view.camera.world(a);
-                            let b = view.camera.world(b);
-                            Rect {
-                                x: a[0].min(b[0]),
-                                y: a[1].min(b[1]),
-                                width: (a[0] - b[0]).abs(),
-                                height: (a[1] - b[1]).abs(),
-                            }
-                        });
-                let mut bounds = egui::Rect::NOTHING;
-                let mut count = 0;
-                for item in board
-                    .selection
-                    .iter()
-                    .filter_map(|id| board.scene.get(*id))
-                    .filter(|i| board.presented(i))
-                {
-                    let presented = if moving.is_some() && !tools.locked && !board.intake.loading {
-                        Some(motion.preview(item, drag, view.camera.zoom, settings.reduced_motion))
-                    } else {
-                        selection_presentation(
-                            item,
-                            board.motion.get(item.id, motion.now()),
-                            &returning,
-                        )
-                    };
-                    let item = presented.as_ref().unwrap_or(item);
-                    let envelope = item.rect.rotated_envelope(item.transform.rotation);
-                    let lo = envelope.lower();
-                    let hi = envelope.upper();
-                    bounds = bounds.union(egui::Rect::from_min_max(
-                        egui::pos2(lo[0], lo[1]),
-                        egui::pos2(hi[0], hi[1]),
-                    ));
-                    count += 1;
-                }
-                if let Some(rect) = marquee {
-                    count = board.scene.query(rect).len();
-                    bounds = egui::Rect::from_min_size(
-                        egui::pos2(rect.x, rect.y),
-                        egui::vec2(rect.width, rect.height),
-                    );
-                }
-                if bounds.is_finite() {
-                    moth_ui::canvas::selection_badge(ui.ctx(), view.viewport, count, bounds.size());
-                    if marquee.is_none() && !board.selection.is_empty() {
-                        let screen = |p: egui::Pos2| {
-                            let p = view.camera.screen([p.x, p.y]);
-                            egui::pos2(p[0], p[1])
-                        };
-                        let frame =
-                            egui::Rect::from_min_max(screen(bounds.min), screen(bounds.max));
-                        selection_frame(
-                            ui,
-                            frame,
-                            board.selection.len() > 1,
-                            settings.show_outlines,
-                        );
-                        if !compact {
-                            let group =
-                                super::selection::single_group(&board.scene, &board.selection);
-                            let kind =
-                                if let Some(group) = group {
-                                    super::surfaces::SelectionKind::Group(
-                                        board.scene.children(group).count(),
-                                    )
-                                } else if board.selection.len() > 1 {
-                                    super::surfaces::SelectionKind::Several
-                                } else if board.selection.iter().any(|id| {
-                                    board.scene.get(*id).is_some_and(|i| i.note().is_some())
-                                }) {
-                                    super::surfaces::SelectionKind::Note
-                                } else {
-                                    super::surfaces::SelectionKind::Image
-                                };
-                            intents.extend(super::surfaces::selection(
-                                ui.ctx(),
-                                frame,
-                                view.viewport,
-                                kind,
-                                enabled,
-                                registry,
-                            ));
-                        }
-                    }
-                }
-            }
-            if !overlay {
-                let response = ui.interact(
-                    view.viewport,
-                    egui::Id::new("canvas_context"),
-                    egui::Sense::click(),
-                );
-                if !secondary_gesture {
-                    response.context_menu(|ui| {
-                        super::surfaces::context(
-                            ui,
-                            super::surfaces::CONTEXT_MENU,
-                            enabled,
-                            registry,
-                            &mut intents,
-                        )
-                    });
-                }
-                // Double-click edits a note in place, or creates one on empty canvas.
-                if response.double_clicked()
-                    && activate
-                    && board.idle()
-                    && let Some(pos) = response.interact_pointer_pos()
-                {
-                    let world = view.camera.world([pos.x, pos.y]);
-                    let hit = board
-                        .scene
-                        .query(Rect {
-                            x: world[0],
-                            y: world[1],
-                            width: 1. / view.camera.zoom,
-                            height: 1. / view.camera.zoom,
-                        })
-                        .into_iter()
-                        .rev()
-                        .find(|i| {
-                            board.presented(i)
-                                && i.rect.contains_rotated(i.transform.rotation, world)
-                        });
-                    let chip = super::groups::chip_rects(ui.ctx())
-                        .into_iter()
-                        .rev()
-                        .find(|(_, rect)| rect.contains(pos))
-                        .map(|(id, _)| id);
-                    match hit {
-                        _ if chip.is_some() => {
-                            intents.push(Intent::Action(super::bindings::Action::RenameGroup))
-                        }
-                        Some(item)
-                            if super::selection::target(&board.scene, board.entered, item.id)
-                                != item.id =>
-                        {
-                            intents.push(Intent::EnterGroup(item.id))
-                        }
-                        Some(item) if item.is_group() => intents.push(Intent::EnterGroup(item.id)),
-                        Some(item) if item.note().is_some() => {
-                            intents.push(Intent::EditNote(item.id))
-                        }
-                        Some(item) => intents.push(Intent::FocusItem(item.id)),
-                        None => intents.push(Intent::AddNote(world)),
-                    }
-                }
-                // The inline note editor floats above the canvas.
-                if let Some(editing) = editing {
-                    let anchor = view.camera.screen(editing.anchor);
-                    let zoom = view.camera.zoom;
-                    egui::Area::new(egui::Id::new("note_editor"))
-                        .fixed_pos(egui::pos2(anchor[0], anchor[1]))
-                        .show(ui.ctx(), |ui| {
-                            let response = note_editor(ui, editing, zoom);
-                            if editing.focus {
-                                response.response.request_focus();
-                                intents.push(Intent::NoteFocused);
-                            }
-                            if response.response.lost_focus() {
-                                intents.push(Intent::CommitNote);
-                            }
-                        });
-                }
-            }
-            if !compact
-                && settings.show_minimap
-                && let Some(bounds) = board.scene.bounds()
-            {
-                let normalize = |x: f32, y: f32| {
-                    egui::pos2(
-                        (x - bounds.x) / bounds.width,
-                        (y - bounds.y) / bounds.height,
-                    )
-                };
-                // The minimap samples at most 128 items; the indexed bounds still include every item.
-                let samples: Vec<_> = board
-                    .scene
-                    .items()
-                    .take(128)
-                    .map(|item| {
-                        let envelope = item.rect.rotated_envelope(item.transform.rotation);
-                        let lower = envelope.lower();
-                        let upper = envelope.upper();
-                        egui::Rect::from_min_max(
-                            normalize(lower[0], lower[1]),
-                            normalize(upper[0], upper[1]),
-                        )
-                    })
-                    .collect();
-                let world_min = view
-                    .camera
-                    .world([view.viewport.left(), view.viewport.top()]);
-                let world_max = view
-                    .camera
-                    .world([view.viewport.right(), view.viewport.bottom()]);
-                if let Some(p) = moth_ui::canvas::minimap(
-                    ui.ctx(),
-                    view.safe_area,
-                    &samples,
-                    egui::vec2(bounds.width, bounds.height),
-                    moth_ui::canvas::Minimap {
-                        size: settings.minimap_size,
-                        alignment: settings.minimap_alignment(),
-                        opacity: settings.minimap_opacity / 100.,
-                        distance: settings.minimap_distance / 100.,
-                        images: settings.minimap_images,
-                    },
-                    egui::Rect::from_min_max(
-                        normalize(world_min[0], world_min[1]),
-                        normalize(world_max[0], world_max[1]),
-                    ),
-                ) {
-                    view.camera.origin = [
-                        bounds.x + p.x * bounds.width - view.viewport.center().x / view.camera.zoom,
-                        bounds.y + p.y * bounds.height
-                            - view.viewport.center().y / view.camera.zoom,
-                    ];
-                }
-            }
-            if let Some((a, b, false)) = drag
-                && moving.is_none()
-            {
-                ui.painter().rect_stroke(
-                    egui::Rect::from_two_pos(egui::pos2(a[0], a[1]), egui::pos2(b[0], b[1])),
-                    moth_ui::tokens(ui.ctx()).radius_none as f32,
-                    egui::Stroke::new(1., moth_ui::tokens(ui.ctx()).accent),
-                    egui::StrokeKind::Inside,
-                );
-            }
+            minimap(ui, &c, &mut view);
+            marquee(ui, &c);
         });
     intents.insert(0, Intent::View(view));
     intents.extend(super::intent::intents_from_actions(actions));
     intents
+}
+
+/// The item under the pointer, the cursor for it, and how far its hover outline
+/// has faded in.
+fn hover(ui: &mut egui::Ui, c: &Canvas<'_>, view: &View) -> (Option<Uuid>, f32) {
+    let board = c.board;
+    let settings = &*c.settings;
+    let drag = c.drag;
+    let moving = c.moving;
+    let resizing = c.resizing;
+    let (pointer, tool) = (c.pointer, *c.tool);
+    let hover = pointer
+        .filter(|p| view.viewport.contains(egui::pos2(p[0], p[1])))
+        .and_then(|p| {
+            let world = view.camera.world(p);
+            board
+                .scene
+                .query(Rect {
+                    x: world[0],
+                    y: world[1],
+                    width: 1. / view.camera.zoom,
+                    height: 1. / view.camera.zoom,
+                })
+                .into_iter()
+                .rev()
+                .find(|item| {
+                    board.presented(item)
+                        && item.rect.contains_rotated(item.transform.rotation, world)
+                })
+                .map(|item| item.id)
+        });
+    let over_canvas = pointer.is_some_and(|p| view.viewport.contains(egui::pos2(p[0], p[1])));
+    if over_canvas || drag.is_some() {
+        ui.ctx().set_cursor_icon(if resizing.is_some() {
+            egui::CursorIcon::ResizeNwSe
+        } else if tool.picks() {
+            egui::CursorIcon::Crosshair
+        } else if drag.is_some_and(|(_, _, pan)| pan) || moving.is_some() {
+            egui::CursorIcon::Grabbing
+        } else if hover.is_some_and(|id| board.selection.contains(&id)) {
+            egui::CursorIcon::Move
+        } else if hover.is_some() {
+            egui::CursorIcon::Grab
+        } else {
+            egui::CursorIcon::Default
+        });
+    }
+    let hover_key = egui::Id::new("canvas_hover_item");
+    if let Some(id) = hover {
+        ui.ctx().data_mut(|data| data.insert_temp(hover_key, id));
+    }
+    let fade = ui.ctx().animate_bool_with_time(
+        hover_key,
+        settings.show_outlines && hover.is_some() && moving.is_none(),
+        if settings.reduced_motion || !settings.show_outlines {
+            0.
+        } else {
+            0.09
+        },
+    );
+    let hover_id = ui.ctx().data(|data| data.get_temp::<Uuid>(hover_key));
+    (hover_id, fade)
+}
+
+/// Fits the view to this frame: toolbar, the area bars leave free, scaling with
+/// the window, the first fit after loading, and the empty-board prompt.
+fn layout(
+    ui: &mut egui::Ui,
+    c: &Canvas<'_>,
+    view: &mut View,
+    actions: &mut Actions,
+    intents: &mut Vec<Intent>,
+) {
+    let board = c.board;
+    let settings = &*c.settings;
+    let enabled = c.enabled;
+    let registry = c.registry;
+    let compact = c.compact;
+    let previous = view.viewport;
+    view.viewport = ui.max_rect();
+    if !compact {
+        intents.extend(super::surfaces::toolbar(
+            ui.ctx(),
+            view.viewport,
+            enabled,
+            registry,
+            view.camera.zoom,
+        ));
+    }
+    view.safe_area = view.viewport;
+    view.selection_bar_visible = !compact && !board.selection.is_empty();
+    view.selection_bar_height = 0.;
+    if !compact {
+        let bar_bottom = ui
+            .ctx()
+            .data(|data| data.get_temp::<f32>(egui::Id::new("window_bar_bottom")));
+        let (toolbar, selection) = ui.ctx().memory(|memory| {
+            (
+                memory.area_rect(egui::Id::new("bottom_toolbar")),
+                memory.area_rect(egui::Id::new("selection_bar")),
+            )
+        });
+        view.safe_area.min.y = bar_bottom
+            .unwrap_or(view.viewport.top())
+            .max(view.viewport.top());
+        if let Some(toolbar) = toolbar {
+            view.safe_area.max.y = toolbar.top().min(view.viewport.bottom());
+        }
+        view.selection_bar_height =
+            selection.map_or(ui.spacing().interact_size.y, |rect| rect.height());
+    }
+
+    if settings.scale_with_window
+        && previous.is_positive()
+        && previous.size() != view.viewport.size()
+    {
+        let anchor = view
+            .camera
+            .world([previous.center().x, previous.center().y]);
+        view.camera.zoom = (view.camera.zoom
+            * (view.viewport.width() / previous.width())
+                .min(view.viewport.height() / previous.height()))
+        .clamp(0.01, 64.);
+        view.camera.origin = [
+            anchor[0] - view.viewport.center().x / view.camera.zoom,
+            anchor[1] - view.viewport.center().y / view.camera.zoom,
+        ];
+    }
+    if view.needs_fit && board.intake.in_flight == 0 {
+        view.fit(&board.scene);
+    }
+    if board.scene.is_empty() {
+        let empty = moth_ui::empty_board(ui);
+        actions.paste |= empty.paste;
+        if empty.open {
+            intents.push(Intent::Action(super::bindings::Action::Images));
+        }
+    }
+}
+
+/// Paints placeholders, notes and outlines of the visible items, including items
+/// in motion and the ghosts of moves being undone. Returns the items returning
+/// to place, which the selection frame follows.
+fn items(
+    ui: &mut egui::Ui,
+    c: &Canvas<'_>,
+    view: &View,
+    hover_id: Option<Uuid>,
+    fade: f32,
+    intents: &mut Vec<Intent>,
+) -> std::collections::HashMap<Uuid, Item> {
+    let board = c.board;
+    let tools = &*c.tools;
+    let settings = &*c.settings;
+    let editing = &*c.editing;
+    let drag = c.drag;
+    let moving = c.moving;
+    let resizing = c.resizing;
+    let motion = c.motion;
+    let duplicate = c.duplicate;
+    let gpu = c.gpu;
+    let compact = c.compact;
+    let overlay = c.overlay;
+    let origin = view
+        .camera
+        .world([view.viewport.min.x, view.viewport.min.y]);
+    let mut returning: std::collections::HashMap<_, _> = motion
+        .returning(motion.now(), settings.reduced_motion)
+        .into_iter()
+        .map(|item| (item.id, item))
+        .collect();
+    if let Some(resizing) = resizing {
+        returning.extend(resizing.previews().into_iter().map(|item| (item.id, item)));
+    }
+    let mut visible = board.scene.query(Rect {
+        x: origin[0],
+        y: origin[1],
+        width: view.viewport.width() / view.camera.zoom,
+        height: view.viewport.height() / view.camera.zoom,
+    });
+
+    let transitions = board.motion.copies(motion.now());
+    if moving.is_some() || !transitions.is_empty() || !returning.is_empty() {
+        let mut ids: std::collections::HashSet<_> = visible.iter().map(|item| item.id).collect();
+        for id in board
+            .selection
+            .iter()
+            .filter(|_| moving.is_some())
+            .copied()
+            .chain(transitions.iter().map(|item| item.id))
+            .chain(returning.keys().copied())
+        {
+            if ids.insert(id)
+                && let Some(item) = board.scene.get(id)
+            {
+                visible.push(item);
+            }
+        }
+    }
+    let mut groups = Vec::new();
+    for item in visible.into_iter().filter(|item| board.presented(item)) {
+        let mut presented = board
+            .motion
+            .get(item.id, motion.now())
+            .map(std::borrow::Cow::Owned)
+            .unwrap_or(std::borrow::Cow::Borrowed(item));
+        if moving.is_some()
+            && board.selection.contains(&item.id)
+            && !tools.locked
+            && !board.intake.loading
+        {
+            presented = std::borrow::Cow::Owned(motion.preview(
+                item,
+                drag,
+                view.camera.zoom,
+                settings.reduced_motion,
+            ));
+            if duplicate && item.blob().is_none() {
+                draw_note(ui, &view.camera, item);
+            }
+        }
+        if moving.is_none()
+            && let Some(returning) = returning.get(&item.id).cloned()
+        {
+            presented = std::borrow::Cow::Owned(returning);
+        }
+        let item = &presented;
+        if item.is_group() {
+            groups.push(item.as_ref().clone());
+        }
+        match item.blob() {
+            // Non-resident images show a placeholder until decoded.
+            Some(blob) if !gpu.registry.resident(blob, 1) => {
+                let p = view.camera.screen([item.rect.x, item.rect.y]);
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(p[0], p[1]),
+                    egui::vec2(
+                        item.rect.width * view.camera.zoom,
+                        item.rect.height * view.camera.zoom,
+                    ),
+                );
+                ui.painter().rect_filled(
+                    rect,
+                    moth_ui::tokens(ui.ctx()).radius_placeholder as f32,
+                    moth_ui::tokens(ui.ctx()).canvas,
+                );
+                ui.painter().rect_stroke(
+                    rect,
+                    moth_ui::tokens(ui.ctx()).radius_placeholder as f32,
+                    egui::Stroke::new(1., moth_ui::tokens(ui.ctx()).accent),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            // Notes are drawn by the UI layer in screen space.
+            None => {
+                if editing.as_ref().is_none_or(|e| e.id != item.id) {
+                    draw_note(ui, &view.camera, item);
+                }
+            }
+            Some(_) => {}
+        }
+        if !overlay {
+            outline(
+                ui,
+                &view.camera,
+                item,
+                board.selection.len() == 1
+                    && board.selection.contains(&item.id)
+                    && !(duplicate
+                        && moving.is_none()
+                        && !returning.is_empty()
+                        && !returning.contains_key(&item.id)),
+                if hover_id == Some(item.id) { fade } else { 0. },
+                settings.show_outlines,
+            );
+        }
+    }
+    if !overlay && !compact {
+        intents.extend(super::groups::chips(ui, board, &view.camera, &mut groups));
+        if !board.scene.is_empty() {
+            intents.extend(super::groups::layers(ui.ctx(), board, view.safe_area));
+        }
+    }
+    for ghost in returning.values().filter(|item| board.presented(item)) {
+        if ghost.blob().is_none() && board.scene.get(ghost.id).is_none() {
+            draw_note(ui, &view.camera, ghost);
+        }
+        if !overlay && board.scene.get(ghost.id).is_none() {
+            outline(ui, &view.camera, ghost, true, 0., settings.show_outlines);
+        }
+    }
+    for ghost in transitions.into_iter().filter(|item| board.presented(item)) {
+        if ghost.blob().is_none() && board.scene.get(ghost.id).is_none() {
+            draw_note(ui, &view.camera, &ghost);
+        }
+    }
+    returning
+}
+
+/// The selection frame, the size badge and the selection bar for the selection
+/// or the rectangle being dragged.
+fn selection(
+    ui: &mut egui::Ui,
+    c: &Canvas<'_>,
+    view: &View,
+    returning: &std::collections::HashMap<Uuid, Item>,
+    intents: &mut Vec<Intent>,
+) {
+    let board = c.board;
+    let tools = &*c.tools;
+    let settings = &*c.settings;
+    let enabled = c.enabled;
+    let registry = c.registry;
+    let drag = c.drag;
+    let moving = c.moving;
+    let motion = c.motion;
+    let compact = c.compact;
+    let overlay = c.overlay;
+    if !overlay {
+        let marquee = drag
+            .filter(|(_, _, pan)| !pan && moving.is_none())
+            .map(|(a, b, _)| {
+                let a = view.camera.world(a);
+                let b = view.camera.world(b);
+                Rect {
+                    x: a[0].min(b[0]),
+                    y: a[1].min(b[1]),
+                    width: (a[0] - b[0]).abs(),
+                    height: (a[1] - b[1]).abs(),
+                }
+            });
+        let mut bounds = egui::Rect::NOTHING;
+        let mut count = 0;
+        for item in board
+            .selection
+            .iter()
+            .filter_map(|id| board.scene.get(*id))
+            .filter(|i| board.presented(i))
+        {
+            let presented = if moving.is_some() && !tools.locked && !board.intake.loading {
+                Some(motion.preview(item, drag, view.camera.zoom, settings.reduced_motion))
+            } else {
+                selection_presentation(item, board.motion.get(item.id, motion.now()), returning)
+            };
+            let item = presented.as_ref().unwrap_or(item);
+            let envelope = item.rect.rotated_envelope(item.transform.rotation);
+            let lo = envelope.lower();
+            let hi = envelope.upper();
+            bounds = bounds.union(egui::Rect::from_min_max(
+                egui::pos2(lo[0], lo[1]),
+                egui::pos2(hi[0], hi[1]),
+            ));
+            count += 1;
+        }
+        if let Some(rect) = marquee {
+            count = board.scene.query(rect).len();
+            bounds = egui::Rect::from_min_size(
+                egui::pos2(rect.x, rect.y),
+                egui::vec2(rect.width, rect.height),
+            );
+        }
+        if bounds.is_finite() {
+            moth_ui::canvas::selection_badge(ui.ctx(), view.viewport, count, bounds.size());
+            if marquee.is_none() && !board.selection.is_empty() {
+                let screen = |p: egui::Pos2| {
+                    let p = view.camera.screen([p.x, p.y]);
+                    egui::pos2(p[0], p[1])
+                };
+                let frame = egui::Rect::from_min_max(screen(bounds.min), screen(bounds.max));
+                selection_frame(ui, frame, board.selection.len() > 1, settings.show_outlines);
+                if !compact {
+                    let group = super::selection::single_group(&board.scene, &board.selection);
+                    let kind = if let Some(group) = group {
+                        super::surfaces::SelectionKind::Group(board.scene.children(group).count())
+                    } else if board.selection.len() > 1 {
+                        super::surfaces::SelectionKind::Several
+                    } else if board
+                        .selection
+                        .iter()
+                        .any(|id| board.scene.get(*id).is_some_and(|i| i.note().is_some()))
+                    {
+                        super::surfaces::SelectionKind::Note
+                    } else {
+                        super::surfaces::SelectionKind::Image
+                    };
+                    intents.extend(super::surfaces::selection(
+                        ui.ctx(),
+                        frame,
+                        view.viewport,
+                        kind,
+                        enabled,
+                        registry,
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// The context menu, double-click (edit a note, enter a group, focus an image,
+/// add a note) and the inline note editor.
+fn input(ui: &mut egui::Ui, c: &mut Canvas<'_>, view: &View, intents: &mut Vec<Intent>) {
+    let board = c.board;
+    let enabled = c.enabled;
+    let registry = c.registry;
+    let editing = &mut *c.editing;
+    let overlay = c.overlay;
+    let secondary_gesture = c.secondary_gesture;
+    let activate = c.activate;
+    if !overlay {
+        let response = ui.interact(
+            view.viewport,
+            egui::Id::new("canvas_context"),
+            egui::Sense::click(),
+        );
+        if !secondary_gesture {
+            response.context_menu(|ui| {
+                super::surfaces::context(
+                    ui,
+                    super::surfaces::CONTEXT_MENU,
+                    enabled,
+                    registry,
+                    intents,
+                )
+            });
+        }
+        // Double-click edits a note in place, or creates one on empty canvas.
+        if response.double_clicked()
+            && activate
+            && board.idle()
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            let world = view.camera.world([pos.x, pos.y]);
+            let hit = board
+                .scene
+                .query(Rect {
+                    x: world[0],
+                    y: world[1],
+                    width: 1. / view.camera.zoom,
+                    height: 1. / view.camera.zoom,
+                })
+                .into_iter()
+                .rev()
+                .find(|i| {
+                    board.presented(i) && i.rect.contains_rotated(i.transform.rotation, world)
+                });
+            let chip = super::groups::chip_rects(ui.ctx())
+                .into_iter()
+                .rev()
+                .find(|(_, rect)| rect.contains(pos))
+                .map(|(id, _)| id);
+            match hit {
+                _ if chip.is_some() => {
+                    intents.push(Intent::Action(super::bindings::Action::RenameGroup))
+                }
+                Some(item)
+                    if super::selection::target(&board.scene, board.entered, item.id)
+                        != item.id =>
+                {
+                    intents.push(Intent::EnterGroup(item.id))
+                }
+                Some(item) if item.is_group() => intents.push(Intent::EnterGroup(item.id)),
+                Some(item) if item.note().is_some() => intents.push(Intent::EditNote(item.id)),
+                Some(item) => intents.push(Intent::FocusItem(item.id)),
+                None => intents.push(Intent::AddNote(world)),
+            }
+        }
+        // The inline note editor floats above the canvas.
+        if let Some(editing) = editing {
+            let anchor = view.camera.screen(editing.anchor);
+            let zoom = view.camera.zoom;
+            egui::Area::new(egui::Id::new("note_editor"))
+                .fixed_pos(egui::pos2(anchor[0], anchor[1]))
+                .show(ui.ctx(), |ui| {
+                    let response = note_editor(ui, editing, zoom);
+                    if editing.focus {
+                        response.response.request_focus();
+                        intents.push(Intent::NoteFocused);
+                    }
+                    if response.response.lost_focus() {
+                        intents.push(Intent::CommitNote);
+                    }
+                });
+        }
+    }
+}
+
+/// The navigator; clicking it moves the camera.
+fn minimap(ui: &mut egui::Ui, c: &Canvas<'_>, view: &mut View) {
+    let board = c.board;
+    let settings = &*c.settings;
+    let compact = c.compact;
+    if !compact
+        && settings.show_minimap
+        && let Some(bounds) = board.scene.bounds()
+    {
+        let normalize = |x: f32, y: f32| {
+            egui::pos2(
+                (x - bounds.x) / bounds.width,
+                (y - bounds.y) / bounds.height,
+            )
+        };
+        // The minimap samples at most 128 items; the indexed bounds still include every item.
+        let samples: Vec<_> = board
+            .scene
+            .items()
+            .take(128)
+            .map(|item| {
+                let envelope = item.rect.rotated_envelope(item.transform.rotation);
+                let lower = envelope.lower();
+                let upper = envelope.upper();
+                egui::Rect::from_min_max(
+                    normalize(lower[0], lower[1]),
+                    normalize(upper[0], upper[1]),
+                )
+            })
+            .collect();
+        let world_min = view
+            .camera
+            .world([view.viewport.left(), view.viewport.top()]);
+        let world_max = view
+            .camera
+            .world([view.viewport.right(), view.viewport.bottom()]);
+        if let Some(p) = moth_ui::canvas::minimap(
+            ui.ctx(),
+            view.safe_area,
+            &samples,
+            egui::vec2(bounds.width, bounds.height),
+            moth_ui::canvas::Minimap {
+                size: settings.minimap_size,
+                alignment: settings.minimap_alignment(),
+                opacity: settings.minimap_opacity / 100.,
+                distance: settings.minimap_distance / 100.,
+                images: settings.minimap_images,
+            },
+            egui::Rect::from_min_max(
+                normalize(world_min[0], world_min[1]),
+                normalize(world_max[0], world_max[1]),
+            ),
+        ) {
+            view.camera.origin = [
+                bounds.x + p.x * bounds.width - view.viewport.center().x / view.camera.zoom,
+                bounds.y + p.y * bounds.height - view.viewport.center().y / view.camera.zoom,
+            ];
+        }
+    }
+}
+
+/// The rectangle of a selection drag in progress.
+fn marquee(ui: &mut egui::Ui, c: &Canvas<'_>) {
+    let drag = c.drag;
+    let moving = c.moving;
+    if let Some((a, b, false)) = drag
+        && moving.is_none()
+    {
+        ui.painter().rect_stroke(
+            egui::Rect::from_two_pos(egui::pos2(a[0], a[1]), egui::pos2(b[0], b[1])),
+            moth_ui::tokens(ui.ctx()).radius_none as f32,
+            egui::Stroke::new(1., moth_ui::tokens(ui.ctx()).accent),
+            egui::StrokeKind::Inside,
+        );
+    }
 }
 
 fn selection_frame(ui: &mut egui::Ui, frame: egui::Rect, multiple: bool, show: bool) {
