@@ -65,7 +65,8 @@ Latest release: **0.1.0-alpha.16** (2026-10-29). Pre-alpha builds for Windows, m
 | 1.0 | M5, M6, M7 | All P0 and P1 features, all performance targets | |
 | 1.5 | M10 items tagged 1.5, M12, M14 | Ruler with calibration, Obsidian interop, capture integrations | |
 | 2.0 | M8, M9, M10 items tagged 2.0, M16 | Web build and collaboration; value and perspective tools; Excalidraw, draw.io, UML/XML, Blender, video frames | |
-| 1.x, no target yet | M11, M13, M15, untagged M10 items | Review workflow, CLI, PDF references, other artist tools | |
+| 1.x, no target yet | M13, M15, untagged M10 items | CLI, PDF references, other artist tools | |
+| Someday | M11 | Review workflow; not planned for any release, picked up only on request | |
 
 M8 and M9 come after 1.0, but the architecture they depend on (stable UUIDs, fractional z-order, command-based mutations, content-addressed blobs) is already in place from M0–M1. M10–M16 do not depend on M8 or M9 and ship in 1.x minor releases as they land.
 
@@ -443,7 +444,9 @@ Tools that help while painting from references, not only while collecting them. 
 
 **Exit criteria:** every tool works on a 1,000-image board without breaking the frame budget; none of them mutates image data. Persisted overlays, measurements and calibrations follow the format-change rules (schema bump, migration, corpus files, `docs/FORMAT.md`).
 
-### M11 — Review and presentation
+### M11 — Review and presentation (someday)
+
+Parked by the maintainer on 2026-10-30: not planned for any release; start it only when asked.
 
 For art directors who collect references and give feedback on work in progress. Everything is local; sharing and live comments stay in M9.
 
