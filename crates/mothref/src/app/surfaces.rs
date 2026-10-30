@@ -387,10 +387,24 @@ fn row(
                     intents.push(Intent::Action(ZoomOut));
                 }
                 let mut percent = zoom * 100.;
+                // Whole percents in a field as wide as the widest value, so the toolbar
+                // keeps its width while zooming.
+                let font = egui::TextStyle::Button.resolve(ui.style());
+                let color = ui.visuals().text_color();
+                let widest = ui
+                    .fonts_mut(|fonts| fonts.layout_no_wrap("6400%".into(), font, color))
+                    .size()
+                    .x;
+                let size = egui::vec2(
+                    widest + ui.spacing().button_padding.x * 2.,
+                    ui.spacing().interact_size.y,
+                );
                 if ui
-                    .add(
+                    .add_sized(
+                        size,
                         egui::DragValue::new(&mut percent)
                             .range(1.0..=6400.)
+                            .max_decimals(0)
                             .suffix("%"),
                     )
                     .changed()
