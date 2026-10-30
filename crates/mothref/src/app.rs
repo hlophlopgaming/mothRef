@@ -1988,6 +1988,10 @@ impl App {
             },
             viewport: self.workspace.board.view.viewport,
             grayscale: self.workspace.board.grayscale,
+            tint: self
+                .settings
+                .grayscale_tint
+                .map(|rgb| rgb.map(|c| f32::from(c) / 255.)),
             sampling: moth_scene::Sampling::from_code(self.settings.sampling + 1)
                 .unwrap_or_default(),
         };

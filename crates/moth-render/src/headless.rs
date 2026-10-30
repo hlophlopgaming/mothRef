@@ -283,7 +283,9 @@ pub async fn golden_transform(software: bool) -> Result<(), String> {
         height: 32.,
     };
     type Sample = ((u32, u32), Option<(u32, u32)>);
-    let cases: [(&str, Rect, Transform, &[Sample]); 9] = [
+    /// A warm sepia-like tone for the monochrome case.
+    const TINT: [f32; 3] = [0.75, 0.55, 0.35];
+    let cases: [(&str, Rect, Transform, &[Sample]); 10] = [
         (
             "identity",
             square,
@@ -293,6 +295,12 @@ pub async fn golden_transform(software: bool) -> Result<(), String> {
         ),
         (
             "canvas grayscale",
+            square,
+            Transform::default(),
+            &[((19, 35), Some((4, 20))), ((43, 19), Some((28, 4)))],
+        ),
+        (
+            "canvas tint",
             square,
             Transform::default(),
             &[((19, 35), Some((4, 20))), ((43, 19), Some((28, 4)))],
@@ -377,7 +385,8 @@ pub async fn golden_transform(software: bool) -> Result<(), String> {
     let texture = target(&device, 64, 64);
     let view = texture.create_view(&Default::default());
     for (name, rect, transform, samples) in cases {
-        registry.grayscale = name == "canvas grayscale";
+        registry.grayscale = matches!(name, "canvas grayscale" | "canvas tint");
+        registry.tint = (name == "canvas tint").then_some(TINT);
         let mut scene = Scene::default();
         let mut item = Item::image(image.hash, rect, None);
         item.transform = transform;
@@ -426,12 +435,27 @@ pub async fn golden_transform(software: bool) -> Result<(), String> {
                     let l = linear(expected[0]) * 0.2126
                         + linear(expected[1]) * 0.7152
                         + linear(expected[2]) * 0.0722;
-                    let g = if l <= 0.0031308 {
-                        12.92 * l
-                    } else {
-                        1.055 * l.powf(1. / 2.4) - 0.055
+                    let encode = |l: f32| {
+                        if l <= 0.0031308 {
+                            12.92 * l
+                        } else {
+                            1.055 * l.powf(1. / 2.4) - 0.055
+                        }
                     };
-                    expected[..3].fill((g * 255.).round() as u8);
+                    if registry.tint.is_some() && !transform.grayscale {
+                        // Same lightness mapping as the shader's `monochrome`.
+                        let v = l.powf(1. / 2.2);
+                        for (channel, tint) in expected[..3].iter_mut().zip(TINT) {
+                            let toned = if v > 0.5 {
+                                tint + (1. - tint) * (2. * v - 1.)
+                            } else {
+                                tint * 2. * v
+                            };
+                            *channel = (encode(toned.powf(2.2)) * 255.).round() as u8;
+                        }
+                    } else {
+                        expected[..3].fill((encode(l) * 255.).round() as u8);
+                    }
                 }
                 for channel in &mut expected[..3] {
                     *channel = (*channel as f32 * transform.opacity).round() as u8;

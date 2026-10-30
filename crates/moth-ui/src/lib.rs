@@ -641,6 +641,8 @@ pub enum Text {
     PreviousImage,
     /// Localized CanvasGrayscale control.
     CanvasGrayscale,
+    /// Color the board's grayscale view is toned with.
+    GrayscaleTint,
     /// Localized PackFit control.
     PackFit,
     /// Localized CoordinatePicker control.
@@ -1265,6 +1267,7 @@ mod tests {
             Text::NextImage,
             Text::PreviousImage,
             Text::CanvasGrayscale,
+            Text::GrayscaleTint,
             Text::PackFit,
             Text::CoordinatePicker,
             Text::ExportZip,

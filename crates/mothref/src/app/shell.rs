@@ -23,6 +23,8 @@ pub(super) struct Frame {
     pub viewport: egui::Rect,
     /// View-only grayscale, never changes board content.
     pub grayscale: bool,
+    /// sRGB color the grayscale view is toned with; `None` keeps it gray.
+    pub tint: Option<[f32; 3]>,
     pub sampling: moth_scene::Sampling,
 }
 
@@ -219,6 +221,7 @@ impl Shell {
         // Resize events can lag window.inner_size(); clip to the acquired attachment.
         let size = texture.texture.size();
         gpu.registry.grayscale = frame.grayscale;
+        gpu.registry.tint = frame.tint;
         gpu.registry.sampling = frame.sampling;
         let tokens = moth_ui::tokens(&self.ctx);
         gpu.registry.backdrops = backdrops(tokens);

@@ -8,6 +8,7 @@ struct Out {
     @location(3) @interpolate(flat) layer: u32,
     @location(4) @interpolate(flat) lod: f32,
     @location(5) @interpolate(flat) appearance: vec4<f32>,
+    @location(6) @interpolate(flat) tint: vec4<f32>,
 }
 @group(0) @binding(0) var images: texture_2d_array<f32>;
 @group(0) @binding(1) var linear_sampler: sampler;
@@ -25,6 +26,7 @@ struct Out {
     @location(9) layer: u32,
     @location(10) lod: f32,
     @location(11) appearance: vec4<f32>,
+    @location(12) tint: vec4<f32>,
 ) -> Out {
     // Two triangles over four corners; the CPU supplies rotated positions, so the shader
     // only picks one per vertex.
@@ -43,7 +45,20 @@ struct Out {
     out.layer = layer;
     out.lod = lod;
     out.appearance = appearance;
+    out.tint = tint;
     return out;
+}
+// Gray of the same luminance; with a tint, shadows stay dark, highlights stay light
+// and the middle tones take the tint, mapped in perceptual lightness so the image
+// keeps its values.
+fn monochrome(rgb: vec3<f32>, tint: vec4<f32>) -> vec3<f32> {
+    let l = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+    if (tint.a < 0.5) {
+        return vec3(l);
+    }
+    let v = pow(l, 1. / 2.2);
+    let toned = select(tint.rgb * (2. * v), mix(tint.rgb, vec3(1.), 2. * v - 1.), v > 0.5);
+    return pow(toned, vec3(2.2));
 }
 fn sample_mip(in: Out, level: f32) -> vec4<f32> {
     let size = vec2<f32>(textureDimensions(images, i32(level)));
@@ -71,7 +86,7 @@ fn sample_mip(in: Out, level: f32) -> vec4<f32> {
         discard;
     }
     var color = mix(sample_mip(in, floor(in.lod)), sample_mip(in, ceil(in.lod)), fract(in.lod));
-    color = vec4(mix(color.rgb, vec3(dot(color.rgb, vec3(0.2126, 0.7152, 0.0722))), in.appearance.y), color.a * in.appearance.x);
+    color = vec4(mix(color.rgb, monochrome(color.rgb, in.tint), in.appearance.y), color.a * in.appearance.x);
     if OUTPUT_SRGB { return color; }
     let gamma = select(color.rgb * 12.92, 1.055 * pow(color.rgb, vec3(1. / 2.4)) - 0.055, color.rgb > vec3(0.0031308));
     return vec4(gamma, color.a);

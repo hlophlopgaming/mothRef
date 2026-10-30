@@ -69,6 +69,8 @@ struct Instance {
     layer: u32,
     lod: f32,
     appearance: [f32; 4],
+    /// Monochrome color in sRGB; alpha 1 tints the grayscale, 0 leaves it gray.
+    tint: [f32; 4],
 }
 /// Content geometry of one item, shared by rendering and the scene-level hit tests.
 struct Content {
@@ -159,6 +161,7 @@ fn backdrop_instance(
         layer: 0,
         lod: style.radius.unwrap_or(BACKDROP_RADIUS * camera.zoom) * scale,
         appearance: style.border,
+        tint: [0.; 4],
     }
 }
 fn source_region(dims: [f32; 2], flip: [bool; 2]) -> [f32; 4] {
@@ -218,6 +221,8 @@ pub enum RenderError {
 pub struct Registry {
     /// Optional view-only grayscale leaves image metadata unchanged.
     pub grayscale: bool,
+    /// sRGB color the view-only grayscale is toned with; `None` keeps it gray.
+    pub tint: Option<[f32; 3]>,
     /// Default interpolation for items without a persisted override.
     pub sampling: moth_scene::Sampling,
     /// Low-quality mode keeps its preview ceiling instead of requesting original tiles.
@@ -292,7 +297,7 @@ impl Registry {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{label:Some("quads"),layout:Some(&pipeline_layout),vertex:wgpu::VertexState{module:&shader,entry_point:Some("vs"),buffers:&[Some(wgpu::VertexBufferLayout{array_stride:std::mem::size_of::<Instance>() as u64,step_mode:wgpu::VertexStepMode::Instance,attributes:&wgpu::vertex_attr_array![0=>Float32x2,1=>Float32x2,2=>Float32x2,3=>Float32x2,4=>Float32x2,5=>Float32x2,6=>Float32x2,7=>Float32x2,8=>Float32x4,9=>Uint32,10=>Float32,11=>Float32x4]})],compilation_options:Default::default()},fragment:Some(wgpu::FragmentState{module:&shader,entry_point:Some("fs"),targets:&[Some(wgpu::ColorTargetState{format,blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})],compilation_options:wgpu::PipelineCompilationOptions{constants:&[("OUTPUT_SRGB",if format.is_srgb(){1.}else{0.})],..Default::default()}}),primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview_mask:None,cache:None});
+        let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{label:Some("quads"),layout:Some(&pipeline_layout),vertex:wgpu::VertexState{module:&shader,entry_point:Some("vs"),buffers:&[Some(wgpu::VertexBufferLayout{array_stride:std::mem::size_of::<Instance>() as u64,step_mode:wgpu::VertexStepMode::Instance,attributes:&wgpu::vertex_attr_array![0=>Float32x2,1=>Float32x2,2=>Float32x2,3=>Float32x2,4=>Float32x2,5=>Float32x2,6=>Float32x2,7=>Float32x2,8=>Float32x4,9=>Uint32,10=>Float32,11=>Float32x4,12=>Float32x4]})],compilation_options:Default::default()},fragment:Some(wgpu::FragmentState{module:&shader,entry_point:Some("fs"),targets:&[Some(wgpu::ColorTargetState{format,blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})],compilation_options:wgpu::PipelineCompilationOptions{constants:&[("OUTPUT_SRGB",if format.is_srgb(){1.}else{0.})],..Default::default()}}),primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview_mask:None,cache:None});
         let backdrop_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("group backdrops"),
             source: wgpu::ShaderSource::Wgsl(include_str!("backdrop.wgsl").into()),
@@ -306,7 +311,7 @@ impl Registry {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Instance>() as u64,
                     step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &wgpu::vertex_attr_array![0=>Float32x2,1=>Float32x2,2=>Float32x2,3=>Float32x2,4=>Float32x2,5=>Float32x2,6=>Float32x2,7=>Float32x2,8=>Float32x4,9=>Uint32,10=>Float32,11=>Float32x4],
+                    attributes: &wgpu::vertex_attr_array![0=>Float32x2,1=>Float32x2,2=>Float32x2,3=>Float32x2,4=>Float32x2,5=>Float32x2,6=>Float32x2,7=>Float32x2,8=>Float32x4,9=>Uint32,10=>Float32,11=>Float32x4,12=>Float32x4],
                 })],
                 compilation_options: Default::default(),
             },
@@ -376,6 +381,7 @@ impl Registry {
         });
         Self {
             grayscale: false,
+            tint: None,
             sampling: moth_scene::Sampling::Smooth,
             tile_detail: true,
             tile_threshold: moth_io::MAX_SIDE,
@@ -1212,6 +1218,12 @@ impl Registry {
             0.,
             if nearest { 1. } else { 0. },
         ];
+        // The board's color applies only to its own monochrome view; an item's own
+        // grayscale stays gray.
+        let tint = match self.tint {
+            Some([r, g, b]) if self.grayscale => [r, g, b, 1.],
+            _ => [0.; 4],
+        };
         let clip = target.clip.map_or(
             [0., 0., target.screen[0], target.screen[1]],
             |[x, y, w, h]| {
@@ -1246,6 +1258,7 @@ impl Registry {
                 layer: layer as u32,
                 lod: base_lod,
                 appearance,
+                tint,
             });
             classes.push(class);
             return;
@@ -1294,6 +1307,7 @@ impl Registry {
                 layer: layer as u32,
                 lod: 0.,
                 appearance: [appearance[0], appearance[1], continuous, appearance[3]],
+                tint,
             });
             classes.push(class);
         }

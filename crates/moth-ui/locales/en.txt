@@ -411,6 +411,7 @@ BackgroundColor = Background color
 CanvasColor = Canvas color
 
 SelectionColor = Selection color
+GrayscaleTint = Grayscale view tint
 
 OverlaySelection = Overlay selection
 OverlayWindowLimit = Close floating images before opening more (maximum 32).

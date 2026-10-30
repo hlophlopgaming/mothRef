@@ -411,6 +411,7 @@ BackgroundColor = Цвет фона
 CanvasColor = Цвет холста
 
 SelectionColor = Цвет выделения
+GrayscaleTint = Оттенок чёрно-белого режима
 
 OverlaySelection = Выделение в отдельных окнах
 OverlayWindowLimit = Закройте плавающие изображения перед открытием новых (не более 32).
