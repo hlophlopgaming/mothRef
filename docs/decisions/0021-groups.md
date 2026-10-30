@@ -47,6 +47,6 @@ exact inverse that the journal, undo and later sync share.
 
 - Older MothRef versions reject schema 6 boards, including boards without
   groups once saved by this version.
-- Exports and the `.pur` exporter ignore backdrops for now (ROADMAP M4
-  follow-ups), as do images dropped from outside onto a backdrop.
+- SVG/PNG/PDF exports draw backdrops and titles in the dark-theme swatches; the
+  `.pur` exporter still writes members without their groups.
 - JSON Canvas group nodes (M12) map directly onto this model.

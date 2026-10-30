@@ -109,6 +109,8 @@ pub(super) enum Intent {
     EnterGroup(Uuid),
     /// Select exactly this item (with its members), entering its group if needed.
     SelectItem(Uuid),
+    /// Layers drawer drop: move an item into a group, next to an item, or to the board.
+    MoveLayer(Uuid, Option<Uuid>),
     /// Lay a finished import burst out with a chosen arrangement.
     Arrange(Arrange, Vec<Uuid>),
     /// Fit the camera to the current selection.

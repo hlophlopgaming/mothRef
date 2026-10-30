@@ -106,18 +106,7 @@ pub(super) fn backdrops_first(scene: &Scene, items: &mut Vec<&Item>) {
 /// to the board when the pointer left every group. A group its last members left is
 /// removed in the same step, so no empty backdrop stays behind.
 pub(super) fn regroup(scene: &Scene, selection: &HashSet<Uuid>, drop: [f32; 2]) -> Vec<Command> {
-    let target = scene
-        .query(Rect {
-            x: drop[0],
-            y: drop[1],
-            width: 0.001,
-            height: 0.001,
-        })
-        .into_iter()
-        .filter(|item| item.is_group() && !selection.contains(&item.id))
-        .filter(|item| item.rect.contains_rotated(0., drop))
-        .max_by_key(|item| scene.ancestors(item.id).count())
-        .map(|item| item.id);
+    let target = group_at(scene, drop, selection);
     let roots: Vec<_> = selection
         .iter()
         .filter_map(|id| scene.get(*id))
@@ -143,6 +132,74 @@ pub(super) fn regroup(scene: &Scene, selection: &HashSet<Uuid>, drop: [f32; 2]) 
         {
             commands.push(Command::Remove(group));
         }
+    }
+    commands
+}
+/// The innermost group whose backdrop contains `point`, skipping `excluded` groups.
+pub(super) fn group_at(scene: &Scene, point: [f32; 2], excluded: &HashSet<Uuid>) -> Option<Uuid> {
+    scene
+        .query(Rect {
+            x: point[0],
+            y: point[1],
+            width: 0.001,
+            height: 0.001,
+        })
+        .into_iter()
+        .filter(|item| item.is_group() && !excluded.contains(&item.id))
+        .filter(|item| item.rect.contains_rotated(0., point))
+        .max_by_key(|item| scene.ancestors(item.id).count())
+        .map(|item| item.id)
+}
+/// Where a new item dropped or pasted at `point` belongs: the group under it, when one
+/// more level still fits.
+pub(super) fn landing(scene: &Scene, point: [f32; 2]) -> Option<Uuid> {
+    group_at(scene, point, &HashSet::new())
+        .filter(|group| scene.ancestors(*group).count() + 2 <= MAX_GROUP_DEPTH)
+}
+/// Moves `id` as the Layers drawer asks: into the group `onto`, above the item `onto`
+/// in that item's group, or out to the board with `None`.
+pub(super) fn move_layer(scene: &Scene, id: Uuid, onto: Option<Uuid>) -> Vec<Command> {
+    let Some(item) = scene.get(id) else {
+        return Vec::new();
+    };
+    let target = onto.and_then(|onto| scene.get(onto));
+    let parent = match target {
+        Some(target) if target.is_group() => Some(target.id),
+        Some(target) => target.parent,
+        None => None,
+    };
+    if parent.is_some_and(|group| !scene.can_join(id, group)) {
+        return Vec::new();
+    }
+    let mut commands = Vec::new();
+    match target.filter(|target| !target.is_group() && !item.is_group()) {
+        // Above a sibling: a new z between it and the next item up, in one step with
+        // the new parent.
+        Some(target) => {
+            let above = scene
+                .items()
+                .filter(|other| other.z > target.z && other.id != id)
+                .map(|other| &other.z)
+                .min();
+            let z = match above {
+                Some(above) => FractionalIndex::new_between(&target.z, above),
+                None => Some(FractionalIndex::new_after(&target.z)),
+            };
+            let Some(z) = z else {
+                return Vec::new();
+            };
+            let mut moved = item.clone();
+            moved.z = z;
+            moved.parent = parent;
+            commands.extend([Command::Remove(id), Command::Insert(moved)]);
+        }
+        None if item.parent != parent => commands.push(Command::SetParent { id, parent }),
+        None => {}
+    }
+    if let Some(old) = item.parent.filter(|old| Some(*old) != parent)
+        && scene.children(old).all(|child| child.id == id)
+    {
+        commands.push(Command::Remove(old));
     }
     commands
 }
@@ -424,7 +481,11 @@ pub(super) fn layers(
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_width(width);
                 ui.horizontal(|ui| {
-                    ui.strong(text(Text::Layers));
+                    // The header takes a dropped row out of every group.
+                    let header = ui.strong(text(Text::Layers));
+                    if let Some(id) = header.dnd_release_payload::<Uuid>() {
+                        intents.push(super::Intent::MoveLayer(*id, None));
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if moth_ui::icons::button(
                             ui,
@@ -486,14 +547,32 @@ pub(super) fn layers(
                                     );
                                 }
                                 let selected = board.selection.contains(&row.id);
-                                if ui
-                                    .add(
-                                        egui::Button::selectable(selected, row_label(item))
-                                            .truncate(),
-                                    )
-                                    .clicked()
-                                {
+                                let response = ui.add(
+                                    egui::Button::selectable(selected, row_label(item))
+                                        .truncate()
+                                        .sense(egui::Sense::click_and_drag()),
+                                );
+                                response.dnd_set_drag_payload(row.id);
+                                if response.clicked() {
                                     intents.push(super::Intent::SelectItem(row.id));
+                                }
+                                // Dropping a row on a group puts it inside; on an item,
+                                // just above that item in the same group.
+                                if response
+                                    .dnd_hover_payload::<Uuid>()
+                                    .is_some_and(|id| *id != row.id)
+                                {
+                                    ui.painter().rect_stroke(
+                                        response.rect,
+                                        tokens.radius_s,
+                                        egui::Stroke::new(1.5, tokens.accent),
+                                        egui::StrokeKind::Inside,
+                                    );
+                                }
+                                if let Some(id) = response.dnd_release_payload::<Uuid>()
+                                    && *id != row.id
+                                {
+                                    intents.push(super::Intent::MoveLayer(*id, Some(row.id)));
                                 }
                             });
                         }

@@ -308,6 +308,7 @@ impl App {
             action,
             Delete
                 | Duplicate
+                | ExportSelection
                 | NudgeLeft
                 | NudgeRight
                 | NudgeUp

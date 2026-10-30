@@ -1118,6 +1118,13 @@ impl App {
                         ));
                 }
             }
+            Intent::MoveLayer(id, onto) => {
+                if self.workspace.board.idle() && !self.tools.locked {
+                    let commands = groups::move_layer(&self.workspace.board.scene, id, onto);
+                    self.workspace
+                        .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+                }
+            }
             Intent::SelectItem(id) => {
                 let board = &mut self.workspace.board;
                 if board.scene.get(id).is_none() {

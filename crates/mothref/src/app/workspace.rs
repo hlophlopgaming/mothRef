@@ -468,6 +468,7 @@ impl Workspace {
                     if !paste {
                         item.name = self.board.storage().source_name(done.request.handle);
                     }
+                    item.parent = super::groups::landing(&self.board.scene, point);
                     self.board.burst.push(item.id);
                     self.persist(moth_platform::boards::Request::Apply(
                         Command::Insert(item),
@@ -495,6 +496,7 @@ impl Workspace {
                     if !paste {
                         item.name = self.board.storage().source_name(done.request.handle);
                     }
+                    item.parent = super::groups::landing(&self.board.scene, point);
                     self.board.burst.push(item.id);
                     self.persist(moth_platform::boards::Request::Apply(
                         Command::Insert(item),

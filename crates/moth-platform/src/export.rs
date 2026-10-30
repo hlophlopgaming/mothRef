@@ -664,6 +664,10 @@ fn note_export_lines(
     }
     Ok(lines)
 }
+/// Group backdrop colors by palette code, the dark theme's swatches.
+const GROUP_SWATCHES: [&str; moth_scene::GROUP_COLORS as usize] = [
+    "#9a9f94", "#a6c47a", "#e0b46c", "#8fb8de", "#e58fae", "#b4a0d8",
+];
 fn svg(
     storage: &DesktopStorage,
     sources: &HashMap<BlobId, Handle>,
@@ -687,7 +691,29 @@ fn svg(
             .fontdb_mut()
             .load_font_data(include_bytes!("../../moth-ui/fonts/NotoSans-Regular.ttf").to_vec());
     }
-    for (index, item) in items.iter().enumerate() {
+    // Backdrops go first, outer groups before inner ones, so no tint covers an image.
+    let mut groups: Vec<_> = items.iter().filter(|item| item.is_group()).collect();
+    groups
+        .sort_by(|a, b| (b.rect.width * b.rect.height).total_cmp(&(a.rect.width * a.rect.height)));
+    for item in groups {
+        let (Some(style), r) = (item.group_style(), item.rect) else {
+            continue;
+        };
+        let swatch = GROUP_SWATCHES[style.color as usize % GROUP_SWATCHES.len()];
+        svg.push_str(&format!(
+            r##"<rect x="{}" y="{}" width="{}" height="{}" rx="14" fill="{swatch}" fill-opacity="0.1" stroke="{swatch}" stroke-opacity="0.4"/>"##,
+            r.x, r.y, r.width, r.height
+        ));
+        if !style.title.is_empty() {
+            svg.push_str(&format!(
+                r##"<text x="{}" y="{}" fill="{swatch}" font-family="Noto Sans" font-size="16">{}</text>"##,
+                r.x + 24.,
+                r.y + 24.,
+                escape(&style.title)
+            ));
+        }
+    }
+    for (index, item) in items.iter().filter(|item| !item.is_group()).enumerate() {
         let r = item.rect;
         let t = item.transform;
         let (cx, cy) = (r.x + r.width / 2., r.y + r.height / 2.);
