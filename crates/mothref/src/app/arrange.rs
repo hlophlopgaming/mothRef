@@ -531,7 +531,7 @@ pub fn translate(
 /// Copies of grouped items join the copy of their group; a copied member whose group
 /// stayed behind joins the original group. Inserts are reordered so a group always
 /// exists before its members.
-fn adopt_copies(items: &[&Item], out: &mut [Command]) {
+fn adopt_copies(items: &[&Item], out: &mut Vec<Command>) {
     let ids: std::collections::HashMap<_, _> = items
         .iter()
         .zip(out.iter())
@@ -544,22 +544,19 @@ fn adopt_copies(items: &[&Item], out: &mut [Command]) {
             copy.parent = Some(ids.get(&parent).copied().unwrap_or(parent));
         }
     }
-    let parents: std::collections::HashMap<_, _> = out
-        .iter()
+    // Duplicating emits inserts only.
+    let copies: Vec<_> = out
+        .drain(..)
         .filter_map(|command| match command {
-            Command::Insert(copy) => Some((copy.id, copy.parent)),
+            Command::Insert(copy) => Some(copy),
             _ => None,
         })
         .collect();
-    let depth = |mut id| {
-        let mut depth = 0;
-        while let Some(Some(parent)) = parents.get(&id) {
-            depth += 1;
-            id = *parent;
-        }
-        depth
-    };
-    out.sort_by_cached_key(|command| depth(command.id()));
+    out.extend(
+        moth_scene::insertion_order(copies, |copy| copy)
+            .into_iter()
+            .map(Command::Insert),
+    );
 }
 /// Reuse remove/insert commands so layer changes need no new journal encoding.
 pub fn reorder(
@@ -663,6 +660,39 @@ pub(super) fn scale(items: &[&moth_scene::Item], factor: f32) -> Vec<Command> {
 mod tests {
     use super::*;
     use moth_scene::Scene;
+
+    /// Duplicating and deleting the corpus board with every item kind keeps each
+    /// insert after what it references, and undoing the delete restores it exactly.
+    #[test]
+    fn duplicate_and_delete_keep_every_item_kind() {
+        let bytes = include_bytes!("../../../../corpus/moth/v6.moth");
+        let mut scene = moth_format::board::read(&mut std::io::Cursor::new(&bytes[..]))
+            .unwrap()
+            .scene;
+        let mut items: Vec<_> = scene.items().collect();
+        items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
+        let original = items.len();
+        let copies = translate(&items, [500., 0.], true, scene.top());
+        assert_eq!(copies.len(), original);
+        for command in copies {
+            scene.apply(command).unwrap();
+        }
+        assert_eq!(scene.len(), original * 2);
+        let mut snapshot: Vec<_> = scene.items().cloned().collect();
+        snapshot.sort_by_key(|item| item.id);
+        let ids = scene.items().map(|item| item.id).collect();
+        let mut undo = Vec::new();
+        for command in super::super::groups::removal(&scene, ids) {
+            undo.push(scene.apply(command).unwrap());
+        }
+        assert!(scene.is_empty());
+        for command in undo.into_iter().rev() {
+            scene.apply(command).unwrap();
+        }
+        let mut restored: Vec<_> = scene.items().cloned().collect();
+        restored.sort_by_key(|item| item.id);
+        assert_eq!(restored, snapshot);
+    }
 
     fn blob(n: u8) -> moth_scene::BlobId {
         moth_scene::BlobId::from_bytes([n; 32])

@@ -213,9 +213,14 @@ pub(super) fn removal(scene: &Scene, mut ids: HashSet<Uuid>) -> Vec<Command> {
             parents.extend(scene.get(group).and_then(|g| g.parent));
         }
     }
-    let mut ordered: Vec<_> = ids.into_iter().collect();
-    ordered.sort_by_cached_key(|id| std::cmp::Reverse(scene.ancestors(*id).count()));
-    ordered.into_iter().map(Command::Remove).collect()
+    // The reverse of an insertion order: nothing is removed while something left
+    // still points at it.
+    let items = ids.iter().filter_map(|id| scene.get(*id)).collect();
+    moth_scene::insertion_order(items, |item| item)
+        .into_iter()
+        .rev()
+        .map(|item| Command::Remove(item.id))
+        .collect()
 }
 /// Screen rectangles of the title chips drawn this frame, innermost last; the pointer
 /// handler hit-tests them before the board so a chip can be grabbed like its group.

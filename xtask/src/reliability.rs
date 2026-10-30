@@ -251,10 +251,30 @@ pub fn fixture() -> anyhow::Result<()> {
     inner.parent = Some(outer.id);
     item.parent = Some(inner.id);
     note.parent = Some(inner.id);
+    // Every item kind in every position: grouped and loose, and an empty group.
+    // Paths that rebuild a board are tested against this file, so a new kind
+    // belongs here too.
+    let mut loose = self::item();
+    loose.rect.x = 40.;
+    let empty = Item::group(
+        moth_scene::Group {
+            title: "empty".into(),
+            color: 2,
+        },
+        Rect {
+            x: 80.,
+            y: 0.,
+            width: 30.,
+            height: 20.,
+        },
+        Default::default(),
+    );
     scene.apply(Command::Insert(outer))?;
     scene.apply(Command::Insert(inner))?;
     scene.apply(Command::Insert(item))?;
     scene.apply(Command::Insert(note))?;
+    scene.apply(Command::Insert(loose))?;
+    scene.apply(Command::Insert(empty))?;
     let offset = bytes.len() as u64;
     board::append(&mut bytes, offset, 3, &board::snapshot(&scene)?)?;
     std::fs::write("corpus/moth/v6.moth", bytes)?;

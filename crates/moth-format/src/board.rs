@@ -186,7 +186,7 @@ fn group_bytes(bytes: &mut Vec<u8>, group: &Group) {
 pub fn snapshot(scene: &Scene) -> Result<Vec<u8>, Error> {
     let mut bytes = Vec::new();
     // Parents first: replaying a checkpoint must never name a group before it exists.
-    for item in scene.items_parent_first() {
+    for item in scene.items_in_insertion_order() {
         let command = encode(&Command::Insert(item.clone()));
         if bytes.len() + command.len() + 4 > 64 * 1024 * 1024 {
             return Err(Error::Budget);

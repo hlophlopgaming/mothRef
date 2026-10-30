@@ -487,25 +487,15 @@ impl State {
             bounds: loaded.scene.bounds(),
             ..LoadBatch::default()
         };
-        // Groups first, parents before their members, so no insert names a group
-        // that does not exist yet; then everything else in file order, which keeps
-        // reading the originals sequential.
-        let parents_first = loaded.scene.items_parent_first();
-        let mut items: Vec<_> = parents_first
-            .iter()
-            .copied()
-            .filter(|i| i.is_group())
-            .collect();
-        let mut rest: Vec<_> = parents_first
-            .into_iter()
-            .filter(|i| !i.is_group())
-            .collect();
-        rest.sort_by_key(|item| {
+        // File order keeps reading the originals sequential; insertion_order then
+        // only moves items after what they reference.
+        let mut items: Vec<_> = loaded.scene.items().collect();
+        items.sort_by_key(|item| {
             item.blob()
                 .and_then(|hash| loaded.blobs.get(&hash))
                 .map_or(u64::MAX, |blob| blob.offset)
         });
-        items.extend(rest);
+        let items = moth_scene::insertion_order(items, |item| item);
         let mut copied = HashSet::new();
         let loading = (|| -> io::Result<()> {
             for item in items {
@@ -1249,23 +1239,57 @@ mod tests {
             undo_limit: 256,
         }
     }
+    /// The corpus board with every item kind, grouped and loose, survives each path
+    /// that rebuilds a board from inserts: open, save and reopen, and recovery
+    /// after the process dies. Item kinds that link items must be added to it.
     #[test]
-    fn opening_inserts_groups_before_their_members() {
-        let mut state = state();
-        let path = state.storage.base_directory().unwrap().join("groups.moth");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fn every_rebuild_path_keeps_every_item_kind() {
         let bytes = include_bytes!("../../../corpus/moth/v6.moth");
-        std::fs::write(&path, bytes).unwrap();
         let expected = board::read(&mut std::io::Cursor::new(&bytes[..])).unwrap();
         assert!(expected.scene.items().any(|i| i.parent.is_some()));
-        state.request(Request::Open(path)).unwrap();
-        assert_eq!(state.scene.len(), expected.scene.len());
-        for item in expected.scene.items() {
-            assert_eq!(state.scene.get(item.id).unwrap().parent, item.parent);
-        }
-        state.journal = None;
-        state.journal_guard = None;
-        state.storage.discard().unwrap();
+        assert!(
+            expected
+                .scene
+                .items()
+                .any(|i| i.parent.is_none() && i.blob().is_some())
+        );
+        let same = |scene: &Scene, path: &str| {
+            assert_eq!(scene.len(), expected.scene.len(), "{path}");
+            for item in expected.scene.items() {
+                assert_eq!(scene.get(item.id), Some(item), "{path}");
+            }
+        };
+        let mut first = state();
+        let directory = first.storage.base_directory().unwrap();
+        std::fs::create_dir_all(&directory).unwrap();
+        let (source, copy) = (directory.join("all.moth"), directory.join("copy.moth"));
+        std::fs::write(&source, bytes).unwrap();
+        first.request(Request::Open(source)).unwrap();
+        same(&first.scene, "open");
+        first.request(Request::Save(copy.clone())).unwrap();
+        first.journal = None;
+        first.journal_guard = None;
+        first.storage.discard().unwrap();
+        drop(first);
+
+        let mut second = state();
+        second.request(Request::Open(copy)).unwrap();
+        same(&second.scene, "save and reopen");
+        // The process dies with the board open: its journal is all that is left.
+        let root = second.storage.base_directory().unwrap();
+        drop(second);
+        // A new session on the same data directory, as after a restart.
+        let mut restored = state();
+        restored.storage = Arc::new(DesktopStorage::in_directory(root));
+        let recovery = recovery::discover(&restored.storage).unwrap();
+        assert_eq!(recovery.len(), 1);
+        restored
+            .request(Request::Restore(recovery[0].journal.clone()))
+            .unwrap();
+        same(&restored.scene, "recovery");
+        restored.journal = None;
+        restored.journal_guard = None;
+        restored.storage.discard().unwrap();
     }
     #[test]
     fn saving_schema_three_atomically_upgrades_appearance() {

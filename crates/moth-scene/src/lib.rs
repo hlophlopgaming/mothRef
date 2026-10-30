@@ -305,6 +305,14 @@ impl Item {
     pub fn is_group(&self) -> bool {
         matches!(self.content, Content::Group(_))
     }
+    /// Other items this one points at, which must exist before it is inserted.
+    ///
+    /// Every path that rebuilds a board (open, checkpoints, duplicate, import)
+    /// orders inserts with [`insertion_order`], which reads this. A new kind that
+    /// links items (connectors, attachments) adds its targets here and nowhere else.
+    pub fn references(&self) -> impl Iterator<Item = Uuid> + '_ {
+        self.parent.into_iter()
+    }
     /// Maps a world point back to original image coordinates, rejecting clipped or empty space.
     pub fn source_uv(&self, point: [f32; 2], dimensions: [u32; 2]) -> Option<[f32; 2]> {
         if dimensions.contains(&0) || !self.rect.contains_rotated(self.transform.rotation, point) {
@@ -468,6 +476,54 @@ pub struct Scene {
     rests: HashMap<Uuid, Rect>,
     /// Union of the members' footprints, without padding; absent for empty groups.
     hulls: HashMap<Uuid, Hull>,
+}
+/// Orders items so each comes after the items it [references](Item::references)
+/// within the set, keeping the given order otherwise: callers pre-sort by file
+/// offset or stacking and only dependents move later. References outside the set
+/// are left to the scene, which rejects an insert whose target is missing.
+pub fn insertion_order<T>(items: Vec<T>, item: impl Fn(&T) -> &Item) -> Vec<T> {
+    let index: HashMap<Uuid, usize> = items
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| (item(entry).id, i))
+        .collect();
+    // Longest chain of references inside the set; a scene has no cycles, and the
+    // depth cap keeps a malformed set from looping.
+    let mut depth: Vec<Option<usize>> = vec![None; items.len()];
+    for start in 0..items.len() {
+        let mut path = vec![start];
+        while let Some(&current) = path.last() {
+            if depth[current].is_some() {
+                path.pop();
+                continue;
+            }
+            let pending = item(&items[current])
+                .references()
+                .filter_map(|id| index.get(&id).copied())
+                .find(|&next| depth[next].is_none() && !path.contains(&next));
+            match pending {
+                Some(next) if path.len() <= items.len() => path.push(next),
+                _ => {
+                    depth[current] = Some(
+                        item(&items[current])
+                            .references()
+                            .filter_map(|id| index.get(&id).and_then(|&i| depth[i]))
+                            .map(|d| d + 1)
+                            .max()
+                            .unwrap_or(0),
+                    );
+                    path.pop();
+                }
+            }
+        }
+    }
+    let mut ordered: Vec<_> = depth
+        .into_iter()
+        .map(Option::unwrap_or_default)
+        .zip(items)
+        .collect();
+    ordered.sort_by_key(|(depth, _)| *depth);
+    ordered.into_iter().map(|(_, entry)| entry).collect()
 }
 /// Footprint edges kept as min/max rather than a `Rect`: min and max are exact,
 /// so a hull grown one member at a time equals a rescan bit for bit, and a member
@@ -818,17 +874,9 @@ impl Scene {
         }
         out
     }
-    /// Items with parents before their members, so replaying inserts in this order
-    /// never names a group that does not exist yet.
-    pub fn items_parent_first(&self) -> Vec<&Item> {
-        let mut out: Vec<&Item> = self.items.values().filter(|i| i.parent.is_none()).collect();
-        let mut next = 0;
-        while next < out.len() {
-            let id = out[next].id;
-            out.extend(self.children(id));
-            next += 1;
-        }
-        out
+    /// Every item, in an order that replays as inserts: see [`insertion_order`].
+    pub fn items_in_insertion_order(&self) -> Vec<&Item> {
+        insertion_order(self.items.values().collect(), |item| item)
     }
     /// Uses the spatial index's root so navigation need not scan a huge board each frame.
     pub fn bounds(&self) -> Option<Rect> {
@@ -1318,6 +1366,39 @@ mod tests {
     }
     proptest! {
         #[test]
+        fn insertion_order_puts_references_first_and_keeps_the_rest(
+            parents in prop::collection::vec(prop::option::of(0usize..16), 1..=MAX_GROUP_DEPTH),
+            shuffle in prop::collection::vec(any::<u32>(), MAX_GROUP_DEPTH),
+        ) {
+            // Item i may only point at an earlier item, so the graph is a forest.
+            let mut items: Vec<Item> = Vec::new();
+            for (i, parent) in parents.iter().enumerate() {
+                let mut item = Item::group(Group::default(), square(0.), FractionalIndex::default());
+                item.parent = parent.filter(|&p| p < i).map(|p| items[p].id);
+                items.push(item);
+            }
+            let mut shuffled: Vec<_> = items.iter().collect();
+            shuffled.sort_by_key(|item| shuffle[items.iter().position(|i| i.id == item.id).unwrap()]);
+            let ordered = insertion_order(shuffled.clone(), |item| item);
+            prop_assert_eq!(ordered.len(), shuffled.len());
+            let position = |id: Uuid| ordered.iter().position(|i| i.id == id).unwrap();
+            for item in &ordered {
+                for reference in item.references() {
+                    prop_assert!(position(reference) < position(item.id));
+                }
+            }
+            // Top-level items keep their relative input order.
+            let roots = |list: &[&Item]| list.iter().filter(|i| i.parent.is_none()).map(|i| i.id).collect::<Vec<_>>();
+            prop_assert_eq!(roots(&ordered), roots(&shuffled));
+            // And the order replays: every insert finds its group.
+            let mut scene = Scene::default();
+            for item in ordered {
+                prop_assert!(scene.apply(Command::Insert(item.clone())).is_ok());
+            }
+        }
+    }
+    proptest! {
+        #[test]
         fn group_edits_undo_to_identity(steps in prop::collection::vec((0u8..6, 0usize..12, 0usize..12, -500f32..500., 0f32..3.), 1..80)) {
             let mut scene = Scene::default();
             let mut ids = Vec::new();
@@ -1355,7 +1436,7 @@ mod tests {
             }
             // Replaying parents first rebuilds the same scene, which is what checkpoints rely on.
             let mut replay = Scene::default();
-            for item in scene.items_parent_first() {
+            for item in scene.items_in_insertion_order() {
                 let mut item = item.clone();
                 if item.is_group() {
                     item.rect = scene.rests[&item.id];

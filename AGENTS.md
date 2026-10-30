@@ -183,6 +183,7 @@ Per the maintainer, these images are licensed under Creative Commons; artwork in
 | You changed | You must add or run |
 | --- | --- |
 | A `Command` or scene logic | `proptest`: apply + undo = identity; save + load = same scene |
+| A new item kind, or a field that points at other items | List its targets in `Item::references`; add it to the corpus fixture (`cargo xtask fixture`, newest `corpus/moth/vN.moth`), which `every_rebuild_path_keeps_every_item_kind` and `duplicate_and_delete_keep_every_item_kind` run through every path that rebuilds a board |
 | `.moth` reader/writer | Corpus round-trip, truncation test (cut at every byte of the last checkpoint), tier-2 fuzz run |
 | Journal / autosave | Kill-process test: `cargo xtask killtest 50` (the 1,000-kill run is tier 3) |
 | `.bee` / `.pur` import or `.pur` export | New corpus files for the case, round-trip test, fuzz run |
