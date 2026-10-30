@@ -183,8 +183,8 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 - [ ] Double-click a drawing (or its hierarchy entry) to edit it again (PR)
 
 ### Groups and hierarchy (M4)
-- [ ] Groups with a customizable background, auto-resize to content, empty groups removed (PR)
-- [ ] Locked groups: click selects the group, double-click enters it (PR)
+- [x] Groups with a customizable background, auto-resize to content, empty groups removed (PR)
+- [x] Locked groups: click selects the group, double-click enters it (PR)
 - [ ] Slideshow and pack operate on a group's content when only the group is selected (PR)
 - [ ] Hierarchy: drag to reorder and re-parent, rename with F2, status icons (linked, locked, comment), tooltip with source and size (PR)
 - [ ] Parent selected items to the first selected item (PR)

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Groups: select images and notes and press Ctrl/⌘+G to put them on a tinted backdrop that grows and shrinks with its content, then type a title (Enter keeps it, Esc leaves it untitled). Click a member or the title to select the whole group and drag to move it; double-click to step inside and work on single items. Drop an item onto a backdrop to add it, drag it out to take it out. Groups nest, have six backdrop colors, and Ctrl/⌘+Shift+G dissolves them. A Layers drawer on the right edge shows the board as a tree. Boards with groups are saved as `.moth` schema 6; older MothRef versions cannot open them.
 - Glass background blurs what is behind the window on Windows 11 (acrylic) and KDE Plasma (Wayland and X11), in addition to macOS. Other systems keep the translucent tint.
 
 - Move board tabs between windows: drag a tab out of the tab strip to open it in its own window, or use the tab menu (right click or long press) to move it to a new or another window, or to gather all tabs into one window. On Windows, macOS and X11 a tab can also be dropped onto another window's tab strip. Each window has its own tabs, view mode, pin and video memory share.

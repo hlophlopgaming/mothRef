@@ -6,6 +6,7 @@ Moved from `ROADMAP.md` on 2026-10-26. Add new lines at the top of the table.
 
 | Date | Decision |
 | --- | --- |
+| 2026-10-30 | [Groups](0021-groups.md): a group is an item with a derived frame; members point to it by parent id; `.moth` schema 6 |
 | 2026-10-29 | [Several main windows](0020-several-main-windows.md): per-window panes swapped into `App`, shared device with per-window registries, tab moves queued after the frame |
 | 2026-10-29 | Over grab handle dropped: the Over controller stays the way out of click-through |
 | 2026-10-29 | Watch folder import dropped. The browser extension and web clipper leave M3 for M14 as a separate project after 1.0, built on the `moth-bridge` local drop API |

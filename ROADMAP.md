@@ -326,8 +326,8 @@ Navigation, shortcuts, the command palette, batch editing and board conversion a
 
 Open:
 
-- [ ] Groups and a hierarchy tree view: Ctrl/⌘+G adds a tinted backdrop and focuses an inline title field at once; clicking the title selects the whole group, dragging it moves the group, dropping an image on the backdrop adds it; the hierarchy tree lives in a slide-out Layers drawer (DESIGN.md screen 14)
-  - [ ] View a group on its own in View mode (moved from M3)
+- [ ] View a group on its own in View mode (moved from M3)
+- [ ] Group follow-ups: images pasted or dropped from outside onto a backdrop join the group; exports draw group backdrops; drag and drop to reorder in the Layers drawer
 - [ ] Freehand drawing (3 widths, eraser, color) and shapes (ellipse, rectangle, line)
 - [ ] Drawing pens: marker (thin / thick) and highlighter (thin / thick), each with color selection
 - [ ] Washi tape: textured tape strips from a built-in set, plus user-added custom textures
@@ -344,6 +344,7 @@ Open:
 <summary>Done</summary>
 
 - [x] Minimap / navigator: board overview with the viewport rectangle; click or drag to move the camera; toggle with a shortcut — shipped early with configurable size, position and opacity (0.1.0-alpha.9–10)
+- [x] Groups and a hierarchy tree view: Ctrl/⌘+G adds a tinted backdrop that hugs its members and focuses an inline title field at once; clicking the title selects the whole group, dragging it moves the group, dropping an item on the backdrop adds it and dragging it out takes it out; groups nest; the hierarchy tree lives in a slide-out Layers drawer (DESIGN.md screen 14; `.moth` schema 6, [decision 0021](docs/decisions/0021-groups.md))
 
 </details>
 

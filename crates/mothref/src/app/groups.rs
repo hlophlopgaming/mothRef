@@ -441,10 +441,12 @@ pub(super) fn layers(
                 ui.separator();
                 let row_height = ui.spacing().interact_size.y;
                 let indent = tokens.space_l as f32;
+                let max_height =
+                    (viewport.height() - tokens.space_xl as f32 * 6.).max(row_height * 3.);
+                let spaced = row_height + ui.spacing().item_spacing.y;
                 egui::ScrollArea::vertical()
-                    .max_height(
-                        (viewport.height() - tokens.space_xl as f32 * 6.).max(row_height * 3.),
-                    )
+                    .max_height(max_height)
+                    .min_scrolled_height((rows.len() as f32 * spaced).min(max_height))
                     .show_rows(ui, row_height, rows.len(), |ui, range| {
                         for row in &rows[range] {
                             let Some(item) = board.scene.get(row.id) else {
