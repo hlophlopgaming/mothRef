@@ -44,6 +44,7 @@ struct Editing {
     focus: bool,
 }
 mod actions;
+mod apply;
 mod arrange;
 mod bindings;
 mod camera_motion;
@@ -856,406 +857,79 @@ impl App {
             return;
         }
         let before = self.workspace.board.view.camera;
-        match intent {
-            Intent::Action(action) => self.run_action(action, event_loop),
-            Intent::View(mut view) => {
-                if let Some(bounds) = self.window.resize_bounds.take() {
-                    view.fit_bounds(Some(bounds));
-                }
-                self.workspace.board.view = view;
+        let animate = match intent {
+            Intent::Action(action) => {
+                self.run_action(action, event_loop);
+                true
             }
-            Intent::NoteFocused => {
-                if let Some(editing) = &mut self.editing {
-                    editing.focus = false;
-                }
+            Intent::Session(event) => {
+                self.session_event(event);
+                true
             }
-            Intent::DialogFocused => self.modal.dialog_focus = false,
-            Intent::Library(request) => {
-                if self
-                    .library_screen
-                    .worker
-                    .requests
-                    .try_send(request)
-                    .is_err()
-                {
-                    self.workspace.board.notices.message = moth_ui::Text::StorageBusy.into();
-                }
+            intent @ (Intent::View(..)
+            | Intent::Fit
+            | Intent::Zoom(..)
+            | Intent::ZoomTo(..)
+            | Intent::Pan(..)
+            | Intent::ResetCamera
+            | Intent::Focus(..)
+            | Intent::FitSelection
+            | Intent::FocusItem(..)) => self.apply_camera(intent, event_loop),
+            intent @ (Intent::Paste
+            | Intent::Undo
+            | Intent::Redo
+            | Intent::Commands(..)
+            | Intent::AddNote(..)
+            | Intent::EditNote(..)
+            | Intent::CommitNote
+            | Intent::NoteFocused
+            | Intent::GroupTitle(..)
+            | Intent::EnterGroup(..)
+            | Intent::SelectItem(..)
+            | Intent::MoveLayer(..)
+            | Intent::Arrange(..)
+            | Intent::OriginalGeometry(..)
+            | Intent::Export(..)
+            | Intent::DismissArrangePrompt) => self.apply_board(intent, event_loop),
+            intent @ (Intent::Library(..)
+            | Intent::Home
+            | Intent::New
+            | Intent::Open
+            | Intent::Images
+            | Intent::Save
+            | Intent::OpenPath(..)
+            | Intent::SaveAs(..)
+            | Intent::CancelDialog
+            | Intent::DialogFocused
+            | Intent::SaveAndClose
+            | Intent::Discard
+            | Intent::KeepOpen
+            | Intent::DismissRecovery
+            | Intent::RestoreRecovery
+            | Intent::Tab(..)
+            | Intent::CloseTab(..)) => self.apply_file(intent, event_loop),
+            intent @ (Intent::Appearance(..)
+            | Intent::Overlay
+            | Intent::Pin
+            | Intent::PinChoice(..)
+            | Intent::CancelWindowMode
+            | Intent::Fullscreen
+            | Intent::CloseWindow
+            | Intent::Drag
+            | Intent::WindowBar(..)
+            | Intent::DetachTab(..)
+            | Intent::MoveTab(..)
+            | Intent::GatherTabs
+            | Intent::Minimize
+            | Intent::Maximize) => self.apply_window(intent, event_loop),
+            intent
+            @ (Intent::Language(..) | Intent::SettingsRow(..) | Intent::PreferencesDirty) => {
+                self.apply_preferences(intent, event_loop)
             }
-
-            Intent::Paste => {
-                if !self.workspace.board.file.discarding {
-                    self.paste();
-                }
-            }
-            Intent::Fit => {
-                self.fit();
-                self.redraw();
-            }
-            Intent::Pan(delta) => {
-                self.camera_motion.stop();
-                let camera = &mut self.workspace.board.view.camera;
-                camera.origin[0] += delta[0] / camera.zoom;
-                camera.origin[1] += delta[1] / camera.zoom;
-                self.redraw();
-            }
-            Intent::Zoom(mut factor) | Intent::ZoomTo(mut factor) => {
-                if matches!(intent, Intent::ZoomTo(_)) {
-                    self.camera_motion.stop();
-                    factor /= self.workspace.board.view.camera.zoom;
-                }
-                self.camera_motion.zoom(
-                    &mut self.workspace.board.view.camera,
-                    [
-                        self.workspace.board.view.viewport.center().x,
-                        self.workspace.board.view.viewport.center().y,
-                    ],
-                    factor,
-                    self.settings.reduced_motion || !self.settings.smooth_zoom,
-                );
-                self.redraw();
-            }
-            Intent::Home => {
-                self.workspace.library = true;
-                self.workspace.refresh_library = true;
-                self.workspace.board.view.viewport = egui::Rect::NOTHING;
-            }
-            Intent::New => self.new_board(),
-            Intent::Open => self.open_files(false),
-            Intent::Images => self.open_files(true),
-            Intent::Save => {
-                self.workspace.board.notices.conversion_prompt = false;
-                if self.workspace.board.file.path.is_empty() {
-                    self.modal.dialog = Some(());
-                    self.modal.dialog_focus = true;
-                    self.modal.dialog_path.clear();
-                } else {
-                    self.workspace.board.save();
-                }
-            }
-            Intent::Undo => self.workspace.persist(moth_platform::boards::Request::Undo),
-            Intent::Redo => self.workspace.persist(moth_platform::boards::Request::Redo),
-            Intent::Overlay => self.toggle_overlay(event_loop),
-            Intent::Appearance(value) => {
-                self.workspace.board.appearance = value;
-                self.remember_appearance();
-            }
-            Intent::PinChoice(target) => {
-                if self.shell.window.as_ref().is_some_and(|w| {
-                    if target {
-                        moth_platform::Desktop.window_capabilities(w).above_window
-                    } else {
-                        moth_platform::Desktop.window_capabilities(w).on_top
-                    }
-                }) {
-                    if target {
-                        self.pick_window();
-                    } else {
-                        self.window.picking_window = false;
-                        self.window.target_pin = false;
-                        self.apply_pin(true);
-                    }
-                }
-            }
-            Intent::CancelWindowMode => self.cancel_window_mode(),
-            Intent::Pin => {
-                if self.window.picking_window {
-                    self.cancel_window_mode();
-                    return;
-                }
-                if self.window.target_pin
-                    && !self.window.pinned
-                    && !moth_platform::Desktop.pin_target_available(&self.window.pin)
-                {
-                    self.pick_window();
-                } else {
-                    self.apply_pin(!self.window.pinned);
-                }
-            }
-            Intent::Fullscreen => {
-                if let Some(window) = &self.shell.window {
-                    window.set_fullscreen(if window.fullscreen().is_some() {
-                        None
-                    } else {
-                        Some(winit::window::Fullscreen::Borderless(None))
-                    });
-                }
-            }
-            Intent::Tab(index) => self.activate(index),
-            Intent::CloseTab(index) => {
-                self.activate(index);
-                self.request_close(false);
-            }
-            Intent::CloseWindow => self.request_close(true),
-            Intent::Drag => self.drag_window(None),
-            Intent::Session(event) => self.session_event(event),
-            Intent::WindowBar(shown) => self.window.window_bar = shown,
-            // Switching the current window mid-frame would render this frame into
-            // another window; these run after the frame in `about_to_wait`.
-            Intent::DetachTab(slot, at) => self.queue_window_op(panes::WindowOp::Detach(slot, at)),
-            Intent::MoveTab(slot, index) => {
-                if let Some(target) = self.pane_window(index) {
-                    self.queue_window_op(panes::WindowOp::Move(slot, target));
-                }
-            }
-            Intent::GatherTabs => self.queue_window_op(panes::WindowOp::Gather),
-            Intent::Minimize => {
-                if let Some(window) = &self.shell.window {
-                    window.set_minimized(true);
-                }
-            }
-            Intent::Maximize => {
-                if let Some(window) = &self.shell.window {
-                    if window.fullscreen().is_some() {
-                        window.set_fullscreen(None);
-                    } else {
-                        window.set_maximized(!window.is_maximized());
-                    }
-                }
-            }
-            Intent::Language(language) => {
-                self.settings.language = language;
-                moth_ui::set_locale(language);
-                self.workspace
-                    .persist(moth_platform::boards::Request::SaveSettings(
-                        language.code().to_owned(),
-                    ));
-            }
-            Intent::OpenPath(path) => {
-                if path
-                    .extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("moth"))
-                {
-                    self.open_in_tab(path);
-                } else {
-                    if self.workspace.library {
-                        self.new_board();
-                    }
-                    self.import(path);
-                }
-            }
-            Intent::SaveAs(mut path) => {
-                path.set_extension("moth");
-                self.modal.dialog = None;
-                self.workspace.board.file.path = path.to_string_lossy().into_owned();
-                self.workspace.board.save();
-            }
-            Intent::CancelDialog => {
-                self.modal.dialog = None;
-                self.workspace.board.file.close_after_save = false;
-            }
-            Intent::SaveAndClose => {
-                self.workspace.board.notices.conversion_prompt = false;
-                self.workspace.board.file.close_after_save = true;
-                if self.workspace.board.file.path.is_empty() {
-                    self.modal.dialog_path.clear();
-                    self.modal.dialog = Some(());
-                    self.modal.dialog_focus = true;
-                } else {
-                    self.workspace.board.save();
-                }
-            }
-            Intent::Discard => self.workspace.discard(),
-            Intent::KeepOpen => {
-                self.workspace.confirm_close = false;
-                self.workspace.closing_window = false;
-                self.workspace.board.file.close_after_save = false;
-            }
-            Intent::AddNote(world) => self.add_note(world),
-            Intent::EditNote(id) => self.edit_note(id),
-            Intent::CommitNote => self.finish_editing(),
-            Intent::Commands(commands) => {
-                self.workspace
-                    .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
-            }
-            Intent::GroupTitle(title) => {
-                let board = &mut self.workspace.board;
-                let Some((id, _)) = board.group_edits.renaming.take() else {
-                    return;
-                };
-                let Some(style) = board.group_style(id) else {
-                    return;
-                };
-                let Some(mut title) = title.map(|title| title.trim().to_owned()) else {
-                    return;
-                };
-                while title.len() > moth_scene::MAX_GROUP_TITLE {
-                    title.pop();
-                }
-                if title != style.title {
-                    let group = moth_scene::Group { title, ..style };
-                    board.group_edits.pending_styles.insert(id, group.clone());
-                    self.workspace
-                        .persist(moth_platform::boards::Request::Apply(
-                            Command::SetGroup { id, group },
-                            None,
-                        ));
-                }
-            }
-            Intent::MoveLayer(id, onto) => {
-                if self.workspace.board.idle() && !self.tools.locked {
-                    let commands = groups::move_layer(&self.workspace.board.scene, id, onto);
-                    self.workspace
-                        .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
-                }
-            }
-            Intent::SelectItem(id) => {
-                let board = &mut self.workspace.board;
-                if board.scene.get(id).is_none() {
-                    return;
-                }
-                board.entered = board.scene.get(id).and_then(|item| item.parent);
-                board.selection = HashSet::from([id]);
-                selection::with_members(&board.scene, &mut board.selection, None);
-            }
-            Intent::EnterGroup(hit) => {
-                let board = &mut self.workspace.board;
-                let group = selection::target(&board.scene, board.entered, hit);
-                if !board.scene.get(group).is_some_and(|item| item.is_group()) {
-                    return;
-                }
-                board.entered = Some(group);
-                board.selection.clear();
-                if group != hit {
-                    board
-                        .selection
-                        .insert(selection::target(&board.scene, board.entered, hit));
-                    selection::with_members(&board.scene, &mut board.selection, None);
-                }
-            }
-            Intent::Arrange(mode, ids) => {
-                let mut items: Vec<_> = ids
-                    .iter()
-                    .filter_map(|id| self.workspace.board.scene.get(*id))
-                    .collect();
-                items.sort_unstable_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
-                let commands = if matches!(mode, arrange::Arrange::Grid | arrange::Arrange::Optimal)
-                {
-                    arrange::arrange(
-                        &items,
-                        mode,
-                        self.settings.gap,
-                        arrange::FreeRectChoice::from_index(self.settings.arrange_choice),
-                        arrange::GuillotineSplit::from_index(self.settings.arrange_split),
-                    )
-                } else {
-                    arrange::counted(
-                        &items,
-                        mode,
-                        self.tools.layout_counts[mode as usize],
-                        self.settings.gap,
-                    )
-                };
-                // Layout changes belong to the still-open insertion group.
-                let previous = self.workspace.board.notices.added.take();
-                if !commands.is_empty() {
-                    let pending = self.workspace.board.intake.in_flight;
-                    self.workspace
-                        .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
-                    if self.workspace.board.intake.in_flight == pending {
-                        self.workspace.board.notices.added = previous;
-                        return;
-                    }
-                }
-                self.workspace.board.notices.added = Some(document::Added {
-                    ids,
-                    mode,
-                    needs_fit: true,
-                });
-                self.settings.default_arrange = mode as u8;
-                self.apply(Intent::PreferencesDirty, event_loop);
-            }
-            Intent::FitSelection => self.fit_selection(),
-            Intent::Export(target) => self
-                .workspace
-                .persist(moth_platform::boards::Request::Export(target)),
-            Intent::ResetCamera => self.workspace.board.view.camera = Camera::default(),
-            Intent::Focus(step) => {
-                let mut items: Vec<_> = self
-                    .workspace
-                    .board
-                    .scene
-                    .items()
-                    .filter(|i| i.blob().is_some())
-                    .collect();
-                items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
-                if !items.is_empty() {
-                    let current = items
-                        .iter()
-                        .position(|i| self.workspace.board.selection.contains(&i.id));
-                    let next = current.map_or(if step > 0 { 0 } else { items.len() - 1 }, |i| {
-                        (i as i32 + step).rem_euclid(items.len() as i32) as usize
-                    });
-                    self.workspace.board.selection = HashSet::from([items[next].id]);
-                    self.fit_selection();
-                }
-            }
-            Intent::SettingsRow(index) => self.settings_window.open_row(index),
-            Intent::PreferencesDirty => {
-                if !self.settings.lock_maximized
-                    && self.shell.window.as_ref().is_some_and(|w| w.is_maximized())
-                {
-                    self.window.locked_position = None;
-                }
-                self.configure_global_shortcuts();
-                self.adapt_gpu_budget();
-                moth_ui::theme::apply(self.shell.context(), &self.settings.tokens());
-                self.shell.context().set_zoom_factor(self.settings.ui_scale);
-                self.restyle_windows();
-                for tab in &mut self.workspace.tabs {
-                    let values = std::collections::BTreeMap::from([(
-                        "undo_limit".to_owned(),
-                        self.settings.undo_limit.to_string(),
-                    )]);
-                    if tab
-                        .boards()
-                        .requests
-                        .try_send(moth_platform::boards::Request::Preferences(values))
-                        .is_ok()
-                    {
-                        tab.intake.in_flight += 1;
-                    } else {
-                        tab.notices.message = moth_ui::Text::StorageBusy.into();
-                    }
-                }
-                self.workspace
-                    .persist(moth_platform::boards::Request::Preferences(
-                        self.settings
-                            .preferences()
-                            .into_iter()
-                            .map(|(k, v)| (k.to_owned(), v))
-                            .chain(self.shortcuts.registry.preferences())
-                            .collect(),
-                    ));
-            }
-            Intent::OriginalGeometry(ids, mode) => {
-                self.workspace
-                    .persist(moth_platform::boards::Request::OriginalGeometry { ids, mode });
-            }
-            Intent::DismissArrangePrompt => self.workspace.board.notices.arrange_prompt = None,
-            Intent::FocusItem(id) => {
-                if self
-                    .workspace
-                    .board
-                    .view
-                    .focus_return
-                    .as_ref()
-                    .is_some_and(|(rid, _)| *rid == id)
-                {
-                    if let Some((_, camera)) = self.workspace.board.view.focus_return.take() {
-                        self.workspace.board.view.camera = camera;
-                    }
-                } else {
-                    self.workspace.board.view.focus_return =
-                        Some((id, self.workspace.board.view.camera));
-                    focus_selection(&mut self.workspace.board.selection, id);
-                    self.fit_selection();
-                }
-            }
-
-            Intent::DismissRecovery => self.workspace.dismiss_recovery(self.modal.recovery),
-            Intent::RestoreRecovery => self.workspace.restore_recovery(self.modal.recovery),
+        };
+        if animate {
+            self.animate_camera(before);
         }
-        self.animate_camera(before);
     }
     /// Fits the camera to the current selection, if any.
     fn fit_selection(&mut self) {
