@@ -54,7 +54,7 @@ impl App {
                 }
             }
             Intent::MoveLayer(id, onto) => {
-                if self.workspace.board.idle() && !self.tools.locked {
+                if self.workspace.board.idle() && !self.workspace.board.locked {
                     let commands = groups::move_layer(&self.workspace.board.scene, id, onto);
                     self.workspace
                         .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
@@ -103,7 +103,7 @@ impl App {
                     arrange::counted(
                         &items,
                         mode,
-                        self.tools.layout_counts[mode as usize],
+                        self.tools.arrange.layout_counts[mode as usize],
                         self.settings.gap,
                     )
                 };

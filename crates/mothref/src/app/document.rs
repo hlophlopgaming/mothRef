@@ -738,7 +738,7 @@ mod tests {
         let mut window = SettingsWindow::default();
         window.open = true;
         let mut settings = Settings::default();
-        let mut tools = super::super::tools::Tools::default();
+        let mut diagnostics = super::super::settings::Diagnostics::default();
         let enabled = vec![true; super::super::bindings::ACTIONS.len()];
         for size in [egui::vec2(1440., 900.), egui::vec2(900., 600.)] {
             for frame in 0..3 {
@@ -748,7 +748,7 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        window.show(ui, &mut settings, &mut tools, &board, "", &enabled);
+                        window.show(ui, &mut settings, &mut diagnostics, &board, "", &enabled);
                     },
                 );
                 output.textures_delta.clear();

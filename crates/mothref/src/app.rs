@@ -86,6 +86,8 @@ pub struct App {
     cache_maintenance: moth_platform::lod_store::Maintenance,
     workspace: workspace::Workspace,
     tools: tools::Tools,
+    /// Snapshots for Settings › For developers.
+    diagnostics: settings::Diagnostics,
     settings: settings::Settings,
     settings_window: settings::SettingsWindow,
     shortcuts: shortcuts::Shortcuts,
@@ -148,6 +150,7 @@ impl App {
             cache_maintenance,
             workspace: workspace::Workspace::new(board, shell.wake()),
             tools: tools::Tools::default(),
+            diagnostics: settings::Diagnostics::default(),
             settings: settings::Settings::default(),
             settings_window: settings::SettingsWindow::default(),
             shortcuts: shortcuts::Shortcuts::default(),
@@ -317,8 +320,6 @@ impl App {
             self.remember_appearance();
         }
         self.tools = tools::Tools::default();
-        self.tools.locked = self.workspace.board.locked;
-        self.tools.grayscale = self.workspace.board.grayscale;
         self.library_screen.cards.clear();
         self.library_screen.catalog.dismiss_editor();
         self.editing = None;
@@ -421,7 +422,7 @@ impl App {
         Ok(())
     }
     fn paste(&mut self) {
-        if self.tools.locked || self.workspace.board.intake.loading {
+        if self.workspace.board.locked || self.workspace.board.intake.loading {
             return;
         }
         if self.workspace.board.file.discarding {
@@ -480,7 +481,7 @@ impl App {
 
     /// Creates an empty note at `world` and opens the inline editor for it.
     fn add_note(&mut self, world: [f32; 2]) {
-        if self.tools.locked || self.workspace.board.intake.loading {
+        if self.workspace.board.locked || self.workspace.board.intake.loading {
             return;
         }
         if self.workspace.board.file.discarding || !self.workspace.board.idle() {
@@ -510,7 +511,7 @@ impl App {
     }
     /// Opens the inline editor over an existing note.
     fn edit_note(&mut self, id: Uuid) {
-        if self.tools.locked || self.workspace.board.intake.loading {
+        if self.workspace.board.locked || self.workspace.board.intake.loading {
             return;
         }
         let Some(item) = self.workspace.board.scene.get(id) else {
@@ -589,12 +590,12 @@ impl App {
     fn adapt_gpu_budget(&mut self) {
         if self
             .cache_maintenance
-            .update(self.settings_window.open, self.tools.clear_disk_cache)
+            .update(self.settings_window.open, self.diagnostics.clear_disk_cache)
         {
-            self.tools.clear_disk_cache = false;
+            self.diagnostics.clear_disk_cache = false;
         }
-        self.tools.disk_cache_usage = self.cache_maintenance.usage.clone();
-        self.tools.disk_cache_busy = self.cache_maintenance.busy;
+        self.diagnostics.disk_cache_usage = self.cache_maintenance.usage.clone();
+        self.diagnostics.disk_cache_busy = self.cache_maintenance.busy;
         let available = self.memory.available();
         let cache = moth_io::LodCache::shared();
         let mode = self.settings.performance_mode;
@@ -612,7 +613,7 @@ impl App {
                 .board
                 .offer_board_bakes(gpu.registry.image_format());
         }
-        self.tools.bake_pending = self.workspace.board.bake_pending();
+        self.diagnostics.bake_pending = self.workspace.board.bake_pending();
         self.detect_video_memory();
         let full = mode == moth_io::CacheMode::Full;
         if !full && self.workspace.board.preload_started() {
@@ -624,7 +625,7 @@ impl App {
             let active = self.workspace.board.image_count > 0 || !self.workspace.board.idle();
             // Main windows share one device, so they share its limit.
             let limit = self
-                .tools
+                .diagnostics
                 .vram_limit(&self.settings)
                 .unwrap_or(moth_render::TEXTURE_BUDGET)
                 / windows;
@@ -669,8 +670,8 @@ impl App {
         {
             self.video = Some(video);
         }
-        if self.tools.video != self.video {
-            self.tools.video = self.video.clone();
+        if self.diagnostics.video != self.video {
+            self.diagnostics.video = self.video.clone();
         }
     }
     /// Uploads prepared images for the full-resolution mode, a few milliseconds per
@@ -1141,7 +1142,7 @@ impl App {
                 if p.phase == Phase::Down
                     && p.button == 1
                     && !p.pan
-                    && !self.tools.locked
+                    && !self.workspace.board.locked
                     && !self.tools.blocked()
                     && !self.settings_window.open
                     && self.settings.show_outlines
@@ -1222,7 +1223,7 @@ impl App {
                         moth_platform::export::Target::Sample {
                             id,
                             point: world,
-                            format: match self.tools.color_format {
+                            format: match self.tools.pickers.color_format {
                                 1 => moth_platform::export::ColorFormat::Rgb,
                                 2 => moth_platform::export::ColorFormat::Hsv,
                                 _ => moth_platform::export::ColorFormat::Hex,
@@ -1442,7 +1443,7 @@ impl App {
         let zoom = self.workspace.board.view.camera.zoom;
         let dx = (end[0] - start[0]) / zoom;
         let dy = (end[1] - start[1]) / zoom;
-        if self.tools.locked
+        if self.workspace.board.locked
             || self.workspace.board.intake.loading
             || dx.abs() + dy.abs() <= 0.5 / zoom
         {
@@ -1911,7 +1912,7 @@ impl App {
                 intents.extend(self.settings_window.show(
                     ui,
                     &mut self.settings,
-                    &mut self.tools,
+                    &mut self.diagnostics,
                     &self.workspace.board,
                     &format!(
                         "{} · {:.1}/{:.1} MiB",
@@ -1986,7 +1987,7 @@ impl App {
                 }
             },
             viewport: self.workspace.board.view.viewport,
-            grayscale: self.tools.grayscale,
+            grayscale: self.workspace.board.grayscale,
             sampling: moth_scene::Sampling::from_code(self.settings.sampling + 1)
                 .unwrap_or_default(),
         };
@@ -2006,7 +2007,7 @@ impl App {
             None => (frame, self.workspace.board.view.camera),
         };
         let mut previews: Vec<_> = if self.gesture.grabbed().is_some()
-            && !self.tools.locked
+            && !self.workspace.board.locked
             && !self.workspace.board.intake.loading
             && !self.workspace.library
         {
@@ -2496,7 +2497,7 @@ impl App {
                 if pressed && key == egui::Key::Escape {
                     let closing_surface = self.tools.blocked()
                         || self.tool.picks()
-                        || self.tools.picker_open
+                        || self.tools.pickers.open
                         || self.settings_window.open
                         || self.window.moving_window
                         || self.window.picking_window;
@@ -2512,10 +2513,10 @@ impl App {
                     }
                     if !blocked {
                         self.tool = gesture::Tool::Select;
-                        self.tools.picker_open = false;
-                        self.tools.inspector = false;
-                        self.tools.export_open = false;
-                        self.tools.arrange_open = false;
+                        self.tools.pickers.open = false;
+                        self.tools.edit.open = false;
+                        self.tools.export.open = false;
+                        self.tools.arrange.open = false;
                         self.settings_window.open = false;
                         self.redraw();
                     }

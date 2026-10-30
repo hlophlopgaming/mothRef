@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix locking or switching to grayscale on one window's board affecting another window until its board changed.
 - Fix boards with groups opening as a partial "Untitled" board from the library.
 - Fix a group backdrop that sometimes stayed too large after an image was dragged out of it.
 - Fix the View window bar popping in place instead of sliding down from the top edge; it now slides in and out quickly.

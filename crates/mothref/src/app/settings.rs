@@ -249,6 +249,27 @@ impl Settings {
         }
     }
 }
+/// Read-only snapshots shown under Settings › For developers, refreshed by the app.
+#[derive(Default)]
+pub(super) struct Diagnostics {
+    /// Detected adapter memory; `None` until detection reports.
+    pub video: Option<moth_platform::gpu::VideoMemory>,
+    pub disk_cache_usage: Option<Result<u64, String>>,
+    pub disk_cache_busy: bool,
+    /// "Clear disk cache" was asked for and not yet started.
+    pub clear_disk_cache: bool,
+    pub bake_pending: usize,
+}
+impl Diagnostics {
+    /// The video memory limit: the user's override, else what the adapter allows.
+    pub fn vram_limit(&self, settings: &Settings) -> Option<u64> {
+        if settings.vram_limit_mib > 0 {
+            Some(u64::from(settings.vram_limit_mib) * 1024 * 1024)
+        } else {
+            self.video.as_ref().map(|v| v.limit)
+        }
+    }
+}
 #[derive(Default)]
 pub(super) struct SettingsWindow {
     pub open: bool,
@@ -269,7 +290,7 @@ impl SettingsWindow {
         &mut self,
         ui: &mut egui::Ui,
         settings: &mut Settings,
-        tools: &mut super::tools::Tools,
+        diagnostics: &mut Diagnostics,
         board: &super::Document,
         adapter: &str,
         enabled: &[bool],
@@ -370,7 +391,7 @@ impl SettingsWindow {
                                                 Kind::VideoLimit => {
                                                     ui.label(label);
                                                     let mut auto = settings.vram_limit_mib == 0;
-                                                    let max = tools
+                                                    let max = diagnostics
                                                         .video
                                                         .as_ref()
                                                         .and_then(|v| v.dedicated.or(v.system))
@@ -388,7 +409,7 @@ impl SettingsWindow {
                                                         next = if auto {
                                                             "0".into()
                                                         } else {
-                                                            tools
+                                                            diagnostics
                                                                 .video
                                                                 .as_ref()
                                                                 .map_or(4096, |v| {
@@ -604,7 +625,7 @@ impl SettingsWindow {
                                             }
                                         }
                                         if section == Section::Performance {
-                                            if let Some(usage) = &tools.disk_cache_usage {
+                                            if let Some(usage) = &diagnostics.disk_cache_usage {
                                                 ui.label(format!(
                                                     "{}: {}",
                                                     text(Text::DiskCacheUsage),
@@ -619,7 +640,7 @@ impl SettingsWindow {
                                             }
                                             if ui
                                                 .add_enabled(
-                                                    !tools.disk_cache_busy,
+                                                    !diagnostics.disk_cache_busy,
                                                     egui::Button::new(text(Text::ClearDiskCache)),
                                                 )
                                                 .clicked()
@@ -642,7 +663,7 @@ impl SettingsWindow {
                                                 text(Text::Journaled),
                                                 board.intake.in_flight
                                             ));
-                                            if let Some(video) = &tools.video {
+                                            if let Some(video) = &diagnostics.video {
                                                 ui.label(super::tools::video_summary(video));
                                             }
                                         }

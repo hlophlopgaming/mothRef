@@ -121,7 +121,7 @@ impl App {
         let blocked = (gate >= Gate::NoSession && board.session.is_some())
             || (gate >= Gate::NotEditing && self.editing.is_some())
             || (gate >= Gate::Board && self.workspace.library)
-            || (gate >= Gate::Ready && (!board.idle() || self.tools.locked));
+            || (gate >= Gate::Ready && (!board.idle() || self.workspace.board.locked));
         !blocked
             && match area(action) {
                 Area::Prompt => self.prompt_enabled(action),
@@ -198,32 +198,37 @@ impl super::tools::Tools {
         ids.sort_unstable();
         let mut hash = std::hash::DefaultHasher::new();
         ids.hash(&mut hash);
-        self.layout_counts.hash(&mut hash);
-        let key = (self.order, mode as u8, hash.finish());
-        let repeat = self.last_arrange == Some(key);
-        self.reversed = repeat && !self.reversed;
-        self.last_arrange = Some(key);
+        self.arrange.layout_counts.hash(&mut hash);
+        let key = (self.arrange.order, mode as u8, hash.finish());
+        let repeat = self.arrange.last_arrange == Some(key);
+        self.arrange.reversed = repeat && !self.arrange.reversed;
+        self.arrange.last_arrange = Some(key);
         if !repeat {
-            self.random_salt = Uuid::now_v7().as_u128();
+            self.arrange.random_salt = Uuid::now_v7().as_u128();
         }
-        match self.order {
+        match self.arrange.order {
             1 => items.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id))),
             2 => items.sort_by_key(|i| i.id),
             3 => items.sort_by_key(|i| {
                 i.id.as_u128()
-                    .wrapping_mul(self.random_salt | 1)
+                    .wrapping_mul(self.arrange.random_salt | 1)
                     .rotate_left(43)
             }),
             _ => items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id))),
         }
-        if self.reversed {
+        if self.arrange.reversed {
             items.reverse();
         }
         if matches!(
             mode,
             arrange::Arrange::Horizontal | arrange::Arrange::Vertical
         ) {
-            return arrange::counted(items, mode, self.layout_counts[mode as usize], settings.gap);
+            return arrange::counted(
+                items,
+                mode,
+                self.arrange.layout_counts[mode as usize],
+                settings.gap,
+            );
         }
         arrange::arrange(
             items,
@@ -309,10 +314,8 @@ mod tests {
             Some(&a.z),
         );
         for order in [0, 1, 2, 3] {
-            let mut tools = Tools {
-                order,
-                ..Tools::default()
-            };
+            let mut tools = Tools::default();
+            tools.arrange.order = order;
             let mut items = vec![&a, &b];
             let first = tools.arrange(
                 &mut items,

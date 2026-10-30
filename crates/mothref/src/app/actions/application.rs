@@ -10,7 +10,9 @@ impl App {
                 moth_platform::Desktop.shell_integration(),
                 moth_platform::ShellIntegration::Missing | moth_platform::ShellIntegration::Pending
             ),
-            ClearDiskCache => !self.tools.disk_cache_busy && !self.tools.clear_disk_cache,
+            ClearDiskCache => {
+                !self.diagnostics.disk_cache_busy && !self.diagnostics.clear_disk_cache
+            }
             Save => self.workspace.board.idle(),
             _ => true,
         }
@@ -45,7 +47,7 @@ impl App {
             }
             CloseWindow => Intent::CloseWindow,
             ClearDiskCache => {
-                self.tools.clear_disk_cache = true;
+                self.diagnostics.clear_disk_cache = true;
                 return None;
             }
             ShellIntegration => {

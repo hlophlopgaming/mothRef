@@ -30,7 +30,7 @@ impl App {
         let mut items = Self::selected_items(&self.workspace.board, action);
         let intent = match action {
             ArrangeOptions => {
-                self.tools.arrange_open = true;
+                self.tools.arrange.open = true;
                 return None;
             }
             ScaleApply => {
@@ -38,7 +38,7 @@ impl App {
                     items = self.workspace.board.scene.items().collect();
                     items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
                 }
-                Intent::Commands(arrange::scale(&items, self.tools.factor))
+                Intent::Commands(arrange::scale(&items, self.tools.arrange.factor))
             }
             Horizontal | Vertical | Grid | Optimal | ArrangeName | ArrangeTime | PackFit
             | NormalizeWidth | NormalizeHeight | NormalizeSize | NormalizeArea | AlignLeft
@@ -75,10 +75,10 @@ impl App {
                     ),
                     _ => {
                         if action == ArrangeName {
-                            self.tools.order = 1;
+                            self.tools.arrange.order = 1;
                         }
                         if action == ArrangeTime {
-                            self.tools.order = 2;
+                            self.tools.arrange.order = 2;
                         }
                         self.tools.arrange(
                             &mut items,

@@ -70,13 +70,11 @@ impl App {
                 return None;
             }
             Lock => {
-                self.tools.locked = !self.tools.locked;
-                self.workspace.board.locked = self.tools.locked;
+                self.workspace.board.locked = !self.workspace.board.locked;
                 return None;
             }
             Grayscale => {
-                self.tools.grayscale = !self.tools.grayscale;
-                self.workspace.board.grayscale = self.tools.grayscale;
+                self.workspace.board.grayscale = !self.workspace.board.grayscale;
                 return None;
             }
             _ => return None,

@@ -5,8 +5,8 @@ impl App {
     /// Whether an action of this area is available once its [`Gate`] is passed.
     pub(super) fn export_enabled(&self, action: Action) -> bool {
         use Action::*;
-        let export_ready =
-            !self.tools.path.is_empty() && (!self.tools.crop || self.tools.region.valid());
+        let export_ready = !self.tools.export.path.is_empty()
+            && (!self.tools.export.crop || self.tools.export.region.valid());
         let single_image = || {
             self.workspace.board.idle()
                 && self.workspace.board.selection.len() == 1
@@ -45,25 +45,25 @@ impl App {
         let intent = match action {
             Export => {
                 self.workspace.board.notices.export_message = None;
-                self.tools.export_open = true;
+                self.tools.export.open = true;
                 return None;
             }
             SampleColor => {
                 self.workspace.board.notices.export_message = None;
                 self.tool = super::gesture::Tool::PickColor;
-                self.tools.picker_open = true;
+                self.tools.pickers.open = true;
                 return None;
             }
             CoordinatePicker => {
                 self.workspace.board.notices.export_message = None;
                 self.tool = super::gesture::Tool::PickInfo;
-                self.tools.picker_open = true;
+                self.tools.pickers.open = true;
                 return None;
             }
             OpenOriginal | CopyImage | ExportScene | ExportSelection | ExportOriginal
             | ExportOriginals | ExportZip => {
                 use moth_platform::export::Target;
-                let path = std::path::PathBuf::from(&self.tools.path);
+                let path = std::path::PathBuf::from(&self.tools.export.path);
                 let target = match action {
                     OpenOriginal => {
                         self.tools.viewer_open = true;
@@ -96,8 +96,8 @@ impl App {
                         } else {
                             Vec::new()
                         },
-                        region: self.tools.crop.then_some(self.tools.region),
-                        side: self.tools.side,
+                        region: self.tools.export.crop.then_some(self.tools.export.region),
+                        side: self.tools.export.side,
                     },
                 };
                 Intent::Export(target)

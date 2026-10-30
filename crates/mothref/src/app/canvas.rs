@@ -209,7 +209,6 @@ fn items(
     intents: &mut Vec<Intent>,
 ) -> std::collections::HashMap<Uuid, Item> {
     let board = c.board;
-    let tools = &*c.tools;
     let settings = &*c.settings;
     let editing = &*c.editing;
     let drag = c.drag;
@@ -265,7 +264,7 @@ fn items(
             .unwrap_or(std::borrow::Cow::Borrowed(item));
         if moving.is_some()
             && board.selection.contains(&item.id)
-            && !tools.locked
+            && !board.locked
             && !board.intake.loading
         {
             presented = std::borrow::Cow::Owned(motion.preview(
@@ -366,7 +365,6 @@ fn selection(
     intents: &mut Vec<Intent>,
 ) {
     let board = c.board;
-    let tools = &*c.tools;
     let settings = &*c.settings;
     let enabled = c.enabled;
     let registry = c.registry;
@@ -396,7 +394,7 @@ fn selection(
             .filter_map(|id| board.scene.get(*id))
             .filter(|i| board.presented(i))
         {
-            let presented = if moving.is_some() && !tools.locked && !board.intake.loading {
+            let presented = if moving.is_some() && !board.locked && !board.intake.loading {
                 Some(motion.preview(item, drag, view.camera.zoom, settings.reduced_motion))
             } else {
                 selection_presentation(item, board.motion.get(item.id, motion.now()), returning)

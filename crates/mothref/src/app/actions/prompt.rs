@@ -28,7 +28,7 @@ impl App {
                 // The added-images toast: its layouts and undo.
                 self.workspace.board.notices.added.is_some()
                     && self.workspace.board.idle()
-                    && !self.tools.locked
+                    && !self.workspace.board.locked
             }
         }
     }

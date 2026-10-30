@@ -10,52 +10,62 @@ use super::{
 };
 use moth_scene::{Rect, Transform, Uuid};
 use moth_ui::{Text, text};
+/// The small editor windows opened by actions, each with its own draft.
+#[derive(Default)]
 pub(super) struct Tools {
+    /// Edit selection: exact frame and content values of one item.
+    pub edit: ItemEditor,
+    pub arrange: ArrangeOptions,
+    pub export: ExportForm,
+    pub pickers: Pickers,
+    /// Open original: which external viewer to use.
+    pub viewer_open: bool,
+}
+#[derive(Default)]
+pub(super) struct ItemEditor {
+    pub open: bool,
+    /// Values being typed, applied by "Apply".
     pub draft: Option<(Uuid, Rect, Transform)>,
+    /// The item as the draft last saw it, so outside edits refresh the draft.
     pub observed: Option<(Uuid, Rect, Transform)>,
+}
+/// Layout options, and the state that makes repeating a layout reverse it.
+pub(super) struct ArrangeOptions {
+    pub open: bool,
     pub layout_counts: [usize; 2],
     pub order: u8,
     pub last_arrange: Option<(u8, u8, u64)>,
     pub reversed: bool,
     pub random_salt: u128,
-    pub locked: bool,
-    pub grayscale: bool,
-    pub video: Option<moth_platform::gpu::VideoMemory>,
-    pub disk_cache_usage: Option<Result<u64, String>>,
-    pub disk_cache_busy: bool,
-    pub clear_disk_cache: bool,
-    pub bake_pending: usize,
-    pub color_format: u8,
+    /// Scale factor for "Scale selection".
     pub factor: f32,
-    pub path: String,
-    pub side: u32,
-    pub region: Rect,
-    pub crop: bool,
-    pub inspector: bool,
-    pub arrange_open: bool,
-    pub export_open: bool,
-    pub picker_open: bool,
-    pub viewer_open: bool,
 }
-impl Default for Tools {
+impl Default for ArrangeOptions {
     fn default() -> Self {
         Self {
-            draft: None,
-            observed: None,
+            open: false,
             layout_counts: [1, 1],
             order: 0,
             last_arrange: None,
             reversed: false,
             random_salt: 0,
-            locked: false,
-            grayscale: false,
-            video: None,
-            disk_cache_usage: None,
-            disk_cache_busy: false,
-            clear_disk_cache: false,
-            bake_pending: 0,
-            color_format: 0,
             factor: 1.,
+        }
+    }
+}
+pub(super) struct ExportForm {
+    pub open: bool,
+    pub path: String,
+    /// Longest side of a scene export, in pixels.
+    pub side: u32,
+    /// World region exported when `crop` is on.
+    pub region: Rect,
+    pub crop: bool,
+}
+impl Default for ExportForm {
+    fn default() -> Self {
+        Self {
+            open: false,
             path: String::new(),
             side: 2048,
             region: Rect {
@@ -65,13 +75,14 @@ impl Default for Tools {
                 height: 1024.,
             },
             crop: false,
-            inspector: false,
-            arrange_open: false,
-            export_open: false,
-            picker_open: false,
-            viewer_open: false,
         }
     }
+}
+#[derive(Default)]
+pub(super) struct Pickers {
+    pub open: bool,
+    /// HEX, RGB or HSV for sampled colors.
+    pub color_format: u8,
 }
 const MIB: u64 = 1024 * 1024;
 fn gib(bytes: u64) -> String {
@@ -113,14 +124,7 @@ fn rect(ui: &mut egui::Ui, rect: &mut Rect) {
 }
 impl Tools {
     pub fn blocked(&self) -> bool {
-        self.inspector || self.arrange_open || self.export_open
-    }
-    pub fn vram_limit(&self, settings: &Settings) -> Option<u64> {
-        if settings.vram_limit_mib > 0 {
-            Some(u64::from(settings.vram_limit_mib) * MIB)
-        } else {
-            self.video.as_ref().map(|v| v.limit)
-        }
+        self.edit.open || self.arrange.open || self.export.open
     }
     pub fn show(
         &mut self,
@@ -131,10 +135,10 @@ impl Tools {
         enabled: &[bool],
         registry: &Registry,
     ) -> Vec<Intent> {
-        if !self.inspector
-            && !self.arrange_open
-            && !self.export_open
-            && !self.picker_open
+        if !self.edit.open
+            && !self.arrange.open
+            && !self.export.open
+            && !self.pickers.open
             && !self.viewer_open
         {
             return Vec::new();
@@ -145,7 +149,7 @@ impl Tools {
             .iter()
             .filter_map(|id| board.scene.get(*id))
             .collect();
-        let mut open = self.inspector;
+        let mut open = self.edit.open;
         egui::Window::new(text(Text::EditItem))
             .open(&mut open)
             .vscroll(true)
@@ -153,15 +157,15 @@ impl Tools {
             .show(ui.ctx(), |ui| {
                 if items.len() == 1 {
                     let item = items[0];
-                    if self.observed != Some((item.id, item.rect, item.transform)) {
-                        self.observed = Some((item.id, item.rect, item.transform));
-                        self.draft = Some((item.id, item.rect, item.transform));
+                    if self.edit.observed != Some((item.id, item.rect, item.transform)) {
+                        self.edit.observed = Some((item.id, item.rect, item.transform));
+                        self.edit.draft = Some((item.id, item.rect, item.transform));
                     }
                     let rotation_snap = settings.rotation_snap;
                     egui::CollapsingHeader::new(text(Text::EditSelection))
                         .default_open(true)
                         .show(ui, |ui| {
-                            let Some((_, frame, t)) = &mut self.draft else {
+                            let Some((_, frame, t)) = &mut self.edit.draft else {
                                 return;
                             };
                             ui.label(&item.name);
@@ -263,12 +267,12 @@ impl Tools {
                             );
                         });
                 } else {
-                    self.draft = None;
-                    self.observed = None;
+                    self.edit.draft = None;
+                    self.edit.observed = None;
                 }
             });
-        self.inspector = open;
-        let mut open = self.arrange_open;
+        self.edit.open = open;
+        let mut open = self.arrange.open;
         egui::Window::new(text(Text::ArrangeOptions))
             .open(&mut open)
             .vscroll(true)
@@ -277,10 +281,10 @@ impl Tools {
                 let before = settings.preferences();
                 number(ui, Text::Gap, &mut settings.gap, 1.0..=10000.);
                 egui::ComboBox::from_id_salt("arrange_order")
-                    .selected_text(text(order_label(self.order)))
+                    .selected_text(text(order_label(self.arrange.order)))
                     .show_ui(ui, |ui| {
                         for i in 0..4 {
-                            ui.selectable_value(&mut self.order, i, text(order_label(i)));
+                            ui.selectable_value(&mut self.arrange.order, i, text(order_label(i)));
                         }
                     });
                 for (i, label) in [Text::LayoutRows, Text::LayoutColumns]
@@ -288,8 +292,11 @@ impl Tools {
                     .enumerate()
                 {
                     ui.add(
-                        egui::Slider::new(&mut self.layout_counts[i], 1..=board.scene.len().max(1))
-                            .text(text(label)),
+                        egui::Slider::new(
+                            &mut self.arrange.layout_counts[i],
+                            1..=board.scene.len().max(1),
+                        )
+                        .text(text(label)),
                     );
                 }
                 super::surfaces::menu(
@@ -299,7 +306,12 @@ impl Tools {
                     registry,
                     &mut intents,
                 );
-                number(ui, Text::ScaleSelection, &mut self.factor, 0.001..=1000.);
+                number(
+                    ui,
+                    Text::ScaleSelection,
+                    &mut self.arrange.factor,
+                    0.001..=1000.,
+                );
                 super::surfaces::menu(
                     ui,
                     &[super::surfaces::Slot::Action(Action::ScaleApply)],
@@ -311,7 +323,7 @@ impl Tools {
                     intents.push(Intent::PreferencesDirty);
                 }
             });
-        self.arrange_open = open;
+        self.arrange.open = open;
         let mut open = self.viewer_open;
         egui::Window::new(text(Text::OpenOriginal))
             .open(&mut open)
@@ -319,7 +331,7 @@ impl Tools {
                 export_feedback(ui, board);
             });
         self.viewer_open = open;
-        let mut open = self.export_open;
+        let mut open = self.export.open;
         egui::Window::new(text(Text::Export))
             .open(&mut open)
             .vscroll(true)
@@ -328,25 +340,25 @@ impl Tools {
                 ui.label(text(Text::ExportLimit));
                 export_feedback(ui, board);
                 ui.label(text(Text::ExportPath));
-                ui.text_edit_singleline(&mut self.path);
+                ui.text_edit_singleline(&mut self.export.path);
                 ui.horizontal(|ui| {
                     ui.label(text(Text::ExportSide));
-                    ui.add(egui::DragValue::new(&mut self.side).range(1..=4096));
+                    ui.add(egui::DragValue::new(&mut self.export.side).range(1..=4096));
                 });
-                ui.checkbox(&mut self.crop, text(Text::CropRegion));
-                if self.crop {
-                    rect(ui, &mut self.region);
+                ui.checkbox(&mut self.export.crop, text(Text::CropRegion));
+                if self.export.crop {
+                    rect(ui, &mut self.export.region);
                 }
                 super::surfaces::menu(ui, super::surfaces::EXPORT, enabled, registry, &mut intents);
             });
-        self.export_open = open;
-        let mut open = self.picker_open;
+        self.export.open = open;
+        let mut open = self.pickers.open;
         egui::Window::new(text(Text::ImagePickers))
             .open(&mut open)
             .show(ui.ctx(), |ui| {
                 ui.horizontal_wrapped(|ui| {
                     for (i, label) in ["HEX", "RGB", "HSV"].into_iter().enumerate() {
-                        ui.selectable_value(&mut self.color_format, i as u8, label);
+                        ui.selectable_value(&mut self.pickers.color_format, i as u8, label);
                     }
                 });
                 if tool.picks() {
@@ -368,7 +380,7 @@ impl Tools {
                     &mut intents,
                 );
             });
-        self.picker_open = open;
+        self.pickers.open = open;
         if !open {
             *tool = super::gesture::Tool::Select;
         }

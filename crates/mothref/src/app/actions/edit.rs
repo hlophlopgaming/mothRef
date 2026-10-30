@@ -18,7 +18,7 @@ impl App {
         match action {
             SamplingDefault | SamplingSmooth | SamplingNearest | SamplingAutomatic => {
                 self.workspace.board.idle()
-                    && !self.tools.locked
+                    && !self.workspace.board.locked
                     && !self.workspace.board.selection.is_empty()
                     && self.workspace.board.selection.iter().all(|id| {
                         self.workspace
@@ -30,13 +30,13 @@ impl App {
             }
             EditNote => {
                 self.workspace.board.idle()
-                    && !self.tools.locked
+                    && !self.workspace.board.locked
                     && single(|item| item.note().is_some())
             }
             EditItem | CancelItem => self.workspace.board.selection.len() == 1,
             ApplyItem => {
                 self.workspace.board.selection.len() == 1
-                    && self.tools.draft.is_some_and(|(id, r, t)| {
+                    && self.tools.edit.draft.is_some_and(|(id, r, t)| {
                         self.workspace.board.selection.contains(&id) && r.valid() && t.valid()
                     })
             }
@@ -60,7 +60,7 @@ impl App {
                 Intent::EditNote(item.id)
             }
             EditItem => {
-                self.tools.inspector = true;
+                self.tools.edit.open = true;
                 return None;
             }
             SamplingDefault | SamplingSmooth | SamplingNearest | SamplingAutomatic => {
@@ -85,7 +85,7 @@ impl App {
                 )
             }
             ApplyItem => {
-                let (id, mut rect, transform) = self.tools.draft?;
+                let (id, mut rect, transform) = self.tools.edit.draft?;
                 let item = self.workspace.board.scene.get(id)?;
                 if let Some(text) = item.note() {
                     let [width, height] = canvas::measure_note_frame(
@@ -110,8 +110,8 @@ impl App {
                 Intent::Commands(commands)
             }
             CancelItem => {
-                self.tools.draft = None;
-                self.tools.observed = None;
+                self.tools.edit.draft = None;
+                self.tools.edit.observed = None;
                 return None;
             }
             ResetRotation | ResetFlip => Intent::Commands(transform_selection(
