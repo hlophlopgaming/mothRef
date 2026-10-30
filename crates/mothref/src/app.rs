@@ -1043,6 +1043,7 @@ impl App {
                 if input::canvas_navigation(
                     self.workspace.board.view.viewport,
                     self.tools.blocked() || self.settings_window.open,
+                    self.over_panel(position),
                     position,
                 ) {
                     self.camera_motion.stop();
@@ -1069,6 +1070,7 @@ impl App {
                 if input::canvas_navigation(
                     self.workspace.board.view.viewport,
                     self.tools.blocked() || self.settings_window.open,
+                    self.over_panel(position),
                     position,
                 ) {
                     if continuous {
@@ -1509,6 +1511,14 @@ impl App {
             self.input.pointer_action,
         );
         selection::with_members(&board.scene, &mut board.selection, None);
+    }
+    /// A panel or popup (Layers, toolbars, menus) lies under `position`, above the
+    /// canvas, which egui paints in the background order.
+    fn over_panel(&self, position: [f32; 2]) -> bool {
+        self.shell
+            .context()
+            .layer_id_at(egui::pos2(position[0], position[1]))
+            .is_some_and(|layer| layer.order != egui::Order::Background)
     }
     /// Vertical drag zooms around the press point: up zooms in, down zooms out.
     /// Reachable with a mouse wheel button or a pen side button plus Ctrl/⌘.

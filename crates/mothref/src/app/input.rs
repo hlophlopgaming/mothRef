@@ -80,12 +80,15 @@ pub(super) fn key(event: &winit::event::KeyEvent) -> Option<egui::Key> {
 }
 
 /// Wheel and trackpad navigation share the same canvas ownership check.
+/// Whether wheel, trackpad and pinch input at `position` moves the camera. Over a
+/// panel (Layers, toolbars, menus) it scrolls the panel only.
 pub(super) fn canvas_navigation(
     viewport: egui::Rect,
     tools_open: bool,
+    over_panel: bool,
     position: [f32; 2],
 ) -> bool {
-    !tools_open && viewport.contains(egui::pos2(position[0], position[1]))
+    !tools_open && !over_panel && viewport.contains(egui::pos2(position[0], position[1]))
 }
 
 impl super::App {
@@ -489,8 +492,10 @@ mod tests {
                 | moth_platform::input::Input::Pan { position, .. } => position,
                 _ => unreachable!(),
             };
-            assert!(canvas_navigation(viewport, false, position));
-            assert!(!canvas_navigation(viewport, true, position));
+            assert!(canvas_navigation(viewport, false, false, position));
+            assert!(!canvas_navigation(viewport, true, false, position));
+            // Scrolling the Layers drawer must not zoom the board underneath.
+            assert!(!canvas_navigation(viewport, false, true, position));
         }
     }
     #[test]

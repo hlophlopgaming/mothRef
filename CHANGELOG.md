@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix scrolling the Layers drawer (or any panel over the board) zooming the board underneath.
 - The grayscale view can be toned with a color: Settings › Appearance › Grayscale view tint (for example sepia or blue). Shadows stay dark and highlights light; the middle tones take the color.
 - Fix locking or switching to grayscale on one window's board affecting another window until its board changed.
 - Fix boards with groups opening as a partial "Untitled" board from the library.
