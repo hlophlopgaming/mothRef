@@ -1,15 +1,16 @@
-# MothRef format, schema 5
+# MothRef format, schema 6
 
 All integers and IEEE-754 f32 coordinates are little-endian. Core readers accept
 seekable byte streams; native filesystem paths are never serialized. Schema 1 is the
 first persistent format; there is no schema 0 board to migrate. Schema 2 adds item
 content transforms; schema 3 adds text notes; schema 4 adds appearance and source
-filenames; schema 5 adds image sampling and fixed-width note metrics. The reader keeps the schema 1, 2, 3 and 4 record layouts, so every older board and journal still opens: a schema 1 insert
+filenames; schema 5 adds image sampling and fixed-width note metrics; schema 6 adds
+nested groups. The reader keeps the schema 1, 2, 3, 4 and 5 record layouts, so every older board and journal still opens: a schema 1 insert
 carries no transform and migrates to the identity transform. Future schemas must
 retain both readers and provide explicit migrations.
 
-The 16-byte header is `MOTH`, u32 schema version `5`, then eight zero bytes.
-Readers accept versions 1, 2, 3, 4 and 5 and reject every other version. Every record
+The 16-byte header is `MOTH`, u32 schema version `6`, then eight zero bytes.
+Readers accept versions 1 through 6 and reject every other version. Every record
 consists of a payload followed by a 96-byte footer:
 
 | Footer offset | Size | Meaning |
@@ -95,6 +96,36 @@ compact an older board to schema 5 before appending a schema-5 checkpoint;
 journals start with the current header. No header or committed payload is
 rewritten in place. Applications that only support schemas 1–4 reject schema 5.
 
+### Migration 5 → 6
+
+Schema 6 adds groups: a titled backdrop that hugs its members. Every item gains an
+optional parent group, written as 16 bytes where the nil UUID means "directly on the
+board" (item ids are UUIDv7, never nil). New tags:
+
+- `14` image insert: tag `11` layout with the parent between the filename and the
+  fractional index.
+- `15` note insert: tag `12` layout with the parent between the filename and the
+  fractional index.
+- `16` group insert: UUIDv7, rectangle (four f32, offset 17), u8 color code
+  (offset 33, below `6`), u16 UTF-8 title length (at most 256 bytes), the title,
+  the parent, then the fractional index.
+- `17` SetParent: UUID, parent (33 bytes total). The inverse carries the old parent.
+- `18` SetGroup: UUID, u8 color code, u16 title length, the title.
+
+A group's rectangle is derived, not stored state: while it has members it is the
+union of their rotated footprints, padded by 24 world units on the sides and bottom
+and 36 on top for the title chip; while empty it shows its resting rectangle, which
+is the one written in its insert and changed by SetRect. Groups keep the identity
+transform; SetTransform on a group is rejected. A group can be removed only once
+it is empty, groups nest at most 16 levels, and a group can never contain itself.
+Color codes index theme tokens, never literal colors.
+
+Checkpoints write parents before their members, so replaying inserts in order never
+names a group that does not exist yet; the checkpoint writes a group's current
+frame as its resting rectangle. Older tags migrate with no parent. `corpus/moth/v5.moth`
+is now frozen; `corpus/moth/v6.moth` holds two nested groups, an image and a note.
+Applications that only support schemas 1–5 reject schema 6.
+
 A checkpoint contains zero or more u32-length-prefixed Insert commands. The
 entire checkpoint is one record, so replacing the scene is atomic. Commands after
 the last checkpoint replay through the same scene command API. Journal and board
@@ -102,8 +133,8 @@ streams share this encoding. The desktop worker syncs an original before its
 insertion command, then syncs the command before acknowledging it to the UI.
 Acknowledged mutations therefore need no deferred shutdown flush.
 
-Limits: 256 MiB per record; 64 MiB per checkpoint; 5,219 bytes per image command
-(including a 1,024-byte name and a 4,096-byte fractional index);
+Limits: 256 MiB per record; 64 MiB per checkpoint; 5,235 bytes per image command
+(including a 1,024-byte name, a parent and a 4,096-byte fractional index);
 32 KiB of note text per insert/SetText; one million scene items and blob entries
 in the reader. The current UI still limits boards to 10,000 items. The desktop
 journal/file budget is 8 GiB; exhaustion rejects new work instead of evicting

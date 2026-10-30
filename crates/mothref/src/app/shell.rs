@@ -219,6 +219,7 @@ impl Shell {
         let size = texture.texture.size();
         gpu.registry.grayscale = frame.grayscale;
         gpu.registry.sampling = frame.sampling;
+        gpu.registry.backdrops = backdrops(moth_ui::tokens(&self.ctx));
         let mut jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);
         if frame.ui_opacity < 1. {
             for job in &mut jobs {
@@ -304,4 +305,25 @@ impl Shell {
             .and_then(|o| Instant::now().checked_add(o.repaint_delay));
         Ok(Present::Presented)
     }
+}
+/// Theme group colors in the renderer's straight-alpha linear form.
+pub(super) fn backdrops(
+    tokens: moth_ui::Tokens,
+) -> [moth_render::Backdrop; moth_scene::GROUP_COLORS as usize] {
+    let linear = |color: egui::Color32| {
+        let [r, g, b, a] = color.to_srgba_unmultiplied();
+        [
+            egui::ecolor::linear_f32_from_gamma_u8(r),
+            egui::ecolor::linear_f32_from_gamma_u8(g),
+            egui::ecolor::linear_f32_from_gamma_u8(b),
+            a as f32 / 255.,
+        ]
+    };
+    std::array::from_fn(|code| {
+        let [fill, border] = tokens.group_backdrop(code as u8);
+        moth_render::Backdrop {
+            fill: linear(fill),
+            border: linear(border),
+        }
+    })
 }

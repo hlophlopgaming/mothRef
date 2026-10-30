@@ -576,18 +576,10 @@ impl Workspace {
                             self.board
                                 .selection
                                 .retain(|id| self.board.scene.get(*id).is_some());
+                            self.board.settle_groups();
                         }
                         Completion::AppliedBatch(commands, sources) => {
-                            let affected: HashSet<_> = commands
-                                .iter()
-                                .map(|command| match command {
-                                    Command::Insert(item) => item.id,
-                                    Command::Remove(id)
-                                    | Command::SetRect { id, .. }
-                                    | Command::SetTransform { id, .. }
-                                    | Command::SetText { id, .. } => *id,
-                                })
-                                .collect();
+                            let affected: HashSet<_> = commands.iter().map(Command::id).collect();
                             let inserted: HashSet<_> = commands
                                 .iter()
                                 .filter_map(|c| match c {
@@ -616,6 +608,7 @@ impl Workspace {
                             self.board
                                 .selection
                                 .retain(|id| self.board.scene.get(*id).is_some());
+                            self.board.settle_groups();
                         }
                         Completion::Opened(scene, sources, recovered, destination) => {
                             if let Some(journal) = self.board.restoring.take() {

@@ -5,6 +5,40 @@ use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Sidebar and menu: put the selection into a new group.
+    GroupSelection,
+    /// Dissolve a group, keeping its members on the board.
+    Ungroup,
+    /// Step into a group to select its members one by one.
+    EnterGroup,
+    /// Edit a group's title.
+    RenameGroup,
+    /// Submenu of backdrop colors.
+    GroupColor,
+    /// Backdrop color.
+    GroupNeutral,
+    /// Backdrop color.
+    GroupSage,
+    /// Backdrop color.
+    GroupAmber,
+    /// Backdrop color.
+    GroupSky,
+    /// Backdrop color.
+    GroupWing,
+    /// Backdrop color.
+    GroupLilac,
+    /// Title chip of a group without a title.
+    UntitledGroup,
+    /// Hint beside the title being typed: Enter keeps it, Esc leaves it untitled.
+    GroupTitleHint,
+    /// Selection bar label, followed by the member count.
+    GroupLabel,
+    /// Drawer with the board's groups and items as a tree.
+    Layers,
+    /// Layers drawer: an image without a file name.
+    LayerImage,
+    /// Layers drawer: a note row prefix.
+    LayerNote,
     /// Tab menu: open this board in a window of its own.
     MoveToNewWindow,
     /// Tab menu: followed by another window's board title.

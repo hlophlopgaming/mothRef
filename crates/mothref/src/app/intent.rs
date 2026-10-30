@@ -103,6 +103,12 @@ pub(super) enum Intent {
     CommitNote,
     /// Journal a whole command batch as one undo step.
     Commands(Vec<Command>),
+    /// Finish editing a group title: `Some` keeps the typed title, `None` leaves it.
+    GroupTitle(Option<String>),
+    /// Double-click inside a group: step into it, selecting the item at that level.
+    EnterGroup(Uuid),
+    /// Select exactly this item (with its members), entering its group if needed.
+    SelectItem(Uuid),
     /// Lay a finished import burst out with a chosen arrangement.
     Arrange(Arrange, Vec<Uuid>),
     /// Fit the camera to the current selection.

@@ -34,6 +34,8 @@ pub enum Icon {
     Code,
     /// ChevronRight control.
     ChevronRight,
+    /// An expanded tree row.
+    ChevronDown,
 
     /// Return to the board catalog.
     Home,
@@ -231,6 +233,7 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
             line(&[(10., 2.), (8., 16.)]);
         }
         Icon::ChevronRight => line(&[(6., 3.), (12., 9.), (6., 15.)]),
+        Icon::ChevronDown => line(&[(3., 6.), (9., 12.), (15., 6.)]),
         Icon::Home => {
             line(&[
                 (2., 8.),

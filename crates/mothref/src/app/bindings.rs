@@ -155,8 +155,28 @@ actions! {
     ClearDiskCache, ClearDiskCache, "", Some(moth_ui::icons::Icon::Close);
     ShellIntegration, InstallShellIntegration, "", None;
     WindowBar, WindowControls, "", None;
+    Group, GroupSelection, "Cmd+G", None;
+    Ungroup, Ungroup, "Cmd+Shift+G", None;
+    EnterGroup, EnterGroup, "", None;
+    RenameGroup, RenameGroup, "F2", None;
+    GroupNeutral, GroupNeutral, "", None;
+    GroupSage, GroupSage, "", None;
+    GroupAmber, GroupAmber, "", None;
+    GroupSky, GroupSky, "", None;
+    GroupWing, GroupWing, "", None;
+    GroupLilac, GroupLilac, "", None;
+    Layers, Layers, "", None;
 
 }
+/// Backdrop colors in palette-code order.
+pub(super) const GROUP_COLORS: [Action; moth_scene::GROUP_COLORS as usize] = [
+    Action::GroupNeutral,
+    Action::GroupSage,
+    Action::GroupAmber,
+    Action::GroupSky,
+    Action::GroupWing,
+    Action::GroupLilac,
+];
 impl Action {
     pub fn pan_direction(self) -> Option<[f32; 2]> {
         match self {
@@ -180,7 +200,7 @@ impl Action {
             | CloseTab | NextTab | Overlay | Pin | Minimize | Maximize | MoveWindow
             | Fullscreen | Settings | CloseWindow | OverlaySelection | ClickThrough | Bottom
             | LockWindow | ResizeSelection | ResizeAll | OpacityUp | OpacityDown
-            | ShellIntegration | WindowBar => Text::CategoryBoard,
+            | ShellIntegration | WindowBar | Layers => Text::CategoryBoard,
             _ => Text::CategoryEdit,
         }
     }

@@ -51,6 +51,7 @@ mod canvas;
 mod chrome;
 mod document;
 mod floating;
+mod groups;
 mod input;
 mod intent;
 mod item_motion;
@@ -1091,6 +1092,56 @@ impl App {
                 self.workspace
                     .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
             }
+            Intent::GroupTitle(title) => {
+                let board = &mut self.workspace.board;
+                let Some((id, _)) = board.renaming.take() else {
+                    return;
+                };
+                let Some(style) = board.scene.get(id).and_then(|item| item.group_style()) else {
+                    return;
+                };
+                let Some(mut title) = title.map(|title| title.trim().to_owned()) else {
+                    return;
+                };
+                while title.len() > moth_scene::MAX_GROUP_TITLE {
+                    title.pop();
+                }
+                if title != style.title {
+                    let group = moth_scene::Group {
+                        title,
+                        ..style.clone()
+                    };
+                    self.workspace
+                        .persist(moth_platform::boards::Request::Apply(
+                            Command::SetGroup { id, group },
+                            None,
+                        ));
+                }
+            }
+            Intent::SelectItem(id) => {
+                let board = &mut self.workspace.board;
+                if board.scene.get(id).is_none() {
+                    return;
+                }
+                board.entered = board.scene.get(id).and_then(|item| item.parent);
+                board.selection = HashSet::from([id]);
+                selection::with_members(&board.scene, &mut board.selection, None);
+            }
+            Intent::EnterGroup(hit) => {
+                let board = &mut self.workspace.board;
+                let group = selection::target(&board.scene, board.entered, hit);
+                if !board.scene.get(group).is_some_and(|item| item.is_group()) {
+                    return;
+                }
+                board.entered = Some(group);
+                board.selection.clear();
+                if group != hit {
+                    board
+                        .selection
+                        .insert(selection::target(&board.scene, board.entered, hit));
+                    selection::with_members(&board.scene, &mut board.selection, None);
+                }
+            }
             Intent::Arrange(mode, ids) => {
                 let mut items: Vec<_> = ids
                     .iter()
@@ -1594,35 +1645,63 @@ impl App {
                         self.camera_motion.clear_samples();
                         if !p.pan && self.workspace.board.idle() {
                             let world = self.workspace.board.view.camera.world(p.position);
-                            if let Some(item) = self
-                                .workspace
-                                .board
-                                .scene
-                                .query(Rect {
-                                    x: world[0],
-                                    y: world[1],
-                                    width: 1. / self.workspace.board.view.camera.zoom,
-                                    height: 1. / self.workspace.board.view.camera.zoom,
-                                })
+                            let chip = groups::chip_rects(self.shell.context())
                                 .into_iter()
                                 .rev()
-                                // The index only guarantees the rotated envelope, so the
-                                // click must still land inside the frame itself.
-                                .find(|item| {
-                                    self.workspace.board.presented(item)
-                                        && item
-                                            .rect
-                                            .contains_rotated(item.transform.rotation, world)
+                                .find(|(_, rect)| {
+                                    rect.contains(egui::pos2(p.position[0], p.position[1]))
                                 })
+                                .map(|(id, _)| id);
+                            let board = &mut self.workspace.board;
+                            let raw = chip.or_else(|| {
+                                board
+                                    .scene
+                                    .query(Rect {
+                                        x: world[0],
+                                        y: world[1],
+                                        width: 1. / board.view.camera.zoom,
+                                        height: 1. / board.view.camera.zoom,
+                                    })
+                                    .into_iter()
+                                    .rev()
+                                    // The index only guarantees the rotated envelope, so the
+                                    // click must still land inside the frame itself.
+                                    .find(|item| {
+                                        board.presented(item)
+                                            && item
+                                                .rect
+                                                .contains_rotated(item.transform.rotation, world)
+                                    })
+                                    .map(|item| item.id)
+                            });
+                            selection::keep_entered(&board.scene, &mut board.entered, raw);
+                            // The backdrop of the entered group is canvas: it starts a
+                            // selection rectangle among its members. Its title chip still
+                            // grabs the whole group.
+                            if let Some(hit) =
+                                raw.filter(|hit| Some(*hit) != board.entered || chip.is_some())
                             {
+                                let id = if chip.is_some() {
+                                    hit
+                                } else {
+                                    selection::target(&board.scene, board.entered, hit)
+                                };
                                 if !selection::click(
-                                    &mut self.workspace.board.selection,
-                                    item.id,
+                                    &mut board.selection,
+                                    id,
                                     self.input.pointer_action,
                                 ) {
+                                    selection::with_members(
+                                        &board.scene,
+                                        &mut board.selection,
+                                        Some(id),
+                                    );
                                     return;
                                 }
-                                self.moving = Some((item.id, item.rect));
+                                selection::with_members(&board.scene, &mut board.selection, None);
+                                if let Some(item) = board.scene.get(id) {
+                                    self.moving = Some((item.id, item.rect));
+                                }
                                 self.drag_duplicate = self.input.pointer_action
                                     == Some(bindings::Action::DuplicateDrag);
                             }
@@ -1717,12 +1796,21 @@ impl App {
                                         .filter_map(|id| self.workspace.board.scene.get(*id))
                                         .collect();
                                     items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
-                                    let commands = arrange::translate(
+                                    let mut commands = arrange::translate(
                                         &items,
                                         [dx, dy],
                                         self.drag_duplicate,
                                         self.workspace.board.scene.top(),
                                     );
+                                    if !self.drag_duplicate {
+                                        let world =
+                                            self.workspace.board.view.camera.world(p.position);
+                                        commands.extend(groups::regroup(
+                                            &self.workspace.board.scene,
+                                            &self.workspace.board.selection,
+                                            world,
+                                        ));
+                                    }
                                     self.motion.release(
                                         &commands,
                                         &self.workspace.board.scene,
@@ -1749,17 +1837,22 @@ impl App {
                             };
                             let images_only = self.workspace.board.view.compact
                                 && self.workspace.board.appearance.images_only;
+                            let board = &mut self.workspace.board;
+                            let entered = board.entered;
+                            let hits: HashSet<_> = board
+                                .scene
+                                .query(rect)
+                                .iter()
+                                .filter(|i| !images_only || i.blob().is_some())
+                                .filter(|i| Some(i.id) != entered)
+                                .map(|i| selection::target(&board.scene, entered, i.id))
+                                .collect();
                             selection::area(
-                                &mut self.workspace.board.selection,
-                                self.workspace
-                                    .board
-                                    .scene
-                                    .query(rect)
-                                    .iter()
-                                    .filter(|i| !images_only || i.blob().is_some())
-                                    .map(|i| i.id),
+                                &mut board.selection,
+                                hits.into_iter(),
                                 self.input.pointer_action,
                             );
+                            selection::with_members(&board.scene, &mut board.selection, None);
                         }
                     }
                     Phase::Cancel => self.cancel_drag(),
@@ -2283,6 +2376,7 @@ impl App {
                     .collect::<Vec<_>>(),
             );
         }
+        groups::backdrops_first(&self.workspace.board.scene, &mut visible);
         match self.shell.render(output, &visible, camera, frame)? {
             shell::Present::Presented => {}
             shell::Present::Recovered => {
@@ -2732,7 +2826,11 @@ fn transform_selection(
     selection: &HashSet<Uuid>,
     change: impl Fn(Transform) -> Transform,
 ) -> Vec<Command> {
-    let items: Vec<_> = selection.iter().filter_map(|id| scene.get(*id)).collect();
+    let items: Vec<_> = selection
+        .iter()
+        .filter_map(|id| scene.get(*id))
+        .filter(|item| !item.is_group())
+        .collect();
     let mut bounds = egui::Rect::NOTHING;
     for item in &items {
         let envelope = item.rect.rotated_envelope(item.transform.rotation);

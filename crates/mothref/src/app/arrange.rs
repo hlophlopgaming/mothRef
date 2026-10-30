@@ -523,7 +523,43 @@ pub fn translate(
             out.push(Command::SetRect { id: item.id, rect });
         }
     }
+    if duplicate {
+        adopt_copies(items, &mut out);
+    }
     out
+}
+/// Copies of grouped items join the copy of their group; a copied member whose group
+/// stayed behind joins the original group. Inserts are reordered so a group always
+/// exists before its members.
+fn adopt_copies(items: &[&Item], out: &mut [Command]) {
+    let ids: std::collections::HashMap<_, _> = items
+        .iter()
+        .zip(out.iter())
+        .map(|(item, copy)| (item.id, copy.id()))
+        .collect();
+    for command in out.iter_mut() {
+        if let Command::Insert(copy) = command
+            && let Some(parent) = copy.parent
+        {
+            copy.parent = Some(ids.get(&parent).copied().unwrap_or(parent));
+        }
+    }
+    let parents: std::collections::HashMap<_, _> = out
+        .iter()
+        .filter_map(|command| match command {
+            Command::Insert(copy) => Some((copy.id, copy.parent)),
+            _ => None,
+        })
+        .collect();
+    let depth = |mut id| {
+        let mut depth = 0;
+        while let Some(Some(parent)) = parents.get(&id) {
+            depth += 1;
+            id = *parent;
+        }
+        depth
+    };
+    out.sort_by_cached_key(|command| depth(command.id()));
 }
 /// Reuse remove/insert commands so layer changes need no new journal encoding.
 pub fn reorder(

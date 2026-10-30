@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Versioned append-only records. A checksummed footer commits one record.
 use crate::ReadSeek;
-use moth_scene::{BlobId, Command, Content, Item, Rect, Scene, Transform, Uuid};
+use moth_scene::{BlobId, Command, Content, Group, Item, Rect, Scene, Transform, Uuid};
 use std::{
     collections::HashMap,
     io::{self, SeekFrom, Write},
 };
 
-const HEADER: &[u8; 16] = b"MOTH\x05\0\0\0\0\0\0\0\0\0\0\0";
+/// Schema the writer produces. Boards with an older header are compacted to it before
+/// a checkpoint is appended, so a file never mixes record layouts across headers.
+pub const SCHEMA: u8 = 6;
+const HEADER: &[u8; 16] = b"MOTH\x06\0\0\0\0\0\0\0\0\0\0\0";
+/// Schema-5 boards predate groups.
+const HEADER_V5: &[u8; 16] = b"MOTH\x05\0\0\0\0\0\0\0\0\0\0\0";
 /// Schema-4 boards predate sampling and fixed-width notes.
 const HEADER_V4: &[u8; 16] = b"MOTH\x04\0\0\0\0\0\0\0\0\0\0\0";
 /// Schema-3 boards predate appearance and source names.
@@ -20,8 +25,13 @@ const FOOTER: &[u8; 8] = b"MOTHEND1";
 const FOOTER_SIZE: u64 = 96;
 /// Bounds allocations even for malicious input lengths.
 pub const MAX_RECORD: u64 = 256 * 1024 * 1024;
-/// Longest accepted image command payload: the largest fractional index plus its fixed fields.
-const MAX_COMMAND: u64 = 5219;
+/// Longest accepted image command payload: the largest fractional index plus its fixed
+/// fields and, from schema 6, the parent id.
+const MAX_COMMAND: u64 = 5219 + 16;
+/// Longest fractional index any insert may carry.
+const MAX_INDEX: usize = 4096;
+/// Bytes of a group insert before its title: tag, id, rectangle, color and u16 length.
+const INSERT_GROUP_FIXED: usize = 1 + 16 + 16 + 1 + 2;
 /// Bytes of fixed command fields after the tag, before a schema-2 insert's fractional index.
 const INSERT_V2_FIXED: usize = 86;
 /// Bytes of fixed fields before a text insert's fractional index: tag, id, u32 length,
@@ -29,7 +39,7 @@ const INSERT_V2_FIXED: usize = 86;
 const INSERT_TEXT_FIXED: usize = 1 + 16 + 4 + 16 + 32;
 /// Longest accepted text insert or SetText command (text plus a fractional index).
 const MAX_TEXT_COMMAND: u64 =
-    INSERT_TEXT_FIXED as u64 + moth_scene::MAX_NOTE_BYTES as u64 + 4096 + 1026;
+    INSERT_TEXT_FIXED as u64 + moth_scene::MAX_NOTE_BYTES as u64 + 4096 + 1026 + 16;
 /// Bytes of fixed command fields in a transform record.
 const SET_TRANSFORM_LEN: usize = 1 + 16 + 21;
 /// Distinguishes unsupported files from recoverable torn tails.
@@ -99,17 +109,18 @@ pub fn encode(command: &Command) -> Vec<u8> {
     match command {
         Command::Insert(item) => match &item.content {
             Content::Image(blob) => {
-                bytes.push(11);
+                bytes.push(14);
                 bytes.extend_from_slice(item.id.as_bytes());
                 bytes.extend_from_slice(blob.as_bytes());
                 rect_bytes(&mut bytes, item.rect);
                 transform_bytes(&mut bytes, item.transform);
                 bytes.extend_from_slice(&(item.name.len() as u16).to_le_bytes());
                 bytes.extend_from_slice(item.name.as_bytes());
+                bytes.extend_from_slice(parent_bytes(item.parent).as_bytes());
                 bytes.extend_from_slice(item.z.as_bytes());
             }
             Content::Text(text) => {
-                bytes.push(12);
+                bytes.push(15);
                 bytes.extend_from_slice(item.id.as_bytes());
                 bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
                 bytes.extend_from_slice(text.as_bytes());
@@ -117,6 +128,15 @@ pub fn encode(command: &Command) -> Vec<u8> {
                 transform_bytes(&mut bytes, item.transform);
                 bytes.extend_from_slice(&(item.name.len() as u16).to_le_bytes());
                 bytes.extend_from_slice(item.name.as_bytes());
+                bytes.extend_from_slice(parent_bytes(item.parent).as_bytes());
+                bytes.extend_from_slice(item.z.as_bytes());
+            }
+            Content::Group(group) => {
+                bytes.push(16);
+                bytes.extend_from_slice(item.id.as_bytes());
+                rect_bytes(&mut bytes, item.rect);
+                group_bytes(&mut bytes, group);
+                bytes.extend_from_slice(parent_bytes(item.parent).as_bytes());
                 bytes.extend_from_slice(item.z.as_bytes());
             }
         },
@@ -140,13 +160,33 @@ pub fn encode(command: &Command) -> Vec<u8> {
             bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
             bytes.extend_from_slice(text.as_bytes());
         }
+        Command::SetParent { id, parent } => {
+            bytes.push(17);
+            bytes.extend_from_slice(id.as_bytes());
+            bytes.extend_from_slice(parent_bytes(*parent).as_bytes());
+        }
+        Command::SetGroup { id, group } => {
+            bytes.push(18);
+            bytes.extend_from_slice(id.as_bytes());
+            group_bytes(&mut bytes, group);
+        }
     }
     bytes
+}
+/// The nil UUID marks "on the board"; it is never a valid item id (ids are UUIDv7).
+fn parent_bytes(parent: Option<Uuid>) -> Uuid {
+    parent.unwrap_or(Uuid::nil())
+}
+fn group_bytes(bytes: &mut Vec<u8>, group: &Group) {
+    bytes.push(group.color);
+    bytes.extend_from_slice(&(group.title.len() as u16).to_le_bytes());
+    bytes.extend_from_slice(group.title.as_bytes());
 }
 /// Encodes an atomic checkpoint; the footer commits the entire replacement scene.
 pub fn snapshot(scene: &Scene) -> Result<Vec<u8>, Error> {
     let mut bytes = Vec::new();
-    for item in scene.items() {
+    // Parents first: replaying a checkpoint must never name a group before it exists.
+    for item in scene.items_parent_first() {
         let command = encode(&Command::Insert(item.clone()));
         if bytes.len() + command.len() + 4 > 64 * 1024 * 1024 {
             return Err(Error::Budget);
@@ -210,7 +250,7 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
         ))
     };
     let rect = || -> Result<Rect, Error> {
-        let start = if matches!(bytes[0], 1 | 4 | 8 | 11) {
+        let start = if matches!(bytes[0], 1 | 4 | 8 | 11 | 14) {
             49
         } else {
             17
@@ -226,12 +266,12 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
         let flags = *bytes.get(start + 4).ok_or(Error::Invalid)?;
         Ok(Transform {
             rotation: float(start, 0)?,
-            opacity: if matches!(bytes[0], 8..=13) {
+            opacity: if matches!(bytes[0], 8..=15) {
                 float(start + 21, 0)?
             } else {
                 1.0
             },
-            grayscale: if matches!(bytes[0], 8..=13) {
+            grayscale: if matches!(bytes[0], 8..=15) {
                 match bytes.get(start + 25) {
                     Some(0) => false,
                     Some(1) => true,
@@ -240,18 +280,18 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             } else {
                 false
             },
-            sampling: if matches!(bytes[0], 11..=13) {
+            sampling: if matches!(bytes[0], 11..=15) {
                 moth_scene::Sampling::from_code(*bytes.get(start + 26).ok_or(Error::Invalid)?)
                     .ok_or(Error::Invalid)?
             } else {
                 moth_scene::Sampling::Default
             },
-            note_font_size: if matches!(bytes[0], 11..=13) {
+            note_font_size: if matches!(bytes[0], 11..=15) {
                 float(start + 27, 0)?
             } else {
                 0.
             },
-            note_wrap: if matches!(bytes[0], 11..=13) {
+            note_wrap: if matches!(bytes[0], 11..=15) {
                 match bytes.get(start + 31) {
                     Some(0) => false,
                     Some(1) => true,
@@ -283,6 +323,33 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             .to_owned();
         Ok((name, end))
     };
+    // Schema 6 stores the parent between the name and the fractional index.
+    let parent = |start: usize| -> Result<(Option<Uuid>, usize), Error> {
+        if bytes[0] < 14 {
+            return Ok((None, start));
+        }
+        let id = Uuid::from_slice(bytes.get(start..start + 16).ok_or(Error::Invalid)?)
+            .map_err(|_| Error::Invalid)?;
+        Ok(((!id.is_nil()).then_some(id), start + 16))
+    };
+    let group = |start: usize| -> Result<(Group, usize), Error> {
+        let color = *bytes.get(start).ok_or(Error::Invalid)?;
+        let len = u16::from_le_bytes(
+            bytes
+                .get(start + 1..start + 3)
+                .ok_or(Error::Invalid)?
+                .try_into()
+                .map_err(|_| Error::Invalid)?,
+        ) as usize;
+        if len > moth_scene::MAX_GROUP_TITLE || color >= moth_scene::GROUP_COLORS {
+            return Err(Error::Invalid);
+        }
+        let end = start + 3 + len;
+        let title = std::str::from_utf8(bytes.get(start + 3..end).ok_or(Error::Invalid)?)
+            .map_err(|_| Error::Invalid)?
+            .to_owned();
+        Ok((Group { title, color }, end))
+    };
     match bytes[0] {
         // Schema-1 insert: no transform fields, so content starts at identity.
         1 if bytes.len() > 65 && bytes.len() <= 4161 => Ok(Command::Insert(Item {
@@ -295,16 +362,18 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             transform: Transform::default(),
             z: fractional_index::FractionalIndex::from_bytes(bytes[65..].to_vec())
                 .map_err(|_| Error::Invalid)?,
+            parent: None,
         })),
-        4 | 8 | 11
+        4 | 8 | 11 | 14
             if bytes.len() > INSERT_V2_FIXED + if bytes[0] >= 8 { 5 } else { 0 }
                 && bytes.len() as u64 <= MAX_COMMAND =>
         {
             let (name, index) = if bytes[0] >= 8 {
-                name_index(if bytes[0] == 11 { 97 } else { 91 })?
+                name_index(if bytes[0] >= 11 { 97 } else { 91 })?
             } else {
                 (String::new(), 86)
             };
+            let (parent, index) = parent(index)?;
             Ok(Command::Insert(Item {
                 id,
                 name,
@@ -313,11 +382,14 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
                 )),
                 rect: rect()?,
                 transform: transform(65)?,
-                z: fractional_index::FractionalIndex::from_bytes(bytes[index..].to_vec())
-                    .map_err(|_| Error::Invalid)?,
+                z: fractional_index::FractionalIndex::from_bytes(
+                    bytes.get(index..).ok_or(Error::Invalid)?.to_vec(),
+                )
+                .map_err(|_| Error::Invalid)?,
+                parent,
             }))
         }
-        6 | 9 | 12
+        6 | 9 | 12 | 15
             if bytes.len()
                 > INSERT_TEXT_FIXED
                     - if bytes[0] == 6 {
@@ -346,19 +418,52 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             };
             let transform_start = rect_start + 16;
             let (name, index) = if bytes[0] >= 9 {
-                name_index(transform_start + if bytes[0] == 12 { 32 } else { 26 })?
+                name_index(transform_start + if bytes[0] >= 12 { 32 } else { 26 })?
             } else {
                 (String::new(), transform_start + 21)
             };
+            let (parent, index) = parent(index)?;
             Ok(Command::Insert(Item {
                 id,
                 name,
                 content: Content::Text(text.to_owned()),
                 rect,
                 transform: transform(transform_start)?,
-                z: fractional_index::FractionalIndex::from_bytes(bytes[index..].to_vec())
-                    .map_err(|_| Error::Invalid)?,
+                z: fractional_index::FractionalIndex::from_bytes(
+                    bytes.get(index..).ok_or(Error::Invalid)?.to_vec(),
+                )
+                .map_err(|_| Error::Invalid)?,
+                parent,
             }))
+        }
+        16 if bytes.len() > INSERT_GROUP_FIXED + 16
+            && bytes.len() <= INSERT_GROUP_FIXED + moth_scene::MAX_GROUP_TITLE + 16 + MAX_INDEX =>
+        {
+            let (group, index) = group(33)?;
+            let (parent, index) = parent(index)?;
+            Ok(Command::Insert(Item {
+                id,
+                name: String::new(),
+                content: Content::Group(group),
+                rect: rect()?,
+                transform: Transform::default(),
+                z: fractional_index::FractionalIndex::from_bytes(
+                    bytes.get(index..).ok_or(Error::Invalid)?.to_vec(),
+                )
+                .map_err(|_| Error::Invalid)?,
+                parent,
+            }))
+        }
+        17 if bytes.len() == 33 => Ok(Command::SetParent {
+            id,
+            parent: parent(17)?.0,
+        }),
+        18 if bytes.len() >= 20 && bytes.len() <= 20 + moth_scene::MAX_GROUP_TITLE => {
+            let (group, end) = group(17)?;
+            if end != bytes.len() {
+                return Err(Error::Invalid);
+            }
+            Ok(Command::SetGroup { id, group })
         }
         2 if bytes.len() == 17 => Ok(Command::Remove(id)),
         3 if bytes.len() == 33 => Ok(Command::SetRect { id, rect: rect()? }),
@@ -399,6 +504,7 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
     let mut header = [0; 16];
     reader.read_exact(&mut header)?;
     if &header != HEADER
+        && &header != HEADER_V5
         && &header != HEADER_V4
         && &header != HEADER_V3
         && &header != HEADER_V2
@@ -684,11 +790,34 @@ mod tests {
     #[test]
     fn unsupported_schema_is_rejected() {
         let (mut bytes, _) = base();
-        bytes[4] = 6;
+        bytes[4] = 7;
         assert!(matches!(read(&mut Cursor::new(bytes)), Err(Error::Invalid)));
     }
     #[test]
-    fn schema_five_fixture_keeps_sampling_and_wrapped_note_metrics() {
+    fn schema_six_fixture_keeps_nested_groups() {
+        let bytes = include_bytes!("../../../corpus/moth/v6.moth");
+        assert_eq!(bytes[4], SCHEMA);
+        let board = read(&mut Cursor::new(bytes.as_slice())).unwrap();
+        let outer = board
+            .scene
+            .items()
+            .find(|item| item.group_style().is_some_and(|g| g.title == "outer"))
+            .unwrap();
+        let inner = board
+            .scene
+            .items()
+            .find(|item| item.parent == Some(outer.id))
+            .unwrap();
+        assert!(inner.is_group());
+        assert_eq!(board.scene.children(inner.id).count(), 2);
+        let restored = restore(&snapshot(&board.scene).unwrap(), &board.blobs).unwrap();
+        for item in board.scene.items() {
+            assert_eq!(restored.get(item.id), Some(item));
+        }
+    }
+    #[test]
+    fn schema_five_migrates_to_ungrouped_items() {
+        // Frozen: regenerating it with the current writer would erase this migration case.
         let bytes = include_bytes!("../../../corpus/moth/v5.moth");
         assert_eq!(bytes[4], 5);
         let board = read(&mut Cursor::new(bytes.as_slice())).unwrap();
@@ -697,9 +826,83 @@ mod tests {
         assert!(board.scene.items().any(|item| item.note().is_some()
             && item.transform.note_wrap
             && item.transform.note_font_size == 24.));
+        assert!(board.scene.items().all(|item| item.parent.is_none()));
         let restored = restore(&snapshot(&board.scene).unwrap(), &board.blobs).unwrap();
         for item in board.scene.items() {
             assert_eq!(restored.get(item.id), Some(item));
+        }
+    }
+    #[test]
+    fn group_records_survive_journal_checkpoint_and_truncation() {
+        let (mut bytes, mut item) = base();
+        let group = Item::group(
+            Group {
+                title: "refs".into(),
+                color: 2,
+            },
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 5.,
+                height: 5.,
+            },
+            fractional_index::FractionalIndex::default(),
+        );
+        let records = [
+            Command::Insert(group.clone()),
+            Command::SetParent {
+                id: item.id,
+                parent: Some(group.id),
+            },
+            Command::SetGroup {
+                id: group.id,
+                group: Group {
+                    title: "renamed".into(),
+                    color: 5,
+                },
+            },
+        ];
+        let mut scene = read(&mut Cursor::new(&bytes)).unwrap().scene;
+        let mut cuts = Vec::new();
+        for command in records {
+            assert_eq!(
+                decode(&encode(&command)).map(|c| encode(&c)).unwrap(),
+                encode(&command)
+            );
+            scene.apply(command.clone()).unwrap();
+            let start = bytes.len();
+            cuts.push(start);
+            append(&mut bytes, start as u64, 2, &encode(&command)).unwrap();
+        }
+        item.parent = Some(group.id);
+        let board = read(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(board.scene.get(item.id), Some(&item));
+        assert_eq!(board.scene.get(group.id), scene.get(group.id));
+        assert_eq!(
+            board
+                .scene
+                .get(group.id)
+                .unwrap()
+                .group_style()
+                .unwrap()
+                .title,
+            "renamed"
+        );
+        // A torn SetParent never moves the item.
+        for cut in cuts[1]..cuts[2] {
+            let torn = read(&mut Cursor::new(&bytes[..cut])).unwrap();
+            assert_eq!(torn.scene.get(item.id).unwrap().parent, None);
+        }
+        let restored = restore(&snapshot(&board.scene).unwrap(), &board.blobs).unwrap();
+        assert_eq!(restored.get(item.id), Some(&item));
+        assert_eq!(restored.get(group.id), board.scene.get(group.id));
+        // Bad color codes, long titles and truncated records are rejected, never panics.
+        let valid = encode(&Command::Insert(group));
+        let mut bad = valid.clone();
+        bad[33] = moth_scene::GROUP_COLORS;
+        assert!(decode(&bad).is_err());
+        for cut in 0..valid.len() {
+            assert!(decode(&valid[..cut]).is_err());
         }
     }
     #[test]
@@ -915,6 +1118,25 @@ mod tests {
             prop_assert_eq!(restored.top(),Some(&item.z));
             restored.apply(Command::Remove(item.id)).unwrap();
             prop_assert!(restored.top().is_none());
+        }
+        #[test]
+        fn group_roundtrip(title in "[a-zA-Z0-9 ]{0,60}", color in 0u8..moth_scene::GROUP_COLORS, nested in any::<bool>()) {
+            let (mut bytes, mut item) = base();
+            let rect = Rect { x: 0., y: 0., width: 1., height: 1. };
+            let outer = Item::group(Group { title: title.clone(), color }, rect, fractional_index::FractionalIndex::default());
+            let mut inner = Item::group(Group { title, color }, rect, fractional_index::FractionalIndex::default());
+            inner.parent = nested.then_some(outer.id);
+            for command in [Command::Insert(outer.clone()), Command::Insert(inner.clone()), Command::SetParent { id: item.id, parent: Some(inner.id) }] {
+                let offset = bytes.len() as u64;
+                append(&mut bytes, offset, 2, &encode(&command)).unwrap();
+            }
+            item.parent = Some(inner.id);
+            let board = read(&mut Cursor::new(bytes)).unwrap();
+            prop_assert_eq!(board.scene.get(item.id), Some(&item));
+            let restored = restore(&snapshot(&board.scene).unwrap(), &board.blobs).unwrap();
+            for id in [outer.id, inner.id, item.id] {
+                prop_assert_eq!(restored.get(id), board.scene.get(id));
+            }
         }
         #[test]
         fn arbitrary_input_never_panics(bytes in proptest::collection::vec(any::<u8>(),0..8192)) {

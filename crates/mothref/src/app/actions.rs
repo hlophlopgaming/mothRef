@@ -223,6 +223,17 @@ impl App {
         if matches!(action, Paste | Undo | Redo | Note) {
             return true;
         }
+        if matches!(action, EnterGroup | RenameGroup) {
+            return selection::single_group(
+                &self.workspace.board.scene,
+                &self.workspace.board.selection,
+            )
+            .is_some();
+        }
+        if action == Ungroup || bindings::GROUP_COLORS.contains(&action) {
+            return !groups::selected(&self.workspace.board.scene, &self.workspace.board.selection)
+                .is_empty();
+        }
         if matches!(
             action,
             Horizontal
@@ -292,6 +303,22 @@ impl App {
             .filter_map(|id| self.workspace.board.scene.get(*id))
             .collect();
         items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
+        // A group's frame follows its members; only these actions act on the group itself.
+        if !matches!(
+            action,
+            Delete
+                | Duplicate
+                | NudgeLeft
+                | NudgeRight
+                | NudgeUp
+                | NudgeDown
+                | NudgeLeftFast
+                | NudgeRightFast
+                | NudgeUpFast
+                | NudgeDownFast
+        ) {
+            items.retain(|item| !item.is_group());
+        }
         let intent = match action {
             Palette => {
                 self.cancel_drag();
@@ -611,7 +638,72 @@ impl App {
                 self.workspace.board.view.viewport.center().x,
                 self.workspace.board.view.viewport.center().y,
             ])),
-            Delete => Intent::Commands(items.iter().map(|i| Command::Remove(i.id)).collect()),
+            Group => {
+                let Some((id, commands)) =
+                    groups::create(&self.workspace.board.scene, &self.workspace.board.selection)
+                else {
+                    return;
+                };
+                self.workspace.board.renaming = Some((id, String::new()));
+                Intent::Commands(commands)
+            }
+            Ungroup => {
+                let board = &mut self.workspace.board;
+                let commands = groups::dissolve(&board.scene, &board.selection);
+                board.entered = None;
+                Intent::Commands(commands)
+            }
+            EnterGroup | RenameGroup => {
+                let board = &mut self.workspace.board;
+                let Some(group) = selection::single_group(&board.scene, &board.selection) else {
+                    return;
+                };
+                if action == EnterGroup {
+                    board.entered = Some(group);
+                    board.selection = board.scene.children(group).map(|item| item.id).collect();
+                    selection::with_members(&board.scene, &mut board.selection, None);
+                } else if let Some(style) =
+                    board.scene.get(group).and_then(|item| item.group_style())
+                {
+                    board.renaming = Some((group, style.title.clone()));
+                }
+                return;
+            }
+            GroupNeutral | GroupSage | GroupAmber | GroupSky | GroupWing | GroupLilac => {
+                let color = bindings::GROUP_COLORS
+                    .iter()
+                    .position(|candidate| *candidate == action)
+                    .unwrap_or(0) as u8;
+                let scene = &self.workspace.board.scene;
+                Intent::Commands(
+                    groups::selected(scene, &self.workspace.board.selection)
+                        .into_iter()
+                        .filter_map(|id| {
+                            let style = scene.get(id)?.group_style()?;
+                            (style.color != color).then(|| Command::SetGroup {
+                                id,
+                                group: moth_scene::Group {
+                                    color,
+                                    ..style.clone()
+                                },
+                            })
+                        })
+                        .collect(),
+                )
+            }
+            Layers => {
+                let ctx = self.shell.context();
+                let key = egui::Id::new("layers_open");
+                ctx.data_mut(|data| {
+                    let open = data.get_temp_mut_or_default::<bool>(key);
+                    *open = !*open;
+                });
+                return;
+            }
+            Delete => Intent::Commands(groups::removal(
+                &self.workspace.board.scene,
+                items.iter().map(|i| i.id).collect(),
+            )),
             Duplicate => Intent::Commands(arrange::translate(
                 &items,
                 [24., 24.],
@@ -660,7 +752,7 @@ impl App {
             BringFront | SendBack | BringForward | SendBackward => {
                 Intent::Commands(arrange::reorder(
                     &self.workspace.board.scene,
-                    &self.workspace.board.selection,
+                    &items.iter().map(|item| item.id).collect(),
                     matches!(action, BringFront | BringForward),
                     matches!(action, BringFront | SendBack),
                 ))

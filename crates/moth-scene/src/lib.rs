@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![forbid(unsafe_code)]
 //! Pixel-free board state. All mutations go through reversible commands.
-use fractional_index::FractionalIndex;
+pub use fractional_index::FractionalIndex;
 use rstar::{AABB, RTree, RTreeObject};
 use std::collections::{BTreeSet, HashMap};
 pub use uuid::Uuid;
@@ -19,6 +19,34 @@ pub enum Content {
     Image(BlobId),
     /// Plain-text note. Font size is a fixed presentation constant.
     Text(String),
+    /// A titled backdrop that hugs its members; it owns no pixels and no text body.
+    Group(Group),
+}
+/// Upper bound on a group title's UTF-8 length.
+pub const MAX_GROUP_TITLE: usize = 256;
+/// Number of backdrop colors; the theme maps each code to a light and a dark token.
+pub const GROUP_COLORS: u8 = 6;
+/// Groups nest at most this deep, so a hostile file cannot make every edit walk a
+/// million-long ancestor chain.
+pub const MAX_GROUP_DEPTH: usize = 16;
+/// World-space margin between a group's members and its backdrop edge.
+pub const GROUP_PADDING: f32 = 24.0;
+/// Extra top margin that keeps the title chip, which straddles the top edge, off the
+/// first row of members.
+pub const GROUP_HEADER: f32 = 36.0;
+/// Title and backdrop color of a group. Geometry comes from the members.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Group {
+    /// Shown in the title chip; empty means untitled.
+    pub title: String,
+    /// Palette code below [`GROUP_COLORS`]; never a literal color, so themes stay free.
+    pub color: u8,
+}
+impl Group {
+    /// Rejects values a reader or the UI could not show safely.
+    pub fn valid(&self) -> bool {
+        self.title.len() <= MAX_GROUP_TITLE && self.color < GROUP_COLORS
+    }
 }
 /// Note font size in world units; the renderer and the UI share it so measured
 /// note frames match what is drawn.
@@ -226,6 +254,8 @@ pub struct Item {
     pub transform: Transform,
     /// Allows insertion between images without renumbering the board.
     pub z: FractionalIndex,
+    /// The group this item belongs to; `None` sits directly on the board.
+    pub parent: Option<Uuid>,
 }
 impl Item {
     /// Appends an image above the supplied fractional index.
@@ -237,6 +267,7 @@ impl Item {
             rect,
             transform: Transform::default(),
             z: above.map(FractionalIndex::new_after).unwrap_or_default(),
+            parent: None,
         }
     }
     /// Appends a note above the supplied fractional index.
@@ -248,7 +279,31 @@ impl Item {
             rect,
             transform: Transform::default(),
             z: above.map(FractionalIndex::new_after).unwrap_or_default(),
+            parent: None,
         }
+    }
+    /// Creates a group whose backdrop rests at `rect` until it gains members.
+    pub fn group(group: Group, rect: Rect, z: FractionalIndex) -> Self {
+        Self {
+            id: Uuid::now_v7(),
+            name: String::new(),
+            content: Content::Group(group),
+            rect,
+            transform: Transform::default(),
+            z,
+            parent: None,
+        }
+    }
+    /// The group's title and color, or `None` for images and notes.
+    pub fn group_style(&self) -> Option<&Group> {
+        match &self.content {
+            Content::Group(group) => Some(group),
+            _ => None,
+        }
+    }
+    /// Groups are containers; images and notes are the content they hold.
+    pub fn is_group(&self) -> bool {
+        matches!(self.content, Content::Group(_))
     }
     /// Maps a world point back to original image coordinates, rejecting clipped or empty space.
     pub fn source_uv(&self, point: [f32; 2], dimensions: [u32; 2]) -> Option<[f32; 2]> {
@@ -280,7 +335,7 @@ impl Item {
     pub fn blob(&self) -> Option<BlobId> {
         match self.content {
             Content::Image(blob) => Some(blob),
-            Content::Text(_) => None,
+            Content::Text(_) | Content::Group(_) => None,
         }
     }
     /// Legacy notes derive text scale from their unwrapped height until first edited.
@@ -306,16 +361,8 @@ impl Item {
     pub fn note(&self) -> Option<&str> {
         match &self.content {
             Content::Text(text) => Some(text),
-            Content::Image(_) => None,
+            Content::Image(_) | Content::Group(_) => None,
         }
-    }
-}
-/// Rebuilds an index entry from the fields `apply` writes, so removal always matches insertion.
-fn entry(item: &Item) -> Entry {
-    Entry {
-        id: item.id,
-        rect: item.rect,
-        rotation: item.transform.rotation,
     }
 }
 #[derive(Clone, PartialEq)]
@@ -335,9 +382,11 @@ impl RTreeObject for Entry {
 pub enum Command {
     /// Introduces metadata through the reversible mutation path.
     Insert(Item),
-    /// Returns the removed item as its inverse.
+    /// Returns the removed item as its inverse. A group must be empty first.
     Remove(Uuid),
     /// Updates geometry and spatial indexing atomically.
+    ///
+    /// On a group this sets the resting frame, which only shows while it has no members.
     SetRect {
         /// Stable identity prevents changes being applied to a reused slot.
         id: Uuid,
@@ -358,6 +407,34 @@ pub enum Command {
         /// New note text, bounded by [`MAX_NOTE_BYTES`].
         text: String,
     },
+    /// Moves an item into a group, or out to the board with `None`.
+    SetParent {
+        /// Stable identity prevents changes being applied to a reused slot.
+        id: Uuid,
+        /// Target group; cycles and nesting beyond [`MAX_GROUP_DEPTH`] are rejected.
+        parent: Option<Uuid>,
+    },
+    /// Renames or recolors a group.
+    SetGroup {
+        /// Stable identity prevents changes being applied to a reused slot.
+        id: Uuid,
+        /// New title and color.
+        group: Group,
+    },
+}
+impl Command {
+    /// The item a command targets, or inserts.
+    pub fn id(&self) -> Uuid {
+        match self {
+            Command::Insert(item) => item.id,
+            Command::Remove(id)
+            | Command::SetRect { id, .. }
+            | Command::SetTransform { id, .. }
+            | Command::SetText { id, .. }
+            | Command::SetParent { id, .. }
+            | Command::SetGroup { id, .. } => *id,
+        }
+    }
 }
 /// Failed commands leave the board unchanged.
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -371,13 +448,71 @@ pub enum SceneError {
     #[error("item does not exist")]
     /// Rejects commands targeting an item that no longer exists.
     Missing,
+    #[error("group still has members")]
+    /// A group leaves only once it is empty, so no member is left pointing at nothing.
+    Occupied,
 }
 /// Owns metadata only; the R-tree has exactly one entry per live item.
+///
+/// A group's `rect` is derived: the union of its members plus padding, or its resting
+/// frame while empty. Deriving it inside the scene keeps every inverse exact without
+/// commands having to carry backdrop geometry.
 #[derive(Default)]
 pub struct Scene {
     items: HashMap<Uuid, Item>,
     tree: RTree<Entry>,
     order: BTreeSet<(FractionalIndex, Uuid)>,
+    /// Members per group; every live group has an entry, possibly empty.
+    children: HashMap<Uuid, BTreeSet<Uuid>>,
+    /// Frame a group shows while empty and restores to when it empties again.
+    rests: HashMap<Uuid, Rect>,
+    /// Union of the members' footprints, without padding; absent for empty groups.
+    hulls: HashMap<Uuid, Rect>,
+}
+fn union(a: Rect, b: Rect) -> Rect {
+    let x = a.x.min(b.x);
+    let y = a.y.min(b.y);
+    Rect {
+        x,
+        y,
+        width: (a.x + a.width).max(b.x + b.width) - x,
+        height: (a.y + a.height).max(b.y + b.height) - y,
+    }
+}
+/// True when `inner` touches an edge of `outer`, so removing it may shrink `outer`.
+fn touches(inner: Rect, outer: Rect) -> bool {
+    inner.x <= outer.x
+        || inner.y <= outer.y
+        || inner.x + inner.width >= outer.x + outer.width
+        || inner.y + inner.height >= outer.y + outer.height
+}
+/// The backdrop around a member hull.
+pub fn group_frame(hull: Rect) -> Rect {
+    Rect {
+        x: hull.x - GROUP_PADDING,
+        y: hull.y - GROUP_HEADER,
+        width: hull.width + 2. * GROUP_PADDING,
+        height: hull.height + GROUP_HEADER + GROUP_PADDING,
+    }
+}
+fn entry(item: &Item) -> Entry {
+    Entry {
+        id: item.id,
+        rect: item.rect,
+        rotation: item.transform.rotation,
+    }
+}
+/// Axis-aligned footprint an item contributes to its group's backdrop.
+pub fn footprint(item: &Item) -> Rect {
+    let envelope = item.rect.rotated_envelope(item.transform.rotation);
+    let [x, y] = envelope.lower();
+    let [right, bottom] = envelope.upper();
+    Rect {
+        x,
+        y,
+        width: right - x,
+        height: bottom - y,
+    }
 }
 impl Scene {
     /// The only mutable entry point for board content.
@@ -391,44 +526,85 @@ impl Scene {
                 {
                     return Err(SceneError::Invalid);
                 }
+                if let Content::Group(group) = &item.content
+                    && (!group.valid() || item.transform != Transform::default())
+                {
+                    return Err(SceneError::Invalid);
+                }
                 if self.items.contains_key(&item.id) {
                     return Err(SceneError::Duplicate);
                 }
+                if let Some(parent) = item.parent
+                    && self.depth(parent)? + 1 > MAX_GROUP_DEPTH
+                {
+                    return Err(SceneError::Invalid);
+                }
                 let inverse = Command::Remove(item.id);
+                let (id, parent) = (item.id, item.parent);
+                if item.is_group() {
+                    self.children.insert(id, BTreeSet::new());
+                    self.rests.insert(id, item.rect);
+                }
                 self.tree.insert(entry(&item));
-                self.order.insert((item.z.clone(), item.id));
-                self.items.insert(item.id, item);
+                self.order.insert((item.z.clone(), id));
+                let footprint = footprint(&item);
+                self.items.insert(id, item);
+                if let Some(parent) = parent {
+                    self.join(id, parent, footprint);
+                }
                 Ok(inverse)
             }
             Command::Remove(id) => {
-                let item = self.items.remove(&id).ok_or(SceneError::Missing)?;
+                let item = self.items.get(&id).ok_or(SceneError::Missing)?;
+                if self.children.get(&id).is_some_and(|c| !c.is_empty()) {
+                    return Err(SceneError::Occupied);
+                }
+                let footprint = footprint(item);
+                if let Some(parent) = item.parent {
+                    self.leave(id, parent, footprint);
+                }
+                let mut item = self.items.remove(&id).ok_or(SceneError::Missing)?;
                 self.tree.remove(&entry(&item));
                 self.order.remove(&(item.z.clone(), id));
+                self.children.remove(&id);
+                self.hulls.remove(&id);
+                if let Some(rest) = self.rests.remove(&id) {
+                    item.rect = rest;
+                }
                 Ok(Command::Insert(item))
             }
             Command::SetRect { id, rect } => {
                 if !rect.valid() {
                     return Err(SceneError::Invalid);
                 }
-                let item = self.items.get_mut(&id).ok_or(SceneError::Missing)?;
+                let item = self.items.get(&id).ok_or(SceneError::Missing)?;
+                if let Some(rest) = self.rests.get_mut(&id) {
+                    let old = std::mem::replace(rest, rect);
+                    if !self.hulls.contains_key(&id) {
+                        let frame = item.rect;
+                        if let Some(parent) = self.reframe(id, rect) {
+                            self.moved(parent, frame, rect);
+                        }
+                    }
+                    return Ok(Command::SetRect { id, rect: old });
+                }
                 let old = item.rect;
-                self.tree.remove(&entry(item));
-                item.rect = rect;
-                self.tree.insert(entry(item));
+                self.edit(id, |item| item.rect = rect);
                 Ok(Command::SetRect { id, rect: old })
             }
             Command::SetTransform { id, transform } => {
                 if !transform.valid() {
                     return Err(SceneError::Invalid);
                 }
-                let item = self.items.get_mut(&id).ok_or(SceneError::Missing)?;
+                let item = self.items.get(&id).ok_or(SceneError::Missing)?;
+                if item.is_group() && transform != Transform::default() {
+                    return Err(SceneError::Invalid);
+                }
                 let old = item.transform;
                 // Only rotation changes the indexed footprint; content gestures skip the tree.
                 if old.rotation != transform.rotation {
-                    self.tree.remove(&entry(item));
-                    item.transform = transform;
-                    self.tree.insert(entry(item));
-                } else {
+                    self.edit(id, |item| item.transform = transform);
+                } else if let Some(item) = self.items.get_mut(&id) {
                     item.transform = transform;
                 }
                 Ok(Command::SetTransform { id, transform: old })
@@ -448,7 +624,195 @@ impl Scene {
                 item.content = Content::Text(text);
                 Ok(inverse)
             }
+            Command::SetParent { id, parent } => {
+                let item = self.items.get(&id).ok_or(SceneError::Missing)?;
+                let old = item.parent;
+                if old == parent {
+                    return Ok(Command::SetParent { id, parent: old });
+                }
+                if let Some(parent) = parent {
+                    if parent == id || self.ancestors(parent).any(|a| a == id) {
+                        return Err(SceneError::Invalid);
+                    }
+                    if self.depth(parent)? + self.height(id) > MAX_GROUP_DEPTH {
+                        return Err(SceneError::Invalid);
+                    }
+                }
+                let footprint = footprint(item);
+                if let Some(old) = old {
+                    self.leave(id, old, footprint);
+                }
+                if let Some(item) = self.items.get_mut(&id) {
+                    item.parent = parent;
+                }
+                if let Some(parent) = parent {
+                    self.join(id, parent, footprint);
+                }
+                Ok(Command::SetParent { id, parent: old })
+            }
+            Command::SetGroup { id, group } => {
+                if !group.valid() {
+                    return Err(SceneError::Invalid);
+                }
+                let item = self.items.get_mut(&id).ok_or(SceneError::Missing)?;
+                let Content::Group(old) = &mut item.content else {
+                    return Err(SceneError::Invalid);
+                };
+                Ok(Command::SetGroup {
+                    id,
+                    group: std::mem::replace(old, group),
+                })
+            }
         }
+    }
+    /// Nesting level of a group counted from the board (a top-level group is 1).
+    /// Fails when `group` is missing or not a group.
+    fn depth(&self, group: Uuid) -> Result<usize, SceneError> {
+        if !self
+            .items
+            .get(&group)
+            .ok_or(SceneError::Missing)?
+            .is_group()
+        {
+            return Err(SceneError::Invalid);
+        }
+        Ok(1 + self.ancestors(group).count())
+    }
+    /// Levels a subtree occupies: 1 for an image or empty group.
+    pub fn height(&self, id: Uuid) -> usize {
+        1 + self
+            .children
+            .get(&id)
+            .into_iter()
+            .flatten()
+            .map(|&child| self.height(child))
+            .max()
+            .unwrap_or(0)
+    }
+    /// Applies a change to a non-group item, keeping its index entry and the
+    /// backdrops above it in step.
+    fn edit(&mut self, id: Uuid, change: impl FnOnce(&mut Item)) {
+        let Some(item) = self.items.get_mut(&id) else {
+            return;
+        };
+        let before = footprint(item);
+        self.tree.remove(&entry(item));
+        change(item);
+        self.tree.insert(entry(item));
+        let (after, parent) = (footprint(item), item.parent);
+        if let Some(parent) = parent {
+            self.moved(parent, before, after);
+        }
+    }
+    fn join(&mut self, id: Uuid, group: Uuid, footprint: Rect) {
+        self.children.entry(group).or_default().insert(id);
+        self.moved_into(group, None, Some(footprint));
+    }
+    fn leave(&mut self, id: Uuid, group: Uuid, footprint: Rect) {
+        if let Some(children) = self.children.get_mut(&group) {
+            children.remove(&id);
+        }
+        self.moved_into(group, Some(footprint), None);
+    }
+    fn moved(&mut self, group: Uuid, before: Rect, after: Rect) {
+        self.moved_into(group, Some(before), Some(after));
+    }
+    /// Updates a group's hull after one member footprint changed, then walks up.
+    /// Growth is O(1); only a member that touched the hull edge forces a rescan.
+    fn moved_into(&mut self, mut group: Uuid, mut before: Option<Rect>, mut after: Option<Rect>) {
+        loop {
+            let Some(item) = self.items.get(&group) else {
+                return;
+            };
+            let old_frame = item.rect;
+            let hull = match (self.hulls.get(&group).copied(), before) {
+                (Some(hull), Some(before)) if touches(before, hull) => self.rescan(group),
+                (Some(hull), _) => after.map_or(Some(hull), |after| Some(union(hull, after))),
+                (None, _) => after,
+            };
+            let frame = match hull {
+                Some(hull) => {
+                    self.hulls.insert(group, hull);
+                    group_frame(hull)
+                }
+                None => {
+                    self.hulls.remove(&group);
+                    self.rests.get(&group).copied().unwrap_or(old_frame)
+                }
+            };
+            if frame == old_frame {
+                return;
+            }
+            let Some(parent) = self.reframe(group, frame) else {
+                return;
+            };
+            (before, after, group) = (Some(old_frame), Some(frame), parent);
+        }
+    }
+    /// Recomputes a hull from scratch.
+    fn rescan(&self, group: Uuid) -> Option<Rect> {
+        self.children
+            .get(&group)?
+            .iter()
+            .filter_map(|id| self.items.get(id))
+            .map(footprint)
+            .reduce(union)
+    }
+    /// Moves a group's backdrop in the index and returns its parent, which must follow.
+    fn reframe(&mut self, group: Uuid, frame: Rect) -> Option<Uuid> {
+        let item = self.items.get_mut(&group)?;
+        self.tree.remove(&entry(item));
+        item.rect = frame;
+        self.tree.insert(entry(item));
+        item.parent
+    }
+    /// Whether `id` may move into `group` without a cycle or exceeding the depth limit.
+    pub fn can_join(&self, id: Uuid, group: Uuid) -> bool {
+        group != id
+            && self.items.contains_key(&id)
+            && !self.ancestors(group).any(|a| a == id)
+            && self
+                .depth(group)
+                .is_ok_and(|depth| depth + self.height(id) <= MAX_GROUP_DEPTH)
+    }
+    /// The chain of groups that contain `id`, innermost first.
+    pub fn ancestors(&self, id: Uuid) -> impl Iterator<Item = Uuid> + '_ {
+        std::iter::successors(self.items.get(&id).and_then(|i| i.parent), |p| {
+            self.items.get(p).and_then(|i| i.parent)
+        })
+        .take(MAX_GROUP_DEPTH)
+    }
+    /// Direct members of a group, in id order; empty for images, notes and missing ids.
+    pub fn children(&self, group: Uuid) -> impl Iterator<Item = &Item> {
+        self.children
+            .get(&group)
+            .into_iter()
+            .flatten()
+            .filter_map(|id| self.items.get(id))
+    }
+    /// Every item inside a group at any depth, parents before their members.
+    pub fn descendants(&self, group: Uuid) -> Vec<Uuid> {
+        let mut out = Vec::new();
+        let mut stack = vec![group];
+        while let Some(next) = stack.pop() {
+            for child in self.children.get(&next).into_iter().flatten() {
+                out.push(*child);
+                stack.push(*child);
+            }
+        }
+        out
+    }
+    /// Items with parents before their members, so replaying inserts in this order
+    /// never names a group that does not exist yet.
+    pub fn items_parent_first(&self) -> Vec<&Item> {
+        let mut out: Vec<&Item> = self.items.values().filter(|i| i.parent.is_none()).collect();
+        let mut next = 0;
+        while next < out.len() {
+            let id = out[next].id;
+            out.extend(self.children(id));
+            next += 1;
+        }
+        out
     }
     /// Uses the spatial index's root so navigation need not scan a huge board each frame.
     pub fn bounds(&self) -> Option<Rect> {
@@ -485,6 +849,10 @@ impl Scene {
     /// Metadata count is useful without exposing mutable scene storage.
     pub fn len(&self) -> usize {
         self.items.len()
+    }
+    /// Number of groups; cheap because every live group keeps a member set.
+    pub fn group_count(&self) -> usize {
+        self.children.len()
     }
     /// Allows a blank canvas to provide its own empty state.
     pub fn is_empty(&self) -> bool {
@@ -814,5 +1182,171 @@ mod tests {
         ));
         scene.apply(inverse).unwrap();
         assert_eq!(scene.len(), 1);
+    }
+    /// Recomputes every derived group frame from scratch and compares.
+    fn consistent(scene: &Scene) -> bool {
+        scene.items().all(|item| {
+            if !item.is_group() {
+                return true;
+            }
+            let expected = scene
+                .children(item.id)
+                .map(footprint)
+                .reduce(union)
+                .map_or(scene.rests[&item.id], group_frame);
+            item.rect == expected
+        }) && scene.tree.size() == scene.len()
+            && scene.items().all(|item| {
+                item.parent
+                    .is_none_or(|p| scene.children[&p].contains(&item.id))
+            })
+    }
+    fn snapshot(scene: &Scene) -> Vec<Item> {
+        let mut items: Vec<_> = scene.items().cloned().collect();
+        items.sort_by_key(|i| i.id);
+        items
+    }
+    fn square(x: f32) -> Rect {
+        Rect {
+            x,
+            y: 0.,
+            width: 10.,
+            height: 10.,
+        }
+    }
+    #[test]
+    fn group_hugs_members_and_rests_when_empty() {
+        let mut scene = Scene::default();
+        let group = Item::group(Group::default(), square(500.), FractionalIndex::default());
+        let gid = group.id;
+        scene.apply(Command::Insert(group)).unwrap();
+        assert_eq!(scene.get(gid).unwrap().rect, square(500.));
+        let mut a = Item::image(blake3::hash(b"a"), square(0.), None);
+        a.parent = Some(gid);
+        let mut b = Item::image(blake3::hash(b"b"), square(100.), None);
+        b.parent = Some(gid);
+        let (aid, bid) = (a.id, b.id);
+        scene.apply(Command::Insert(a)).unwrap();
+        let remove_b = scene.apply(Command::Insert(b)).unwrap();
+        assert_eq!(
+            scene.get(gid).unwrap().rect,
+            group_frame(Rect {
+                width: 110.,
+                ..square(0.)
+            })
+        );
+        assert_eq!(
+            scene.apply(Command::Remove(gid)).unwrap_err(),
+            SceneError::Occupied
+        );
+        scene.apply(remove_b).unwrap();
+        assert_eq!(scene.get(gid).unwrap().rect, group_frame(square(0.)));
+        scene
+            .apply(Command::SetParent {
+                id: aid,
+                parent: None,
+            })
+            .unwrap();
+        assert_eq!(scene.get(gid).unwrap().rect, square(500.));
+        assert!(scene.get(bid).is_none());
+        assert!(consistent(&scene));
+        // A group may not join itself or its own member.
+        let inner = Item::group(Group::default(), square(0.), FractionalIndex::default());
+        let inner_id = inner.id;
+        scene.apply(Command::Insert(inner)).unwrap();
+        scene
+            .apply(Command::SetParent {
+                id: inner_id,
+                parent: Some(gid),
+            })
+            .unwrap();
+        for (id, parent) in [(gid, inner_id), (gid, gid)] {
+            assert_eq!(
+                scene
+                    .apply(Command::SetParent {
+                        id,
+                        parent: Some(parent)
+                    })
+                    .unwrap_err(),
+                SceneError::Invalid
+            );
+        }
+        assert_eq!(
+            scene
+                .apply(Command::SetParent {
+                    id: aid,
+                    parent: Some(aid)
+                })
+                .unwrap_err(),
+            SceneError::Invalid
+        );
+        assert!(consistent(&scene));
+    }
+    #[test]
+    fn nesting_stops_at_the_depth_limit() {
+        let mut scene = Scene::default();
+        let mut parent = None;
+        for _ in 0..MAX_GROUP_DEPTH {
+            let mut group = Item::group(Group::default(), square(0.), FractionalIndex::default());
+            group.parent = parent;
+            parent = Some(group.id);
+            scene.apply(Command::Insert(group)).unwrap();
+        }
+        let mut deeper = Item::image(blake3::hash(b"deep"), square(0.), None);
+        deeper.parent = parent;
+        assert_eq!(
+            scene.apply(Command::Insert(deeper)).unwrap_err(),
+            SceneError::Invalid
+        );
+        assert!(consistent(&scene));
+    }
+    proptest! {
+        #[test]
+        fn group_edits_undo_to_identity(steps in prop::collection::vec((0u8..6, 0usize..12, 0usize..12, -500f32..500., 0f32..3.), 1..80)) {
+            let mut scene = Scene::default();
+            let mut ids = Vec::new();
+            for i in 0..12 {
+                let item = if i % 3 == 0 {
+                    Item::group(Group { title: format!("g{i}"), color: (i % 6) as u8 }, square(i as f32 * 40.), FractionalIndex::default())
+                } else {
+                    Item::image(blake3::hash(&[i as u8]), square(i as f32 * 40.), None)
+                };
+                ids.push(item.id);
+                scene.apply(Command::Insert(item)).unwrap();
+            }
+            for (kind, a, b, value, turn) in steps {
+                let (id, other) = (ids[a], ids[b]);
+                let command = match kind {
+                    0 => Command::SetParent { id, parent: Some(other) },
+                    1 => Command::SetParent { id, parent: None },
+                    2 => Command::SetRect { id, rect: Rect { x: value, y: value / 2., width: 10. + turn, height: 20. } },
+                    3 => Command::SetTransform { id, transform: Transform { rotation: turn, ..Transform::default() } },
+                    4 => Command::SetGroup { id, group: Group { title: "t".into(), color: b as u8 % GROUP_COLORS } },
+                    _ => Command::Remove(id),
+                };
+                let before = snapshot(&scene);
+                match scene.apply(command) {
+                    Ok(inverse) => {
+                        prop_assert!(consistent(&scene));
+                        let redo = scene.apply(inverse).unwrap();
+                        prop_assert!(consistent(&scene));
+                        prop_assert_eq!(snapshot(&scene), before);
+                        scene.apply(redo).unwrap();
+                    }
+                    Err(_) => prop_assert_eq!(snapshot(&scene), before),
+                }
+                prop_assert!(consistent(&scene));
+            }
+            // Replaying parents first rebuilds the same scene, which is what checkpoints rely on.
+            let mut replay = Scene::default();
+            for item in scene.items_parent_first() {
+                let mut item = item.clone();
+                if item.is_group() {
+                    item.rect = scene.rests[&item.id];
+                }
+                replay.apply(Command::Insert(item)).unwrap();
+            }
+            prop_assert_eq!(snapshot(&replay), snapshot(&scene));
+        }
     }
 }

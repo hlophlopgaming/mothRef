@@ -122,6 +122,10 @@ pub(super) struct Document {
     pub(super) locked: bool,
     pub(super) grayscale: bool,
     pub(super) selection: HashSet<Uuid>,
+    /// The group the user stepped into: clicks select its members instead of the group.
+    pub(super) entered: Option<Uuid>,
+    /// Group whose title is being typed, with the draft; shown once the group exists.
+    pub(super) renaming: Option<(Uuid, String)>,
     pub(super) sources: HashMap<BlobId, Handle>,
     /// Board state of the last whole-board bake offer, so unchanged boards offer nothing.
     board_bake: Option<(usize, moth_io::BakeMode, bool)>,
@@ -187,6 +191,22 @@ impl Document {
             self.motion.record(before, self.scene.get(id).cloned(), now);
         }
         Ok(inverse)
+    }
+    /// Keeps group view state valid after an edit: a selected group carries its members,
+    /// and a removed group can no longer be entered or renamed.
+    pub(super) fn settle_groups(&mut self) {
+        super::selection::with_members(&self.scene, &mut self.selection, None);
+        if self.entered.is_some_and(|id| self.scene.get(id).is_none()) {
+            self.entered = None;
+        }
+        if self.in_flight == 0
+            && self
+                .renaming
+                .as_ref()
+                .is_some_and(|(id, _)| self.scene.get(*id).is_none())
+        {
+            self.renaming = None;
+        }
     }
     pub(super) fn boards(&self) -> &moth_platform::boards::Worker {
         &self.boards
@@ -548,6 +568,8 @@ impl Document {
             locked: false,
             grayscale: false,
             selection: HashSet::new(),
+            entered: None,
+            renaming: None,
             sources: HashMap::new(),
             board_bake: None,
             preload_offered: None,

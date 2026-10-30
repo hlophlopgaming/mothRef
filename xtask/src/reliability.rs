@@ -200,7 +200,7 @@ fn killtest_impl(count: usize, loading: bool) -> anyhow::Result<()> {
 }
 pub fn fixture() -> anyhow::Result<()> {
     std::fs::create_dir_all("corpus/moth")?;
-    // corpus/moth/v1.moth through v4.moth are frozen migration fixtures;
+    // corpus/moth/v1.moth through v5.moth are frozen migration fixtures;
     // regenerating them with the current writer would erase that coverage.
     let mut bytes = Vec::new();
     board::initialize(&mut bytes)?;
@@ -220,7 +220,6 @@ pub fn fixture() -> anyhow::Result<()> {
         ..Default::default()
     };
     item.name = "rows.png".into();
-    scene.apply(Command::Insert(item))?;
     let mut note = Item::text(
         "a note that wraps to a fixed frame width",
         Rect {
@@ -233,10 +232,32 @@ pub fn fixture() -> anyhow::Result<()> {
     );
     note.transform.note_font_size = 24.;
     note.transform.note_wrap = true;
+    // Groups nest: "outer" holds "inner", which holds the image and the note.
+    let rest = Rect {
+        x: 0.,
+        y: 0.,
+        width: 1.,
+        height: 1.,
+    };
+    let outer = Item::group(
+        moth_scene::Group {
+            title: "outer".into(),
+            color: 1,
+        },
+        rest,
+        Default::default(),
+    );
+    let mut inner = Item::group(moth_scene::Group::default(), rest, Default::default());
+    inner.parent = Some(outer.id);
+    item.parent = Some(inner.id);
+    note.parent = Some(inner.id);
+    scene.apply(Command::Insert(outer))?;
+    scene.apply(Command::Insert(inner))?;
+    scene.apply(Command::Insert(item))?;
     scene.apply(Command::Insert(note))?;
     let offset = bytes.len() as u64;
     board::append(&mut bytes, offset, 3, &board::snapshot(&scene)?)?;
-    std::fs::write("corpus/moth/v5.moth", bytes)?;
+    std::fs::write("corpus/moth/v6.moth", bytes)?;
     Ok(())
 }
 pub fn roundtrip(path: &Path) -> anyhow::Result<()> {

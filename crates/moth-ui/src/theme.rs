@@ -50,6 +50,8 @@ pub struct Tokens {
     pub shadow: Color32,
     /// Semantic image tint color.
     pub image_tint: Color32,
+    /// Group swatches by palette code: neutral, sage, amber, sky, wing, lilac.
+    pub groups: [Color32; 6],
     /// Shared radius none metric.
     pub radius_none: u8,
     /// Shared radius icon metric.
@@ -105,6 +107,36 @@ impl Tokens {
         let [r, g, b, _] = self.note_fill.to_array();
         Color32::from_rgba_unmultiplied(r, g, b, 235)
     }
+    /// A group's swatch; unknown codes fall back to neutral.
+    pub fn group(self, code: u8) -> Color32 {
+        self.groups
+            .get(code as usize)
+            .copied()
+            .unwrap_or(self.groups[0])
+    }
+    /// Backdrop fill and border of a group, translucent so the canvas reads through.
+    pub fn group_backdrop(self, code: u8) -> [Color32; 2] {
+        let [r, g, b, _] = self.group(code).to_array();
+        let (fill, border) = if self.dark { (24, 92) } else { (34, 110) };
+        [
+            Color32::from_rgba_unmultiplied(r, g, b, fill),
+            Color32::from_rgba_unmultiplied(r, g, b, border),
+        ]
+    }
+    /// Text on a filled group swatch (a selected title chip): dark on light swatches.
+    pub fn on_group(self, code: u8) -> Color32 {
+        let [r, g, b, _] = self.group(code).to_array();
+        let luma = 0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32;
+        if luma > 140. {
+            Self::DARK.on_accent
+        } else {
+            Self::LIGHT.surface
+        }
+    }
+    /// Title chip fill of a group: the canvas tinted towards its swatch.
+    pub fn group_chip(self, code: u8) -> Color32 {
+        self.surface.lerp_to_gamma(self.group(code), 0.14)
+    }
     /// Dark palette from the «Pixel» exploration (docs/DESIGN.md): Screen
     /// background, Bone text, Sage accent, Ink shadows, Wing warm accent.
     pub const DARK: Self = Self {
@@ -131,6 +163,14 @@ impl Tokens {
         note_fill: Color32::from_rgb(42, 50, 44),
         shadow: Color32::from_rgb(26, 26, 26),
         image_tint: Color32::from_rgb(255, 255, 255),
+        groups: [
+            Color32::from_rgb(154, 159, 148),
+            Color32::from_rgb(166, 196, 122),
+            Color32::from_rgb(224, 180, 108),
+            Color32::from_rgb(143, 184, 222),
+            Color32::from_rgb(229, 143, 174),
+            Color32::from_rgb(180, 160, 216),
+        ],
         radius_none: 0,
         radius_icon: 1,
         radius_placeholder: 2,
@@ -181,6 +221,14 @@ impl Tokens {
         note_fill: Color32::from_rgb(249, 247, 240),
         shadow: Color32::from_rgb(0, 0, 0),
         image_tint: Color32::from_rgb(255, 255, 255),
+        groups: [
+            Color32::from_rgb(105, 107, 97),
+            Color32::from_rgb(85, 112, 47),
+            Color32::from_rgb(166, 112, 28),
+            Color32::from_rgb(46, 104, 158),
+            Color32::from_rgb(172, 64, 104),
+            Color32::from_rgb(108, 84, 160),
+        ],
         radius_none: 0,
         radius_icon: 1,
         radius_placeholder: 2,

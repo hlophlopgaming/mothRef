@@ -204,6 +204,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     }
                 }
             }
+            let mut groups = Vec::new();
             for item in visible.into_iter().filter(|item| board.presented(item)) {
                 let mut presented = board
                     .motion
@@ -231,6 +232,9 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     presented = std::borrow::Cow::Owned(returning);
                 }
                 let item = &presented;
+                if item.is_group() {
+                    groups.push(item.as_ref().clone());
+                }
                 match item.blob() {
                     // Non-resident images show a placeholder until decoded.
                     Some(blob) if !gpu.registry.resident(blob, 1) => {
@@ -276,6 +280,12 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                         if hover_id == Some(item.id) { fade } else { 0. },
                         settings.show_outlines,
                     );
+                }
+            }
+            if !overlay && !compact {
+                intents.extend(super::groups::chips(ui, board, &view.camera, &mut groups));
+                if !board.scene.is_empty() {
+                    intents.extend(super::groups::layers(ui.ctx(), board, view.safe_area));
                 }
             }
             for ghost in returning.values().filter(|item| board.presented(item)) {
@@ -354,8 +364,14 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                             settings.show_outlines,
                         );
                         if !compact {
+                            let group =
+                                super::selection::single_group(&board.scene, &board.selection);
                             let kind =
-                                if board.selection.len() > 1 {
+                                if let Some(group) = group {
+                                    super::surfaces::SelectionKind::Group(
+                                        board.scene.children(group).count(),
+                                    )
+                                } else if board.selection.len() > 1 {
                                     super::surfaces::SelectionKind::Several
                                 } else if board.selection.iter().any(|id| {
                                     board.scene.get(*id).is_some_and(|i| i.note().is_some())
@@ -414,7 +430,22 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                             board.presented(i)
                                 && i.rect.contains_rotated(i.transform.rotation, world)
                         });
+                    let chip = super::groups::chip_rects(ui.ctx())
+                        .into_iter()
+                        .rev()
+                        .find(|(_, rect)| rect.contains(pos))
+                        .map(|(id, _)| id);
                     match hit {
+                        _ if chip.is_some() => {
+                            intents.push(Intent::Action(super::bindings::Action::RenameGroup))
+                        }
+                        Some(item)
+                            if super::selection::target(&board.scene, board.entered, item.id)
+                                != item.id =>
+                        {
+                            intents.push(Intent::EnterGroup(item.id))
+                        }
+                        Some(item) if item.is_group() => intents.push(Intent::EnterGroup(item.id)),
                         Some(item) if item.note().is_some() => {
                             intents.push(Intent::EditNote(item.id))
                         }

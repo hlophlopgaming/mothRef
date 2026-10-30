@@ -32,6 +32,26 @@ const CLASSES: [(u32, u32); 8] = [
     (2048, 1),
 ];
 const MAX_INSTANCES: usize = 10_000;
+/// Instance class of group backdrops; drawn by their own pipeline with no texture.
+const BACKDROP: usize = usize::MAX;
+/// Backdrop corner radius in world units, so it scales with the board like the frame.
+const BACKDROP_RADIUS: f32 = 14.;
+/// Fill and border of one group color, as straight-alpha linear RGBA.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Backdrop {
+    /// Interior tint; usually a low alpha so the canvas shows through.
+    pub fill: [f32; 4],
+    /// One-pixel edge.
+    pub border: [f32; 4],
+}
+impl Default for Backdrop {
+    fn default() -> Self {
+        Self {
+            fill: [0.5, 0.5, 0.5, 0.08],
+            border: [0.5, 0.5, 0.5, 0.35],
+        }
+    }
+}
 /// Corner order shared by the shader constants, the CPU geometry and hit testing.
 const LOCAL: [[f32; 2]; 4] = [[0., 0.], [1., 0.], [0., 1.], [1., 1.]];
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -102,6 +122,42 @@ fn content(item: &Item, dims: [u32; 2], camera: Camera, screen: [f32; 2]) -> Con
         region: source_region(dims, transform.flip),
     }
 }
+/// A group backdrop as an image instance: `frame` carries pixel offsets inside the
+/// rectangle (its last corner is the size), `region` the fill, `appearance` the border
+/// and `lod` the corner radius in pixels.
+fn backdrop_instance(
+    rect: moth_scene::Rect,
+    style: Backdrop,
+    camera: Camera,
+    screen: [f32; 2],
+    scale: f32,
+) -> Instance {
+    let size = [
+        rect.width * camera.zoom * scale,
+        rect.height * camera.zoom * scale,
+    ];
+    let mut corners = [[0.; 2]; 4];
+    let mut frame = [[0.; 2]; 4];
+    for (index, corner) in LOCAL.iter().enumerate() {
+        let point = camera.screen([
+            rect.x + corner[0] * rect.width,
+            rect.y + corner[1] * rect.height,
+        ]);
+        corners[index] = [
+            point[0] / screen[0] * 2. - 1.,
+            1. - point[1] / screen[1] * 2.,
+        ];
+        frame[index] = [corner[0] * size[0], corner[1] * size[1]];
+    }
+    Instance {
+        corners,
+        frame,
+        region: style.fill,
+        layer: 0,
+        lod: BACKDROP_RADIUS * camera.zoom * scale,
+        appearance: style.border,
+    }
+}
 fn source_region(dims: [f32; 2], flip: [bool; 2]) -> [f32; 4] {
     [
         if flip[0] { dims[0] } else { 0. },
@@ -169,6 +225,8 @@ pub struct Registry {
     /// Full-resolution mode: everything uploaded stays resident. Tiles leaving the
     /// viewport and previews shown smaller are kept instead of released.
     pub keep_all: bool,
+    /// Group backdrop colors by palette code; the app sets them from theme tokens.
+    pub backdrops: [Backdrop; moth_scene::GROUP_COLORS as usize],
     /// UI GPU resources share the renderer lifetime and are freed with the registry.
     pub ui: egui_wgpu::Renderer,
     arrays: Vec<Option<Array>>,
@@ -176,6 +234,7 @@ pub struct Registry {
     // At most one fallback per resident blob, bounded by the same texture budget.
     fallbacks: std::collections::HashMap<BlobId, (usize, usize)>,
     pipeline: wgpu::RenderPipeline,
+    backdrop: wgpu::RenderPipeline,
     grid: wgpu::RenderPipeline,
     opacity: opacity::Pass,
     layout: wgpu::BindGroupLayout,
@@ -228,6 +287,42 @@ impl Registry {
             immediate_size: 0,
         });
         let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{label:Some("quads"),layout:Some(&pipeline_layout),vertex:wgpu::VertexState{module:&shader,entry_point:Some("vs"),buffers:&[Some(wgpu::VertexBufferLayout{array_stride:std::mem::size_of::<Instance>() as u64,step_mode:wgpu::VertexStepMode::Instance,attributes:&wgpu::vertex_attr_array![0=>Float32x2,1=>Float32x2,2=>Float32x2,3=>Float32x2,4=>Float32x2,5=>Float32x2,6=>Float32x2,7=>Float32x2,8=>Float32x4,9=>Uint32,10=>Float32,11=>Float32x4]})],compilation_options:Default::default()},fragment:Some(wgpu::FragmentState{module:&shader,entry_point:Some("fs"),targets:&[Some(wgpu::ColorTargetState{format,blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})],compilation_options:wgpu::PipelineCompilationOptions{constants:&[("OUTPUT_SRGB",if format.is_srgb(){1.}else{0.})],..Default::default()}}),primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview_mask:None,cache:None});
+        let backdrop_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("group backdrops"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("backdrop.wgsl").into()),
+        });
+        let backdrop = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("group backdrops"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &backdrop_shader,
+                entry_point: Some("vs"),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Instance>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &wgpu::vertex_attr_array![0=>Float32x2,1=>Float32x2,2=>Float32x2,3=>Float32x2,4=>Float32x2,5=>Float32x2,6=>Float32x2,7=>Float32x2,8=>Float32x4,9=>Uint32,10=>Float32,11=>Float32x4],
+                })],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &backdrop_shader,
+                entry_point: Some("fs"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &[("OUTPUT_SRGB", if format.is_srgb() { 1. } else { 0. })],
+                    ..Default::default()
+                },
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
         let grid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("canvas grid"),
             source: wgpu::ShaderSource::Wgsl(include_str!("grid.wgsl").into()),
@@ -279,11 +374,13 @@ impl Registry {
             tile_detail: true,
             tile_threshold: moth_io::MAX_SIDE,
             keep_all: false,
+            backdrops: [Backdrop::default(); moth_scene::GROUP_COLORS as usize],
             ui: egui_wgpu::Renderer::new(device, format, Default::default()),
             arrays: Vec::new(),
             locations: std::collections::HashMap::new(),
             fallbacks: std::collections::HashMap::new(),
             pipeline,
+            backdrop,
             grid,
             opacity: opacity::Pass::new(device, format),
             layout,
@@ -1019,6 +1116,18 @@ impl Registry {
         instances: &mut Vec<Instance>,
         classes: &mut Vec<usize>,
     ) {
+        if let Some(group) = item.group_style() {
+            let style = self.backdrops[group.color as usize % self.backdrops.len()];
+            instances.push(backdrop_instance(
+                item.rect,
+                style,
+                camera,
+                target.screen,
+                scale,
+            ));
+            classes.push(BACKDROP);
+            return;
+        }
         let Some(blob) = item.blob() else { return };
         let Some(&(class, layer)) = self.locations.get(&blob) else {
             return;
@@ -1231,7 +1340,11 @@ impl Registry {
                     while next < end && classes[next] == class {
                         next += 1;
                     }
-                    if let Some(array) = &self.arrays[class] {
+                    if class == BACKDROP {
+                        pass.set_pipeline(&self.backdrop);
+                        pass.draw(0..6, (run - start) as u32..(next - start) as u32);
+                        pass.set_pipeline(&self.pipeline);
+                    } else if let Some(array) = self.arrays.get(class).and_then(Option::as_ref) {
                         pass.set_bind_group(0, &array.bind, &[]);
                         pass.draw(0..6, (run - start) as u32..(next - start) as u32);
                     }

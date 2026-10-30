@@ -383,7 +383,7 @@ impl State {
         file.seek(SeekFrom::Start(0))?;
         let mut header = [0u8; 16];
         file.read_exact(&mut header)?;
-        if header[4] < 5 {
+        if header[4] < board::SCHEMA {
             drop(file);
             let handle = self.storage.register(path.clone())?;
             let result = board::compact(self.storage.as_ref(), handle).map_err(error);
@@ -684,15 +684,13 @@ impl State {
         let mut above = None;
         for entry in pending {
             let item = entry.item;
-            let mut ordered = match &item.content {
-                moth_scene::Content::Image(hash) => Item::image(*hash, item.rect, above.as_ref()),
-                moth_scene::Content::Text(text) => {
-                    Item::text(text.clone(), item.rect, above.as_ref())
-                }
+            let ordered = Item {
+                z: above
+                    .as_ref()
+                    .map(moth_scene::FractionalIndex::new_after)
+                    .unwrap_or_default(),
+                ..item.clone()
             };
-            ordered.id = item.id;
-            ordered.transform = item.transform;
-            ordered.name = item.name;
             above = Some(ordered.z.clone());
             if ordered.z != item.z {
                 self.apply_command(Command::Remove(item.id), None, false)?;

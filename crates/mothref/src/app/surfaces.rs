@@ -83,6 +83,7 @@ const WINDOW_MODES: &[Slot] = &[
 ];
 pub(super) const VIEW: &[Slot] = &[
     A(WindowBar),
+    A(Layers),
     A(ToggleView),
     A(Fit),
     A(Focus),
@@ -101,6 +102,12 @@ pub(super) const CONTEXT_MENU: &[Slot] = &[
     G(Text::Normalize, NORMALIZE),
     G(Text::AlignGroup, ALIGN),
     G(Text::OrderGroup, ORDER),
+    S,
+    A(Group),
+    A(Ungroup),
+    A(EnterGroup),
+    A(RenameGroup),
+    G(Text::GroupColor, GROUP_COLOR),
     S,
     A(Duplicate),
     A(CopyImage),
@@ -127,6 +134,8 @@ pub(super) enum SelectionKind {
     Image,
     Several,
     Note,
+    /// One group, with the number of its direct members.
+    Group(usize),
 }
 const IMAGE_BAR: &[Slot] = &[
     G(Text::ImageSampling, SAMPLING),
@@ -137,6 +146,7 @@ const IMAGE_BAR: &[Slot] = &[
     A(ArrangeOptions),
 ];
 const MULTI_BAR: &[Slot] = &[
+    A(Group),
     A(Focus),
     G(Text::Arrange, ARRANGE),
     G(Text::Normalize, NORMALIZE),
@@ -144,11 +154,21 @@ const MULTI_BAR: &[Slot] = &[
     A(Duplicate),
 ];
 const NOTE_BAR: &[Slot] = &[A(EditNote), A(EditItem), A(Duplicate), A(Delete)];
+pub(super) const GROUP_COLOR: &[Slot] = &[
+    A(GroupNeutral),
+    A(GroupSage),
+    A(GroupAmber),
+    A(GroupSky),
+    A(GroupWing),
+    A(GroupLilac),
+];
+const GROUP_BAR: &[Slot] = &[A(EnterGroup), A(Ungroup), G(Text::GroupColor, GROUP_COLOR)];
 fn selection_bar(kind: SelectionKind) -> &'static [Slot] {
     match kind {
         SelectionKind::Image => IMAGE_BAR,
         SelectionKind::Several => MULTI_BAR,
         SelectionKind::Note => NOTE_BAR,
+        SelectionKind::Group(_) => GROUP_BAR,
     }
 }
 pub(super) fn button(
@@ -399,6 +419,9 @@ pub(super) fn selection(
             ui.set_max_width(viewport.width().max(1.));
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
+                    if let SelectionKind::Group(count) = kind {
+                        ui.weak(format!("{} · {count}", text(Text::GroupLabel)));
+                    }
                     row(ui, selection_bar(kind), enabled, registry, &mut intents, 1.);
                     ui.menu_button(text(Text::More), |ui| {
                         menu(ui, CONTEXT_MENU, enabled, registry, &mut intents)
