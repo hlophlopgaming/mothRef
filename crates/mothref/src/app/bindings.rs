@@ -48,6 +48,7 @@ actions! {
     Maximize, Maximize, "", Some(moth_ui::icons::Icon::Maximize);
     Settings, Settings, "Cmd+O", Some(moth_ui::icons::Icon::Settings);
     Deselect, Deselect, "", None;
+    SelectAll, SelectAll, "Cmd+A", None;
     Select, Select, "V", Some(moth_ui::icons::Icon::Select);
     Fit, Fit, "Home", Some(moth_ui::icons::Icon::Fit);
     Focus, FitSelection, "Space", Some(moth_ui::icons::Icon::Fit);

@@ -404,7 +404,7 @@ fn setup_screen(ui: &mut egui::Ui, setup: &mut Setup, board: &Board<'_>) -> Opti
                         .max_height(screen.height() - tokens.space_xl as f32 * 5.)
                         .min_scrolled_height(screen.height() - tokens.space_xl as f32 * 5.)
                         .show(ui, |ui| {
-                            ui.heading(text(Text::DrawingSession));
+                            moth_ui::icons::dialog_title(ui, text(Text::DrawingSession));
                             let images = available(setup.source);
                             // Two columns as in the design when there is room, one below
                             // the other on a narrow window.

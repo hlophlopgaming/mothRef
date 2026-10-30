@@ -28,7 +28,7 @@ impl Modal {
         if workspace.library && !recovery_paths.is_empty() && board.scene.is_empty() {
             self.recovery = self.recovery.min(recovery_paths.len() - 1);
             egui::Modal::new(egui::Id::new("recovery")).show(ui.ctx(), |ui| {
-                ui.heading(moth_ui::text(moth_ui::Text::Recovery));
+                moth_ui::icons::dialog_title(ui, moth_ui::text(moth_ui::Text::Recovery));
                 egui::ScrollArea::vertical()
                     .max_height(ui.ctx().content_rect().height() / 2.)
                     .show(ui, |ui| {
@@ -77,7 +77,7 @@ impl Modal {
 
         if board.conversion_prompt && self.dialog.is_none() && !workspace.confirm_close {
             egui::Modal::new(egui::Id::new("conversion")).show(ui.ctx(), |ui| {
-                ui.heading(moth_ui::text(moth_ui::Text::ConversionTitle));
+                moth_ui::icons::dialog_title(ui, moth_ui::text(moth_ui::Text::ConversionTitle));
                 conversion_report(ui, board);
                 ui.horizontal_wrapped(|ui| {
                     for (label, action) in [
@@ -97,7 +97,7 @@ impl Modal {
         if self.dialog.is_some() {
             egui::Modal::new(egui::Id::new("board_path")).show(ui.ctx(), |ui| {
                 ui.set_width(ui.ctx().content_rect().width().min(460.) - 40.);
-                ui.heading(moth_ui::text(moth_ui::Text::PathDialog));
+                moth_ui::icons::dialog_title(ui, moth_ui::text(moth_ui::Text::PathDialog));
                 conversion_report(ui, board);
                 ui.label(moth_ui::text(moth_ui::Text::Path));
                 let input = ui.add(
@@ -130,7 +130,7 @@ impl Modal {
         if workspace.confirm_close && self.dialog.is_none() {
             egui::Modal::new(egui::Id::new("confirm_close")).show(ui.ctx(), |ui| {
                 ui.set_max_width(380.);
-                ui.heading(moth_ui::text(moth_ui::Text::SaveQuestion));
+                moth_ui::icons::dialog_title(ui, moth_ui::text(moth_ui::Text::SaveQuestion));
                 ui.add_space(moth_ui::tokens(ui.ctx()).space_s as f32);
                 ui.label(moth_ui::text(moth_ui::Text::CloseWarning));
                 ui.add_space(moth_ui::tokens(ui.ctx()).space_m as f32);
@@ -178,39 +178,62 @@ impl Modal {
                 ));
                 intents.push(Intent::DismissArrangePrompt);
             } else {
-                egui::Modal::new(egui::Id::new("arrange_prompt")).show(ui.ctx(), |ui| {
-                    ui.set_max_width(380.);
-                    ui.heading(moth_ui::text(moth_ui::Text::ArrangePrompt));
-                    ui.add_space(moth_ui::tokens(ui.ctx()).space_m as f32);
-                    ui.separator();
-                    ui.horizontal_wrapped(|ui| {
-                        for (label, mode) in [
-                            (moth_ui::Text::Horizontal, arrange::Arrange::Horizontal),
-                            (moth_ui::Text::Vertical, arrange::Arrange::Vertical),
-                            (moth_ui::Text::Grid, arrange::Arrange::Grid),
-                            (moth_ui::Text::Optimal, arrange::Arrange::Optimal),
-                        ] {
-                            if moth_ui::icons::labeled_button(
-                                ui,
-                                super::tools::layout_icon(mode),
-                                moth_ui::text(label),
-                                false,
-                            )
-                            .clicked()
-                            {
-                                intents.push(Intent::Action(match mode {
-                                    arrange::Arrange::Horizontal => Action::Horizontal,
-                                    arrange::Arrange::Vertical => Action::Vertical,
-                                    arrange::Arrange::Grid => Action::Grid,
-                                    arrange::Arrange::Optimal => Action::Optimal,
-                                }));
+                let tokens = moth_ui::tokens(ui.ctx());
+                let modal = egui::Modal::new(egui::Id::new("arrange_prompt"))
+                    .frame(
+                        egui::Frame::popup(&ui.ctx().global_style())
+                            .corner_radius(tokens.radius_l)
+                            .inner_margin(egui::Margin::same(tokens.space_xl as i8)),
+                    )
+                    .show(ui.ctx(), |ui| {
+                        ui.set_max_width(tokens.space_xl as f32 * 15.6);
+                        moth_ui::icons::dialog_title(
+                            ui,
+                            moth_ui::text(moth_ui::Text::ArrangePrompt),
+                        );
+                        ui.label(
+                            egui::RichText::new(moth_ui::item_counts(
+                                moth_ui::locale(),
+                                ids.len(),
+                                0,
+                            ))
+                            .color(tokens.text_muted),
+                        );
+                        ui.add_space(tokens.space_m as f32);
+                        ui.horizontal_wrapped(|ui| {
+                            for (label, mode) in [
+                                (moth_ui::Text::Horizontal, arrange::Arrange::Horizontal),
+                                (moth_ui::Text::Vertical, arrange::Arrange::Vertical),
+                                (moth_ui::Text::Grid, arrange::Arrange::Grid),
+                                (moth_ui::Text::Optimal, arrange::Arrange::Optimal),
+                            ] {
+                                if moth_ui::icons::tile(
+                                    ui,
+                                    super::tools::layout_icon(mode),
+                                    moth_ui::text(label),
+                                )
+                                .clicked()
+                                {
+                                    intents.push(Intent::Action(match mode {
+                                        arrange::Arrange::Horizontal => Action::Horizontal,
+                                        arrange::Arrange::Vertical => Action::Vertical,
+                                        arrange::Arrange::Grid => Action::Grid,
+                                        arrange::Arrange::Optimal => Action::Optimal,
+                                    }));
+                                }
                             }
-                        }
-                        if ui.button(moth_ui::text(moth_ui::Text::Cancel)).clicked() {
-                            intents.push(Intent::Action(Action::CancelArrange));
-                        }
+                        });
+                        ui.add_space(tokens.space_m as f32);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button(moth_ui::text(moth_ui::Text::Cancel)).clicked() {
+                                intents.push(Intent::Action(Action::CancelArrange));
+                            }
+                        });
                     });
-                });
+                // Esc or a click beside the dialog means "leave them as they are".
+                if modal.should_close() {
+                    intents.push(Intent::Action(Action::CancelArrange));
+                }
             }
         }
         if let Some(added) = &board.added {

@@ -425,7 +425,6 @@ impl App {
             || self.workspace.board.arrange_prompt.is_some()
             || self.shortcuts.blocked()
             || self.editing.is_some()
-            || self.shortcuts.toast_focused()
             || self.shell.context().text_edit_focused()
             || egui::Popup::is_any_open(self.shell.context())
     }

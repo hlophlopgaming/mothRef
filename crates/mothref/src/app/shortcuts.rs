@@ -6,9 +6,6 @@ use moth_ui::{Text, text};
 struct Toast {
     action: Action,
     started: std::time::Instant,
-    hovered: bool,
-    focused: bool,
-    held: bool,
 }
 
 #[derive(Default)]
@@ -30,12 +27,13 @@ impl Shortcuts {
         self.toast = Some(Toast {
             action,
             started: now,
-            hovered: false,
-            focused: false,
-            held: false,
         });
     }
+    /// A quiet pill naming the action a key ran: shown briefly, never in the way of
+    /// the pointer, gone on its own.
     pub fn toast(&mut self, ctx: &egui::Context, enabled: bool, reduced_motion: bool) {
+        const SHOWN: f32 = 1.4;
+        const FADE: f32 = 0.35;
         if !enabled {
             self.toast = None;
         }
@@ -43,19 +41,17 @@ impl Shortcuts {
             return;
         };
         let age = toast.started.elapsed().as_secs_f32();
-        let alpha = if toast.held || toast.hovered || toast.focused || age <= 3.5 {
+        let alpha = if age <= SHOWN {
             1.
         } else {
-            ((4. - age) / 0.5).clamp(0., 1.)
+            ((SHOWN + FADE - age) / FADE).clamp(0., 1.)
         };
         if alpha == 0. {
             self.toast = None;
             return;
         }
-        let mut dismiss = false;
-        let mut hovered = false;
-        let mut focused = false;
-        let gap = moth_ui::tokens(ctx).space_m as f32;
+        let tokens = moth_ui::tokens(ctx);
+        let gap = tokens.space_m as f32;
         let viewport = ctx.content_rect();
         let bottom = ctx.memory(|memory| {
             ["bottom_toolbar", "selection_badge", "added_feedback"]
@@ -64,58 +60,46 @@ impl Shortcuts {
                 .map(|rect| rect.top())
                 .fold(viewport.bottom(), f32::min)
         });
+        let label = text(toast.action.label());
+        let keys = self.registry.label(toast.action);
         egui::Area::new(egui::Id::new("hotkey_feedback"))
             .order(egui::Order::Foreground)
+            .interactable(false)
             .pivot(egui::Align2::CENTER_BOTTOM)
-            .fixed_pos(egui::pos2(ctx.content_rect().center().x, bottom - gap))
+            .fixed_pos(egui::pos2(viewport.center().x, bottom - gap))
             .show(ctx, |ui| {
-                ui.set_opacity(if reduced_motion { 1. } else { alpha });
-                let frame = egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.set_max_width((ctx.content_rect().width() - 40.).clamp(1., 480.));
-                    ui.label(format!(
-                        "{}   {}",
-                        text(toast.action.label()),
-                        self.registry.label(toast.action)
-                    ));
-                    ui.horizontal(|ui| {
-                        let hold = ui
-                            .selectable_label(toast.held, text(Text::ToastHold))
-                            .on_hover_text(text(Text::ToastHint));
-                        focused |= hold.has_focus();
-                        if hold.clicked() {
-                            toast.held = !toast.held;
-                            toast.started = std::time::Instant::now();
-                        }
-                        let close = ui.button(text(Text::ToastDismiss));
-                        focused |= close.has_focus();
-                        dismiss |= close.clicked();
+                ui.set_opacity(if reduced_motion { alpha.ceil() } else { alpha });
+                egui::Frame::popup(ui.style())
+                    .corner_radius(tokens.radius_l)
+                    .inner_margin(egui::Margin::symmetric(
+                        tokens.space_m as i8,
+                        tokens.space_xs as i8,
+                    ))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(label);
+                            if !keys.is_empty() {
+                                egui::Frame::new()
+                                    .fill(tokens.surface_raised)
+                                    .stroke(egui::Stroke::new(1., tokens.border))
+                                    .corner_radius(tokens.radius_s)
+                                    .inner_margin(egui::Margin::symmetric(tokens.space_xs as i8, 0))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            egui::RichText::new(keys)
+                                                .monospace()
+                                                .color(tokens.text_muted),
+                                        );
+                                    });
+                            }
+                        });
                     });
-                });
-                hovered = frame.response.contains_pointer();
             });
-        if focused {
-            toast.started = std::time::Instant::now();
+        if age < SHOWN {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f32(SHOWN - age));
+        } else {
+            ctx.request_repaint();
         }
-        dismiss |= toast.hovered && !hovered && !toast.held && !focused;
-        dismiss |= (focused || toast.held)
-            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-        dismiss |= toast.focused && !focused && !toast.held && !hovered;
-        toast.hovered = hovered;
-        toast.focused = focused;
-        if dismiss {
-            self.toast = None;
-        } else if !hovered && !focused && !toast.held {
-            if age < 3.5 {
-                ctx.request_repaint_after(std::time::Duration::from_secs_f32(3.5 - age));
-            } else if reduced_motion {
-                ctx.request_repaint_after(std::time::Duration::from_secs_f32((4. - age).max(0.)));
-            } else {
-                ctx.request_repaint();
-            }
-        }
-    }
-    pub fn toast_focused(&self) -> bool {
-        self.toast.as_ref().is_some_and(|t| t.focused)
     }
     pub fn blocked(&self) -> bool {
         self.open || self.palette || self.sheet
@@ -221,7 +205,7 @@ impl Shortcuts {
             let response =
                 egui::Modal::new(egui::Id::new("shortcut_cheatsheet")).show(ui.ctx(), |ui| {
                     ui.set_width((ui.ctx().content_rect().width() - 40.).clamp(1., 650.));
-                    ui.heading(text(Text::CheatSheet));
+                    moth_ui::icons::dialog_title(ui, text(Text::CheatSheet));
                     let input = ui.add(
                         egui::TextEdit::singleline(&mut self.filter)
                             .hint_text(text(Text::SearchActions))
@@ -258,7 +242,7 @@ impl Shortcuts {
                                 if actions.is_empty() {
                                     continue;
                                 }
-                                ui.heading(text(category));
+                                ui.label(egui::RichText::new(text(category)).strong());
                                 for action in actions {
                                     ui.horizontal_wrapped(|ui| {
                                         ui.label(text(action.label()));
@@ -284,7 +268,7 @@ impl Shortcuts {
                     ui.set_width((ui.ctx().content_rect().width() - 40.).clamp(1., 560.));
                     let height = (ui.ctx().content_rect().height() * 0.7).min(500.);
                     ui.set_height(height);
-                    ui.heading(text(Text::CommandPalette));
+                    moth_ui::icons::dialog_title(ui, text(Text::CommandPalette));
                     let input = ui.add(
                         egui::TextEdit::singleline(&mut self.query)
                             .char_limit(128)
@@ -407,7 +391,7 @@ impl Shortcuts {
                         .id_salt("shortcut_modal_body")
                         .max_height((ui.ctx().content_rect().height() - 60.).max(1.))
                         .show(ui, |ui| {
-                            ui.heading(text(Text::Shortcuts));
+                            moth_ui::icons::dialog_title(ui, text(Text::Shortcuts));
                             ui.label(text(Text::BindingHelp));
                             ui.label(text(Text::PresetHelp));
                             ui.horizontal_wrapped(|ui| {
@@ -590,8 +574,7 @@ mod tests {
         .textures_delta
         .clear();
         assert!(state.toast.is_none());
-        state.feedback(Action::Next, now - std::time::Duration::from_secs(10));
-        state.toast.as_mut().unwrap().held = true;
+        state.feedback(Action::Next, std::time::Instant::now());
         ctx.run_ui(egui::RawInput::default(), |ui| {
             state.toast(ui.ctx(), true, false)
         })

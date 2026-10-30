@@ -509,3 +509,4 @@ CloseSummary = Close
 CustomTime = Custom:
 PlanName = Plan name
 DeletePlan = Delete plan
+SelectAll = Select all

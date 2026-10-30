@@ -5,6 +5,8 @@ use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Selects every item at the current level.
+    SelectAll,
     /// Setup: a time per image other than the presets.
     CustomTime,
     /// Hint of the plan name field.

@@ -439,13 +439,15 @@ fn row_label(item: &Item) -> String {
         item.name.clone()
     }
 }
-/// The Layers drawer: a tab on the right edge that opens a tree of groups and items.
-/// Clicking a row selects that item exactly, whatever group it sits in.
+/// The Layers drawer: a handle on the right edge that opens a tree of groups and items.
+/// Clicking a row selects that item exactly, whatever group it sits in; rows drag onto
+/// groups, next to items, or onto the header to leave every group.
 pub(super) fn layers(
     ctx: &egui::Context,
     board: &super::Document,
     viewport: egui::Rect,
 ) -> Vec<super::Intent> {
+    use moth_ui::icons::{self, Icon};
     use moth_ui::{Text, text};
     let mut intents = Vec::new();
     let open = ctx.data(|data| {
@@ -453,22 +455,23 @@ pub(super) fn layers(
             .unwrap_or(false)
     });
     let tokens = moth_ui::tokens(ctx);
+    let toggle = || super::Intent::Action(super::bindings::Action::Layers);
     if !open {
         egui::Area::new(egui::Id::new("layers_tab"))
             .anchor(egui::Align2::RIGHT_CENTER, egui::vec2(0., 0.))
             .constrain_to(viewport)
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
-                    .inner_margin(egui::Margin::symmetric(
-                        tokens.space_xs as i8,
-                        tokens.space_m as i8,
-                    ))
+                    .corner_radius(egui::CornerRadius {
+                        nw: tokens.radius_l,
+                        sw: tokens.radius_l,
+                        ne: 0,
+                        se: 0,
+                    })
+                    .inner_margin(egui::Margin::same(tokens.space_xs as i8))
                     .show(ui, |ui| {
-                        if ui
-                            .add(egui::Button::new(text(Text::Layers)).frame(false))
-                            .clicked()
-                        {
-                            intents.push(super::Intent::Action(super::bindings::Action::Layers));
+                        if icons::button(ui, Icon::Layers, text(Text::Layers), false).clicked() {
+                            intents.push(toggle());
                         }
                     });
             });
@@ -480,114 +483,196 @@ pub(super) fn layers(
         .unwrap_or_default();
     let rows = rows(&board.scene, &collapsed);
     let width = (viewport.width() * 0.8).min(tokens.space_xl as f32 * 11.);
+    let row_height = 28.;
+    let indent = tokens.space_l as f32;
     egui::Area::new(egui::Id::new("layers_drawer"))
         .anchor(
             egui::Align2::RIGHT_TOP,
-            egui::vec2(0., tokens.space_xl as f32 * 2.),
+            egui::vec2(-(tokens.space_s as f32), tokens.space_s as f32),
         )
         .constrain_to(viewport)
         .show(ctx, |ui| {
-            egui::Frame::popup(ui.style()).show(ui, |ui| {
-                ui.set_width(width);
-                ui.horizontal(|ui| {
-                    // The header takes a dropped row out of every group.
-                    let header = ui.strong(text(Text::Layers));
-                    if let Some(id) = header.dnd_release_payload::<Uuid>() {
-                        intents.push(super::Intent::MoveLayer(*id, None));
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if moth_ui::icons::button(
-                            ui,
-                            moth_ui::icons::Icon::Close,
-                            text(Text::CloseSummary),
-                            false,
-                        )
-                        .clicked()
-                        {
-                            intents.push(super::Intent::Action(super::bindings::Action::Layers));
+            egui::Frame::popup(ui.style())
+                .corner_radius(tokens.radius_l)
+                .inner_margin(egui::Margin::same(tokens.space_s as i8))
+                .show(ui, |ui| {
+                    ui.set_width(width);
+                    ui.horizontal(|ui| {
+                        ui.add_space(tokens.space_xs as f32);
+                        // The header takes a dropped row out of every group.
+                        let header = ui.add(
+                            egui::Label::new(egui::RichText::new(text(Text::Layers)).strong())
+                                .selectable(false)
+                                .sense(egui::Sense::hover()),
+                        );
+                        ui.label(
+                            egui::RichText::new(board.scene.len().to_string())
+                                .color(tokens.text_muted),
+                        );
+                        if let Some(id) = header.dnd_release_payload::<Uuid>() {
+                            intents.push(super::Intent::MoveLayer(*id, None));
                         }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if icons::button(ui, Icon::Close, text(Text::CloseSummary), false)
+                                .clicked()
+                            {
+                                intents.push(toggle());
+                            }
+                        });
                     });
+                    ui.add_space(tokens.space_xs as f32);
+                    let max_height =
+                        (viewport.height() - tokens.space_xl as f32 * 4.).max(row_height * 3.);
+                    ui.spacing_mut().item_spacing.y = 0.;
+                    egui::ScrollArea::vertical()
+                        .max_height(max_height)
+                        .min_scrolled_height((rows.len() as f32 * row_height).min(max_height))
+                        .show_rows(ui, row_height, rows.len(), |ui, range| {
+                            ui.spacing_mut().item_spacing.y = 0.;
+                            for row in &rows[range] {
+                                if let Some(item) = board.scene.get(row.id) {
+                                    layer_row(
+                                        ui,
+                                        board,
+                                        row,
+                                        item,
+                                        (row_height, indent),
+                                        &mut collapsed,
+                                        &mut intents,
+                                    );
+                                }
+                            }
+                        });
                 });
-                ui.separator();
-                let row_height = ui.spacing().interact_size.y;
-                let indent = tokens.space_l as f32;
-                let max_height =
-                    (viewport.height() - tokens.space_xl as f32 * 6.).max(row_height * 3.);
-                let spaced = row_height + ui.spacing().item_spacing.y;
-                egui::ScrollArea::vertical()
-                    .max_height(max_height)
-                    .min_scrolled_height((rows.len() as f32 * spaced).min(max_height))
-                    .show_rows(ui, row_height, rows.len(), |ui, range| {
-                        for row in &rows[range] {
-                            let Some(item) = board.scene.get(row.id) else {
-                                continue;
-                            };
-                            ui.horizontal(|ui| {
-                                ui.add_space(row.depth as f32 * indent);
-                                if row.group {
-                                    let folded = collapsed.contains(&row.id);
-                                    let icon = if folded {
-                                        moth_ui::icons::Icon::ChevronRight
-                                    } else {
-                                        moth_ui::icons::Icon::ChevronDown
-                                    };
-                                    if moth_ui::icons::button(ui, icon, text(Text::Layers), false)
-                                        .clicked()
-                                    {
-                                        if folded {
-                                            collapsed.remove(&row.id);
-                                        } else {
-                                            collapsed.insert(row.id);
-                                        }
-                                    }
-                                    let color = item.group_style().map_or(0, |g| g.color);
-                                    let (dot, _) = ui.allocate_exact_size(
-                                        egui::Vec2::splat(tokens.space_s as f32),
-                                        egui::Sense::hover(),
-                                    );
-                                    ui.painter().circle_filled(
-                                        dot.center(),
-                                        dot.width() / 2.,
-                                        tokens.group(color),
-                                    );
-                                } else {
-                                    ui.add_space(
-                                        ui.spacing().icon_width + ui.spacing().item_spacing.x,
-                                    );
-                                }
-                                let selected = board.selection.contains(&row.id);
-                                let response = ui.add(
-                                    egui::Button::selectable(selected, row_label(item))
-                                        .truncate()
-                                        .sense(egui::Sense::click_and_drag()),
-                                );
-                                response.dnd_set_drag_payload(row.id);
-                                if response.clicked() {
-                                    intents.push(super::Intent::SelectItem(row.id));
-                                }
-                                // Dropping a row on a group puts it inside; on an item,
-                                // just above that item in the same group.
-                                if response
-                                    .dnd_hover_payload::<Uuid>()
-                                    .is_some_and(|id| *id != row.id)
-                                {
-                                    ui.painter().rect_stroke(
-                                        response.rect,
-                                        tokens.radius_s,
-                                        egui::Stroke::new(1.5, tokens.accent),
-                                        egui::StrokeKind::Inside,
-                                    );
-                                }
-                                if let Some(id) = response.dnd_release_payload::<Uuid>()
-                                    && *id != row.id
-                                {
-                                    intents.push(super::Intent::MoveLayer(*id, Some(row.id)));
-                                }
-                            });
-                        }
-                    });
-            });
         });
     ctx.data_mut(|data| data.insert_temp(collapsed_key, collapsed));
     intents
+}
+/// One tree row: fold chevron or type icon, color dot for groups, truncated name.
+fn layer_row(
+    ui: &mut egui::Ui,
+    board: &super::Document,
+    row: &Row,
+    item: &Item,
+    (row_height, indent): (f32, f32),
+    collapsed: &mut HashSet<Uuid>,
+    intents: &mut Vec<super::Intent>,
+) {
+    use moth_ui::icons::{self, Icon};
+    let tokens = moth_ui::tokens(ui.ctx());
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), row_height),
+        egui::Sense::click_and_drag(),
+    );
+    response.dnd_set_drag_payload(row.id);
+    let selected = board.selection.contains(&row.id);
+    let target = response
+        .dnd_hover_payload::<Uuid>()
+        .is_some_and(|id| *id != row.id);
+    let painter = ui.painter_at(rect);
+    let fill = if selected {
+        Some(tokens.selection.gamma_multiply(0.7))
+    } else if response.hovered() {
+        Some(tokens.hover)
+    } else {
+        None
+    };
+    if let Some(fill) = fill {
+        painter.rect_filled(rect.shrink2(egui::vec2(0., 1.)), tokens.radius_s, fill);
+    }
+    if target {
+        painter.rect_stroke(
+            rect.shrink(1.),
+            tokens.radius_s,
+            egui::Stroke::new(1.5, tokens.accent),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let icon = 14.;
+    let mid = rect.center().y;
+    let mut x = rect.left() + tokens.space_xs as f32 + row.depth as f32 * indent;
+    if row.group {
+        // A small chevron folds the group; it is a target of its own.
+        let chevron = egui::Rect::from_center_size(
+            egui::pos2(x + icon / 2., mid),
+            egui::Vec2::splat(icon + 6.),
+        );
+        let fold = ui.interact(chevron, response.id.with("fold"), egui::Sense::click());
+        let folded = collapsed.contains(&row.id);
+        icons::paint(
+            ui,
+            egui::Rect::from_center_size(chevron.center(), egui::Vec2::splat(icon - 2.)),
+            if folded {
+                Icon::ChevronRight
+            } else {
+                Icon::ChevronDown
+            },
+            if fold.hovered() {
+                tokens.text
+            } else {
+                tokens.text_muted
+            },
+        );
+        if fold.clicked() {
+            if folded {
+                collapsed.remove(&row.id);
+            } else {
+                collapsed.insert(row.id);
+            }
+        }
+        x += icon + tokens.space_xs as f32;
+        let color = item.group_style().map_or(0, |g| g.color);
+        painter.circle_filled(egui::pos2(x + 4., mid), 4., tokens.group(color));
+        x += 8. + tokens.space_s as f32;
+    } else {
+        x += icon + tokens.space_xs as f32;
+        let kind = if item.note().is_some() {
+            Icon::List
+        } else {
+            Icon::Image
+        };
+        icons::paint(
+            ui,
+            egui::Rect::from_center_size(egui::pos2(x + icon / 2., mid), egui::Vec2::splat(icon)),
+            kind,
+            tokens.text_muted,
+        );
+        x += icon + tokens.space_s as f32;
+    }
+    let label = board
+        .group_style(item.id)
+        .filter(|style| !style.title.is_empty())
+        .map(|style| style.title)
+        .unwrap_or_else(|| row_label(item));
+    let room = (rect.right() - x - tokens.space_s as f32).max(0.);
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        label.clone(),
+        egui::TextStyle::Body.resolve(ui.style()),
+        if selected || row.group {
+            tokens.text
+        } else {
+            tokens.text.gamma_multiply(0.85)
+        },
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+    let galley = ui.fonts_mut(|f| f.layout_job(job));
+    let truncated = galley.size().x >= room - 1.;
+    painter.galley(
+        egui::pos2(x, mid - galley.size().y / 2.),
+        galley,
+        tokens.text,
+    );
+    let response = if truncated {
+        response.on_hover_text(label)
+    } else {
+        response
+    };
+    if response.clicked() {
+        intents.push(super::Intent::SelectItem(row.id));
+    }
+    if let Some(id) = response.dnd_release_payload::<Uuid>()
+        && *id != row.id
+    {
+        intents.push(super::Intent::MoveLayer(*id, Some(row.id)));
+    }
 }

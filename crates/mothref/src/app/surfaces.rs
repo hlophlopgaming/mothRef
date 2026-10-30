@@ -104,6 +104,7 @@ pub(super) const CONTEXT_MENU: &[Slot] = &[
     G(Text::AlignGroup, ALIGN),
     G(Text::OrderGroup, ORDER),
     S,
+    A(SelectAll),
     A(Group),
     A(Ungroup),
     A(EnterGroup),
@@ -197,6 +198,17 @@ pub(super) fn button(
             enabled,
         )
         .clicked();
+    }
+    if icon_only {
+        // Bars carry words without an icon slot or a shortcut; the tooltip has both.
+        let shortcut = registry.label(action);
+        let response = ui.add_enabled(enabled, egui::Button::new(label).selected(selected));
+        let response = if shortcut.is_empty() {
+            response
+        } else {
+            response.on_hover_text(format!("{label}  {shortcut}"))
+        };
+        return response.clicked();
     }
     let icon_id = ui.next_auto_id().with("menu_icon");
     let icon_size = egui::Vec2::splat(ui.spacing().icon_width);

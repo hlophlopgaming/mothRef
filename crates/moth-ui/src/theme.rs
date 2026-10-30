@@ -267,6 +267,8 @@ impl Tokens {
         space_xl: 24,
     };
 }
+/// No fill: idle ghost buttons and inactive tabs.
+pub const CLEAR: Color32 = Color32::TRANSPARENT;
 /// Active colors follow theme changes without retaining widget-local copies.
 pub fn tokens(ctx: &Context) -> Tokens {
     ctx.data(|data| data.get_temp(egui::Id::new("house_tokens")))

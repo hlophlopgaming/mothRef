@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A calmer interface: the title bar is a quiet strip where the open board sits on a soft tab and other boards are plain text, with a dot for unsaved changes; icon buttons have no box until you point at them; the Layers drawer is a compact tree with fold arrows, group colors and type icons; selection bars show plain words; the arrange question after adding images is a small dialog with four picture choices, and Esc leaves the images as they are; the shortcut hint is a short-lived pill without buttons.
+- Select all (Ctrl/⌘+A) selects everything on the board, or inside the group you entered.
 - Drawing sessions (gesture mode, F5 or View ▸ Drawing session): practice with timed images from the whole board, the selection or a group. Pick one time per image (30 s to 10 min) or a plan of stages such as 10 × 30 s then 5 × 2 min, and save plans for later. Images are shuffled each once, shown in board order or picked at random. A 3-2-1 countdown, a ring timer that turns pink in the last 5 seconds, a soft chime on every change, pause (Space), previous and next (arrow keys) and "+30 s" are there; the panel hides while you draw. Run it full screen or in a small window kept above your drawing app that takes the shape of each image. The summary lists what was shown and for how long; star images and repeat the same order, a new shuffle, only skipped or only starred images.
 - Fix "Resize window to selection" leaving the board drawn at the old size on Wayland.
 - Drawing sessions: type any time per image or per stage (minutes and seconds) besides the presets; saved plans get a name, and a right click deletes one.

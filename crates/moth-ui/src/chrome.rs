@@ -123,22 +123,36 @@ pub fn toolbar(
         ui.spacing_mut().interact_size = egui::vec2(44., 44.);
     }
     let mut a = Actions::default();
+    let t = crate::tokens(ui.ctx());
     let brand = egui::Panel::top("brand")
         .frame(
             egui::Frame::new()
-                .fill(ui.visuals().extreme_bg_color)
-                .inner_margin(egui::Margin::symmetric(
-                    crate::tokens(ui.ctx()).space_m as i8,
-                    crate::tokens(ui.ctx()).space_none as i8,
-                )),
+                .fill(t.sidebar)
+                .stroke(egui::Stroke::new(1., t.divider))
+                .inner_margin(egui::Margin::symmetric(t.space_s as i8, t.space_xs as i8)),
         )
         .show(ui, |ui| {
+            // Buttons in the bar are ghosts: only hover and the active tab get a fill.
+            let widgets = &mut ui.style_mut().visuals.widgets;
+            widgets.inactive.weak_bg_fill = crate::theme::CLEAR;
+            widgets.inactive.bg_stroke = egui::Stroke::NONE;
+            widgets.hovered.bg_stroke = egui::Stroke::NONE;
             ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = crate::tokens(ui.ctx()).space_xs as f32;
+                ui.spacing_mut().item_spacing.x = t.space_xs as f32;
+                ui.add_space(t.space_xs as f32);
                 let (logo, _) = ui.allocate_exact_size(egui::vec2(14., 20.), egui::Sense::hover());
-                ui.painter()
-                    .circle_filled(logo.center(), 6., crate::tokens(ui.ctx()).accent);
+                ui.painter().rect_filled(
+                    egui::Rect::from_center_size(logo.center(), egui::Vec2::splat(13.)),
+                    t.radius_s,
+                    t.accent,
+                );
                 menus(ui);
+                // A thin rule between the app menu and the boards.
+                let (rule, _) = ui.allocate_exact_size(egui::vec2(9., 20.), egui::Sense::hover());
+                ui.painter().line_segment(
+                    [rule.center_top(), rule.center_bottom()],
+                    egui::Stroke::new(1., t.divider),
+                );
                 if !compact && status.library {
                     ui.label(
                         egui::RichText::new(text(Text::Library))
@@ -225,6 +239,18 @@ pub fn toolbar(
                         });
                 }
                 if !status.library && show_summary {
+                    // A small state dot: amber while changes are not in a file yet.
+                    let (dot, _) =
+                        ui.allocate_exact_size(egui::vec2(12., 20.), egui::Sense::hover());
+                    ui.painter().circle_filled(
+                        dot.center(),
+                        3.,
+                        if status.dirty || status.path.is_empty() {
+                            t.group(2)
+                        } else {
+                            t.accent
+                        },
+                    );
                     let response = ui.add(
                         egui::Label::new(
                             egui::RichText::new(summary).font(status_font).color(color),
@@ -421,24 +447,31 @@ fn tab_chip(
     let t = tokens(ui.ctx());
     let active = tab.active && !library;
     let height = ui.spacing().interact_size.y;
-    let title = if tab.dirty {
-        format!("{}  •", tab.title)
-    } else {
-        tab.title.to_owned()
-    };
+    let title = tab.title.to_owned();
+    let hovered_id = egui::Id::new(("tab_hover", tab.slot));
+    let hovered = ui
+        .ctx()
+        .data(|d| d.get_temp::<bool>(hovered_id))
+        .unwrap_or(false);
     // Boards never saved to a file are set in italics and explain where they live.
-    let mut title = egui::RichText::new(title).color(t.text);
+    let mut title = egui::RichText::new(title).color(if active || hovered {
+        t.text
+    } else {
+        t.text_muted
+    });
     if tab.journal_only {
         title = title.italics();
     }
     let mut action = None;
     let chip = egui::Frame::new()
-        .fill(if active { t.selection } else { t.surface })
-        .stroke(egui::Stroke::new(
-            1.,
-            if active { t.accent } else { t.border },
-        ))
-        .corner_radius(t.radius_s)
+        .fill(if active {
+            t.surface_raised
+        } else if hovered {
+            t.hover.gamma_multiply(0.6)
+        } else {
+            crate::theme::CLEAR
+        })
+        .corner_radius(t.radius_m)
         .inner_margin(egui::Margin {
             left: t.space_m as i8,
             right: t.space_xs as i8,
@@ -446,8 +479,13 @@ fn tab_chip(
             bottom: 0,
         })
         .show(ui, |ui| {
-            ui.set_min_height(height - 4.);
+            ui.set_min_height(height - 6.);
             ui.spacing_mut().item_spacing.x = f32::from(t.space_xs);
+            if tab.dirty {
+                // Unsaved changes: a dot before the title, not a stray bullet after it.
+                let (dot, _) = ui.allocate_exact_size(egui::vec2(6., 12.), egui::Sense::hover());
+                ui.painter().circle_filled(dot.center(), 3., t.group(2));
+            }
             let ghost = title.clone();
             let mut label = ui.add(
                 egui::Label::new(title)
@@ -518,14 +556,22 @@ fn tab_chip(
                         .min_size(egui::Vec2::splat(side)),
                 )
                 .on_hover_text(tooltip(ui.ctx(), Text::CloseTab));
+            // The cross shows on the open board and under the pointer; elsewhere it only
+            // keeps its place so tabs never shift.
+            if close.hovered() {
+                ui.painter()
+                    .rect_filled(close.rect.shrink(2.), t.radius_s, t.hover);
+            }
             let color = if close.hovered() {
                 t.text
-            } else {
+            } else if active || hovered {
                 t.text_muted
+            } else {
+                crate::theme::CLEAR
             };
             icons::paint(
                 ui,
-                close.rect.shrink(f32::from(t.space_xs) / 2.),
+                close.rect.shrink(f32::from(t.space_xs)),
                 Icon::Close,
                 color,
             );
@@ -534,7 +580,8 @@ fn tab_chip(
             }
         });
     // No click handler on the chip itself: registered after the title, it would
-    // take the title's drag and context menu.
-    let _ = chip;
+    // take the title's drag and context menu. Hover is read for the next frame.
+    let over = ui.rect_contains_pointer(chip.response.rect);
+    ui.ctx().data_mut(|d| d.insert_temp(hovered_id, over));
     action
 }

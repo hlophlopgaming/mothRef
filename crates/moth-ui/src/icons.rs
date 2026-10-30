@@ -52,6 +52,8 @@ pub enum Icon {
     Shrink,
     /// Mark an item for later.
     Star,
+    /// Stacked layers: the board's tree.
+    Layers,
 
     /// Return to the board catalog.
     Home,
@@ -288,6 +290,11 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
             line(&[(6., 16.), (6., 12.), (2., 12.)]);
             line(&[(12., 16.), (12., 12.), (16., 12.)]);
         }
+        Icon::Layers => {
+            line(&[(2., 6.), (9., 2.5), (16., 6.), (9., 9.5), (2., 6.)]);
+            line(&[(2., 9.5), (9., 13.), (16., 9.5)]);
+            line(&[(2., 13.), (9., 16.5), (16., 13.)]);
+        }
         Icon::Star => line(&[
             (9., 1.5),
             (11.2, 6.5),
@@ -513,55 +520,101 @@ pub fn enabled_button(
     selected: bool,
     enabled: bool,
 ) -> Response {
+    // Ghost buttons: no idle fill, so bars of icons read as one calm surface; hover
+    // and the selected state paint a soft background instead of an outline.
     let response = ui.add_enabled(
         enabled,
-        egui::Button::new("")
-            .min_size(Vec2::splat(if ui.ctx().content_rect().width() < 600. {
+        egui::Button::new("").frame(false).min_size(Vec2::splat(
+            if ui.ctx().content_rect().width() < 600. {
                 44.
             } else {
                 36.
-            }))
-            .selected(selected),
+            },
+        )),
     );
+    let tokens = crate::tokens(ui.ctx());
     let hover = ui.ctx().animate_bool_with_time(
         response.id.with("hover"),
-        response.hovered(),
+        response.hovered() && enabled,
         ui.style().animation_time,
     );
-    let pressed = ui.ctx().animate_bool_with_time(
-        response.id.with("pressed"),
-        response.is_pointer_button_down_on(),
-        ui.style().animation_time,
-    );
-    if hover > 0. || pressed > 0. {
-        ui.painter().rect_stroke(
-            response.rect.shrink(1.),
-            crate::tokens(ui.ctx()).radius_hover as f32,
-            Stroke::new(
-                1. + pressed,
-                crate::tokens(ui.ctx())
-                    .accent
-                    .gamma_multiply(hover * 0.5 + pressed * 0.5),
-            ),
-            egui::StrokeKind::Inside,
+    let pressed = response.is_pointer_button_down_on();
+    let radius = tokens.radius_m as f32;
+    let area = response.rect.shrink(2.);
+    if selected {
+        ui.painter()
+            .rect_filled(area, radius, tokens.accent.gamma_multiply(0.22));
+    }
+    if hover > 0. {
+        let fill = if pressed {
+            tokens.selection
+        } else {
+            tokens.hover
+        };
+        ui.painter().rect_filled(
+            area,
+            radius,
+            fill.gamma_multiply(hover * if selected { 0.5 } else { 1. }),
         );
     }
-    paint(
-        ui,
-        response.rect.translate(egui::vec2(0., -hover + pressed)),
-        icon,
-        if selected {
-            crate::tokens(ui.ctx()).accent_text
-        } else {
-            ui.visuals().text_color()
-        },
-    );
+    let color = if !enabled {
+        tokens.text_muted.gamma_multiply(0.6)
+    } else if selected {
+        tokens.accent_text
+    } else if hover > 0. {
+        tokens.text
+    } else {
+        tokens.text.gamma_multiply(0.85)
+    };
+    paint(ui, response.rect, icon, color);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
     response.on_hover_text(label)
 }
 
+/// A square choice: icon above its label, all tiles of a row the same size.
+pub fn tile(ui: &mut Ui, icon: Icon, label: &str) -> Response {
+    let tokens = crate::tokens(ui.ctx());
+    let size = Vec2::new(tokens.space_xl as f32 * 3.6, tokens.space_xl as f32 * 3.);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let hover = ui.ctx().animate_bool_with_time(
+        response.id.with("hover"),
+        response.hovered(),
+        ui.style().animation_time,
+    );
+    ui.painter().rect(
+        rect,
+        tokens.radius_m,
+        tokens.surface_raised,
+        Stroke::new(1., tokens.border.lerp_to_gamma(tokens.accent, hover)),
+        egui::StrokeKind::Inside,
+    );
+    let icon_rect = Rect::from_center_size(rect.center() - Vec2::new(0., 10.), Vec2::splat(22.));
+    paint(
+        ui,
+        icon_rect,
+        icon,
+        if hover > 0.5 {
+            tokens.accent_text
+        } else {
+            tokens.text
+        },
+    );
+    ui.painter().text(
+        rect.center() + Vec2::new(0., 16.),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::TextStyle::Button.resolve(ui.style()),
+        tokens.text,
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    response
+}
+/// Dialog titles: one step above body text, not the page heading.
+pub fn dialog_title(ui: &mut Ui, title: &str) {
+    ui.label(egui::RichText::new(title).size(17.).strong());
+}
 /// A reserved vector slot keeps labels, focus and touch targets in the native button layout.
 pub fn labeled_button(ui: &mut Ui, icon: Icon, label: &str, selected: bool) -> Response {
     let id = ui.next_auto_id().with("icon");

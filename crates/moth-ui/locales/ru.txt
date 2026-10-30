@@ -509,3 +509,4 @@ CloseSummary = Закрыть
 CustomTime = Своё:
 PlanName = Название плана
 DeletePlan = Удалить план
+SelectAll = Выделить всё

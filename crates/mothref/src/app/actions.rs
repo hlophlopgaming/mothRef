@@ -158,6 +158,9 @@ impl App {
         if action == Deselect {
             return !self.workspace.board.selection.is_empty();
         }
+        if action == SelectAll {
+            return !self.workspace.board.scene.is_empty();
+        }
         if matches!(action, Lock | Grayscale | Save) {
             return self.workspace.board.idle();
         }
@@ -632,6 +635,21 @@ impl App {
             Select => return,
             Deselect => {
                 self.workspace.board.selection.clear();
+                return;
+            }
+            SelectAll => {
+                // Everything at the current level: the board, or the entered group.
+                let board = &mut self.workspace.board;
+                board.selection = match board.entered {
+                    Some(group) => board.scene.children(group).map(|item| item.id).collect(),
+                    None => board
+                        .scene
+                        .items()
+                        .filter(|item| item.parent.is_none())
+                        .map(|item| item.id)
+                        .collect(),
+                };
+                selection::with_members(&board.scene, &mut board.selection, None);
                 return;
             }
             Fit => Intent::Fit,
