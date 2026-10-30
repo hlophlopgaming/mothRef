@@ -401,7 +401,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                 );
                 if !secondary_gesture {
                     response.context_menu(|ui| {
-                        super::surfaces::menu(
+                        super::surfaces::context(
                             ui,
                             super::surfaces::CONTEXT_MENU,
                             enabled,

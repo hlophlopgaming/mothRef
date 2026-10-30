@@ -211,7 +211,7 @@ pub(super) fn button(
         return response.clicked();
     }
     let icon_id = ui.next_auto_id().with("menu_icon");
-    let icon_size = egui::Vec2::splat(ui.spacing().icon_width);
+    let icon_size = egui::Vec2::splat(MENU_ICON);
     let button = egui::Button::new((egui::Atom::custom(icon_id, icon_size), label))
         .shortcut_text(registry.label(action))
         .selected(selected)
@@ -226,6 +226,34 @@ pub(super) fn button(
     let response = result.inner;
     response.clicked()
 }
+/// Icon column of menus: one size for every row, so labels line up.
+const MENU_ICON: f32 = 16.;
+/// Menus are lists, not toolbars: rows a little taller than the text.
+fn compact(ui: &mut egui::Ui) {
+    let spacing = ui.spacing_mut();
+    spacing.interact_size.y = 28.;
+    spacing.button_padding.y = 4.;
+    spacing.item_spacing.y = 1.;
+}
+/// Whether a slot has anything the user can run now.
+fn available(slot: &Slot, enabled: &[bool]) -> bool {
+    match slot {
+        A(action) => enabled.get(*action as usize).copied().unwrap_or(false),
+        G(_, children) => children.iter().any(|child| available(child, enabled)),
+        S | Slot::Zoom => false,
+    }
+}
+/// A context menu: only what applies to the click, without empty separators.
+pub(super) fn context(
+    ui: &mut egui::Ui,
+    slots: &[Slot],
+    enabled: &[bool],
+    registry: &Registry,
+    intents: &mut Vec<Intent>,
+) {
+    items(ui, slots, enabled, registry, intents, true);
+}
+/// A menu that shows every entry, greyed out when unavailable, so it can be learned.
 pub(super) fn menu(
     ui: &mut egui::Ui,
     slots: &[Slot],
@@ -233,7 +261,38 @@ pub(super) fn menu(
     registry: &Registry,
     intents: &mut Vec<Intent>,
 ) {
-    for slot in slots {
+    items(ui, slots, enabled, registry, intents, false);
+}
+fn items(
+    ui: &mut egui::Ui,
+    slots: &[Slot],
+    enabled: &[bool],
+    registry: &Registry,
+    intents: &mut Vec<Intent>,
+    only_available: bool,
+) {
+    compact(ui);
+    let shown: Vec<&Slot> = if only_available {
+        // Drop unavailable entries, then separators that no longer separate anything.
+        let kept: Vec<&Slot> = slots
+            .iter()
+            .filter(|slot| matches!(slot, S) || available(slot, enabled))
+            .collect();
+        let mut out: Vec<&Slot> = Vec::new();
+        for slot in kept {
+            if matches!(slot, S) && out.last().is_none_or(|last| matches!(last, S)) {
+                continue;
+            }
+            out.push(slot);
+        }
+        while out.last().is_some_and(|last| matches!(last, S)) {
+            out.pop();
+        }
+        out
+    } else {
+        slots.iter().collect()
+    };
+    for slot in shown {
         match slot {
             A(action) => {
                 if button(ui, *action, enabled, registry, false, false) {
@@ -250,17 +309,19 @@ pub(super) fn menu(
                 let button = egui::Button::new((
                     egui::Atom::custom(
                         ui.next_auto_id().with("group_icon"),
-                        egui::Vec2::splat(ui.spacing().icon_width),
+                        egui::Vec2::splat(MENU_ICON),
                     ),
                     text(*label),
                 ))
                 .right_text(egui::Atom::custom(
                     ui.next_auto_id().with("submenu_arrow"),
-                    egui::Vec2::splat(ui.spacing().icon_width),
+                    egui::Vec2::splat(MENU_ICON),
                 ));
                 let (response, _) = egui::containers::menu::SubMenuButton::from_button(button)
-                    .ui(ui, |ui| menu(ui, children, enabled, registry, intents));
-                let size = ui.spacing().icon_width;
+                    .ui(ui, |ui| {
+                        items(ui, children, enabled, registry, intents, only_available)
+                    });
+                let size = MENU_ICON - 4.;
                 let rect = egui::Rect::from_center_size(
                     egui::pos2(
                         response.rect.right() - ui.spacing().button_padding.x - size / 2.,
@@ -450,7 +511,7 @@ pub(super) fn selection(
                     }
                     row(ui, selection_bar(kind), enabled, registry, &mut intents, 1.);
                     ui.menu_button(text(Text::More), |ui| {
-                        menu(ui, CONTEXT_MENU, enabled, registry, &mut intents)
+                        context(ui, CONTEXT_MENU, enabled, registry, &mut intents)
                     });
                 });
             });
@@ -480,35 +541,64 @@ pub(super) fn added(
         .fixed_pos(egui::pos2(viewport.center().x, bottom - gap))
         .show(ctx, |ui| {
             ui.set_max_width((viewport.width() - gap * 2.).max(1.));
-            egui::Frame::popup(ui.style()).show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        moth_ui::Message::Count(Text::AddedImages, added.ids.len())
-                            .render(moth_ui::locale()),
-                    );
-                    let (label, _) = super::tools::layout(added.mode as u8);
-                    ui.menu_button(format!("{} ▾", text(label)), |ui| {
-                        menu(
-                            ui,
-                            &[
-                                A(AddedHorizontal),
-                                A(AddedVertical),
-                                A(AddedGrid),
-                                A(AddedOptimal),
-                            ],
-                            enabled,
-                            registry,
-                            &mut intents,
+            let tokens = moth_ui::tokens(ui.ctx());
+            egui::Frame::popup(ui.style())
+                .corner_radius(tokens.radius_l)
+                .inner_margin(egui::Margin {
+                    left: tokens.space_m as i8,
+                    right: tokens.space_xs as i8,
+                    top: tokens.space_xs as i8,
+                    bottom: tokens.space_xs as i8,
+                })
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        let (check, _) = ui.allocate_exact_size(
+                            egui::Vec2::splat(MENU_ICON),
+                            egui::Sense::hover(),
                         );
+                        moth_ui::icons::paint(
+                            ui,
+                            check,
+                            moth_ui::icons::Icon::Check,
+                            tokens.accent_text,
+                        );
+                        ui.label(
+                            moth_ui::Message::Count(Text::AddedImages, added.ids.len())
+                                .render(moth_ui::locale()),
+                        );
+                        let (label, _) = super::tools::layout(added.mode as u8);
+                        ui.menu_button(format!("{} ▾", text(label)), |ui| {
+                            menu(
+                                ui,
+                                &[
+                                    A(AddedHorizontal),
+                                    A(AddedVertical),
+                                    A(AddedGrid),
+                                    A(AddedOptimal),
+                                ],
+                                enabled,
+                                registry,
+                                &mut intents,
+                            );
+                        });
+                        // Undo reads as a link-like action in the accent, as in the design.
+                        let undo = ui.add_enabled(
+                            enabled.get(UndoAdded as usize).copied().unwrap_or(false),
+                            egui::Button::new(
+                                egui::RichText::new(text(UndoAdded.label()))
+                                    .strong()
+                                    .color(tokens.accent_text),
+                            )
+                            .frame(false),
+                        );
+                        if undo.clicked() {
+                            intents.push(Intent::Action(UndoAdded));
+                        }
+                        if button(ui, DismissAdded, enabled, registry, true, false) {
+                            intents.push(Intent::Action(DismissAdded));
+                        }
                     });
-                    if button(ui, UndoAdded, enabled, registry, false, false) {
-                        intents.push(Intent::Action(UndoAdded));
-                    }
-                    if button(ui, DismissAdded, enabled, registry, true, false) {
-                        intents.push(Intent::Action(DismissAdded));
-                    }
                 });
-            });
         });
     intents
 }

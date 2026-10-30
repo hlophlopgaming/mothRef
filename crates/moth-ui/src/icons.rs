@@ -54,6 +54,8 @@ pub enum Icon {
     Star,
     /// Stacked layers: the board's tree.
     Layers,
+    /// Done, confirmed.
+    Check,
 
     /// Return to the board catalog.
     Home,
@@ -114,9 +116,12 @@ pub enum Icon {
 }
 /// Paints into a reserved rectangle so icons cannot change text layout.
 pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
-    let r = Rect::from_center_size(rect.center(), Vec2::splat(18.));
-    let p = |x: f32, y: f32| Pos2::new(r.left() + x, r.top() + y);
-    let stroke = Stroke::new(1.5, color);
+    // Drawn on an 18-unit grid; a smaller slot (menus) shrinks the icon to fit, a
+    // larger one (buttons) keeps it at its natural size in the middle.
+    let scale = (rect.width().min(rect.height()) / 18.).min(1.);
+    let r = Rect::from_center_size(rect.center(), Vec2::splat(18. * scale));
+    let p = |x: f32, y: f32| Pos2::new(r.left() + x * scale, r.top() + y * scale);
+    let stroke = Stroke::new(1.5 * scale.max(0.85), color);
     let line = |points: &[(f32, f32)]| {
         ui.painter().add(egui::Shape::line(
             points.iter().map(|&(x, y)| p(x, y)).collect(),
@@ -168,8 +173,8 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
             line(&[(11., 8.), (11., 13.)]);
         }
         Icon::Settings => {
-            ui.painter().circle_stroke(p(9., 9.), 5., stroke);
-            ui.painter().circle_stroke(p(9., 9.), 2., stroke);
+            ui.painter().circle_stroke(p(9., 9.), 5. * scale, stroke);
+            ui.painter().circle_stroke(p(9., 9.), 2. * scale, stroke);
             for (a, b) in [
                 ((9., 0.), (9., 4.)),
                 ((9., 14.), (9., 18.)),
@@ -198,7 +203,7 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
                 (16., 12.),
             ]);
             for (x, y) in [(5., 6.), (9., 4.), (5., 10.)] {
-                ui.painter().circle_filled(p(x, y), 1., color);
+                ui.painter().circle_filled(p(x, y), 1. * scale, color);
             }
         }
         Icon::ImagePlus => {
@@ -290,6 +295,7 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
             line(&[(6., 16.), (6., 12.), (2., 12.)]);
             line(&[(12., 16.), (12., 12.), (16., 12.)]);
         }
+        Icon::Check => line(&[(3., 9.5), (7.5, 14.), (15., 4.5)]),
         Icon::Layers => {
             line(&[(2., 6.), (9., 2.5), (16., 6.), (9., 9.5), (2., 6.)]);
             line(&[(2., 9.5), (9., 13.), (16., 9.5)]);
@@ -323,7 +329,7 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
             line(&[(3., 2.), (15., 8.), (10., 10.), (8., 16.), (3., 2.)])
         }
         Icon::Compass => {
-            ui.painter().circle_stroke(p(9., 9.), 8., stroke);
+            ui.painter().circle_stroke(p(9., 9.), 8. * scale, stroke);
             line(&[(12., 5.), (10., 11.), (6., 13.), (8., 7.), (12., 5.)]);
         }
         Icon::Pan => {
@@ -428,7 +434,7 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
             for x in [2., 10.] {
                 for y in [2., 10.] {
                     ui.painter().rect_stroke(
-                        Rect::from_min_size(p(x, y), Vec2::splat(5.)),
+                        Rect::from_min_size(p(x, y), Vec2::splat(5. * scale)),
                         crate::tokens(ui.ctx()).radius_none as f32,
                         stroke,
                         egui::StrokeKind::Inside,
@@ -450,7 +456,7 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
             };
             for &[x, y, w, h] in boxes {
                 ui.painter().rect_stroke(
-                    Rect::from_min_size(p(x, y), Vec2::new(w, h)),
+                    Rect::from_min_size(p(x, y), Vec2::new(w, h) * scale),
                     crate::tokens(ui.ctx()).radius_none as f32,
                     stroke,
                     egui::StrokeKind::Inside,
@@ -463,11 +469,11 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
             }
         }
         Icon::Search => {
-            ui.painter().circle_stroke(p(7., 7.), 5., stroke);
+            ui.painter().circle_stroke(p(7., 7.), 5. * scale, stroke);
             line(&[(11., 11.), (16., 16.)]);
         }
         Icon::Clock => {
-            ui.painter().circle_stroke(p(9., 9.), 7., stroke);
+            ui.painter().circle_stroke(p(9., 9.), 7. * scale, stroke);
             line(&[(9., 4.), (9., 9.), (13., 11.)]);
         }
         Icon::Image => {
@@ -477,7 +483,7 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
                 stroke,
                 egui::StrokeKind::Inside,
             );
-            ui.painter().circle_stroke(p(5., 5.), 2., stroke);
+            ui.painter().circle_stroke(p(5., 5.), 2. * scale, stroke);
             line(&[(1., 16.), (10., 8.), (17., 14.)]);
         }
         Icon::Minus => line(&[(4., 9.), (14., 9.)]),
@@ -502,7 +508,7 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
         Icon::Grip => {
             for x in [7., 11.] {
                 for y in [5., 9., 13.] {
-                    ui.painter().circle_filled(p(x, y), 1.2, color);
+                    ui.painter().circle_filled(p(x, y), 1.2 * scale, color);
                 }
             }
         }
