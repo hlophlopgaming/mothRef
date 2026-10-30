@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.17 — 2026-10-30
+
 - The zoom field in the bottom toolbar shows whole percents at a fixed width, so the toolbar no longer changes width while zooming.
 - Fix scrolling the Layers drawer (or any panel over the board) zooming the board underneath.
 - The grayscale view can be toned with a color: Settings › Appearance › Grayscale view tint (for example sepia or blue). Shadows stay dark and highlights light; the middle tones take the color.

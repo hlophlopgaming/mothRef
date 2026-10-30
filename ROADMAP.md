@@ -37,7 +37,7 @@ Every milestone and every pull request is judged against these, in this order:
 
 ## Where we are
 
-Latest release: **0.1.0-alpha.16** (2026-10-29). Pre-alpha builds for Windows, macOS and Linux are attached to every tagged release on GitHub Releases.
+Latest release: **0.1.0-alpha.17** (2026-10-30). Pre-alpha builds for Windows, macOS and Linux are attached to every tagged release on GitHub Releases.
 
 | Milestone | State | What is left |
 | --- | --- | --- |
