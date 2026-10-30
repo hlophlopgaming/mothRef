@@ -36,6 +36,22 @@ pub enum Icon {
     ChevronRight,
     /// An expanded tree row.
     ChevronDown,
+    /// Start or resume a timer.
+    Play,
+    /// Pause a timer.
+    Pause,
+    /// Previous image of a sequence.
+    Previous,
+    /// Next image of a sequence.
+    Next,
+    /// Sound cue on or off.
+    Sound,
+    /// Grow to full screen.
+    Expand,
+    /// Shrink to a small window.
+    Shrink,
+    /// Mark an item for later.
+    Star,
 
     /// Return to the board catalog.
     Home,
@@ -234,6 +250,57 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
         }
         Icon::ChevronRight => line(&[(6., 3.), (12., 9.), (6., 15.)]),
         Icon::ChevronDown => line(&[(3., 6.), (9., 12.), (15., 6.)]),
+        Icon::Play => line(&[(5., 3.), (15., 9.), (5., 15.), (5., 3.)]),
+        Icon::Pause => {
+            line(&[(6., 3.), (6., 15.)]);
+            line(&[(12., 3.), (12., 15.)]);
+        }
+        Icon::Previous => {
+            line(&[(4., 3.), (4., 15.)]);
+            line(&[(15., 3.), (6., 9.), (15., 15.), (15., 3.)]);
+        }
+        Icon::Next => {
+            line(&[(14., 3.), (14., 15.)]);
+            line(&[(3., 3.), (12., 9.), (3., 15.), (3., 3.)]);
+        }
+        Icon::Sound => {
+            line(&[
+                (2., 7.),
+                (5., 7.),
+                (9., 3.),
+                (9., 15.),
+                (5., 11.),
+                (2., 11.),
+                (2., 7.),
+            ]);
+            line(&[(12., 6.), (13.5, 9.), (12., 12.)]);
+            line(&[(14.5, 4.), (17., 9.), (14.5, 14.)]);
+        }
+        Icon::Expand => {
+            line(&[(2., 6.), (2., 2.), (6., 2.)]);
+            line(&[(12., 2.), (16., 2.), (16., 6.)]);
+            line(&[(2., 12.), (2., 16.), (6., 16.)]);
+            line(&[(12., 16.), (16., 16.), (16., 12.)]);
+        }
+        Icon::Shrink => {
+            line(&[(6., 2.), (6., 6.), (2., 6.)]);
+            line(&[(12., 2.), (12., 6.), (16., 6.)]);
+            line(&[(6., 16.), (6., 12.), (2., 12.)]);
+            line(&[(12., 16.), (12., 12.), (16., 12.)]);
+        }
+        Icon::Star => line(&[
+            (9., 1.5),
+            (11.2, 6.5),
+            (16.5, 7.),
+            (12.5, 10.5),
+            (13.7, 16.),
+            (9., 13.2),
+            (4.3, 16.),
+            (5.5, 10.5),
+            (1.5, 7.),
+            (6.8, 6.5),
+            (9., 1.5),
+        ]),
         Icon::Home => {
             line(&[
                 (2., 8.),

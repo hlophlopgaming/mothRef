@@ -6,6 +6,7 @@ Moved from `ROADMAP.md` on 2026-10-26. Add new lines at the top of the table.
 
 | Date | Decision |
 | --- | --- |
+| 2026-10-30 | Drawing sessions play their cues without an audio library: WAV bytes synthesized in memory, played by `pw-play`/`paplay`/`aplay` on Linux, `PlaySoundW` on Windows and `NSSound` on macOS; no ALSA build dependency. The mini session window is the main window resized and pinned, not a second window |
 | 2026-10-30 | [Groups](0021-groups.md): a group is an item with a derived frame; members point to it by parent id; `.moth` schema 6 |
 | 2026-10-29 | [Several main windows](0020-several-main-windows.md): per-window panes swapped into `App`, shared device with per-window registries, tab moves queued after the frame |
 | 2026-10-29 | Over grab handle dropped: the Over controller stays the way out of click-through |

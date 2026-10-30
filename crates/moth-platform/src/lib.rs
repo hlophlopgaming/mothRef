@@ -28,6 +28,8 @@ pub mod memory;
 pub mod settings;
 /// Event-driven system shortcuts and backend capability checks.
 pub mod shortcuts;
+/// Short sound cues for drawing sessions.
+pub mod sound;
 mod source;
 mod viewer;
 use moth_format::{Handle, ReadSeek, Storage};

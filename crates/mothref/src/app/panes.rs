@@ -55,6 +55,7 @@ pane! {
     drag_pointer: Option<(moth_platform::input::Kind, u64)>,
     input: InputState,
     window_closed: bool,
+    session_window: Option<session_window::SavedWindow>,
 }
 
 impl Pane {
@@ -231,6 +232,7 @@ impl App {
             drag_pointer: None,
             input,
             window_closed: false,
+            session_window: None,
             shell: shell::Parts {
                 window: Some(window),
                 ctx,

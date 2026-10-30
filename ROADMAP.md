@@ -336,7 +336,6 @@ Open:
 - [ ] Animated GIFs with frame stepping: the player sits on the image (scrubber, play/pause, frame counter, speed) and steps 1, 2, 3 or 4 frames at a time
 - [ ] Line/dot grid with snapping; automatic alignment guides and edge/center snapping (BeeRef #129). Images snap by their displayed bounds; make grid visibility and snapping independently toggleable, with a temporary bypass while dragging
 - [ ] Slideshow (incl. random order), embedded ICC profiles
-- [ ] **Key feature of 0.7.** Timed drawing sessions (gesture mode) on top of the slideshow: images from the board, a group or a selection; fixed intervals (30 s, 1, 2, 5, 10 min) or a session plan (for example 10 × 30 s, 5 × 2 min); pause, skip, countdown and a sound cue; list of the shown images at the end; runs full screen or in a mini window pinned over other apps that keeps the current image's aspect ratio while resized
 - [ ] All parity- and Milanote-checklist items tagged M4 (presentation mode, note formatting and markdown shortcuts, sketch card, drawing shortcuts, GIF frame tools, drawing details, locked groups, hierarchy tools, note parenting and links)
 
 <details>
@@ -344,6 +343,7 @@ Open:
 
 - [x] Minimap / navigator: board overview with the viewport rectangle; click or drag to move the camera; toggle with a shortcut — shipped early with configurable size, position and opacity (0.1.0-alpha.9–10)
 - [x] Groups and a hierarchy tree view: Ctrl/⌘+G adds a tinted backdrop that hugs its members and focuses an inline title field at once; clicking the title selects the whole group, dragging it moves the group, dropping an item on the backdrop adds it and dragging it out takes it out; groups nest; the hierarchy tree lives in a slide-out Layers drawer where rows drag into groups, next to other items or out to the board; images pasted or dropped onto a backdrop join that group; exports draw backdrops and titles (DESIGN.md screen 14; `.moth` schema 6, [decision 0021](docs/decisions/0021-groups.md))
+- [x] **Key feature of 0.7.** Timed drawing sessions (gesture mode) on top of the slideshow: images from the board, a group or a selection; fixed intervals (30 s, 1, 2, 5, 10 min) or a session plan (for example 10 × 30 s, 5 × 2 min); pause, skip, countdown and a sound cue; list of the shown images at the end; runs full screen or in a mini window pinned over other apps that keeps the current image's aspect ratio while resized — setup with saved plans, 3-2-1 countdown, last-seconds warning, auto-hiding panel, "+30 s", summary with stars and four kinds of repeat (DESIGN.md screens 12–12д)
 
 </details>
 

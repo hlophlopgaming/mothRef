@@ -5,6 +5,108 @@ use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Closes the session summary and returns to the board.
+    CloseSummary,
+    /// Command and screen title: timed drawing session (gesture mode).
+    DrawingSession,
+    /// Setup: saved plans.
+    SessionPlans,
+    /// Built-in plan name.
+    PlanWarmup,
+    /// Built-in plan name.
+    PlanPoses,
+    /// Setup: where the images come from.
+    SessionImages,
+    /// Setup source.
+    SourceBoard,
+    /// Setup source.
+    SourceSelection,
+    /// Setup source, followed by the group title.
+    SourceGroup,
+    /// Setup: one interval for every image.
+    TimePerImage,
+    /// Setup: stages with their own times.
+    SessionPlan,
+    /// Setup: add a stage to the plan.
+    AddStage,
+    /// Setup: keep the plan under My plans.
+    SavePlan,
+    /// Setup: dealing order.
+    SessionOrder,
+    /// Dealing order.
+    OrderShuffle,
+    /// Dealing order.
+    OrderBoard,
+    /// Dealing order.
+    OrderRandom,
+    /// Setup: options while drawing.
+    DuringSession,
+    /// Option and toggle.
+    SessionSound,
+    /// Option.
+    SessionCountdown,
+    /// Option.
+    SessionWarn,
+    /// Option.
+    SessionHide,
+    /// Window choice and button.
+    SessionFullscreen,
+    /// Window choice.
+    SessionMini,
+    /// Setup: primary button.
+    StartSession,
+    /// Unit after a number of seconds.
+    SecondsShort,
+    /// Unit after a number of minutes.
+    MinutesShort,
+    /// Joins plan stages: 10 × 30 s, then 5 × 2 min.
+    Then,
+    /// Countdown caption, followed by seconds.
+    FirstImageIn,
+    /// Countdown hint.
+    SpaceToStart,
+    /// Paused session caption and pause button.
+    Paused,
+    /// Paused hint.
+    SpaceToResume,
+    /// Play button.
+    Resume,
+    /// Ends the running session.
+    FinishSession,
+    /// Mini window: stays above other windows.
+    SessionOnTop,
+    /// Summary title.
+    SessionDone,
+    /// Summary: select the shown images.
+    SelectOnBoard,
+    /// Summary: back to the setup.
+    NewSession,
+    /// Repeat choice.
+    ReplaySame,
+    /// Repeat choice hint.
+    ReplaySameHint,
+    /// Repeat choice.
+    ReplayShuffle,
+    /// Repeat choice hint.
+    ReplayShuffleHint,
+    /// Repeat choice, followed by a count.
+    ReplaySkipped,
+    /// Repeat choice hint.
+    ReplaySkippedHint,
+    /// Repeat choice, followed by a count.
+    ReplayStarred,
+    /// Repeat choice hint.
+    ReplayStarredHint,
+    /// Summary section, followed by its number.
+    StageLabel,
+    /// Summary: an image left early.
+    SkippedLabel,
+    /// Summary footer.
+    SummaryHint,
+    /// Summary: total time.
+    TotalLabel,
+    /// Setup: the chosen source has no images.
+    NoSessionImages,
     /// Sidebar and menu: put the selection into a new group.
     GroupSelection,
     /// Dissolve a group, keeping its members on the board.

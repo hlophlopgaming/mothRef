@@ -82,6 +82,7 @@ const WINDOW_MODES: &[Slot] = &[
     A(OpacityDown),
 ];
 pub(super) const VIEW: &[Slot] = &[
+    A(DrawingSession),
     A(WindowBar),
     A(Layers),
     A(ToggleView),
@@ -147,6 +148,7 @@ const IMAGE_BAR: &[Slot] = &[
 ];
 const MULTI_BAR: &[Slot] = &[
     A(Group),
+    A(DrawingSession),
     A(Focus),
     G(Text::Arrange, ARRANGE),
     G(Text::Normalize, NORMALIZE),
@@ -162,7 +164,12 @@ pub(super) const GROUP_COLOR: &[Slot] = &[
     A(GroupWing),
     A(GroupLilac),
 ];
-const GROUP_BAR: &[Slot] = &[A(EnterGroup), A(Ungroup), G(Text::GroupColor, GROUP_COLOR)];
+const GROUP_BAR: &[Slot] = &[
+    A(DrawingSession),
+    A(EnterGroup),
+    A(Ungroup),
+    G(Text::GroupColor, GROUP_COLOR),
+];
 fn selection_bar(kind: SelectionKind) -> &'static [Slot] {
     match kind {
         SelectionKind::Image => IMAGE_BAR,

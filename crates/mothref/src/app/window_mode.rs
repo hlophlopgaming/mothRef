@@ -300,7 +300,8 @@ impl App {
         );
         self.camera_motion.stop();
         self.resize_bounds = Some(bounds);
-        let _ = window.request_inner_size(target);
+        let applied = window.request_inner_size(target);
+        self.resized(applied);
         self.redraw();
     }
 }

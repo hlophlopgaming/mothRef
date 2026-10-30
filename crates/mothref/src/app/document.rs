@@ -124,6 +124,8 @@ pub(super) struct Document {
     pub(super) selection: HashSet<Uuid>,
     /// The group the user stepped into: clicks select its members instead of the group.
     pub(super) entered: Option<Uuid>,
+    /// The drawing session on this board, from setup to summary.
+    pub(super) session: Option<super::session_ui::State>,
     /// Group whose title is being typed, with the draft; shown once the group exists.
     pub(super) renaming: Option<(Uuid, String)>,
     pub(super) sources: HashMap<BlobId, Handle>,
@@ -570,6 +572,7 @@ impl Document {
             selection: HashSet::new(),
             entered: None,
             renaming: None,
+            session: None,
             sources: HashMap::new(),
             board_bake: None,
             preload_offered: None,

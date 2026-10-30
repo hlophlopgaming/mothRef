@@ -62,6 +62,9 @@ mod overlay;
 mod panes;
 mod resize;
 mod selection;
+mod session;
+mod session_ui;
+mod session_window;
 mod settings;
 mod shell;
 mod shortcuts;
@@ -124,6 +127,8 @@ pub struct App {
     panes: Vec<panes::Pane>,
     /// This window's last board closed; it is dropped after the event.
     window_closed: bool,
+    /// The window as it was before a drawing session took it over.
+    session_window: Option<session_window::SavedWindow>,
     /// Tab moves between windows, run after the frame that requested them.
     window_ops: Vec<(WindowId, panes::WindowOp)>,
 }
@@ -200,6 +205,7 @@ impl App {
                 .collect(),
             panes: Vec::new(),
             window_closed: false,
+            session_window: None,
             window_ops: Vec::new(),
         })
     }
@@ -1013,6 +1019,7 @@ impl App {
             }
             Intent::CloseWindow => self.request_close(true),
             Intent::Drag => self.drag_window(None),
+            Intent::Session(event) => self.session_event(event),
             Intent::WindowBar(shown) => self.window_bar = shown,
             // Switching the current window mid-frame would render this frame into
             // another window; these run after the frame in `about_to_wait`.
@@ -1377,6 +1384,7 @@ impl App {
             Input::Pointer(p) => p.position,
         });
         if self.workspace.confirm_close
+            || self.workspace.board.session.is_some()
             || self.workspace.board.conversion_prompt
             || self.workspace.library
             || self.modal.dialog.is_some()
@@ -2118,6 +2126,7 @@ impl App {
             )
         });
         let window_titles = self.window_titles();
+        let plans = self.session_plans();
         let mut output = {
             let state = self.shell.egui.as_mut();
             let gpu = self.shell.gpu.as_ref();
@@ -2143,6 +2152,29 @@ impl App {
                             }
                         });
                     });
+                }
+                let covered = self
+                    .workspace
+                    .board
+                    .session
+                    .as_ref()
+                    .is_some_and(session_ui::State::covers_board);
+                if covered {
+                    let board = &mut self.workspace.board;
+                    let group =
+                        selection::single_group(&board.scene, &board.selection).or(board.entered);
+                    let events = session_ui::show(
+                        ui,
+                        &mut board.session,
+                        &session_ui::Board {
+                            scene: &board.scene,
+                            selection: &board.selection,
+                            group,
+                            plans: &plans,
+                        },
+                    );
+                    intents.extend(events.into_iter().map(Intent::Session));
+                    return;
                 }
                 let chrome = chrome::chrome(
                     ui,
@@ -2199,6 +2231,22 @@ impl App {
                 }
                 if let Some((viewport, progress)) = cover {
                     canvas::preload_cover(ui, viewport, progress);
+                }
+                if self.workspace.board.session.is_some() {
+                    let board = &mut self.workspace.board;
+                    let group =
+                        selection::single_group(&board.scene, &board.selection).or(board.entered);
+                    let events = session_ui::show(
+                        ui,
+                        &mut board.session,
+                        &session_ui::Board {
+                            scene: &board.scene,
+                            selection: &board.selection,
+                            group,
+                            plans: &plans,
+                        },
+                    );
+                    intents.extend(events.into_iter().map(Intent::Session));
                 }
                 intents.extend(chrome);
                 if self.modal.dialog.is_none()
@@ -2265,6 +2313,7 @@ impl App {
     fn render(&mut self, output: egui::FullOutput) -> anyhow::Result<()> {
         let covered = self.covered_by_preload();
         let canvas_color = moth_ui::tokens(self.shell.context()).canvas;
+        let stage = self.session_stage();
         let Some(gpu) = self.shell.gpu.as_mut() else {
             return Ok(());
         };
@@ -2301,7 +2350,21 @@ impl App {
             sampling: moth_scene::Sampling::from_code(self.settings.sampling + 1)
                 .unwrap_or_default(),
         };
-        let camera = self.workspace.board.view.camera;
+        let (frame, camera) = match &stage {
+            // A session draws its slides in screen points on its own dark stage.
+            Some((_, clip, color)) => (
+                shell::Frame {
+                    grid: false,
+                    ui_opacity: 1.,
+                    opacity: 1.,
+                    clear: *color,
+                    viewport: *clip,
+                    ..frame
+                },
+                moth_scene::Camera::default(),
+            ),
+            None => (frame, self.workspace.board.view.camera),
+        };
         let mut previews: Vec<_> = if self.moving.is_some()
             && !self.tools.locked
             && !self.workspace.board.loading
@@ -2382,6 +2445,19 @@ impl App {
                     })
                     .collect::<Vec<_>>(),
             );
+        }
+        if let Some((items, _, _)) = &stage {
+            visible = items.iter().collect();
+            if !covered {
+                self.workspace.board.request_images(
+                    &mut gpu.registry,
+                    &visible,
+                    false,
+                    output.pixels_per_point,
+                    camera,
+                    &[],
+                );
+            }
         }
         groups::backdrops_first(&self.workspace.board.scene, &mut visible);
         match self.shell.render(output, &visible, camera, frame)? {
@@ -2735,6 +2811,11 @@ impl App {
                 let Some(key) = input::key(&event) else {
                     return;
                 };
+                // A drawing session reads its own keys (Space, arrows, Esc) from egui.
+                if self.workspace.board.session.is_some() {
+                    self.redraw();
+                    return;
+                }
                 let pressed = event.state == ElementState::Pressed;
                 let blocked = self.canvas_keys_blocked();
                 let action = self.input.key_action(

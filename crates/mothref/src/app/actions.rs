@@ -33,6 +33,14 @@ impl App {
             }
             _ => {}
         }
+        if self.workspace.board.session.is_some() {
+            return false;
+        }
+        if action == DrawingSession {
+            return !self.workspace.library
+                && self.workspace.board.idle()
+                && self.workspace.board.image_count > 0;
+        }
         if action == ClickThrough {
             return self.overlay.is_some()
                 && self
@@ -691,6 +699,28 @@ impl App {
                         })
                         .collect(),
                 )
+            }
+            DrawingSession => {
+                let board = &mut self.workspace.board;
+                let mut setup = self
+                    .window_preferences
+                    .get("session_setup")
+                    .map(|value| session::Setup::decode(value))
+                    .unwrap_or_default();
+                let has_images = board
+                    .selection
+                    .iter()
+                    .any(|id| board.scene.get(*id).is_some_and(|i| i.blob().is_some()));
+                setup.source = match selection::single_group(&board.scene, &board.selection)
+                    .or(board.entered)
+                {
+                    Some(group) => session::Source::Group(group),
+                    None if has_images => session::Source::Selection,
+                    None => session::Source::Board,
+                };
+                board.session = Some(session_ui::State::new(setup));
+                self.cancel_drag();
+                return;
             }
             Layers => {
                 let ctx = self.shell.context();

@@ -166,6 +166,7 @@ actions! {
     GroupWing, GroupWing, "", None;
     GroupLilac, GroupLilac, "", None;
     Layers, Layers, "", None;
+    DrawingSession, DrawingSession, "F5", None;
 
 }
 /// Backdrop colors in palette-code order.

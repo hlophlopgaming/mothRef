@@ -50,6 +50,12 @@ pub struct Tokens {
     pub shadow: Color32,
     /// Semantic image tint color.
     pub image_tint: Color32,
+    /// Near-black stage of drawing sessions and other full-screen image views.
+    pub theater: Color32,
+    /// Text and marks drawn on `theater`.
+    pub on_theater: Color32,
+    /// Wing: the last seconds of a timed image.
+    pub wing: Color32,
     /// Group swatches by palette code: neutral, sage, amber, sky, wing, lilac.
     pub groups: [Color32; 6],
     /// Shared radius none metric.
@@ -163,6 +169,9 @@ impl Tokens {
         note_fill: Color32::from_rgb(42, 50, 44),
         shadow: Color32::from_rgb(26, 26, 26),
         image_tint: Color32::from_rgb(255, 255, 255),
+        theater: Color32::from_rgb(9, 11, 10),
+        on_theater: Color32::from_rgb(232, 228, 214),
+        wing: Color32::from_rgb(229, 143, 174),
         groups: [
             Color32::from_rgb(154, 159, 148),
             Color32::from_rgb(166, 196, 122),
@@ -221,6 +230,9 @@ impl Tokens {
         note_fill: Color32::from_rgb(249, 247, 240),
         shadow: Color32::from_rgb(0, 0, 0),
         image_tint: Color32::from_rgb(255, 255, 255),
+        theater: Color32::from_rgb(20, 22, 21),
+        on_theater: Color32::from_rgb(232, 228, 214),
+        wing: Color32::from_rgb(229, 143, 174),
         groups: [
             Color32::from_rgb(105, 107, 97),
             Color32::from_rgb(85, 112, 47),
