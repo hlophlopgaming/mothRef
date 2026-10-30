@@ -118,7 +118,7 @@ impl Modal {
                 });
         }
 
-        if board.conversion_prompt && self.dialog.is_none() && !workspace.confirm_close {
+        if board.notices.conversion_prompt && self.dialog.is_none() && !workspace.confirm_close {
             egui::Modal::new(egui::Id::new("conversion")).show(ui.ctx(), |ui| {
                 moth_ui::icons::dialog_title(ui, moth_ui::text(moth_ui::Text::ConversionTitle));
                 conversion_report(ui, board);
@@ -196,10 +196,10 @@ impl Modal {
                     }
                     if ui
                         .add_enabled(
-                            board.in_flight == 0
-                                && board.pasting == 0
-                                && board.pending.is_empty()
-                                && board.waiting.is_empty(),
+                            board.intake.in_flight == 0
+                                && board.intake.pasting == 0
+                                && board.intake.pending.is_empty()
+                                && board.intake.waiting.is_empty(),
                             egui::Button::new(
                                 egui::RichText::new(moth_ui::text(moth_ui::Text::Save))
                                     .color(moth_ui::tokens(ui.ctx()).on_accent),
@@ -213,7 +213,7 @@ impl Modal {
                 });
             });
         }
-        if let Some(ids) = board.arrange_prompt.clone() {
+        if let Some(ids) = board.notices.arrange_prompt.clone() {
             if settings.auto_arrange || ids.len() <= settings.threshold {
                 intents.push(Intent::Arrange(
                     super::tools::layout(settings.default_arrange).1,
@@ -279,7 +279,7 @@ impl Modal {
                 }
             }
         }
-        if let Some(added) = &board.added {
+        if let Some(added) = &board.notices.added {
             intents.extend(super::surfaces::added(
                 ui.ctx(),
                 board.view.viewport,
@@ -293,7 +293,7 @@ impl Modal {
 }
 
 fn conversion_report(ui: &mut egui::Ui, board: &super::document::Document) {
-    if let Some((source, skipped)) = &board.conversion {
+    if let Some((source, skipped)) = &board.file.conversion {
         ui.label(moth_ui::text(moth_ui::Text::ConversionRetained));
         ui.label(source.to_string_lossy());
         ui.label(moth_ui::text(

@@ -111,7 +111,7 @@ impl super::App {
                     release_window_pointer(&context, state.egui_input_mut());
                 }
             }
-            Err(error) => self.workspace.board.message = error.to_string().into(),
+            Err(error) => self.workspace.board.notices.message = error.to_string().into(),
         }
     }
 

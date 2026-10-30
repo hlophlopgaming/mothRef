@@ -640,7 +640,7 @@ impl SettingsWindow {
                                             ui.label(format!(
                                                 "{}: {}",
                                                 text(Text::Journaled),
-                                                board.in_flight
+                                                board.intake.in_flight
                                             ));
                                             if let Some(video) = &tools.video {
                                                 ui.label(super::tools::video_summary(video));

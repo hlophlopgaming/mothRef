@@ -277,7 +277,7 @@ impl App {
         self.redraw();
         if let Err(error) = self.open_window(event_loop, board, at) {
             tracing::warn!(%error, "cannot open a board window");
-            self.workspace.board.message = error.to_string().into();
+            self.workspace.board.notices.message = error.to_string().into();
         }
     }
 

@@ -7,14 +7,15 @@ impl App {
         use Action::*;
         match action {
             ContinueConversion | SaveConversion => {
-                return self.workspace.board.conversion_prompt && self.workspace.board.idle();
+                return self.workspace.board.notices.conversion_prompt
+                    && self.workspace.board.idle();
             }
             SaveAndClose => {
                 return self.workspace.confirm_close
-                    && self.workspace.board.in_flight == 0
-                    && self.workspace.board.pasting == 0
-                    && self.workspace.board.pending.is_empty()
-                    && self.workspace.board.waiting.is_empty();
+                    && self.workspace.board.intake.in_flight == 0
+                    && self.workspace.board.intake.pasting == 0
+                    && self.workspace.board.intake.pending.is_empty()
+                    && self.workspace.board.intake.waiting.is_empty();
             }
             Discard | KeepOpen => return self.workspace.confirm_close,
             CancelDialog => return self.modal.dialog.is_some(),
@@ -24,10 +25,10 @@ impl App {
             DismissRecovery | RestoreRecovery => {
                 return !self.workspace.recovery_paths().is_empty() && self.workspace.board.idle();
             }
-            CancelArrange => return self.workspace.board.arrange_prompt.is_some(),
+            CancelArrange => return self.workspace.board.notices.arrange_prompt.is_some(),
             AddedHorizontal | AddedVertical | AddedGrid | AddedOptimal | UndoAdded
             | DismissAdded => {
-                return self.workspace.board.added.is_some()
+                return self.workspace.board.notices.added.is_some()
                     && self.workspace.board.idle()
                     && !self.tools.locked;
             }
@@ -99,7 +100,7 @@ impl App {
         }
         if action == OverlaySelection {
             return !self.workspace.library
-                && !self.workspace.board.loading
+                && !self.workspace.board.intake.loading
                 && self.workspace.board.selection.iter().any(|id| {
                     self.workspace
                         .board
@@ -110,7 +111,7 @@ impl App {
         }
         if matches!(action, ResizeSelection | ResizeAll) {
             return !self.workspace.library
-                && !self.workspace.board.loading
+                && !self.workspace.board.intake.loading
                 && !self.workspace.board.scene.is_empty()
                 && (action == ResizeAll || !self.workspace.board.selection.is_empty())
                 && self
@@ -284,7 +285,7 @@ impl App {
             action,
             AddedHorizontal | AddedVertical | AddedGrid | AddedOptimal
         ) {
-            if let Some(added) = &self.workspace.board.added {
+            if let Some(added) = &self.workspace.board.notices.added {
                 let ids = added.ids.clone();
                 let mode = match action {
                     AddedHorizontal => arrange::Arrange::Horizontal,
@@ -297,7 +298,7 @@ impl App {
             return;
         }
         if matches!(action, Horizontal | Vertical | Grid | Optimal)
-            && let Some(ids) = self.workspace.board.arrange_prompt.clone()
+            && let Some(ids) = self.workspace.board.notices.arrange_prompt.clone()
         {
             let mode = match action {
                 Horizontal => arrange::Arrange::Horizontal,
@@ -351,11 +352,11 @@ impl App {
                 return;
             }
             ContinueConversion => {
-                self.workspace.board.conversion_prompt = false;
+                self.workspace.board.notices.conversion_prompt = false;
                 return;
             }
             SaveConversion => {
-                self.workspace.board.conversion_prompt = false;
+                self.workspace.board.notices.conversion_prompt = false;
                 Intent::Save
             }
             SaveAndClose => Intent::SaveAndClose,
@@ -388,7 +389,8 @@ impl App {
             }
             ShellIntegration => {
                 moth_platform::Desktop.install_shell_integration();
-                self.workspace.board.message = moth_ui::Text::ShellIntegrationInstalling.into();
+                self.workspace.board.notices.message =
+                    moth_ui::Text::ShellIntegrationInstalling.into();
                 return;
             }
             EditNote => {
@@ -406,19 +408,19 @@ impl App {
                 return;
             }
             Export => {
-                self.workspace.board.export_message = None;
+                self.workspace.board.notices.export_message = None;
                 self.tools.export_open = true;
                 return;
             }
             SampleColor => {
-                self.workspace.board.export_message = None;
+                self.workspace.board.notices.export_message = None;
                 self.tools.picking = true;
                 self.tools.coordinates = false;
                 self.tools.picker_open = true;
                 return;
             }
             CoordinatePicker => {
-                self.workspace.board.export_message = None;
+                self.workspace.board.notices.export_message = None;
                 self.tools.coordinates = true;
                 self.tools.picking = false;
                 self.tools.picker_open = true;
@@ -675,9 +677,9 @@ impl App {
                     return;
                 };
                 let board = &mut self.workspace.board;
-                board.renaming = Some((id, String::new()));
+                board.group_edits.renaming = Some((id, String::new()));
                 if let Some(Command::Insert(group)) = commands.first() {
-                    board.pending_group = Some((id, group.rect));
+                    board.group_edits.pending_group = Some((id, group.rect));
                 }
                 Intent::Commands(commands)
             }
@@ -697,7 +699,7 @@ impl App {
                     board.selection = board.scene.children(group).map(|item| item.id).collect();
                     selection::with_members(&board.scene, &mut board.selection, None);
                 } else if let Some(style) = board.group_style(group) {
-                    board.renaming = Some((group, style.title));
+                    board.group_edits.renaming = Some((group, style.title));
                 }
                 return;
             }
@@ -719,7 +721,7 @@ impl App {
                     .collect();
                 for command in &commands {
                     if let Command::SetGroup { id, group } = command {
-                        board.pending_styles.insert(*id, group.clone());
+                        board.group_edits.pending_styles.insert(*id, group.clone());
                     }
                 }
                 Intent::Commands(commands)

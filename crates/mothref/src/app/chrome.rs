@@ -37,8 +37,8 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
         ctx.board.ui_id(),
         moth_ui::Tab {
             title: &active_title,
-            dirty: ctx.board.dirty,
-            journal_only: ctx.board.path.is_empty(),
+            dirty: ctx.board.file.dirty,
+            journal_only: ctx.board.file.path.is_empty(),
             active: true,
             slot: 0,
         },
@@ -48,8 +48,8 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
             tab.ui_id(),
             moth_ui::Tab {
                 title: tab.title(),
-                dirty: tab.dirty,
-                journal_only: tab.path.is_empty(),
+                dirty: tab.file.dirty,
+                journal_only: tab.file.path.is_empty(),
                 active: false,
                 slot: i + 1,
             },
@@ -64,7 +64,7 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
     let mut actions = moth_ui::toolbar(
         ui,
         moth_ui::Status {
-            path: &ctx.board.path,
+            path: &ctx.board.file.path,
             adapter: &ctx.gpu.adapter,
             count: ctx.board.scene.len() - ctx.board.scene.group_count(),
             images: ctx.board.image_count,
@@ -73,9 +73,9 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
             zoom_increment: ctx.zoom_increment,
             texture_bytes: ctx.gpu.registry.allocated_bytes(),
             texture_budget: ctx.gpu.registry.budget_bytes(),
-            message: &ctx.board.message.render(moth_ui::locale()),
+            message: &ctx.board.notices.message.render(moth_ui::locale()),
             idle: ctx.board.idle(),
-            dirty: ctx.board.dirty,
+            dirty: ctx.board.file.dirty,
             library: ctx.library,
             pinned: ctx.pinned,
             target_pin: ctx.target_pin,

@@ -109,16 +109,6 @@ pub(super) struct Document {
     pub(super) scene: Scene,
     pub(super) image_count: usize,
     boards: moth_platform::boards::Worker,
-    pub(super) in_flight: usize,
-    pub(super) loading: bool,
-    pub(super) loading_bounds: Option<Rect>,
-    pub(super) pasting: usize,
-    pub(super) path: String,
-    pub(super) conversion: Option<(std::path::PathBuf, usize)>,
-    pub(super) conversion_prompt: bool,
-    pub(super) restoring: Option<std::path::PathBuf>,
-    pub(super) dirty: bool,
-    pub(super) close_after_save: bool,
     pub(super) locked: bool,
     pub(super) grayscale: bool,
     pub(super) selection: HashSet<Uuid>,
@@ -126,18 +116,24 @@ pub(super) struct Document {
     pub(super) entered: Option<Uuid>,
     /// The drawing session on this board, from setup to summary.
     pub(super) session: Option<super::session_ui::State>,
-    /// Group whose title is being typed, with the draft; shown once the group exists.
-    pub(super) renaming: Option<(Uuid, String)>,
-    /// Titles and colors already chosen but not yet journaled, shown at once so a slow
-    /// disk never makes a rename look ignored.
-    pub(super) pending_styles: HashMap<Uuid, moth_scene::Group>,
-    /// Frame of a group whose insert is still being journaled, for its title field.
-    pub(super) pending_group: Option<(Uuid, Rect)>,
     pub(super) sources: HashMap<BlobId, Handle>,
+    pub(super) intake: Intake,
+    pub(super) notices: Notices,
+    pub(super) file: FileState,
+    pub(super) group_edits: GroupEdits,
+}
+/// Images coming into the board: decoding, pasting, opening and the
+/// full-resolution preload.
+#[derive(Default)]
+pub(super) struct Intake {
+    pub(super) in_flight: usize,
+    pub(super) loading: bool,
+    pub(super) loading_bounds: Option<Rect>,
+    pub(super) pasting: usize,
     /// Board state of the last whole-board bake offer, so unchanged boards offer nothing.
-    board_bake: Option<(usize, moth_io::BakeMode, bool)>,
+    pub(super) board_bake: Option<(usize, moth_io::BakeMode, bool)>,
     /// Originals offered to the full-resolution preload; `None` until the first offer.
-    preload_offered: Option<usize>,
+    pub(super) preload_offered: Option<usize>,
     /// The board exceeded the video memory limit: the rest loads on demand.
     pub(super) preload_overflow: bool,
     /// The initial preload finished; later additions load without covering the board.
@@ -145,18 +141,43 @@ pub(super) struct Document {
     pub(super) pending: HashMap<Handle, Pending>,
     pub(super) failed: HashSet<Handle>,
     pub(super) waiting: Vec<Handle>,
-    pub(super) message: moth_ui::Message,
-    pub(super) export_message: Option<moth_ui::Message>,
-    pub(super) exporting: bool,
-    pub(super) discarding: bool,
-    pub(super) discarded: bool,
     pub(super) batching: bool,
     /// Item ids inserted in the current import/paste burst, cleared when it drains.
     pub(super) burst: Vec<Uuid>,
+}
+/// Messages and prompts waiting for the user.
+#[derive(Default)]
+pub(super) struct Notices {
+    pub(super) message: moth_ui::Message,
+    pub(super) export_message: Option<moth_ui::Message>,
     /// Ids of a finished burst awaiting an arrangement choice while the prompt is shown.
     pub(super) arrange_prompt: Option<Vec<Uuid>>,
     /// One import notification; its layouts share the insertion undo group until dismissed.
     pub(super) added: Option<Added>,
+    pub(super) conversion_prompt: bool,
+}
+/// Where the board lives on disk and where saving, closing and conversion stand.
+#[derive(Default)]
+pub(super) struct FileState {
+    pub(super) path: String,
+    pub(super) conversion: Option<(std::path::PathBuf, usize)>,
+    pub(super) restoring: Option<std::path::PathBuf>,
+    pub(super) dirty: bool,
+    pub(super) close_after_save: bool,
+    pub(super) exporting: bool,
+    pub(super) discarding: bool,
+    pub(super) discarded: bool,
+}
+/// Group titles and colors chosen but not journaled yet, shown at once.
+#[derive(Default)]
+pub(super) struct GroupEdits {
+    /// Group whose title is being typed, with the draft; shown once the group exists.
+    pub(super) renaming: Option<(Uuid, String)>,
+    /// Titles and colors already chosen but not yet journaled, shown at once so a slow
+    /// disk never makes a rename look ignored.
+    pub(super) pending_styles: HashMap<Uuid, moth_scene::Group>,
+    /// Frame of a group whose insert is still being journaled, for its title field.
+    pub(super) pending_group: Option<(Uuid, Rect)>,
 }
 impl Document {
     /// Opening a scene recounts once; normal edits maintain the count incrementally.
@@ -201,17 +222,22 @@ impl Document {
     }
     /// A group's title and color as the user last chose them, journaled or not.
     pub(super) fn group_style(&self, id: Uuid) -> Option<moth_scene::Group> {
-        self.pending_styles.get(&id).cloned().or_else(|| {
-            self.scene
-                .get(id)
-                .and_then(|item| item.group_style())
-                .cloned()
-                .or_else(|| {
-                    self.pending_group
-                        .filter(|(group, _)| *group == id)
-                        .map(|_| moth_scene::Group::default())
-                })
-        })
+        self.group_edits
+            .pending_styles
+            .get(&id)
+            .cloned()
+            .or_else(|| {
+                self.scene
+                    .get(id)
+                    .and_then(|item| item.group_style())
+                    .cloned()
+                    .or_else(|| {
+                        self.group_edits
+                            .pending_group
+                            .filter(|(group, _)| *group == id)
+                            .map(|_| moth_scene::Group::default())
+                    })
+            })
     }
     /// Keeps group view state valid after an edit: a selected group carries its members,
     /// and a removed group can no longer be entered or renamed.
@@ -221,30 +247,32 @@ impl Document {
             self.entered = None;
         }
         let scene = &self.scene;
-        self.pending_styles.retain(|id, style| {
+        self.group_edits.pending_styles.retain(|id, style| {
             scene
                 .get(*id)
                 .and_then(|item| item.group_style())
                 .is_none_or(|current| current != style)
         });
         if self
+            .group_edits
             .pending_group
             .is_some_and(|(id, _)| self.scene.get(id).is_some())
         {
-            self.pending_group = None;
+            self.group_edits.pending_group = None;
         }
-        if self.in_flight == 0 {
+        if self.intake.in_flight == 0 {
             // Nothing is on its way any more: whatever did not arrive failed.
-            self.pending_styles.clear();
-            self.pending_group = None;
+            self.group_edits.pending_styles.clear();
+            self.group_edits.pending_group = None;
         }
-        if self.in_flight == 0
+        if self.intake.in_flight == 0
             && self
+                .group_edits
                 .renaming
                 .as_ref()
                 .is_some_and(|(id, _)| self.scene.get(*id).is_none())
         {
-            self.renaming = None;
+            self.group_edits.renaming = None;
         }
     }
     pub(super) fn boards(&self) -> &moth_platform::boards::Worker {
@@ -291,10 +319,10 @@ impl Document {
     pub(super) fn offer_board_bakes(&mut self, format: moth_io::ImageFormat) {
         let cache = self.decode.cache();
         let state = (self.sources.len(), cache.bake_mode(), cache.bakes());
-        if self.board_bake == Some(state) {
+        if self.intake.board_bake == Some(state) {
             return;
         }
-        self.board_bake = Some(state);
+        self.intake.board_bake = Some(state);
         self.decode.offer_board(
             format,
             self.sources.iter().map(|(&hash, &handle)| (handle, hash)),
@@ -303,45 +331,45 @@ impl Document {
     /// Offers the board's originals to the full-resolution preload whenever new ones
     /// arrive; already offered images are skipped by the pool.
     pub(super) fn offer_preload(&mut self, format: moth_io::ImageFormat) {
-        if self.preload_overflow || self.preload_offered == Some(self.sources.len()) {
+        if self.intake.preload_overflow || self.intake.preload_offered == Some(self.sources.len()) {
             return;
         }
-        self.preload_offered = Some(self.sources.len());
+        self.intake.preload_offered = Some(self.sources.len());
         if let Err(error) = self.decode.preload(
             format,
             self.sources.iter().map(|(&hash, &handle)| (handle, hash)),
         ) {
-            self.message = error.to_string().into();
+            self.notices.message = error.to_string().into();
         }
     }
     /// Whether a full-resolution preload was offered since the last reset.
     pub(super) fn preload_started(&self) -> bool {
-        self.preload_offered.is_some()
+        self.intake.preload_offered.is_some()
     }
     /// Starts preloading from scratch after video memory was cleared or the mode changed.
     pub(super) fn reset_preload(&mut self) {
-        self.preload_offered = None;
-        self.preload_overflow = false;
-        self.preload_ready = false;
+        self.intake.preload_offered = None;
+        self.intake.preload_overflow = false;
+        self.intake.preload_ready = false;
         self.decode.restart_preload();
     }
     /// Marks the initial preload done once the board finished loading and every
     /// offered image was prepared.
     pub(super) fn settle_preload(&mut self) {
-        if !self.loading
-            && self.preload_offered.is_some()
+        if !self.intake.loading
+            && self.intake.preload_offered.is_some()
             && !self.preload_progress().active()
             && self.decode.preloaded().is_empty()
         {
-            self.preload_ready = true;
+            self.intake.preload_ready = true;
         }
     }
     /// Stops preloading because the next image would exceed the video memory limit.
     pub(super) fn overflow_preload(&mut self) {
-        self.preload_overflow = true;
-        self.preload_ready = true;
+        self.intake.preload_overflow = true;
+        self.intake.preload_ready = true;
         self.decode.cancel_preload();
-        self.message = moth_ui::Text::PreloadOverflow.into();
+        self.notices.message = moth_ui::Text::PreloadOverflow.into();
     }
     /// Images of the current preload pass prepared so far.
     pub(super) fn preload_progress(&self) -> moth_io::PreloadProgress {
@@ -411,7 +439,7 @@ impl Document {
             let Some(&handle) = self.sources.get(&blob) else {
                 continue;
             };
-            if self.failed.contains(&handle) {
+            if self.intake.failed.contains(&handle) {
                 continue;
             }
             let mut side = moth_render::preview_side(
@@ -491,7 +519,7 @@ impl Document {
             let Some(&handle) = self.sources.get(&blob) else {
                 continue;
             };
-            if self.failed.contains(&handle) {
+            if self.intake.failed.contains(&handle) {
                 continue;
             }
             let mut side =
@@ -594,65 +622,41 @@ impl Document {
             scene: Scene::default(),
             image_count: 0,
             boards,
-            in_flight: 0,
-            loading: false,
-            loading_bounds: None,
-            pasting: 0,
-            path: String::new(),
-            conversion: None,
-            conversion_prompt: false,
-            restoring: None,
-            dirty: false,
-            close_after_save: false,
             locked: false,
             grayscale: false,
             selection: HashSet::new(),
             entered: None,
-            renaming: None,
-            pending_styles: HashMap::new(),
-            pending_group: None,
             session: None,
             sources: HashMap::new(),
-            board_bake: None,
-            preload_offered: None,
-            preload_overflow: false,
-            preload_ready: false,
-            pending: HashMap::new(),
-            failed: HashSet::new(),
-            waiting: Vec::new(),
-            message: moth_ui::Message::default(),
-            export_message: None,
-            exporting: false,
-            discarding: false,
-            discarded: false,
-            batching: false,
-            burst: Vec::new(),
-            arrange_prompt: None,
-            added: None,
+            intake: Intake::default(),
+            notices: Notices::default(),
+            file: FileState::default(),
+            group_edits: GroupEdits::default(),
         })
     }
     pub(super) fn fit(&mut self) {
-        if self.loading_bounds.is_some() {
-            self.view.fit_bounds(self.loading_bounds);
+        if self.intake.loading_bounds.is_some() {
+            self.view.fit_bounds(self.intake.loading_bounds);
         } else {
             self.view.fit(&self.scene);
         }
     }
     pub(super) fn idle(&self) -> bool {
-        self.pasting == 0
-            && self.in_flight == 0
-            && self.pending.is_empty()
-            && self.waiting.is_empty()
-            && !self.discarding
+        self.intake.pasting == 0
+            && self.intake.in_flight == 0
+            && self.intake.pending.is_empty()
+            && self.intake.waiting.is_empty()
+            && !self.file.discarding
     }
     pub(super) fn title(&self) -> &str {
-        let path = if self.path.is_empty() {
-            self.conversion
+        let path = if self.file.path.is_empty() {
+            self.file
+                .conversion
                 .as_ref()
                 .map(|(path, _)| path.as_path())
-                .unwrap_or(std::path::Path::new(&self.path))
+                .unwrap_or(std::path::Path::new(&self.file.path))
         } else {
-            std::path::Path::new(&self.path)
+            std::path::Path::new(&self.file.path)
         };
         path.file_stem()
             .and_then(|n| n.to_str())
@@ -661,39 +665,39 @@ impl Document {
     }
     /// Enqueue a journaled save; the caller resolves the path first.
     pub(super) fn save(&mut self) {
-        if self.loading {
-            self.message = moth_ui::Text::StorageBusy.into();
+        if self.intake.loading {
+            self.notices.message = moth_ui::Text::StorageBusy.into();
             return;
         }
         match self
             .boards
             .requests
             .try_send(moth_platform::boards::Request::Save(
-                std::path::PathBuf::from(&self.path),
+                std::path::PathBuf::from(&self.file.path),
             )) {
-            Ok(()) => self.in_flight += 1,
-            Err(_) => self.message = moth_ui::Text::StorageBusy.into(),
+            Ok(()) => self.intake.in_flight += 1,
+            Err(_) => self.notices.message = moth_ui::Text::StorageBusy.into(),
         }
     }
     /// Begin discarding staged originals and the journal; guarded by in-flight
     /// work so a close never loses journaled but unsaved edits.
     pub(super) fn discard(&mut self) {
-        if self.in_flight > 0
-            || self.pasting > 0
-            || !self.pending.is_empty()
-            || !self.waiting.is_empty()
+        if self.intake.in_flight > 0
+            || self.intake.pasting > 0
+            || !self.intake.pending.is_empty()
+            || !self.intake.waiting.is_empty()
         {
-            self.message = moth_ui::Text::StorageBusy.into();
+            self.notices.message = moth_ui::Text::StorageBusy.into();
             return;
         }
-        if !self.discarding {
+        if !self.file.discarding {
             match self
                 .clipboard
                 .requests
                 .try_send(moth_platform::ClipboardRequest::Discard)
             {
-                Ok(()) => self.discarding = true,
-                Err(_) => self.message = moth_ui::Text::ClipboardBusy.into(),
+                Ok(()) => self.file.discarding = true,
+                Err(_) => self.notices.message = moth_ui::Text::ClipboardBusy.into(),
             }
         }
     }
@@ -913,7 +917,7 @@ mod tests {
             (Command::Insert(a.clone()), None),
             (Command::Insert(b.clone()), None),
         ]);
-        workspace.board.added = Some(Added {
+        workspace.board.notices.added = Some(Added {
             ids: ids.clone(),
             mode: arrange::Arrange::Horizontal,
             needs_fit: true,
@@ -926,17 +930,17 @@ mod tests {
                 .collect();
             let commands = arrange::counted(&items, mode, 1, 24.);
             let camera = workspace.board.view.camera;
-            workspace.board.added = None;
+            workspace.board.notices.added = None;
             workspace.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
-            workspace.board.added = Some(Added {
+            workspace.board.notices.added = Some(Added {
                 ids: ids.clone(),
                 mode,
                 needs_fit: true,
             });
-            assert!(workspace.board.added.as_ref().unwrap().needs_fit);
+            assert!(workspace.board.notices.added.as_ref().unwrap().needs_fit);
             assert_eq!(workspace.board.view.camera.origin, camera.origin);
             drain(&mut workspace);
-            assert!(!workspace.board.added.as_ref().unwrap().needs_fit);
+            assert!(!workspace.board.notices.added.as_ref().unwrap().needs_fit);
             let mut expected = workspace.board.view;
             expected.fit_selection(&workspace.board.scene, &ids.iter().copied().collect());
             assert_eq!(workspace.board.view.camera.origin, expected.camera.origin);
@@ -954,7 +958,7 @@ mod tests {
             },
             None,
         )]);
-        assert!(workspace.board.added.is_none());
+        assert!(workspace.board.notices.added.is_none());
         drain(&mut workspace);
         workspace.persist(moth_platform::boards::Request::Undo);
         drain(&mut workspace);
@@ -1005,7 +1009,7 @@ mod tests {
             .collect();
         let drain = |workspace: &mut workspace::Workspace| {
             let deadline = Instant::now() + Duration::from_secs(10);
-            while workspace.board.in_flight > 0 {
+            while workspace.board.intake.in_flight > 0 {
                 workspace.pump(workspace::Pump {
                     format: moth_io::ImageFormat::default(),
                     cursor: None,
@@ -1183,7 +1187,7 @@ mod tests {
             .requests
             .send(moth_platform::boards::Request::Undo)
             .unwrap();
-        workspace.tabs[0].in_flight += 1;
+        workspace.tabs[0].intake.in_flight += 1;
         let deadline = Instant::now() + Duration::from_secs(10);
         while workspace.tabs[0].scene.get(id).is_some() {
             workspace.pump(workspace::Pump {
@@ -1224,7 +1228,7 @@ mod tests {
                 .join(fixture);
             workspace.import_foreign(source.clone());
             let deadline = Instant::now() + Duration::from_secs(10);
-            while workspace.board.loading {
+            while workspace.board.intake.loading {
                 workspace.pump(workspace::Pump {
                     format: moth_io::ImageFormat::default(),
                     cursor: None,
@@ -1235,19 +1239,19 @@ mod tests {
                 assert!(Instant::now() < deadline, "conversion must finish");
                 std::thread::sleep(Duration::from_millis(1));
             }
-            assert!(workspace.board.conversion_prompt);
-            assert!(workspace.board.dirty);
-            assert!(workspace.board.path.is_empty());
-            assert_eq!(workspace.board.conversion.as_ref().unwrap().0, source);
+            assert!(workspace.board.notices.conversion_prompt);
+            assert!(workspace.board.file.dirty);
+            assert!(workspace.board.file.path.is_empty());
+            assert_eq!(workspace.board.file.conversion.as_ref().unwrap().0, source);
             assert_eq!(
                 workspace.board.title(),
                 source.file_stem().unwrap().to_str().unwrap()
             );
             // Continuing without saving retains the unsaved close guard.
-            workspace.board.conversion_prompt = false;
+            workspace.board.notices.conversion_prompt = false;
             workspace.request_close(false);
             assert!(workspace.confirm_close);
-            assert!(!workspace.board.discarding);
+            assert!(!workspace.board.file.discarding);
             workspace.board.boards.finish().unwrap();
             std::fs::remove_dir_all(root).unwrap();
         }
@@ -1274,7 +1278,7 @@ mod tests {
         );
         let id = item.id;
         board.scene.apply(Command::Insert(item)).unwrap();
-        board.dirty = true;
+        board.file.dirty = true;
         let mut workspace = workspace::Workspace::new(board, Arc::new(|| {}));
         let identity = workspace.board.ui_id;
         workspace.library = false;
@@ -1287,7 +1291,7 @@ mod tests {
             workspace::TabChange::None
         ));
         assert!(workspace.confirm_close && workspace.closing_window);
-        assert!(!workspace.board.discarding && !workspace.board.discarded);
+        assert!(!workspace.board.file.discarding && !workspace.board.file.discarded);
         assert!(workspace.board.scene.get(id).is_some());
         assert_eq!(workspace.board.ui_id, identity);
         assert!(matches!(workspace.activate(0), workspace::TabChange::None));
@@ -1306,21 +1310,21 @@ mod tests {
         .unwrap();
 
         // SaveAndClose on a board with a path enqueues the save and marks the close.
-        session.path = save_path.to_string_lossy().into_owned();
-        session.close_after_save = true;
+        session.file.path = save_path.to_string_lossy().into_owned();
+        session.file.close_after_save = true;
         session.save();
-        assert_eq!(session.in_flight, 1);
+        assert_eq!(session.intake.in_flight, 1);
 
         // Discard must not drop the in-flight save: the guard loses nothing.
         session.discard();
-        assert!(!session.discarding);
-        assert!(!session.discarded);
-        assert!(!session.message.render(moth_ui::locale()).is_empty());
+        assert!(!session.file.discarding);
+        assert!(!session.file.discarded);
+        assert!(!session.notices.message.render(moth_ui::locale()).is_empty());
 
         // Route the actual save acknowledgment through the workspace, including discard.
         let mut workspace = workspace::Workspace::new(session, Arc::new(|| {}));
         let deadline = Instant::now() + Duration::from_secs(10);
-        while !workspace.board.discarded {
+        while !workspace.board.file.discarded {
             workspace.pump(workspace::Pump {
                 format: moth_io::ImageFormat::default(),
                 cursor: None,
@@ -1331,8 +1335,8 @@ mod tests {
             assert!(Instant::now() < deadline, "save and discard must complete");
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert_eq!(workspace.board.in_flight, 0);
-        assert!(!workspace.board.dirty);
+        assert_eq!(workspace.board.intake.in_flight, 0);
+        assert!(!workspace.board.file.dirty);
         assert!(save_path.is_file());
         workspace.board.boards.finish().unwrap();
         std::fs::remove_dir_all(root).unwrap();

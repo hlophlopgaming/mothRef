@@ -115,10 +115,10 @@ pub(super) fn controls(ui: &mut egui::Ui, appearance: &mut Appearance, blur: boo
 
 impl App {
     pub(super) fn remember_appearance(&mut self) {
-        if self.workspace.board.loading {
+        if self.workspace.board.intake.loading {
             return;
         }
-        if let Some(key) = key(&self.workspace.board.path) {
+        if let Some(key) = key(&self.workspace.board.file.path) {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -142,12 +142,12 @@ impl App {
                 ))
                 .is_ok()
         {
-            self.workspace.board.in_flight += 1;
+            self.workspace.board.intake.in_flight += 1;
             self.window_preferences_dirty = false;
         }
     }
     pub(super) fn restore_appearance(&mut self) {
-        self.workspace.board.appearance = key(&self.workspace.board.path)
+        self.workspace.board.appearance = key(&self.workspace.board.file.path)
             .and_then(|k| self.window_preferences.get(&k))
             .and_then(|v| v.split_once('|'))
             .and_then(|(_, v)| Appearance::decode(v))
@@ -330,14 +330,14 @@ impl App {
         };
         if !moth_platform::Desktop.global_shortcuts_available(window) {
             self.settings.global_shortcuts = false;
-            self.workspace.board.message = moth_ui::Text::GlobalShortcutsUnavailable.into();
+            self.workspace.board.notices.message = moth_ui::Text::GlobalShortcutsUnavailable.into();
             return;
         }
         match moth_platform::shortcuts::Shortcuts::new(window, self.shell.shortcut_wake()) {
             Ok(keys) => self.global_shortcuts = Some(keys),
             Err(error) => {
                 self.settings.global_shortcuts = false;
-                self.workspace.board.message = error.into();
+                self.workspace.board.notices.message = error.into();
             }
         }
     }

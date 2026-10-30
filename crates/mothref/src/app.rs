@@ -232,7 +232,7 @@ impl App {
                 self.moving_window = false;
                 self.picking_window = true;
             }
-            Err(error) => self.workspace.board.message = error.into(),
+            Err(error) => self.workspace.board.notices.message = error.into(),
         }
     }
     fn cancel_window_mode(&mut self) {
@@ -271,7 +271,7 @@ impl App {
             }
             Err(error) => {
                 self.pinned = false;
-                self.workspace.board.message = error.into();
+                self.workspace.board.notices.message = error.into();
             }
         }
     }
@@ -288,7 +288,7 @@ impl App {
                 self.pinned && !self.target_pin,
                 false,
             ) {
-                self.workspace.board.message = error.into();
+                self.workspace.board.notices.message = error.into();
             } else {
                 self.overlay = None;
                 self.workspace.board.appearance.over = false;
@@ -317,23 +317,23 @@ impl App {
                     if let Err(error) =
                         moth_platform::Desktop.pin_target(&mut self.pin, &window, false)
                     {
-                        self.workspace.board.message = error.into();
+                        self.workspace.board.notices.message = error.into();
                     }
                     if let Err(error) = moth_platform::Desktop
                         .window_effects(&window, true, overlay.on_top, false)
                         .and_then(|()| overlay.restack())
                     {
-                        self.workspace.board.message = error.into();
+                        self.workspace.board.notices.message = error.into();
                     }
                     self.overlay = Some(overlay);
                     self.workspace.library = false;
                     self.library_screen.cards.clear();
                     self.library_screen.catalog.dismiss_editor();
                 }
-                Err(error) => self.workspace.board.message = error.to_string().into(),
+                Err(error) => self.workspace.board.notices.message = error.to_string().into(),
             }
         } else {
-            self.workspace.board.message = moth_ui::Text::OverlayUnsupported.into();
+            self.workspace.board.notices.message = moth_ui::Text::OverlayUnsupported.into();
         }
         self.remember_appearance();
         if self.overlay.is_none() {
@@ -344,7 +344,7 @@ impl App {
 
     fn reset_board_ui(&mut self) {
         self.floating.clear();
-        if !self.workspace.board.loading {
+        if !self.workspace.board.intake.loading {
             self.remember_appearance();
         }
         self.tools = tools::Tools::default();
@@ -416,13 +416,13 @@ impl App {
     fn covered_by_preload(&self) -> bool {
         self.settings.performance_mode == moth_io::CacheMode::Full
             && !self.workspace.library
-            && !self.workspace.board.preload_ready
+            && !self.workspace.board.intake.preload_ready
     }
     fn canvas_keys_blocked(&self) -> bool {
         self.modal.dialog.is_some()
-            || self.workspace.board.conversion_prompt
+            || self.workspace.board.notices.conversion_prompt
             || self.workspace.confirm_close
-            || self.workspace.board.arrange_prompt.is_some()
+            || self.workspace.board.notices.arrange_prompt.is_some()
             || self.shortcuts.blocked()
             || self.editing.is_some()
             || self.shell.context().text_edit_focused()
@@ -454,17 +454,17 @@ impl App {
         Ok(())
     }
     fn paste(&mut self) {
-        if self.tools.locked || self.workspace.board.loading {
+        if self.tools.locked || self.workspace.board.intake.loading {
             return;
         }
-        if self.workspace.board.discarding {
+        if self.workspace.board.file.discarding {
             return;
         }
         if !self.workspace.finish_added() {
             return;
         }
         // A new paste supersedes a pending arrangement prompt.
-        self.workspace.board.arrange_prompt = None;
+        self.workspace.board.notices.arrange_prompt = None;
         match self
             .workspace
             .board
@@ -472,8 +472,8 @@ impl App {
             .requests
             .try_send(moth_platform::ClipboardRequest::Paste)
         {
-            Ok(()) => self.workspace.board.pasting += 1,
-            Err(_) => self.workspace.board.message = moth_ui::Text::ClipboardBusy.into(),
+            Ok(()) => self.workspace.board.intake.pasting += 1,
+            Err(_) => self.workspace.board.notices.message = moth_ui::Text::ClipboardBusy.into(),
         }
     }
 
@@ -513,10 +513,10 @@ impl App {
 
     /// Creates an empty note at `world` and opens the inline editor for it.
     fn add_note(&mut self, world: [f32; 2]) {
-        if self.tools.locked || self.workspace.board.loading {
+        if self.tools.locked || self.workspace.board.intake.loading {
             return;
         }
-        if self.workspace.board.discarding || !self.workspace.board.idle() {
+        if self.workspace.board.file.discarding || !self.workspace.board.idle() {
             return;
         }
         let rect = canvas::new_note_rect(world, self.workspace.board.view.camera.zoom);
@@ -543,7 +543,7 @@ impl App {
     }
     /// Opens the inline editor over an existing note.
     fn edit_note(&mut self, id: Uuid) {
-        if self.tools.locked || self.workspace.board.loading {
+        if self.tools.locked || self.workspace.board.intake.loading {
             return;
         }
         let Some(item) = self.workspace.board.scene.get(id) else {
@@ -670,7 +670,7 @@ impl App {
             };
             gpu.registry.adapt_budget(active, ceiling);
             gpu.registry.tile_threshold = mode.tile_threshold();
-            gpu.registry.keep_all = full && !self.workspace.board.preload_overflow;
+            gpu.registry.keep_all = full && !self.workspace.board.intake.preload_overflow;
             // Preloading waits for the detected limit, so it never overflows a placeholder.
             if full && self.video.is_some() && !self.workspace.library {
                 self.workspace
@@ -720,7 +720,7 @@ impl App {
             let Some(image) = board.next_preloaded() else {
                 break;
             };
-            if board.preload_overflow {
+            if board.intake.preload_overflow {
                 continue;
             }
             if !gpu.registry.fits(&image) {
@@ -778,7 +778,7 @@ impl App {
                     self.settings.load(&values);
                     self.configure_global_shortcuts();
                     if !self.shortcuts.registry.load(&values) {
-                        self.workspace.board.message = moth_ui::Text::InvalidBinding.into();
+                        self.workspace.board.notices.message = moth_ui::Text::InvalidBinding.into();
                     }
                     moth_ui::theme::apply(self.shell.context(), &self.settings.tokens());
                     self.shell.context().set_zoom_factor(self.settings.ui_scale);
@@ -855,7 +855,7 @@ impl App {
                         self.library_screen.cards.push(card);
                     }
                 }
-                Err(error) => self.workspace.board.message = error.into(),
+                Err(error) => self.workspace.board.notices.message = error.into(),
                 _ => {}
             }
         }
@@ -880,13 +880,13 @@ impl App {
     /// Applies one user intent as a single side effect. Close-with-save ordering
     /// is expressed by `SaveAndClose` itself, never by the order intents arrive in.
     fn apply(&mut self, intent: Intent, event_loop: &ActiveEventLoop) {
-        if self.workspace.board.loading
+        if self.workspace.board.intake.loading
             && matches!(
                 &intent,
                 Intent::Save | Intent::SaveAs(_) | Intent::SaveAndClose
             )
         {
-            self.workspace.board.message = moth_ui::Text::StorageBusy.into();
+            self.workspace.board.notices.message = moth_ui::Text::StorageBusy.into();
             return;
         }
         let before = self.workspace.board.view.camera;
@@ -912,12 +912,12 @@ impl App {
                     .try_send(request)
                     .is_err()
                 {
-                    self.workspace.board.message = moth_ui::Text::StorageBusy.into();
+                    self.workspace.board.notices.message = moth_ui::Text::StorageBusy.into();
                 }
             }
 
             Intent::Paste => {
-                if !self.workspace.board.discarding {
+                if !self.workspace.board.file.discarding {
                     self.paste();
                 }
             }
@@ -957,8 +957,8 @@ impl App {
             Intent::Open => self.open_files(false),
             Intent::Images => self.open_files(true),
             Intent::Save => {
-                self.workspace.board.conversion_prompt = false;
-                if self.workspace.board.path.is_empty() {
+                self.workspace.board.notices.conversion_prompt = false;
+                if self.workspace.board.file.path.is_empty() {
                     self.modal.dialog = Some(());
                     self.modal.dialog_focus = true;
                     self.modal.dialog_path.clear();
@@ -1070,17 +1070,17 @@ impl App {
             Intent::SaveAs(mut path) => {
                 path.set_extension("moth");
                 self.modal.dialog = None;
-                self.workspace.board.path = path.to_string_lossy().into_owned();
+                self.workspace.board.file.path = path.to_string_lossy().into_owned();
                 self.workspace.board.save();
             }
             Intent::CancelDialog => {
                 self.modal.dialog = None;
-                self.workspace.board.close_after_save = false;
+                self.workspace.board.file.close_after_save = false;
             }
             Intent::SaveAndClose => {
-                self.workspace.board.conversion_prompt = false;
-                self.workspace.board.close_after_save = true;
-                if self.workspace.board.path.is_empty() {
+                self.workspace.board.notices.conversion_prompt = false;
+                self.workspace.board.file.close_after_save = true;
+                if self.workspace.board.file.path.is_empty() {
                     self.modal.dialog_path.clear();
                     self.modal.dialog = Some(());
                     self.modal.dialog_focus = true;
@@ -1092,7 +1092,7 @@ impl App {
             Intent::KeepOpen => {
                 self.workspace.confirm_close = false;
                 self.workspace.closing_window = false;
-                self.workspace.board.close_after_save = false;
+                self.workspace.board.file.close_after_save = false;
             }
             Intent::AddNote(world) => self.add_note(world),
             Intent::EditNote(id) => self.edit_note(id),
@@ -1103,7 +1103,7 @@ impl App {
             }
             Intent::GroupTitle(title) => {
                 let board = &mut self.workspace.board;
-                let Some((id, _)) = board.renaming.take() else {
+                let Some((id, _)) = board.group_edits.renaming.take() else {
                     return;
                 };
                 let Some(style) = board.group_style(id) else {
@@ -1117,7 +1117,7 @@ impl App {
                 }
                 if title != style.title {
                     let group = moth_scene::Group { title, ..style };
-                    board.pending_styles.insert(id, group.clone());
+                    board.group_edits.pending_styles.insert(id, group.clone());
                     self.workspace
                         .persist(moth_platform::boards::Request::Apply(
                             Command::SetGroup { id, group },
@@ -1180,17 +1180,17 @@ impl App {
                     )
                 };
                 // Layout changes belong to the still-open insertion group.
-                let previous = self.workspace.board.added.take();
+                let previous = self.workspace.board.notices.added.take();
                 if !commands.is_empty() {
-                    let pending = self.workspace.board.in_flight;
+                    let pending = self.workspace.board.intake.in_flight;
                     self.workspace
                         .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
-                    if self.workspace.board.in_flight == pending {
-                        self.workspace.board.added = previous;
+                    if self.workspace.board.intake.in_flight == pending {
+                        self.workspace.board.notices.added = previous;
                         return;
                     }
                 }
-                self.workspace.board.added = Some(document::Added {
+                self.workspace.board.notices.added = Some(document::Added {
                     ids,
                     mode,
                     needs_fit: true,
@@ -1246,9 +1246,9 @@ impl App {
                         .try_send(moth_platform::boards::Request::Preferences(values))
                         .is_ok()
                     {
-                        tab.in_flight += 1;
+                        tab.intake.in_flight += 1;
                     } else {
-                        tab.message = moth_ui::Text::StorageBusy.into();
+                        tab.notices.message = moth_ui::Text::StorageBusy.into();
                     }
                 }
                 self.workspace
@@ -1265,7 +1265,7 @@ impl App {
                 self.workspace
                     .persist(moth_platform::boards::Request::OriginalGeometry { ids, mode });
             }
-            Intent::DismissArrangePrompt => self.workspace.board.arrange_prompt = None,
+            Intent::DismissArrangePrompt => self.workspace.board.notices.arrange_prompt = None,
             Intent::FocusItem(id) => {
                 if self
                     .workspace
@@ -1347,7 +1347,7 @@ impl App {
                 }
                 NativeEvent::Error(error) => {
                     tracing::warn!(%error, "native input failed");
-                    self.workspace.board.message = error.into();
+                    self.workspace.board.notices.message = error.into();
                     self.redraw();
                 }
             }
@@ -1385,10 +1385,10 @@ impl App {
         });
         if self.workspace.confirm_close
             || self.workspace.board.session.is_some()
-            || self.workspace.board.conversion_prompt
+            || self.workspace.board.notices.conversion_prompt
             || self.workspace.library
             || self.modal.dialog.is_some()
-            || self.workspace.board.arrange_prompt.is_some()
+            || self.workspace.board.notices.arrange_prompt.is_some()
             || self.shortcuts.blocked()
             || self.editing.is_some()
         {
@@ -1560,11 +1560,11 @@ impl App {
                                 resize.wrap_note(self.shell.context());
                                 let commands = resize.commands();
                                 if !commands.is_empty() {
-                                    let pending = self.workspace.board.in_flight;
+                                    let pending = self.workspace.board.intake.in_flight;
                                     self.workspace.persist_batch(
                                         commands.into_iter().map(|c| (c, None)).collect(),
                                     );
-                                    if self.workspace.board.in_flight > pending {
+                                    if self.workspace.board.intake.in_flight > pending {
                                         resize.released = true;
                                         self.resizing = Some(resize);
                                     }
@@ -1799,7 +1799,7 @@ impl App {
                                 let dy = (p.position[1] - start[1])
                                     / self.workspace.board.view.camera.zoom;
                                 if !self.tools.locked
-                                    && !self.workspace.board.loading
+                                    && !self.workspace.board.intake.loading
                                     && dx.abs() + dy.abs()
                                         > 0.5 / self.workspace.board.view.camera.zoom
                                 {
@@ -2016,7 +2016,7 @@ impl App {
             self.apply_pin(false);
         }
         if let Some(error) = moth_platform::Desktop.take_window_error() {
-            self.workspace.board.message = error.into();
+            self.workspace.board.notices.message = error.into();
         }
         self.results();
         if let Some(gpu) = &mut self.shell.gpu {
@@ -2032,7 +2032,7 @@ impl App {
         self.motion.sync(
             &self.workspace.board.scene,
             &mut self.workspace.board.motion,
-            self.workspace.board.in_flight == 0,
+            self.workspace.board.intake.in_flight == 0,
         );
         if self.workspace.board.idle()
             && self.resizing.as_ref().is_some_and(|resize| resize.released)
@@ -2084,11 +2084,11 @@ impl App {
             self.settings.reduced_motion,
             self.moving.is_some(),
         );
-        if self.workspace.board.discarded {
+        if self.workspace.board.file.discarded {
             self.finish_close(event_loop)?;
             if self.workspace.closing_window
                 && self.workspace.tabs.is_empty()
-                && self.workspace.board.discarded
+                && self.workspace.board.file.discarded
             {
                 return Ok(());
             }
@@ -2251,9 +2251,9 @@ impl App {
                 }
                 intents.extend(chrome);
                 if self.modal.dialog.is_none()
-                    && !self.workspace.board.conversion_prompt
+                    && !self.workspace.board.notices.conversion_prompt
                     && !self.workspace.confirm_close
-                    && self.workspace.board.arrange_prompt.is_none()
+                    && self.workspace.board.notices.arrange_prompt.is_none()
                 {
                     let (action, changed, setting) =
                         self.shortcuts.show(ui, &|a| enabled[a as usize]);
@@ -2368,7 +2368,7 @@ impl App {
         };
         let mut previews: Vec<_> = if self.moving.is_some()
             && !self.tools.locked
-            && !self.workspace.board.loading
+            && !self.workspace.board.intake.loading
             && !self.workspace.library
         {
             self.workspace
@@ -2507,11 +2507,11 @@ impl ApplicationHandler<Wake> for App {
             )
         {
             tracing::warn!(%error, "native input startup failed");
-            self.workspace.board.message = error.to_string().into();
+            self.workspace.board.notices.message = error.to_string().into();
         }
         if let Err(e) = self.recover() {
             tracing::error!(%e,"renderer creation failed");
-            self.workspace.board.message = e.to_string().into();
+            self.workspace.board.notices.message = e.to_string().into();
             self.startup_error = Some(e);
             event_loop.exit();
         }
@@ -2616,16 +2616,16 @@ impl App {
             .as_ref()
             .and_then(|keys| keys.errors.try_recv().ok())
         {
-            self.workspace.board.message = error.into();
+            self.workspace.board.notices.message = error.into();
             self.settings.global_shortcuts = false;
             self.global_shortcuts = None;
         }
         self.native_input();
         self.results();
-        if self.workspace.board.discarded
+        if self.workspace.board.file.discarded
             && let Err(error) = self.finish_close(event_loop)
         {
-            self.workspace.board.message = error.to_string().into();
+            self.workspace.board.notices.message = error.to_string().into();
         }
         self.redraw();
     }
@@ -2646,7 +2646,7 @@ impl App {
             if let Some(overlay) = &mut self.overlay {
                 if matches!(event, WindowEvent::RedrawRequested) {
                     if let Err(error) = overlay.frame() {
-                        self.workspace.board.message = error.to_string().into();
+                        self.workspace.board.notices.message = error.to_string().into();
                         overlay.exit = true;
                     }
                     if std::mem::take(&mut overlay.hint_dismissed) {
@@ -2674,12 +2674,12 @@ impl App {
                             overlay.click_through,
                         )
                     {
-                        self.workspace.board.message = error.into();
+                        self.workspace.board.notices.message = error.into();
                         overlay.click_through = false;
                     } else {
                         overlay.applied = (overlay.on_top, overlay.click_through);
                         if let Err(error) = overlay.restack() {
-                            self.workspace.board.message = error.into();
+                            self.workspace.board.notices.message = error.into();
                         }
                     }
                 }
@@ -2752,7 +2752,7 @@ impl App {
             WindowEvent::RedrawRequested => {
                 if let Err(e) = self.frame(event_loop) {
                     tracing::error!(%e,"frame failed");
-                    self.workspace.board.message = e.to_string().into();
+                    self.workspace.board.notices.message = e.to_string().into();
                     if self.overlay.is_some() {
                         self.toggle_overlay(event_loop);
                     }

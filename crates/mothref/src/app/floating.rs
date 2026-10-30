@@ -34,7 +34,7 @@ impl App {
             .filter(|id| !self.floating.iter().any(|w| w.item == *id))
             .collect();
         if self.floating.len() + ids.len() > 32 {
-            self.workspace.board.message = moth_ui::Text::OverlayWindowLimit.into();
+            self.workspace.board.notices.message = moth_ui::Text::OverlayWindowLimit.into();
             return;
         }
         let Some(gpu) = &self.shell.gpu else {
@@ -65,7 +65,7 @@ impl App {
             match result {
                 Ok(image) => self.floating.push(image),
                 Err(error) => {
-                    self.workspace.board.message = error.to_string().into();
+                    self.workspace.board.notices.message = error.to_string().into();
                     break;
                 }
             }
@@ -126,7 +126,7 @@ impl App {
             WindowEvent::RedrawRequested => {
                 let result = self.draw_floating(index);
                 if let Err(error) = result {
-                    self.workspace.board.message = error.to_string().into();
+                    self.workspace.board.notices.message = error.to_string().into();
                 }
             }
             _ => {}

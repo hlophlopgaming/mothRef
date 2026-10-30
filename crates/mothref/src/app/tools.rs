@@ -380,10 +380,10 @@ impl Tools {
     }
 }
 fn export_feedback(ui: &mut egui::Ui, board: &Document) {
-    if board.exporting {
+    if board.file.exporting {
         ui.spinner();
     }
-    if let Some(message) = &board.export_message {
+    if let Some(message) = &board.notices.export_message {
         ui.label(message.render(moth_ui::locale()));
     }
 }

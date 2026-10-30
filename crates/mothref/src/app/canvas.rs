@@ -158,7 +158,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     anchor[1] - view.viewport.center().y / view.camera.zoom,
                 ];
             }
-            if view.needs_fit && board.in_flight == 0 {
+            if view.needs_fit && board.intake.in_flight == 0 {
                 view.fit(&board.scene);
             }
             if board.scene.is_empty() {
@@ -215,7 +215,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                 if moving.is_some()
                     && board.selection.contains(&item.id)
                     && !tools.locked
-                    && !board.loading
+                    && !board.intake.loading
                 {
                     presented = std::borrow::Cow::Owned(motion.preview(
                         item,
@@ -323,7 +323,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                     .filter_map(|id| board.scene.get(*id))
                     .filter(|i| board.presented(i))
                 {
-                    let presented = if moving.is_some() && !tools.locked && !board.loading {
+                    let presented = if moving.is_some() && !tools.locked && !board.intake.loading {
                         Some(motion.preview(item, drag, view.camera.zoom, settings.reduced_motion))
                     } else {
                         selection_presentation(

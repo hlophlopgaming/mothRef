@@ -246,9 +246,13 @@ pub(super) fn chips(
     let mut rects = Vec::new();
     shown.sort_by_cached_key(|item| board.scene.ancestors(item.id).count());
     // The title field of a group still on its way to the journal opens at once.
-    if let Some((id, frame)) = board.pending_group
+    if let Some((id, frame)) = board.group_edits.pending_group
         && board.scene.get(id).is_none()
-        && let Some((_, initial)) = board.renaming.as_ref().filter(|(r, _)| *r == id)
+        && let Some((_, initial)) = board
+            .group_edits
+            .renaming
+            .as_ref()
+            .filter(|(r, _)| *r == id)
     {
         let corner = camera.screen([frame.x, frame.y]);
         let left = egui::pos2(corner[0] + pad, corner[1] - height / 2.);
@@ -261,7 +265,12 @@ pub(super) fn chips(
         let corner = camera.screen([item.rect.x, item.rect.y]);
         let left = egui::pos2(corner[0] + pad, corner[1] - height / 2.);
         let swatch = tokens.group(style.color);
-        if let Some((_, initial)) = board.renaming.as_ref().filter(|(id, _)| *id == item.id) {
+        if let Some((_, initial)) = board
+            .group_edits
+            .renaming
+            .as_ref()
+            .filter(|(id, _)| *id == item.id)
+        {
             intents.extend(title_editor(ui, item.id, initial, left, swatch));
             continue;
         }
