@@ -12,6 +12,10 @@ pub(super) struct SavedWindow {
     maximized: bool,
     fullscreen: bool,
     pinned: bool,
+    /// The session currently holds the window. The saved state outlives a restore so
+    /// a repeat or a new session from the summary never mistakes the mini window for
+    /// the user's own size, even when the restore is still being applied.
+    taken: bool,
 }
 /// Longer side of the mini window in logical points when it opens.
 const MINI_SIDE: f64 = 360.;
@@ -55,21 +59,51 @@ impl App {
         Some((items, state.clip.unwrap_or(ctx.content_rect()), color))
     }
     /// Plans under "My plans": built-ins, then the user's.
-    pub(super) fn session_plans(&self) -> Vec<(String, Vec<session::Stage>)> {
+    pub(super) fn session_plans(&self) -> Vec<session_ui::Plan> {
         let mut plans = session_ui::builtin_plans();
-        if let Some(saved) = self.window_preferences.get("session_plans") {
-            for plan in saved.split(';').filter_map(session::decode_plan) {
-                if !plan.is_empty() && !plans.iter().any(|(_, p)| *p == plan) {
-                    let name = plan
-                        .iter()
-                        .map(|s| format!("{}×{}", s.count, session_ui::seconds(s.seconds as u64)))
-                        .collect::<Vec<_>>()
-                        .join(" + ");
-                    plans.push((name, plan));
-                }
+        for (name, stages) in self.saved_plans() {
+            if !stages.is_empty() {
+                plans.push(session_ui::Plan {
+                    name,
+                    stages,
+                    saved: true,
+                });
             }
         }
         plans
+    }
+    /// `name=10x30,5x120;…`; entries saved before plans had names get one from their stages.
+    fn saved_plans(&self) -> Vec<(String, Vec<session::Stage>)> {
+        let Some(saved) = self.window_preferences.get("session_plans") else {
+            return Vec::new();
+        };
+        saved
+            .split(';')
+            .filter_map(|entry| {
+                let (name, plan) = entry.split_once('=').unwrap_or(("", entry));
+                let stages = session::decode_plan(plan)?;
+                let name = if name.is_empty() {
+                    stages
+                        .iter()
+                        .map(|s| format!("{}×{}", s.count, session_ui::seconds(s.seconds as u64)))
+                        .collect::<Vec<_>>()
+                        .join(" + ")
+                } else {
+                    name.to_owned()
+                };
+                Some((name, stages))
+            })
+            .collect()
+    }
+    fn store_plans(&mut self, plans: &[(String, Vec<session::Stage>)]) {
+        let value = plans
+            .iter()
+            .map(|(name, stages)| format!("{name}={}", session::encode_plan(stages)))
+            .collect::<Vec<_>>()
+            .join(";");
+        self.window_preferences
+            .insert("session_plans".into(), value);
+        self.window_preferences_dirty = true;
     }
     pub(super) fn session_event(&mut self, event: Event) {
         match event {
@@ -95,22 +129,23 @@ impl App {
                     .insert("session_setup".into(), setup.encode());
                 self.window_preferences_dirty = true;
             }
-            Event::SavePlan(plan) => {
-                let mut saved: Vec<String> = self
-                    .window_preferences
-                    .get("session_plans")
-                    .map(|value| value.split(';').map(str::to_owned).collect())
-                    .unwrap_or_default();
-                let encoded = session::encode_plan(&plan);
-                if !encoded.is_empty() && !saved.contains(&encoded) {
-                    saved.push(encoded);
-                    // A short list stays a list of favourites, not a history.
-                    let excess = saved.len().saturating_sub(8);
-                    saved.drain(..excess);
-                    self.window_preferences
-                        .insert("session_plans".into(), saved.join(";"));
-                    self.window_preferences_dirty = true;
+            Event::SavePlan(name, plan) => {
+                if plan.is_empty() || name.is_empty() {
+                    return;
                 }
+                let mut saved = self.saved_plans();
+                // Saving under an existing name replaces that plan.
+                saved.retain(|(existing, _)| *existing != name);
+                saved.push((name, plan));
+                // A short list stays a list of favourites, not a history.
+                let excess = saved.len().saturating_sub(12);
+                saved.drain(..excess);
+                self.store_plans(&saved);
+            }
+            Event::DeletePlan(name) => {
+                let mut saved = self.saved_plans();
+                saved.retain(|(existing, _)| *existing != name);
+                self.store_plans(&saved);
             }
             Event::Drag => self.drag_window(None),
         }
@@ -121,14 +156,18 @@ impl App {
         let Some(window) = self.shell.window.clone() else {
             return;
         };
-        if self.session_window.is_none() {
-            self.session_window = Some(SavedWindow {
-                size: window.inner_size(),
-                position: window.outer_position().ok(),
-                maximized: window.is_maximized(),
-                fullscreen: window.fullscreen().is_some(),
-                pinned: self.pinned,
-            });
+        match &mut self.session_window {
+            Some(saved) => saved.taken = true,
+            None => {
+                self.session_window = Some(SavedWindow {
+                    size: window.inner_size(),
+                    position: window.outer_position().ok(),
+                    maximized: window.is_maximized(),
+                    fullscreen: window.fullscreen().is_some(),
+                    pinned: self.pinned,
+                    taken: true,
+                });
+            }
         }
         if !mini {
             if window.fullscreen().is_none() {
@@ -172,29 +211,62 @@ impl App {
     }
     /// Gives the window back as it was before the session.
     pub(super) fn restore_window(&mut self) {
-        let Some(saved) = self.session_window.take() else {
+        let Some(saved) = self.session_window.as_mut().filter(|saved| saved.taken) else {
             return;
         };
+        saved.taken = false;
+        let (size, position, maximized, fullscreen, pinned) = (
+            saved.size,
+            saved.position,
+            saved.maximized,
+            saved.fullscreen,
+            saved.pinned,
+        );
         let Some(window) = self.shell.window.clone() else {
             return;
         };
-        window.set_fullscreen(
-            saved
-                .fullscreen
-                .then_some(winit::window::Fullscreen::Borderless(None)),
-        );
+        // Unpin first: changing the stacking makes some compositors resend the small
+        // window's geometry, which would undo a size set before it.
+        if self.pinned != pinned {
+            self.apply_pin(pinned);
+        }
+        window.set_fullscreen(fullscreen.then_some(winit::window::Fullscreen::Borderless(None)));
         // The old size first, so a compositor that ignores the maximize request
         // still gives the window back at its previous size.
-        let applied = window.request_inner_size(saved.size);
+        let applied = window.request_inner_size(size);
         self.resized(applied);
-        if let Some(position) = saved.position {
+        if let Some(position) = position {
             window.set_outer_position(position);
         }
-        if saved.maximized {
+        if maximized {
             window.set_maximized(true);
         }
-        if self.pinned != saved.pinned {
-            self.apply_pin(saved.pinned);
+        self.restoring = (!maximized && !fullscreen)
+            .then(|| (size, Instant::now() + std::time::Duration::from_secs(1)));
+    }
+    /// A late configure from the compositor can still carry the mini window's size
+    /// right after a restore; ask again for the user's size then.
+    pub(super) fn keep_restored(&mut self, size: winit::dpi::PhysicalSize<u32>) {
+        let Some((target, until)) = self.restoring else {
+            return;
+        };
+        if Instant::now() > until {
+            self.restoring = None;
+            return;
+        }
+        if size != target
+            && let Some(window) = self.shell.window.clone()
+        {
+            let applied = window.request_inner_size(target);
+            self.resized(applied);
+        }
+    }
+    /// Once the session is gone (closed, tab switched or board closed), the window is
+    /// the user's again.
+    pub(super) fn settle_session_window(&mut self) {
+        if self.session_window.is_some() && self.workspace.board.session.is_none() {
+            self.restore_window();
+            self.session_window = None;
         }
     }
 }

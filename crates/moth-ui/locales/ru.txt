@@ -506,3 +506,6 @@ SummaryHint = Клик по картинке — показать её на до
 TotalLabel = всего
 NoSessionImages = Нет картинок для показа
 CloseSummary = Закрыть
+CustomTime = Своё:
+PlanName = Название плана
+DeletePlan = Удалить план

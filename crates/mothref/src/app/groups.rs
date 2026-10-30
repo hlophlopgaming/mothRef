@@ -240,8 +240,17 @@ pub(super) fn chips(
     let mut intents = Vec::new();
     let mut rects = Vec::new();
     shown.sort_by_cached_key(|item| board.scene.ancestors(item.id).count());
+    // The title field of a group still on its way to the journal opens at once.
+    if let Some((id, frame)) = board.pending_group
+        && board.scene.get(id).is_none()
+        && let Some((_, initial)) = board.renaming.as_ref().filter(|(r, _)| *r == id)
+    {
+        let corner = camera.screen([frame.x, frame.y]);
+        let left = egui::pos2(corner[0] + pad, corner[1] - height / 2.);
+        intents.extend(title_editor(ui, id, initial, left, tokens.group(0)));
+    }
     for item in shown.iter() {
-        let Some(style) = item.group_style() else {
+        let Some(style) = board.group_style(item.id) else {
             continue;
         };
         let corner = camera.screen([item.rect.x, item.rect.y]);
@@ -490,7 +499,7 @@ pub(super) fn layers(
                         if moth_ui::icons::button(
                             ui,
                             moth_ui::icons::Icon::Close,
-                            text(Text::Close),
+                            text(Text::CloseSummary),
                             false,
                         )
                         .clicked()

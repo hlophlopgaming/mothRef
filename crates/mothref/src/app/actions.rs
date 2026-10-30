@@ -36,6 +36,9 @@ impl App {
         if self.workspace.board.session.is_some() {
             return false;
         }
+        if action == Layers {
+            return !self.workspace.library;
+        }
         if action == DrawingSession {
             return !self.workspace.library
                 && self.workspace.board.idle()
@@ -653,7 +656,11 @@ impl App {
                 else {
                     return;
                 };
-                self.workspace.board.renaming = Some((id, String::new()));
+                let board = &mut self.workspace.board;
+                board.renaming = Some((id, String::new()));
+                if let Some(Command::Insert(group)) = commands.first() {
+                    board.pending_group = Some((id, group.rect));
+                }
                 Intent::Commands(commands)
             }
             Ungroup => {
@@ -671,10 +678,8 @@ impl App {
                     board.entered = Some(group);
                     board.selection = board.scene.children(group).map(|item| item.id).collect();
                     selection::with_members(&board.scene, &mut board.selection, None);
-                } else if let Some(style) =
-                    board.scene.get(group).and_then(|item| item.group_style())
-                {
-                    board.renaming = Some((group, style.title.clone()));
+                } else if let Some(style) = board.group_style(group) {
+                    board.renaming = Some((group, style.title));
                 }
                 return;
             }
@@ -683,22 +688,23 @@ impl App {
                     .iter()
                     .position(|candidate| *candidate == action)
                     .unwrap_or(0) as u8;
-                let scene = &self.workspace.board.scene;
-                Intent::Commands(
-                    groups::selected(scene, &self.workspace.board.selection)
-                        .into_iter()
-                        .filter_map(|id| {
-                            let style = scene.get(id)?.group_style()?;
-                            (style.color != color).then(|| Command::SetGroup {
-                                id,
-                                group: moth_scene::Group {
-                                    color,
-                                    ..style.clone()
-                                },
-                            })
+                let board = &mut self.workspace.board;
+                let commands: Vec<_> = groups::selected(&board.scene, &board.selection)
+                    .into_iter()
+                    .filter_map(|id| {
+                        let style = board.group_style(id)?;
+                        (style.color != color).then_some(Command::SetGroup {
+                            id,
+                            group: moth_scene::Group { color, ..style },
                         })
-                        .collect(),
-                )
+                    })
+                    .collect();
+                for command in &commands {
+                    if let Command::SetGroup { id, group } = command {
+                        board.pending_styles.insert(*id, group.clone());
+                    }
+                }
+                Intent::Commands(commands)
             }
             DrawingSession => {
                 let board = &mut self.workspace.board;

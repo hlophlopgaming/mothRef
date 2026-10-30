@@ -5,6 +5,12 @@ use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Setup: a time per image other than the presets.
+    CustomTime,
+    /// Hint of the plan name field.
+    PlanName,
+    /// Context menu of a saved plan.
+    DeletePlan,
     /// Closes the session summary and returns to the board.
     CloseSummary,
     /// Command and screen title: timed drawing session (gesture mode).

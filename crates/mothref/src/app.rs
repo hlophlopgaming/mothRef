@@ -129,6 +129,8 @@ pub struct App {
     window_closed: bool,
     /// The window as it was before a drawing session took it over.
     session_window: Option<session_window::SavedWindow>,
+    /// The size a session restore asked for, re-requested until this instant.
+    restoring: Option<(winit::dpi::PhysicalSize<u32>, Instant)>,
     /// Tab moves between windows, run after the frame that requested them.
     window_ops: Vec<(WindowId, panes::WindowOp)>,
 }
@@ -206,6 +208,7 @@ impl App {
             panes: Vec::new(),
             window_closed: false,
             session_window: None,
+            restoring: None,
             window_ops: Vec::new(),
         })
     }
@@ -1104,7 +1107,7 @@ impl App {
                 let Some((id, _)) = board.renaming.take() else {
                     return;
                 };
-                let Some(style) = board.scene.get(id).and_then(|item| item.group_style()) else {
+                let Some(style) = board.group_style(id) else {
                     return;
                 };
                 let Some(mut title) = title.map(|title| title.trim().to_owned()) else {
@@ -1114,10 +1117,8 @@ impl App {
                     title.pop();
                 }
                 if title != style.title {
-                    let group = moth_scene::Group {
-                        title,
-                        ..style.clone()
-                    };
+                    let group = moth_scene::Group { title, ..style };
+                    board.pending_styles.insert(id, group.clone());
                     self.workspace
                         .persist(moth_platform::boards::Request::Apply(
                             Command::SetGroup { id, group },
@@ -2099,6 +2100,7 @@ impl App {
         for intent in intents {
             self.apply(intent, event_loop);
         }
+        self.settle_session_window();
         self.rebase_drag();
         self.render(output)
     }
@@ -2760,6 +2762,7 @@ impl App {
                 if let Some(gpu) = &mut self.shell.gpu {
                     gpu.resize(size.width, size.height);
                 }
+                self.keep_restored(size);
                 self.redraw();
             }
             WindowEvent::Occluded(false) | WindowEvent::ScaleFactorChanged { .. } => {

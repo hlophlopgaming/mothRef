@@ -128,6 +128,11 @@ pub(super) struct Document {
     pub(super) session: Option<super::session_ui::State>,
     /// Group whose title is being typed, with the draft; shown once the group exists.
     pub(super) renaming: Option<(Uuid, String)>,
+    /// Titles and colors already chosen but not yet journaled, shown at once so a slow
+    /// disk never makes a rename look ignored.
+    pub(super) pending_styles: HashMap<Uuid, moth_scene::Group>,
+    /// Frame of a group whose insert is still being journaled, for its title field.
+    pub(super) pending_group: Option<(Uuid, Rect)>,
     pub(super) sources: HashMap<BlobId, Handle>,
     /// Board state of the last whole-board bake offer, so unchanged boards offer nothing.
     board_bake: Option<(usize, moth_io::BakeMode, bool)>,
@@ -194,12 +199,44 @@ impl Document {
         }
         Ok(inverse)
     }
+    /// A group's title and color as the user last chose them, journaled or not.
+    pub(super) fn group_style(&self, id: Uuid) -> Option<moth_scene::Group> {
+        self.pending_styles.get(&id).cloned().or_else(|| {
+            self.scene
+                .get(id)
+                .and_then(|item| item.group_style())
+                .cloned()
+                .or_else(|| {
+                    self.pending_group
+                        .filter(|(group, _)| *group == id)
+                        .map(|_| moth_scene::Group::default())
+                })
+        })
+    }
     /// Keeps group view state valid after an edit: a selected group carries its members,
     /// and a removed group can no longer be entered or renamed.
     pub(super) fn settle_groups(&mut self) {
         super::selection::with_members(&self.scene, &mut self.selection, None);
         if self.entered.is_some_and(|id| self.scene.get(id).is_none()) {
             self.entered = None;
+        }
+        let scene = &self.scene;
+        self.pending_styles.retain(|id, style| {
+            scene
+                .get(*id)
+                .and_then(|item| item.group_style())
+                .is_none_or(|current| current != style)
+        });
+        if self
+            .pending_group
+            .is_some_and(|(id, _)| self.scene.get(id).is_some())
+        {
+            self.pending_group = None;
+        }
+        if self.in_flight == 0 {
+            // Nothing is on its way any more: whatever did not arrive failed.
+            self.pending_styles.clear();
+            self.pending_group = None;
         }
         if self.in_flight == 0
             && self
@@ -572,6 +609,8 @@ impl Document {
             selection: HashSet::new(),
             entered: None,
             renaming: None,
+            pending_styles: HashMap::new(),
+            pending_group: None,
             session: None,
             sources: HashMap::new(),
             board_bake: None,

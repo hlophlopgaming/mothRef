@@ -45,8 +45,10 @@ pub(super) enum Event {
     Select(Vec<Uuid>),
     /// Remember the setup for the next session.
     Remember(Setup),
-    /// Keep the plan under "My plans".
-    SavePlan(Vec<Stage>),
+    /// Keep the plan under "My plans" with this name.
+    SavePlan(String, Vec<Stage>),
+    /// Forget a saved plan by name.
+    DeletePlan(String),
     /// Move the window (dragging the stage of the mini window).
     Drag,
 }
@@ -70,7 +72,7 @@ pub(super) struct Board<'a> {
     pub scene: &'a Scene,
     pub selection: &'a HashSet<Uuid>,
     pub group: Option<Uuid>,
-    pub plans: &'a [(String, Vec<Stage>)],
+    pub plans: &'a [Plan],
 }
 /// Images of a source in board reading order: rows top to bottom, then left to right.
 pub(super) fn images(board: &Board<'_>, source: Source) -> Vec<Uuid> {
@@ -140,27 +142,64 @@ fn plan_label(stages: &[Stage]) -> String {
         .collect::<Vec<_>>()
         .join(&format!(", {} ", text(Text::Then)))
 }
+/// An entry under "My plans".
+pub(super) struct Plan {
+    pub name: String,
+    pub stages: Vec<Stage>,
+    /// Saved by the user, so it can be deleted.
+    pub saved: bool,
+}
 /// Plans offered before the user saves any: about 15 and 30 minutes.
-pub(super) fn builtin_plans() -> Vec<(String, Vec<Stage>)> {
+pub(super) fn builtin_plans() -> Vec<Plan> {
     let stage = |count, seconds| Stage { count, seconds };
     vec![
-        (
-            format!(
+        Plan {
+            name: format!(
                 "{} · 15 {}",
                 text(Text::PlanWarmup),
                 text(Text::MinutesShort)
             ),
-            vec![stage(10, 30), stage(5, 60), stage(1, 300)],
-        ),
-        (
-            format!(
+            stages: vec![stage(10, 30), stage(5, 60), stage(1, 300)],
+            saved: false,
+        },
+        Plan {
+            name: format!(
                 "{} · 30 {}",
                 text(Text::PlanPoses),
                 text(Text::MinutesShort)
             ),
-            vec![stage(10, 60), stage(4, 300)],
-        ),
+            stages: vec![stage(10, 60), stage(4, 300)],
+            saved: false,
+        },
     ]
+}
+/// Minutes and seconds, each typed or dragged; returns whether the value changed.
+fn duration_edit(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    value: &mut u32,
+) -> bool {
+    let mut minutes = *value / 60;
+    let mut rest = *value % 60;
+    let changed = ui
+        .push_id(id, |ui| {
+            let a = ui.add(
+                egui::DragValue::new(&mut minutes)
+                    .range(0..=60)
+                    .suffix(format!(" {}", text(Text::MinutesShort))),
+            );
+            let b = ui.add(
+                egui::DragValue::new(&mut rest)
+                    .range(0..=59)
+                    .suffix(format!(" {}", text(Text::SecondsShort))),
+            );
+            a.changed() || b.changed()
+        })
+        .inner;
+    if changed {
+        *value = (minutes * 60 + rest).clamp(1, 3600);
+    }
+    changed
 }
 /// Draws the active screen and runs the clock. Returns what the App must do.
 pub(super) fn show(ui: &mut egui::Ui, slot: &mut Option<State>, board: &Board<'_>) -> Vec<Event> {
@@ -207,15 +246,19 @@ pub(super) fn show(ui: &mut egui::Ui, slot: &mut Option<State>, board: &Board<'_
                 Some(false) => close = true,
                 None => {}
             }
-            if let Screen::Setup(setup) = &state.screen
-                && ui
-                    .ctx()
-                    .data(|d| d.get_temp::<bool>(egui::Id::new("session_save_plan")))
-                    .unwrap_or(false)
-            {
-                ui.ctx()
-                    .data_mut(|d| d.remove::<bool>(egui::Id::new("session_save_plan")));
-                events.push(Event::SavePlan(setup.plan.clone()));
+            if let Screen::Setup(setup) = &state.screen {
+                let (save, delete) = ui.ctx().data_mut(|d| {
+                    (
+                        d.remove_temp::<String>(egui::Id::new("session_save_plan")),
+                        d.remove_temp::<String>(egui::Id::new("session_delete_plan")),
+                    )
+                });
+                if let Some(name) = save {
+                    events.push(Event::SavePlan(name, setup.plan.clone()));
+                }
+                if let Some(name) = delete {
+                    events.push(Event::DeletePlan(name));
+                }
             }
         }
         Screen::Running(run) => {
@@ -381,12 +424,29 @@ fn setup_screen(ui: &mut egui::Ui, setup: &mut Setup, board: &Board<'_>) -> Opti
                                     ui.set_width(column);
                                     section(ui, Text::SessionPlans);
                                     ui.horizontal_wrapped(|ui| {
-                                        for (name, plan) in board.plans {
-                                            if ui
-                                                .selectable_label(setup.plan == *plan, name)
-                                                .clicked()
-                                            {
-                                                setup.plan = plan.clone();
+                                        for plan in board.plans {
+                                            let chip = ui.selectable_label(
+                                                setup.plan == plan.stages,
+                                                &plan.name,
+                                            );
+                                            let chip = chip.on_hover_text(plan_label(&plan.stages));
+                                            if chip.clicked() {
+                                                setup.plan = plan.stages.clone();
+                                            }
+                                            if plan.saved {
+                                                chip.context_menu(|ui| {
+                                                    if ui.button(text(Text::DeletePlan)).clicked() {
+                                                        ui.ctx().data_mut(|d| {
+                                                            d.insert_temp(
+                                                                egui::Id::new(
+                                                                    "session_delete_plan",
+                                                                ),
+                                                                plan.name.clone(),
+                                                            )
+                                                        });
+                                                        ui.close();
+                                                    }
+                                                });
                                             }
                                         }
                                     });
@@ -421,6 +481,26 @@ fn setup_screen(ui: &mut egui::Ui, setup: &mut Setup, board: &Board<'_>) -> Opti
                                             }
                                         }
                                     });
+                                    // Any other time, typed or dragged.
+                                    ui.horizontal(|ui| {
+                                        let custom = setup.plan.is_empty()
+                                            && !session::INTERVALS.contains(&setup.interval);
+                                        ui.add_enabled_ui(true, |ui| {
+                                            let label = egui::RichText::new(text(Text::CustomTime));
+                                            ui.label(if custom {
+                                                label.strong()
+                                            } else {
+                                                label.weak()
+                                            });
+                                        });
+                                        if duration_edit(
+                                            ui,
+                                            "session_interval",
+                                            &mut setup.interval,
+                                        ) {
+                                            setup.plan.clear();
+                                        }
+                                    });
                                     section(ui, Text::SessionPlan);
                                     let mut remove = None;
                                     for (index, stage) in setup.plan.iter_mut().enumerate() {
@@ -430,9 +510,20 @@ fn setup_screen(ui: &mut egui::Ui, setup: &mut Setup, board: &Board<'_>) -> Opti
                                                     .range(1..=999),
                                             );
                                             ui.label("×");
-                                            egui::ComboBox::from_id_salt(("session_stage", index))
-                                                .selected_text(seconds(stage.seconds as u64))
-                                                .show_ui(ui, |ui| {
+                                            duration_edit(
+                                                ui,
+                                                ("session_stage", index),
+                                                &mut stage.seconds,
+                                            );
+                                            egui::ComboBox::from_id_salt((
+                                                "session_stage_preset",
+                                                index,
+                                            ))
+                                            .selected_text("")
+                                            .width(0.)
+                                            .show_ui(
+                                                ui,
+                                                |ui| {
                                                     for interval in session::INTERVALS {
                                                         ui.selectable_value(
                                                             &mut stage.seconds,
@@ -440,7 +531,8 @@ fn setup_screen(ui: &mut egui::Ui, setup: &mut Setup, board: &Board<'_>) -> Opti
                                                             seconds(interval as u64),
                                                         );
                                                     }
-                                                });
+                                                },
+                                            );
                                             if moth_ui::icons::button(
                                                 ui,
                                                 moth_ui::icons::Icon::Close,
@@ -464,21 +556,85 @@ fn setup_screen(ui: &mut egui::Ui, setup: &mut Setup, board: &Board<'_>) -> Opti
                                                 .map_or(setup.interval, |s| s.seconds);
                                             setup.plan.push(Stage { count: 5, seconds });
                                         }
-                                        if !setup.plan.is_empty()
+                                        let naming = egui::Id::new("session_plan_name");
+                                        let mut name =
+                                            ui.ctx().data(|d| d.get_temp::<String>(naming));
+                                        if name.is_none()
+                                            && !setup.plan.is_empty()
                                             && !board
                                                 .plans
                                                 .iter()
-                                                .any(|(_, plan)| *plan == setup.plan)
+                                                .any(|plan| plan.stages == setup.plan)
                                             && ui.button(text(Text::SavePlan)).clicked()
                                         {
+                                            name = Some(String::new());
+                                        }
+                                        if name.is_some() {
                                             ui.ctx().data_mut(|d| {
                                                 d.insert_temp(
-                                                    egui::Id::new("session_save_plan"),
-                                                    true,
+                                                    naming,
+                                                    name.clone().unwrap_or_default(),
                                                 )
                                             });
                                         }
                                     });
+                                    // Naming a plan before it joins "My plans".
+                                    let naming = egui::Id::new("session_plan_name");
+                                    if let Some(mut name) =
+                                        ui.ctx().data(|d| d.get_temp::<String>(naming))
+                                    {
+                                        let mut done = None;
+                                        ui.horizontal(|ui| {
+                                            let field = ui.add(
+                                                egui::TextEdit::singleline(&mut name)
+                                                    .hint_text(text(Text::PlanName))
+                                                    .char_limit(40)
+                                                    .desired_width(160.),
+                                            );
+                                            if field.gained_focus()
+                                                || !field.has_focus() && name.is_empty()
+                                            {
+                                                field.request_focus();
+                                            }
+                                            let entered = field.lost_focus()
+                                                && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                            let named = !name.trim().is_empty();
+                                            if ui
+                                                .add_enabled(
+                                                    named,
+                                                    egui::Button::new(text(Text::Save)),
+                                                )
+                                                .clicked()
+                                                || entered && named
+                                            {
+                                                done = Some(true);
+                                            }
+                                            if ui.button(text(Text::Cancel)).clicked()
+                                                || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                                            {
+                                                done = Some(false);
+                                            }
+                                        });
+                                        ui.ctx().data_mut(|d| match done {
+                                            Some(save) => {
+                                                d.remove::<String>(naming);
+                                                if save {
+                                                    let clean: String = name
+                                                        .trim()
+                                                        .chars()
+                                                        .filter(|c| !matches!(c, ';' | '=' | '|'))
+                                                        .collect();
+                                                    d.insert_temp(
+                                                        egui::Id::new("session_save_plan"),
+                                                        clean,
+                                                    );
+                                                }
+                                            }
+                                            None => {
+                                                d.insert_temp(naming, name);
+                                            }
+                                        });
+                                    }
                                     let (count, time) = setup.total(images);
                                     ui.weak(if images == 0 {
                                         text(Text::NoSessionImages).to_owned()

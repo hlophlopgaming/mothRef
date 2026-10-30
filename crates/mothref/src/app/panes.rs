@@ -56,6 +56,7 @@ pane! {
     input: InputState,
     window_closed: bool,
     session_window: Option<session_window::SavedWindow>,
+    restoring: Option<(winit::dpi::PhysicalSize<u32>, Instant)>,
 }
 
 impl Pane {
@@ -233,6 +234,7 @@ impl App {
             input,
             window_closed: false,
             session_window: None,
+            restoring: None,
             shell: shell::Parts {
                 window: Some(window),
                 ctx,

@@ -506,3 +506,6 @@ SummaryHint = Click an image to show it on the board; the star marks it for a re
 TotalLabel = total
 NoSessionImages = No images to show
 CloseSummary = Close
+CustomTime = Custom:
+PlanName = Plan name
+DeletePlan = Delete plan
