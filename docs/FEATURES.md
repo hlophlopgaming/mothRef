@@ -67,7 +67,8 @@ Priorities: **P0** = no release without it, **P1** = required for 1.0, **P2** = 
 | Library sorting, views, board stats, library health | MothRef | P1 | M5 |
 | Palette export/import (`.gpl`, `.ase`) | MothRef | P1 | M6 |
 | SpaceMouse | PureRef 2.0 | P2 | after 1.0 |
-| Composition overlays, ruler with calibration (target 1.5) | MothRef, This Ruler Rules | P2 | M10 |
+| Composition overlays | MothRef | P1 | M4 |
+| Ruler with calibration (target 1.5) | This Ruler Rules | P2 | M10 |
 | Mirror view | MothRef | P2 | M10 |
 | Value check, perspective helper (target 2.0) | MothRef | P2 | M10 |
 | Video references | FrameRef | P2 | M10 |

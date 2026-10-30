@@ -47,8 +47,8 @@ Latest release: **0.1.0-alpha.16** (2026-10-29). Pre-alpha builds for Windows, m
 | M2.5 Zoom performance and memory modes | 🟡 almost | Measurements on reference hardware |
 | M2.6 UI architecture | ✅ done | Native and CI screenshot qualification |
 | M3 Everyday usability, window, overlay | 🟡 mostly done | Native window qualification (Windows, macOS, Plasma 6, GNOME 47+) |
-| M4 PureRef 2 parity | ⚪ not started | Minimap is already done |
-| M5 Library | 🟡 first slice | Start screen, search, tags, pins and folder stacks exist; index, previews, trash, health open |
+| M4 PureRef 2 parity | 🟡 started | Minimap, groups and drawing sessions done; drawing, grid, GIFs, rich notes, composition overlays open |
+| M5 Library | 🟡 first slice | Start screen, search, tags, pins and folder stacks exist; index, previews, health open |
 | M6 Milanote-style elements | ⚪ not started | |
 | M7 Import compatibility and 1.0 qualification | ⚪ not started | |
 | M8–M16 | after 1.0 | |
@@ -63,7 +63,7 @@ Latest release: **0.1.0-alpha.16** (2026-10-29). Pre-alpha builds for Windows, m
 | **0.3 public alpha** | M2, M2.5, M2.6 | Replaces BeeRef, opens `.bee` and `.pur`, zooms faster than PureRef | **next** |
 | 0.7 beta | M3, M4 | Feature parity with PureRef 2 | |
 | 1.0 | M5, M6, M7 | All P0 and P1 features, all performance targets | |
-| 1.5 | M10 items tagged 1.5, M12, M14 | Composition overlays and ruler, Obsidian interop, capture integrations | |
+| 1.5 | M10 items tagged 1.5, M12, M14 | Ruler with calibration, Obsidian interop, capture integrations | |
 | 2.0 | M8, M9, M10 items tagged 2.0, M16 | Web build and collaboration; value and perspective tools; Excalidraw, draw.io, UML/XML, Blender, video frames | |
 | 1.x, no target yet | M11, M13, M15, untagged M10 items | Review workflow, CLI, PDF references, other artist tools | |
 
@@ -327,6 +327,12 @@ Navigation, shortcuts, the command palette, batch editing and board conversion a
 Open:
 
 - [ ] View a group on its own in View mode (moved from M3)
+- [ ] Composition overlays per image (moved from M10 on 2026-10-30) (non-destructive, toggled and cycled by a rebindable shortcut, with a touch path); line color and opacity:
+  - Grids: rule of thirds, N × M grid, square grid for transferring a drawing (cell size or cell count), center cross
+  - Golden ratio: phi grid (0.382 / 0.618), golden spiral in four orientations with mirroring, golden triangles; for non-golden images choose "stretch to image" or "largest inscribed golden rectangle"
+  - Diagonals: main diagonals, baroque and sinister diagonals, dynamic-symmetry armature (diagonals plus perpendiculars from the corners)
+  - Aspect-ratio frames (3:4, 4:3, 1:1, 16:9, custom) to check how a reference would crop
+  - Overlays are stored in normalized coordinates of the visible (cropped) image, so they follow crop, rotation and flip; drawn on top of the image texture with the item transform; scene export offers "with overlays"
 - [ ] Freehand drawing (3 widths, eraser, color) and shapes (ellipse, rectangle, line)
 - [ ] Drawing pens: marker (thin / thick) and highlighter (thin / thick), each with color selection
 - [ ] Washi tape: textured tape strips from a built-in set, plus user-added custom textures
@@ -363,7 +369,7 @@ A first slice shipped early ([decision 0004](docs/decisions/0004-reference-works
 - [ ] Stacks are real folders on disk (Procreate-style: drop a board on a board to create a stack); "smart collections" are saved tag filters
 - [ ] File manager thumbnails for `.moth` and `.bee` (BeeRef #152): Windows `IThumbnailProvider`, freedesktop thumbnailer, macOS Quick Look extension
 - [ ] Board preview image rendered off the UI thread after a checkpoint and stored as a rebuildable chunk (format version bump); used by the start screen, file-manager thumbnails and the note-app sidecar (M12)
-- [ ] Library sidebar (All boards, Pinned, Stacks and Smart collections exist): All boards, Recent, Pinned, Trash (boards deleted from the library go to the OS trash and are listed here), Stacks, Smart collections; counts next to each entry; an icon per entry (pin for Pinned); stack colors picked from a palette and repeated as a dot on the board cards
+- [ ] Library sidebar (All boards, Pinned, Stacks and Smart collections exist): All boards, Recent, Pinned, Stacks, Smart collections. No in-app trash: deleting a board moves it straight to the OS trash (maintainer, 2026-10-30); counts next to each entry; an icon per entry (pin for Pinned); stack colors picked from a palette and repeated as a dot on the board cards
 - [ ] Library view options: sort by last opened, last edited, name, item count or size; grid / list view; tag filter chips above the grid — last opened / name sort and grid / list exist
 - [ ] Board cards show item count, last edited time, file size, pinned state and an "unsaved" badge when a recovery journal is pending; the library header shows totals
 - [ ] Embed images or link to files on disk (PR): a per-image choice, linked images reload when the file changes; a format change (schema bump, migration, corpus files, `docs/FORMAT.md`). Moved from M2 on 2026-10-26
@@ -384,7 +390,7 @@ A first slice shipped early ([decision 0004](docs/decisions/0004-reference-works
 **Exit criteria:** all P0 and P1 features done, all performance targets met. → **Release 1.0**
 
 - [ ] Extend `.pur` import coverage for supported content and geometry; verify preservation through `.moth` save/reopen, with explicit reports for unsupported content
-- [ ] Corpus covers every released PureRef 1.x and 2.x version; import → `.moth` save → reopen tests in CI
+- [ ] Corpus covers the most widely used PureRef 1.x and 2.x versions, as far as their installers (Linux `.deb` packages first) can still be obtained; files are made with each version's normal UI only (clean-room rule); import → `.moth` save → reopen tests in CI. Full coverage of every release is not a goal (maintainer, 2026-10-30)
 - [ ] Format discrepancies are fixed upstream in LazyRef, not in a private fork
 
 ---
@@ -421,12 +427,6 @@ Release targets: items tagged **1.5** ship by 1.5, items tagged **2.0** by 2.0; 
 
 Tools that help while painting from references, not only while collecting them. None of them changes the source image; they are view settings or overlays.
 
-- [ ] **1.5** Composition overlays per image (non-destructive, toggled and cycled by a rebindable shortcut, with a touch path); line color and opacity:
-  - Grids: rule of thirds, N × M grid, square grid for transferring a drawing (cell size or cell count), center cross
-  - Golden ratio: phi grid (0.382 / 0.618), golden spiral in four orientations with mirroring, golden triangles; for non-golden images choose "stretch to image" or "largest inscribed golden rectangle"
-  - Diagonals: main diagonals, baroque and sinister diagonals, dynamic-symmetry armature (diagonals plus perpendiculars from the corners)
-  - Aspect-ratio frames (3:4, 4:3, 1:1, 16:9, custom) to check how a reference would crop
-  - Overlays are stored in normalized coordinates of the visible (cropped) image, so they follow crop, rotation and flip; drawn on top of the image texture with the item transform; scene export offers "with overlays"
 - [ ] **1.5** Ruler and measuring (ideas from [This Ruler Rules](https://github.com/TheSmallKiwi/ThisRulerRules), MIT; no code copied without attribution in `THIRD_PARTY.md`):
   - A measurement is a child item of an image, stored in source-image pixel coordinates; it survives move, scale, any rotation, flip and crop. No screen-anchored lines and no PNG round-trip
   - Calibration per image (enter what a segment represents: cm, m, inches, "heads" or a custom unit; recalibrating recomputes every measurement) and an optional board-wide scale for size-comparison collages
