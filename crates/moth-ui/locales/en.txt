@@ -516,3 +516,4 @@ BoardMany = boards
 ItemOne = item
 ItemFew = items
 ItemMany = items
+MinimapImages = Images in the navigator

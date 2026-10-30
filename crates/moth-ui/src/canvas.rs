@@ -46,6 +46,8 @@ pub struct Minimap {
     pub opacity: f32,
     /// Fraction of the way from the viewport center to the selected placement.
     pub distance: f32,
+    /// Real thumbnails drawn by the renderer; otherwise plain item blocks.
+    pub images: bool,
 }
 /// Draws bounded metadata samples and returns a normalized click for camera navigation.
 pub fn minimap(
@@ -92,9 +94,16 @@ pub fn minimap(
         .constrain_to(viewport)
         .show(ctx, |ui| {
             ui.set_opacity(options.opacity);
-            // No fill here: the renderer draws the panel and the thumbnails below this
-            // layer (see `minimap_layout`); egui only adds the viewport frame on top.
+            // With images the renderer draws the panel and the thumbnails below this
+            // layer (see `minimap_layout`) and egui only adds the viewport frame; without
+            // them the panel and item blocks are drawn here.
             let frame = egui::Frame::new()
+                .fill(if options.images {
+                    crate::theme::CLEAR
+                } else {
+                    ui.visuals().panel_fill
+                })
+                .corner_radius(crate::tokens(ui.ctx()).radius_card)
                 .inner_margin(crate::tokens(ui.ctx()).space_badge as i8)
                 .show(ui, |ui| {
                     let (r, response) = ui.allocate_exact_size(
@@ -103,7 +112,16 @@ pub fn minimap(
                     );
                     let transform =
                         |p: egui::Pos2| r.min + egui::vec2(p.x * r.width(), p.y * r.height());
-                    let _ = items;
+                    if !options.images {
+                        for item in items {
+                            ui.painter().rect_filled(
+                                egui::Rect::from_min_max(transform(item.min), transform(item.max))
+                                    .intersect(r),
+                                crate::tokens(ui.ctx()).radius_none as f32,
+                                crate::tokens(ui.ctx()).minimap_item,
+                            );
+                        }
+                    }
                     map = Some(r);
                     // What the window shows: a soft veil outside, a clear frame inside.
                     let view =
@@ -124,7 +142,7 @@ pub fn minimap(
                         ));
                     }
                 });
-            panel = Some(frame.response.rect);
+            panel = options.images.then_some(frame.response.rect);
         });
     ctx.data_mut(|d| {
         d.insert_temp(
@@ -245,6 +263,7 @@ mod tests {
                             &[],
                             egui::vec2(100., 200.),
                             Minimap {
+                                images: false,
                                 size: crate::Tokens::LIGHT.minimap_max,
                                 alignment,
                                 opacity: 1.,
@@ -296,6 +315,7 @@ mod tests {
                             &[],
                             board,
                             Minimap {
+                                images: false,
                                 size: tokens.minimap_max,
                                 alignment: egui::Align2::LEFT_BOTTOM,
                                 opacity: 0.5,

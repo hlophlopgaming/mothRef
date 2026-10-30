@@ -5,6 +5,8 @@ use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Navigator preference: show image thumbnails instead of blocks.
+    MinimapImages,
     /// Plural form of a count noun.
     BoardOne,
     /// Plural form of a count noun.
@@ -1607,6 +1609,7 @@ mod tests {
                             &[],
                             egui::vec2(1., 1.),
                             canvas::Minimap {
+                                images: false,
                                 size: Tokens::DARK.minimap_max,
                                 alignment: egui::Align2::LEFT_BOTTOM,
                                 opacity: 1.,

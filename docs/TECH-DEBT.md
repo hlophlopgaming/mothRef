@@ -229,7 +229,7 @@ before closing an item.
 - [ ] **DD-6 — Group backdrops on custom canvases.** The neutral backdrop color
   is faint on a mid-tone custom canvas; consider deriving the neutral swatch from
   the canvas (a step lighter or darker) instead of a fixed gray.
-- [ ] **DD-7 — Minimap opacity setting.** The thumbnails and panel are drawn by
+- [x] **DD-7 — Minimap opacity setting.** Fixed 2026-10-30: the opacity fades the panel and the thumbnails, and Settings › Canvas › "Images in the navigator" switches back to plain blocks. The thumbnails and panel are drawn by
   the renderer and ignore the "Minimap opacity" preference; apply it to the panel
   and the thumbnails.
 

@@ -2912,7 +2912,7 @@ fn minimap_items(
     camera: moth_scene::Camera,
 ) -> Vec<moth_scene::Item> {
     const MAX_THUMBNAILS: usize = 4000;
-    let (Some((panel, map, _)), Some(bounds)) = (layout, scene.bounds()) else {
+    let (Some((panel, map, opacity)), Some(bounds)) = (layout, scene.bounds()) else {
         return Vec::new();
     };
     let world = |p: egui::Pos2| camera.world([p.x, p.y]);
@@ -2925,14 +2925,20 @@ fn minimap_items(
             height: b[1] - a[1],
         }
     };
-    let mut items = vec![moth_scene::Item::group(
+    if opacity <= 0. {
+        return Vec::new();
+    }
+    // The navigator's opacity preference reaches the renderer through the copies.
+    let mut backdrop = moth_scene::Item::group(
         moth_scene::Group {
             title: String::new(),
             color: moth_scene::GROUP_COLORS,
         },
         to_world(panel),
         Default::default(),
-    )];
+    );
+    backdrop.transform.opacity = opacity;
+    let mut items = vec![backdrop];
     let scale = egui::vec2(map.width() / bounds.width, map.height() / bounds.height);
     let mut sorted: Vec<_> = scene
         .items()
@@ -2954,6 +2960,7 @@ fn minimap_items(
         if rect.valid() {
             let mut copy = item.clone();
             copy.rect = rect;
+            copy.transform.opacity *= opacity;
             items.push(copy);
         }
     }

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix the navigator ignoring its opacity since it shows thumbnails. Settings › Canvas › "Images in the navigator" switches between thumbnails and plain blocks.
 - A calmer interface: the title bar is a quiet strip where the open board sits on a soft tab and other boards are plain text, with a dot for unsaved changes; icon buttons have no box until you point at them; the Layers drawer is a compact tree with fold arrows, group colors and type icons; selection bars show plain words; the arrange question after adding images is a small dialog with four picture choices, and Esc leaves the images as they are; the shortcut hint is a short-lived pill without buttons.
 - The minimap shows real thumbnails of the board with the visible area framed. A custom selection color stays the accent while selected rows and buttons get a calm tone of it. Context menus list only what applies to the click, in compact rows. The added-images toast and the library follow the design: a recovery card in the corner instead of a blocking dialog, a search field with an icon, and counts like "1 board" in plain text.
 - Select all (Ctrl/⌘+A) selects everything on the board, or inside the group you entered.

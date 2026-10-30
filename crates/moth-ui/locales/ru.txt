@@ -516,3 +516,4 @@ BoardMany = досок
 ItemOne = элемент
 ItemFew = элемента
 ItemMany = элементов
+MinimapImages = Картинки в навигаторе

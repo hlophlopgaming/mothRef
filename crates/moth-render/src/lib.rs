@@ -1160,11 +1160,15 @@ impl Registry {
         classes: &mut Vec<usize>,
     ) {
         if let Some(group) = item.group_style() {
-            let style = self
+            let mut style = self
                 .backdrops
                 .get(group.color as usize)
                 .copied()
                 .unwrap_or(self.panel);
+            // Real groups keep the identity transform; app overlays (the minimap) fade
+            // their panel through the item's opacity.
+            style.fill[3] *= item.transform.opacity;
+            style.border[3] *= item.transform.opacity;
             instances.push(backdrop_instance(
                 item.rect,
                 style,

@@ -513,6 +513,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
                         alignment: settings.minimap_alignment(),
                         opacity: settings.minimap_opacity / 100.,
                         distance: settings.minimap_distance / 100.,
+                        images: settings.minimap_images,
                     },
                     egui::Rect::from_min_max(
                         normalize(world_min[0], world_min[1]),
