@@ -198,6 +198,41 @@ No format or feature change is intended. Native checks above remain unexecuted.
   large boards and a native GNOME run. Deferred by the maintainer (2026-10-29).
   Windows 10 (no documented API) and other Wayland compositors also keep the tint.
 
+## Design debt
+
+Snapshot: 2026-10-30, after the first two polish passes (title bar, tabs, ghost
+icon buttons, Layers drawer, minimap thumbnails, custom selection tones, compact
+context menus, added-images toast, library recovery card). Compare each screen
+with the design canvas (DESIGN.md) and check both themes and a custom accent
+before closing an item.
+
+- [ ] **DD-1 — Library board cards.** No hover or pressed state on a card; the
+  "Tags" button floats under the card on its own; the lone "All" filter chip
+  looks like a stray button. Cards should lift on hover, keep actions (pin, tags,
+  more) in one row that appears on hover or touch, and show filters only when
+  there is more than one.
+- [ ] **DD-2 — Settings window.** Section structure and density: long lists of
+  equal-weight rows, controls of mixed widths, diagnostics next to everyday
+  preferences. Group rows under short headings, align controls in one column,
+  keep "For developers" visually apart.
+- [ ] **DD-3 — Command palette (Ctrl/⌘+K) and shortcut cheat sheet.** Plain
+  lists without icons, grouping or a highlighted match; the cheat sheet repeats
+  category headings without hierarchy. Rows should show icon, label and shortcut
+  chip, matches highlighted, recent commands first.
+- [ ] **DD-4 — Empty board.** Works, but is a bordered box with two dark
+  buttons; screen 5 of the design is warmer: a short line on what the board is
+  for, drop target, paste and open as equal choices, and a hint for the browser
+  and screenshot flows.
+- [ ] **DD-5 — Selection badge.** "8 selected · 1800 × 1687" sits under the
+  minimap in the bottom-left corner and repeats what the selection frame shows.
+  Fold the count into the selection bar and show the size only while resizing.
+- [ ] **DD-6 — Group backdrops on custom canvases.** The neutral backdrop color
+  is faint on a mid-tone custom canvas; consider deriving the neutral swatch from
+  the canvas (a step lighter or darker) instead of a fixed gray.
+- [ ] **DD-7 — Minimap opacity setting.** The thumbnails and panel are drawn by
+  the renderer and ignore the "Minimap opacity" preference; apply it to the panel
+  and the thumbnails.
+
 ## Already resolved or intentionally outside this backlog
 
 - Storage temporary objects and atomic replacement from the M0 follow-up are
