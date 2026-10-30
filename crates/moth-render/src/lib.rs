@@ -157,10 +157,7 @@ fn backdrop_instance(
         frame,
         region: style.fill,
         layer: 0,
-        lod: style
-            .radius
-            .map_or(BACKDROP_RADIUS * camera.zoom, |radius| radius)
-            * scale,
+        lod: style.radius.unwrap_or(BACKDROP_RADIUS * camera.zoom) * scale,
         appearance: style.border,
     }
 }

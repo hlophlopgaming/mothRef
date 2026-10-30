@@ -1259,7 +1259,7 @@ mod tests {
             ))
             .unwrap();
         state.request(Request::Save(path.clone())).unwrap();
-        assert_eq!(std::fs::read(&path).unwrap()[4], 5);
+        assert_eq!(std::fs::read(&path).unwrap()[4], board::SCHEMA);
         let loaded = board::read(&mut File::open(path).unwrap()).unwrap();
         assert_eq!(loaded.scene.get(original.id).unwrap().transform, transform);
         state.journal = None;
