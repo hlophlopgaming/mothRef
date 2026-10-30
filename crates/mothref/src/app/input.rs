@@ -21,8 +21,6 @@ pub(super) struct InputState {
     pub rejected: std::collections::HashSet<u64>,
     /// A pen or touch press moved past [`TAP_SLOP`] and became a drag.
     pub engaged: bool,
-    /// Zoom drag: screen anchor and the last vertical position.
-    pub zoom_drag: Option<([f32; 2], f32)>,
 }
 
 /// A pen tip or finger always wobbles a little on a tap; below this distance in

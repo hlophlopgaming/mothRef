@@ -9,6 +9,7 @@ use moth_ui::Actions;
 pub(super) struct Canvas<'a> {
     pub board: &'a Document,
     pub tools: &'a mut super::tools::Tools,
+    pub tool: &'a mut super::gesture::Tool,
     pub settings: &'a mut super::settings::Settings,
     pub enabled: &'a [bool],
     pub registry: &'a super::bindings::Registry,
@@ -33,6 +34,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
     let Canvas {
         board,
         tools,
+        tool,
         settings,
         enabled,
         registry,
@@ -52,7 +54,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
     let mut view = board.view;
     moth_ui::canvas::clear_minimap(ui.ctx());
     if !compact {
-        intents.extend(tools.show(ui, board, settings, enabled, registry));
+        intents.extend(tools.show(ui, board, settings, tool, enabled, registry));
     }
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
@@ -82,7 +84,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
             if over_canvas || drag.is_some() {
                 ui.ctx().set_cursor_icon(if resizing.is_some() {
                     egui::CursorIcon::ResizeNwSe
-                } else if tools.picking || tools.coordinates {
+                } else if tool.picks() {
                     egui::CursorIcon::Crosshair
                 } else if drag.is_some_and(|(_, _, pan)| pan) || moving.is_some() {
                     egui::CursorIcon::Grabbing

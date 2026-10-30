@@ -35,14 +35,10 @@ pane! {
     camera_active: bool,
     items_active: bool,
     motion: motion::DragMotion,
-    moving: Option<(Uuid, Rect)>,
-    resizing: Option<resize::Resize>,
-    drag_duplicate: bool,
     editing: Option<Editing>,
-    drag: Option<([f32; 2], [f32; 2], bool)>,
-    drag_anchor: Option<[f32; 2]>,
-    drag_pointer: Option<(moth_platform::input::Kind, u64)>,
     input: InputState,
+    gesture: gesture::Gesture,
+    settling: gesture::Settling,
 }
 
 impl Pane {
@@ -253,14 +249,10 @@ impl App {
             camera_active: false,
             items_active: false,
             motion: motion::DragMotion::default(),
-            moving: None,
-            resizing: None,
-            drag_duplicate: false,
             editing: None,
-            drag: None,
-            drag_anchor: None,
-            drag_pointer: None,
             input,
+            gesture: gesture::Gesture::default(),
+            settling: gesture::Settling::default(),
             shell: shell::Parts {
                 window: Some(window),
                 ctx,

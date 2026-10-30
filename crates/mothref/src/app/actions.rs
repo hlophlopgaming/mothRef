@@ -414,15 +414,13 @@ impl App {
             }
             SampleColor => {
                 self.workspace.board.notices.export_message = None;
-                self.tools.picking = true;
-                self.tools.coordinates = false;
+                self.tool = super::gesture::Tool::PickColor;
                 self.tools.picker_open = true;
                 return;
             }
             CoordinatePicker => {
                 self.workspace.board.notices.export_message = None;
-                self.tools.coordinates = true;
-                self.tools.picking = false;
+                self.tool = super::gesture::Tool::PickInfo;
                 self.tools.picker_open = true;
                 return;
             }

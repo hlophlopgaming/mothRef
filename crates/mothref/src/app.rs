@@ -51,6 +51,7 @@ mod canvas;
 mod chrome;
 mod document;
 mod floating;
+mod gesture;
 mod groups;
 mod input;
 mod intent;
@@ -96,21 +97,18 @@ pub struct App {
     camera_active: bool,
     items_active: bool,
     motion: motion::DragMotion,
-    moving: Option<(Uuid, Rect)>,
-    resizing: Option<resize::Resize>,
-    drag_duplicate: bool,
     editing: Option<Editing>,
     pub startup_error: Option<anyhow::Error>,
     shell: shell::Shell,
     /// This main window's mode, pin and auxiliary windows; see `panes.rs`.
     window: panes::WindowState,
-    drag: Option<([f32; 2], [f32; 2], bool)>,
-    /// World point under the pointer when an item or selection drag started. The
-    /// screen start in `drag` is rebuilt from it whenever the camera moves, so zooming
-    /// or wheel-panning mid-drag keeps the dragged images under the cursor.
-    drag_anchor: Option<[f32; 2]>,
-    drag_pointer: Option<(moth_platform::input::Kind, u64)>,
     input: InputState,
+    /// What a press on the canvas does; see `gesture.rs`.
+    tool: gesture::Tool,
+    /// What the current press is doing, until release.
+    gesture: gesture::Gesture,
+    /// What the last gesture left on screen until the journal acknowledges it.
+    settling: gesture::Settling,
     startup: Vec<std::path::PathBuf>,
     /// The other main windows; see `panes.rs`.
     panes: Vec<panes::Pane>,
@@ -161,17 +159,14 @@ impl App {
             camera_active: false,
             items_active: false,
             motion: motion::DragMotion::default(),
-            moving: None,
-            resizing: None,
-            drag_duplicate: false,
             editing: None,
             startup_error: None,
             window: panes::WindowState::new(shell.wake()),
             shell,
-            drag: None,
-            drag_anchor: None,
-            drag_pointer: None,
             input: InputState::default(),
+            tool: gesture::Tool::default(),
+            gesture: gesture::Gesture::default(),
+            settling: gesture::Settling::default(),
             startup: std::env::args_os()
                 .skip(1)
                 .filter(|a| a != "--software")
@@ -329,10 +324,8 @@ impl App {
         self.motion = motion::DragMotion::default();
         self.shell.refinements.clear();
         self.camera_motion.stop();
-        self.drag = None;
-        self.moving = None;
-        self.resizing = None;
-        self.drag_pointer = None;
+        self.gesture = gesture::Gesture::Idle;
+        self.settling.resize = None;
         self.input.pending_focus = None;
         self.input.held.clear();
         self.input.pan_time = None;
@@ -1330,9 +1323,7 @@ impl App {
         if let Input::Pointer(p) = &input
             && p.phase == Phase::Down
             && p.button == 1
-            && self.moving.is_none()
-            && self.drag.is_none()
-            && self.resizing.is_none()
+            && !self.dragging()
             && let Some(edge) = self.resize_edge(p.position, p.kind)
         {
             self.drag_window(Some(edge));
@@ -1462,96 +1453,16 @@ impl App {
                 {
                     return;
                 }
-                if (self.tools.picking || self.tools.coordinates)
-                    && p.phase == Phase::Down
-                    && self.workspace.board.idle()
-                {
-                    let world = self.workspace.board.view.camera.world(p.position);
-                    let id = self
-                        .workspace
-                        .board
-                        .scene
-                        .query(Rect {
-                            x: world[0],
-                            y: world[1],
-                            width: 1. / self.workspace.board.view.camera.zoom,
-                            height: 1. / self.workspace.board.view.camera.zoom,
-                        })
-                        .into_iter()
-                        .rev()
-                        .find(|item| {
-                            item.blob().is_some()
-                                && item.rect.contains_rotated(item.transform.rotation, world)
-                        })
-                        .map(|item| item.id);
-                    if let Some(id) = id {
-                        self.workspace
-                            .persist(moth_platform::boards::Request::Export(
-                                if self.tools.coordinates {
-                                    moth_platform::export::Target::Info { id, point: world }
-                                } else {
-                                    moth_platform::export::Target::Sample {
-                                        id,
-                                        point: world,
-                                        format: match self.tools.color_format {
-                                            1 => moth_platform::export::ColorFormat::Rgb,
-                                            2 => moth_platform::export::ColorFormat::Hsv,
-                                            _ => moth_platform::export::ColorFormat::Hex,
-                                        },
-                                    }
-                                },
-                            ));
-                    }
-                    self.tools.picking = false;
-                    self.tools.coordinates = false;
+                if self.tool.picks() && p.phase == Phase::Down && self.workspace.board.idle() {
+                    self.pick(p.position);
                     return;
                 }
-                if self
-                    .resizing
-                    .as_ref()
-                    .is_some_and(|resize| !resize.released)
-                {
-                    if self.drag_pointer != Some((p.kind, p.id)) {
-                        self.resizing = None;
-                        self.drag_pointer = None;
-                    } else {
-                        let _ = self.input.gestures.update(p);
-                        match p.phase {
-                            Phase::Move => {
-                                let point = self.workspace.board.view.camera.world(p.position);
-                                if let Some(resize) = &mut self.resizing {
-                                    resize.update(point);
-                                    resize.wrap_note(self.shell.context());
-                                }
-                            }
-                            Phase::Up => {
-                                let mut resize = self
-                                    .resizing
-                                    .take()
-                                    .expect("active resize owns the pointer");
-                                resize.update(self.workspace.board.view.camera.world(p.position));
-                                resize.wrap_note(self.shell.context());
-                                let commands = resize.commands();
-                                if !commands.is_empty() {
-                                    let pending = self.workspace.board.intake.in_flight;
-                                    self.workspace.persist_batch(
-                                        commands.into_iter().map(|c| (c, None)).collect(),
-                                    );
-                                    if self.workspace.board.intake.in_flight > pending {
-                                        resize.released = true;
-                                        self.resizing = Some(resize);
-                                    }
-                                }
-                                self.drag_pointer = None;
-                            }
-                            Phase::Cancel => {
-                                self.resizing = None;
-                                self.drag_pointer = None;
-                            }
-                            _ => {}
-                        }
+                if let gesture::Gesture::Resize { owner, .. } = &self.gesture {
+                    if *owner == (p.kind, p.id) {
+                        self.resize_pointer(p);
                         return;
                     }
+                    self.gesture = gesture::Gesture::Idle;
                 }
                 if p.phase == Phase::Down
                     && p.button == 1
@@ -1562,35 +1473,14 @@ impl App {
                     && self.settings.show_outlines
                     && self.workspace.board.idle()
                     && self.input.pointer_action == Some(bindings::Action::MoveDrag)
+                    && self.start_resize(p)
                 {
-                    let items = self
-                        .workspace
-                        .board
-                        .selection
-                        .iter()
-                        .filter_map(|id| self.workspace.board.scene.get(*id).cloned())
-                        .collect();
-                    self.resizing = resize::Resize::start(
-                        items,
-                        self.workspace.board.view.camera,
-                        p.position,
-                        moth_ui::tokens(self.shell.context()).space_m as f32,
-                    );
-                    if self.resizing.is_some() {
-                        let _ = self.input.gestures.update(p);
-                        self.camera_motion.stop();
-                        self.motion
-                            .start(self.workspace.board.view.camera.world(p.position), 0.);
-                        self.drag_pointer = Some((p.kind, p.id));
-                        return;
-                    }
+                    return;
                 }
                 if let Some(g) = self.input.gestures.update(p) {
                     self.camera_motion.stop();
                     self.camera_motion.pan_sample(g.pan, Instant::now());
-                    self.drag = None;
-                    self.moving = None;
-                    self.drag_pointer = None;
+                    self.gesture = gesture::Gesture::Idle;
                     self.workspace.board.view.camera.zoom_at(g.anchor, g.zoom);
                     self.workspace.board.view.camera.origin[0] -=
                         g.pan[0] / self.workspace.board.view.camera.zoom;
@@ -1603,251 +1493,347 @@ impl App {
                         .release(Instant::now(), self.settings.reduced_motion);
                 }
                 if self.input.gestures.active() {
-                    self.drag = None;
-                    self.moving = None;
-                    self.drag_pointer = None;
+                    self.gesture = gesture::Gesture::Idle;
                     return;
                 }
                 if self
-                    .drag_pointer
+                    .gesture
+                    .owner()
                     .is_some_and(|owner| owner != (p.kind, p.id))
                 {
                     return;
                 }
                 if self.input.pointer_action == Some(bindings::Action::ZoomDrag)
-                    && (p.phase == Phase::Down || self.input.zoom_drag.is_some())
+                    && (p.phase == Phase::Down
+                        || matches!(self.gesture, gesture::Gesture::ZoomDrag { .. }))
                 {
                     self.zoom_drag(p);
                     return;
                 }
                 match p.phase {
-                    Phase::Down
-                        if self
-                            .workspace
-                            .board
-                            .view
-                            .viewport
-                            .contains(egui::pos2(p.position[0], p.position[1])) =>
-                    {
-                        self.camera_motion.stop();
-                        self.camera_motion.clear_samples();
-                        if !p.pan && self.workspace.board.idle() {
-                            let world = self.workspace.board.view.camera.world(p.position);
-                            let chip = groups::chip_rects(self.shell.context())
-                                .into_iter()
-                                .rev()
-                                .find(|(_, rect)| {
-                                    rect.contains(egui::pos2(p.position[0], p.position[1]))
-                                })
-                                .map(|(id, _)| id);
-                            let board = &mut self.workspace.board;
-                            let raw = chip.or_else(|| {
-                                board
-                                    .scene
-                                    .query(Rect {
-                                        x: world[0],
-                                        y: world[1],
-                                        width: 1. / board.view.camera.zoom,
-                                        height: 1. / board.view.camera.zoom,
-                                    })
-                                    .into_iter()
-                                    .rev()
-                                    // The index only guarantees the rotated envelope, so the
-                                    // click must still land inside the frame itself.
-                                    .find(|item| {
-                                        board.presented(item)
-                                            && item
-                                                .rect
-                                                .contains_rotated(item.transform.rotation, world)
-                                    })
-                                    .map(|item| item.id)
-                            });
-                            selection::keep_entered(&board.scene, &mut board.entered, raw);
-                            // The backdrop of the entered group is canvas: it starts a
-                            // selection rectangle among its members. Its title chip still
-                            // grabs the whole group.
-                            if let Some(hit) =
-                                raw.filter(|hit| Some(*hit) != board.entered || chip.is_some())
-                            {
-                                let id = if chip.is_some() {
-                                    hit
-                                } else {
-                                    selection::target(&board.scene, board.entered, hit)
-                                };
-                                if !selection::click(
-                                    &mut board.selection,
-                                    id,
-                                    self.input.pointer_action,
-                                ) {
-                                    selection::with_members(
-                                        &board.scene,
-                                        &mut board.selection,
-                                        Some(id),
-                                    );
-                                    return;
-                                }
-                                selection::with_members(&board.scene, &mut board.selection, None);
-                                if let Some(item) = board.scene.get(id) {
-                                    self.moving = Some((item.id, item.rect));
-                                }
-                                self.drag_duplicate = self.input.pointer_action
-                                    == Some(bindings::Action::DuplicateDrag);
-                            }
-                        }
-                        if self.moving.is_some() {
-                            let mut bounds = egui::Rect::NOTHING;
-                            for item in self
-                                .workspace
-                                .board
-                                .selection
-                                .iter()
-                                .filter_map(|id| self.workspace.board.scene.get(*id))
-                            {
-                                let corners = item.rect.rotated_envelope(item.transform.rotation);
-                                bounds = bounds.union(egui::Rect::from_min_max(
-                                    egui::pos2(corners.lower()[0], corners.lower()[1]),
-                                    egui::pos2(corners.upper()[0], corners.upper()[1]),
-                                ));
-                            }
-                            self.motion.start(
-                                self.workspace.board.view.camera.world(p.position),
-                                bounds.size().length() * self.workspace.board.view.camera.zoom,
-                            );
-                            self.motion.sample(p.position[0], Instant::now());
-                        }
-                        self.drag = Some((p.position, p.position, p.pan));
-                        self.drag_anchor = Some(self.workspace.board.view.camera.world(p.position));
-                        self.drag_pointer = Some((p.kind, p.id));
-                        self.input.engaged = p.kind == moth_platform::input::Kind::Mouse;
-                    }
-                    Phase::Move => {
-                        if let Some((start, _, _)) = self.drag
-                            && !self.input.focus_drag(start, p.position)
-                        {
-                            return;
-                        }
-                        if let Some((start, _, _)) = self.drag
-                            && !self.input.engaged
-                        {
-                            if (p.position[0] - start[0]).hypot(p.position[1] - start[1])
-                                < input::TAP_SLOP
-                            {
-                                return;
-                            }
-                            self.input.engaged = true;
-                        }
-                        if self.moving.is_some() {
-                            self.motion.sample(p.position[0], Instant::now());
-                        }
-                        if let Some((_, last, pan)) = self.drag.as_mut() {
-                            if *pan {
-                                if p.kind != moth_platform::input::Kind::Mouse {
-                                    self.camera_motion.pan_sample(
-                                        [p.position[0] - last[0], p.position[1] - last[1]],
-                                        Instant::now(),
-                                    );
-                                }
-                                self.workspace.board.view.camera.origin[0] -= (p.position[0]
-                                    - last[0])
-                                    / self.workspace.board.view.camera.zoom;
-                                self.workspace.board.view.camera.origin[1] -= (p.position[1]
-                                    - last[1])
-                                    / self.workspace.board.view.camera.zoom;
-                            }
-                            *last = p.position;
-                        }
-                    }
-                    Phase::Up => {
-                        self.drag_pointer = None;
-                        // A pen or finger tap that stayed within the slop is a click.
-                        if !self.input.engaged
-                            && let Some((start, _, _)) = self.drag
-                        {
-                            p.position = start;
-                        }
-                        if let Some((start, _, false)) = self.drag.take() {
-                            if let Some((_id, _rect)) = self.moving.take() {
-                                let dx = (p.position[0] - start[0])
-                                    / self.workspace.board.view.camera.zoom;
-                                let dy = (p.position[1] - start[1])
-                                    / self.workspace.board.view.camera.zoom;
-                                if !self.tools.locked
-                                    && !self.workspace.board.intake.loading
-                                    && dx.abs() + dy.abs()
-                                        > 0.5 / self.workspace.board.view.camera.zoom
-                                {
-                                    let mut items: Vec<_> = self
-                                        .workspace
-                                        .board
-                                        .selection
-                                        .iter()
-                                        .filter_map(|id| self.workspace.board.scene.get(*id))
-                                        .collect();
-                                    items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
-                                    let mut commands = arrange::translate(
-                                        &items,
-                                        [dx, dy],
-                                        self.drag_duplicate,
-                                        self.workspace.board.scene.top(),
-                                    );
-                                    if !self.drag_duplicate {
-                                        let world =
-                                            self.workspace.board.view.camera.world(p.position);
-                                        commands.extend(groups::regroup(
-                                            &self.workspace.board.scene,
-                                            &self.workspace.board.selection,
-                                            world,
-                                        ));
-                                    }
-                                    self.motion.release(
-                                        &commands,
-                                        &self.workspace.board.scene,
-                                        [dx, dy],
-                                        self.settings.reduced_motion,
-                                    );
-                                    self.workspace.persist_batch(
-                                        commands.into_iter().map(|c| (c, None)).collect(),
-                                    );
-                                }
-                                return;
-                            }
-                            let a = self.workspace.board.view.camera.world(start);
-                            let b = self.workspace.board.view.camera.world(p.position);
-                            let rect = Rect {
-                                x: a[0].min(b[0]),
-                                y: a[1].min(b[1]),
-                                width: (a[0] - b[0])
-                                    .abs()
-                                    .max(1. / self.workspace.board.view.camera.zoom),
-                                height: (a[1] - b[1])
-                                    .abs()
-                                    .max(1. / self.workspace.board.view.camera.zoom),
-                            };
-                            let images_only = self.workspace.board.view.compact
-                                && self.workspace.board.appearance.images_only;
-                            let board = &mut self.workspace.board;
-                            let entered = board.entered;
-                            let hits: HashSet<_> = board
-                                .scene
-                                .query(rect)
-                                .iter()
-                                .filter(|i| !images_only || i.blob().is_some())
-                                .filter(|i| Some(i.id) != entered)
-                                .map(|i| selection::target(&board.scene, entered, i.id))
-                                .collect();
-                            selection::area(
-                                &mut board.selection,
-                                hits.into_iter(),
-                                self.input.pointer_action,
-                            );
-                            selection::with_members(&board.scene, &mut board.selection, None);
-                        }
-                    }
+                    Phase::Down => self.press(p),
+                    Phase::Move => self.drag_to(p),
+                    Phase::Up => self.release(p),
                     Phase::Cancel => self.cancel_drag(),
-                    _ => {}
                 }
             }
         }
+    }
+    /// A one-shot picker tool: reports the color or details of the image under
+    /// `position`, then falls back to selection.
+    fn pick(&mut self, position: [f32; 2]) {
+        let world = self.workspace.board.view.camera.world(position);
+        let id = self
+            .workspace
+            .board
+            .scene
+            .query(Rect {
+                x: world[0],
+                y: world[1],
+                width: 1. / self.workspace.board.view.camera.zoom,
+                height: 1. / self.workspace.board.view.camera.zoom,
+            })
+            .into_iter()
+            .rev()
+            .find(|item| {
+                item.blob().is_some() && item.rect.contains_rotated(item.transform.rotation, world)
+            })
+            .map(|item| item.id);
+        if let Some(id) = id {
+            self.workspace
+                .persist(moth_platform::boards::Request::Export(
+                    if self.tool == gesture::Tool::PickInfo {
+                        moth_platform::export::Target::Info { id, point: world }
+                    } else {
+                        moth_platform::export::Target::Sample {
+                            id,
+                            point: world,
+                            format: match self.tools.color_format {
+                                1 => moth_platform::export::ColorFormat::Rgb,
+                                2 => moth_platform::export::ColorFormat::Hsv,
+                                _ => moth_platform::export::ColorFormat::Hex,
+                            },
+                        }
+                    },
+                ));
+        }
+        self.tool = gesture::Tool::Select;
+    }
+    /// A press on a selection handle starts resizing the selection.
+    fn start_resize(&mut self, p: moth_platform::input::Pointer) -> bool {
+        let items = self
+            .workspace
+            .board
+            .selection
+            .iter()
+            .filter_map(|id| self.workspace.board.scene.get(*id).cloned())
+            .collect();
+        let Some(resize) = resize::Resize::start(
+            items,
+            self.workspace.board.view.camera,
+            p.position,
+            moth_ui::tokens(self.shell.context()).space_m as f32,
+        ) else {
+            return false;
+        };
+        let _ = self.input.gestures.update(p);
+        self.camera_motion.stop();
+        self.motion
+            .start(self.workspace.board.view.camera.world(p.position), 0.);
+        // A new resize replaces one still waiting for the journal.
+        self.settling.resize = None;
+        self.gesture = gesture::Gesture::Resize {
+            owner: (p.kind, p.id),
+            resize,
+        };
+        true
+    }
+    /// Pointer events of the pointer that owns a resize.
+    fn resize_pointer(&mut self, p: moth_platform::input::Pointer) {
+        let _ = self.input.gestures.update(p);
+        match p.phase {
+            Phase::Move => {
+                let point = self.workspace.board.view.camera.world(p.position);
+                if let gesture::Gesture::Resize { resize, .. } = &mut self.gesture {
+                    resize.update(point);
+                    resize.wrap_note(self.shell.context());
+                }
+            }
+            Phase::Up => {
+                let gesture::Gesture::Resize { mut resize, .. } = std::mem::take(&mut self.gesture)
+                else {
+                    return;
+                };
+                resize.update(self.workspace.board.view.camera.world(p.position));
+                resize.wrap_note(self.shell.context());
+                let commands = resize.commands();
+                if !commands.is_empty() {
+                    let pending = self.workspace.board.intake.in_flight;
+                    self.workspace
+                        .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+                    if self.workspace.board.intake.in_flight > pending {
+                        resize.released = true;
+                        self.settling.resize = Some(resize);
+                    }
+                }
+            }
+            Phase::Cancel => self.gesture = gesture::Gesture::Idle,
+            _ => {}
+        }
+    }
+    /// A press on the canvas: grabs the item under it (moving the selection),
+    /// starts a selection rectangle on empty canvas, or pans with a pan binding.
+    fn press(&mut self, p: moth_platform::input::Pointer) {
+        self.camera_motion.stop();
+        self.camera_motion.clear_samples();
+        let mut grabbed = None;
+        if !p.pan && self.workspace.board.idle() {
+            let world = self.workspace.board.view.camera.world(p.position);
+            let chip = groups::chip_rects(self.shell.context())
+                .into_iter()
+                .rev()
+                .find(|(_, rect)| rect.contains(egui::pos2(p.position[0], p.position[1])))
+                .map(|(id, _)| id);
+            let board = &mut self.workspace.board;
+            let raw = chip.or_else(|| {
+                board
+                    .scene
+                    .query(Rect {
+                        x: world[0],
+                        y: world[1],
+                        width: 1. / board.view.camera.zoom,
+                        height: 1. / board.view.camera.zoom,
+                    })
+                    .into_iter()
+                    .rev()
+                    // The index only guarantees the rotated envelope, so the
+                    // click must still land inside the frame itself.
+                    .find(|item| {
+                        board.presented(item)
+                            && item.rect.contains_rotated(item.transform.rotation, world)
+                    })
+                    .map(|item| item.id)
+            });
+            selection::keep_entered(&board.scene, &mut board.entered, raw);
+            // The backdrop of the entered group is canvas: it starts a selection
+            // rectangle among its members. Its title chip still grabs the whole group.
+            if let Some(hit) = raw.filter(|hit| Some(*hit) != board.entered || chip.is_some()) {
+                let id = if chip.is_some() {
+                    hit
+                } else {
+                    selection::target(&board.scene, board.entered, hit)
+                };
+                if !selection::click(&mut board.selection, id, self.input.pointer_action) {
+                    selection::with_members(&board.scene, &mut board.selection, Some(id));
+                    return;
+                }
+                selection::with_members(&board.scene, &mut board.selection, None);
+                grabbed = board.scene.get(id).map(|item| (item.id, item.rect));
+                self.settling.copies =
+                    self.input.pointer_action == Some(bindings::Action::DuplicateDrag);
+            }
+        }
+        if grabbed.is_some() {
+            let mut bounds = egui::Rect::NOTHING;
+            for item in self
+                .workspace
+                .board
+                .selection
+                .iter()
+                .filter_map(|id| self.workspace.board.scene.get(*id))
+            {
+                let corners = item.rect.rotated_envelope(item.transform.rotation);
+                bounds = bounds.union(egui::Rect::from_min_max(
+                    egui::pos2(corners.lower()[0], corners.lower()[1]),
+                    egui::pos2(corners.upper()[0], corners.upper()[1]),
+                ));
+            }
+            self.motion.start(
+                self.workspace.board.view.camera.world(p.position),
+                bounds.size().length() * self.workspace.board.view.camera.zoom,
+            );
+            self.motion.sample(p.position[0], Instant::now());
+        }
+        let press = gesture::Press {
+            owner: (p.kind, p.id),
+            start: p.position,
+            last: p.position,
+            anchor: self.workspace.board.view.camera.world(p.position),
+        };
+        self.gesture = match grabbed {
+            _ if p.pan => gesture::Gesture::Pan(press),
+            Some(grabbed) => gesture::Gesture::Move {
+                press,
+                grabbed,
+                duplicate: self.settling.copies,
+            },
+            None => gesture::Gesture::Marquee(press),
+        };
+        self.input.engaged = p.kind == moth_platform::input::Kind::Mouse;
+    }
+    /// The owning pointer moved during a press.
+    fn drag_to(&mut self, p: moth_platform::input::Pointer) {
+        let Some((start, _, _)) = self.gesture.drag() else {
+            return;
+        };
+        if !self.input.focus_drag(start, p.position) {
+            return;
+        }
+        if !self.input.engaged {
+            if (p.position[0] - start[0]).hypot(p.position[1] - start[1]) < input::TAP_SLOP {
+                return;
+            }
+            self.input.engaged = true;
+        }
+        if self.gesture.grabbed().is_some() {
+            self.motion.sample(p.position[0], Instant::now());
+        }
+        let pan = matches!(self.gesture, gesture::Gesture::Pan(_));
+        let Some(press) = self.gesture.press_mut() else {
+            return;
+        };
+        if pan {
+            let last = press.last;
+            if p.kind != moth_platform::input::Kind::Mouse {
+                self.camera_motion.pan_sample(
+                    [p.position[0] - last[0], p.position[1] - last[1]],
+                    Instant::now(),
+                );
+            }
+            let camera = &mut self.workspace.board.view.camera;
+            camera.origin[0] -= (p.position[0] - last[0]) / camera.zoom;
+            camera.origin[1] -= (p.position[1] - last[1]) / camera.zoom;
+        }
+        press.last = p.position;
+    }
+    /// The owning pointer was released: a move drops the selection (or copies),
+    /// a selection rectangle selects what it covers.
+    fn release(&mut self, mut p: moth_platform::input::Pointer) {
+        // A pen or finger tap that stayed within the slop is a click.
+        if !self.input.engaged
+            && let Some((start, _, _)) = self.gesture.drag()
+        {
+            p.position = start;
+        }
+        match std::mem::take(&mut self.gesture) {
+            gesture::Gesture::Move {
+                press, duplicate, ..
+            } => self.drop_selection(press.start, p.position, duplicate),
+            gesture::Gesture::Marquee(press) => self.select_area(press.start, p.position),
+            _ => {}
+        }
+    }
+    /// Commits a move of the selection by the screen distance `start → end`.
+    fn drop_selection(&mut self, start: [f32; 2], end: [f32; 2], duplicate: bool) {
+        let zoom = self.workspace.board.view.camera.zoom;
+        let dx = (end[0] - start[0]) / zoom;
+        let dy = (end[1] - start[1]) / zoom;
+        if self.tools.locked
+            || self.workspace.board.intake.loading
+            || dx.abs() + dy.abs() <= 0.5 / zoom
+        {
+            return;
+        }
+        let mut items: Vec<_> = self
+            .workspace
+            .board
+            .selection
+            .iter()
+            .filter_map(|id| self.workspace.board.scene.get(*id))
+            .collect();
+        items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
+        let mut commands = arrange::translate(
+            &items,
+            [dx, dy],
+            duplicate,
+            self.workspace.board.scene.top(),
+        );
+        if !duplicate {
+            let world = self.workspace.board.view.camera.world(end);
+            commands.extend(groups::regroup(
+                &self.workspace.board.scene,
+                &self.workspace.board.selection,
+                world,
+            ));
+        }
+        self.motion.release(
+            &commands,
+            &self.workspace.board.scene,
+            [dx, dy],
+            self.settings.reduced_motion,
+        );
+        self.workspace
+            .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+    }
+    /// Selects what a selection rectangle from `start` to `end` (screen) covers.
+    fn select_area(&mut self, start: [f32; 2], end: [f32; 2]) {
+        let zoom = self.workspace.board.view.camera.zoom;
+        let a = self.workspace.board.view.camera.world(start);
+        let b = self.workspace.board.view.camera.world(end);
+        let rect = Rect {
+            x: a[0].min(b[0]),
+            y: a[1].min(b[1]),
+            width: (a[0] - b[0]).abs().max(1. / zoom),
+            height: (a[1] - b[1]).abs().max(1. / zoom),
+        };
+        let images_only =
+            self.workspace.board.view.compact && self.workspace.board.appearance.images_only;
+        let board = &mut self.workspace.board;
+        let entered = board.entered;
+        let hits: HashSet<_> = board
+            .scene
+            .query(rect)
+            .iter()
+            .filter(|i| !images_only || i.blob().is_some())
+            .filter(|i| Some(i.id) != entered)
+            .map(|i| selection::target(&board.scene, entered, i.id))
+            .collect();
+        selection::area(
+            &mut board.selection,
+            hits.into_iter(),
+            self.input.pointer_action,
+        );
+        selection::with_members(&board.scene, &mut board.selection, None);
     }
     /// Vertical drag zooms around the press point: up zooms in, down zooms out.
     /// Reachable with a mouse wheel button or a pen side button plus Ctrl/⌘.
@@ -1862,37 +1848,47 @@ impl App {
                     .contains(egui::pos2(p.position[0], p.position[1])) =>
             {
                 self.camera_motion.stop();
-                self.input.zoom_drag = Some((p.position, p.position[1]));
-                self.drag_pointer = Some((p.kind, p.id));
+                self.gesture = gesture::Gesture::ZoomDrag {
+                    owner: (p.kind, p.id),
+                    anchor: p.position,
+                    last: p.position[1],
+                };
             }
             Phase::Move => {
-                if let Some((anchor, last)) = &mut self.input.zoom_drag {
+                if let gesture::Gesture::ZoomDrag { anchor, last, .. } = &mut self.gesture {
                     let factor = ((*last - p.position[1]) * input::ZOOM_DRAG_RATE).exp();
                     *last = p.position[1];
                     self.workspace.board.view.camera.zoom_at(*anchor, factor);
-                    self.rebase_drag();
                 }
             }
             Phase::Up | Phase::Cancel => {
-                self.input.zoom_drag = None;
-                self.drag_pointer = None;
+                if matches!(self.gesture, gesture::Gesture::ZoomDrag { .. }) {
+                    self.gesture = gesture::Gesture::Idle;
+                }
             }
             _ => {}
         }
+    }
+    /// A press, move or resize is under way, or a released resize is settling;
+    /// keyboard panning and window-edge resizing wait for it.
+    fn dragging(&self) -> bool {
+        self.gesture.press().is_some()
+            || self.gesture.resize().is_some()
+            || self.settling.resize.is_some()
     }
     /// Keeps a board-space drag glued to the board while the camera changes under it.
     /// Item moves, rubber-band selection and cancel all derive their world delta from
     /// `(last - start) / zoom`; re-projecting `start` makes that equal to the real
     /// world distance under the current camera instead of mixing two zoom levels.
     fn rebase_drag(&mut self) {
-        if let (Some((start, _, false)), Some(anchor)) = (self.drag.as_mut(), self.drag_anchor) {
-            *start = self.workspace.board.view.camera.screen(anchor);
+        let pan = matches!(self.gesture, gesture::Gesture::Pan(_));
+        if !pan && let Some(press) = self.gesture.press_mut() {
+            press.start = self.workspace.board.view.camera.screen(press.anchor);
         }
     }
     fn cancel_drag(&mut self) {
-        self.resizing = None;
-        if self.moving.is_some()
-            && let Some((a, b, false)) = self.drag
+        if let Some((a, b, false)) = self.gesture.drag()
+            && self.gesture.grabbed().is_some()
         {
             let items = self
                 .workspace
@@ -1911,10 +1907,8 @@ impl App {
                 self.settings.reduced_motion,
             );
         }
-        self.drag = None;
-        self.moving = None;
-        self.resizing = None;
-        self.drag_pointer = None;
+        self.gesture = gesture::Gesture::Idle;
+        self.settling.resize = None;
         self.input.pending_focus = None;
         self.input.held.clear();
         self.input.pan_time = None;
@@ -2010,8 +2004,7 @@ impl App {
             self.workspace.board.intake.in_flight == 0,
         );
         if self.workspace.board.idle()
-            && self.resizing.as_ref().is_some_and(|resize| resize.released)
-            && let Some(resize) = self.resizing.take()
+            && let Some(resize) = self.settling.resize.take()
         {
             for item in resize.previews() {
                 self.workspace.board.motion.remove(item.id);
@@ -2032,8 +2025,7 @@ impl App {
                 || self.workspace.library
                 || self.tools.blocked()
                 || self.settings_window.open
-                || self.drag.is_some()
-                || self.resizing.is_some()
+                || self.dragging()
                 || self.window.moving_window
                 || self.window.picking_window;
             if let Some(delta) = self.input.flying_pan(
@@ -2057,7 +2049,7 @@ impl App {
         self.motion.step(
             Instant::now(),
             self.settings.reduced_motion,
-            self.moving.is_some(),
+            self.gesture.grabbed().is_some(),
         );
         if self.workspace.board.file.discarded {
             self.finish_close(event_loop)?;
@@ -2103,6 +2095,7 @@ impl App {
         });
         let window_titles = self.window_titles();
         let plans = self.session_plans();
+        let dragging = self.dragging();
         let mut output = {
             let state = self.shell.egui.as_mut();
             let gpu = self.shell.gpu.as_ref();
@@ -2179,22 +2172,21 @@ impl App {
                         canvas::Canvas {
                             board: &self.workspace.board,
                             tools: &mut self.tools,
+                            tool: &mut self.tool,
                             settings: &mut self.settings,
                             enabled: &enabled,
                             registry: &self.shortcuts.registry,
                             editing: &mut self.editing,
-                            drag: self.drag,
-                            moving: self.moving,
-                            resizing: self.resizing.as_ref(),
+                            drag: self.gesture.drag(),
+                            moving: self.gesture.grabbed(),
+                            resizing: self.gesture.resize().or(self.settling.resize.as_ref()),
                             pointer: self.input.cursor.filter(|_| self.input.hover),
                             motion: &self.motion,
-                            duplicate: self.drag_duplicate,
+                            duplicate: self.settling.copies,
                             gpu,
                             compact: compact_mode,
                             overlay: self.window.overlay.is_some(),
-                            activate: self.moving.is_none()
-                                && self.drag.is_none()
-                                && self.resizing.is_none(),
+                            activate: !dragging,
                             secondary_gesture: self
                                 .input
                                 .pointer_action
@@ -2269,9 +2261,7 @@ impl App {
                 ));
             })
         };
-        if self.moving.is_none()
-            && self.drag.is_none()
-            && self.resizing.is_none()
+        if !self.dragging()
             && let Some(position) = ctx.pointer_hover_pos()
             && let Some(edge) =
                 self.resize_edge([position.x, position.y], moth_platform::input::Kind::Mouse)
@@ -2341,7 +2331,7 @@ impl App {
             ),
             None => (frame, self.workspace.board.view.camera),
         };
-        let mut previews: Vec<_> = if self.moving.is_some()
+        let mut previews: Vec<_> = if self.gesture.grabbed().is_some()
             && !self.tools.locked
             && !self.workspace.board.intake.loading
             && !self.workspace.library
@@ -2352,8 +2342,12 @@ impl App {
                 .iter()
                 .filter_map(|id| self.workspace.board.scene.get(*id))
                 .map(|item| {
-                    self.motion
-                        .preview(item, self.drag, camera.zoom, self.settings.reduced_motion)
+                    self.motion.preview(
+                        item,
+                        self.gesture.drag(),
+                        camera.zoom,
+                        self.settings.reduced_motion,
+                    )
                 })
                 .collect()
         } else {
@@ -2363,7 +2357,7 @@ impl App {
             self.motion
                 .returning(self.motion.now(), self.settings.reduced_motion),
         );
-        if let Some(resizing) = &self.resizing {
+        if let Some(resizing) = self.gesture.resize().or(self.settling.resize.as_ref()) {
             previews.extend(resizing.previews());
         }
         let drag_ids: HashSet<_> = previews.iter().map(|item| item.id).collect();
@@ -2386,7 +2380,7 @@ impl App {
         if !previews.is_empty() {
             visible.retain(|item| {
                 !preview_ids.contains(&item.id)
-                    || (self.drag_duplicate && self.moving.is_some() && drag_ids.contains(&item.id))
+                    || (self.gesture.duplicate() && drag_ids.contains(&item.id))
             });
             visible.extend(previews.iter());
             visible.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
@@ -2503,10 +2497,8 @@ impl ApplicationHandler<Wake> for App {
     fn suspended(&mut self, _: &ActiveEventLoop) {
         self.input.adapter.event(&WindowEvent::Focused(false), 1.);
         self.input.native_pressed = None;
-        self.drag = None;
-        self.moving = None;
-        self.resizing = None;
-        self.drag_pointer = None;
+        self.gesture = gesture::Gesture::Idle;
+        self.settling.resize = None;
         self.input.gestures.cancel();
         self.input.modifiers = egui::Modifiers::NONE;
         self.input.super_key = false;
@@ -2821,19 +2813,15 @@ impl App {
                     pressed,
                     event.repeat,
                     blocked,
-                    self.drag.is_some() || self.resizing.is_some(),
+                    self.dragging(),
                 );
-                if pressed
-                    && key == egui::Key::Escape
-                    && (self.drag.is_some() || self.resizing.is_some())
-                {
+                if pressed && key == egui::Key::Escape && self.dragging() {
                     self.cancel_drag();
                     return;
                 }
                 if pressed && key == egui::Key::Escape {
                     let closing_surface = self.tools.blocked()
-                        || self.tools.picking
-                        || self.tools.coordinates
+                        || self.tool.picks()
                         || self.tools.picker_open
                         || self.settings_window.open
                         || self.window.moving_window
@@ -2849,8 +2837,7 @@ impl App {
                         return;
                     }
                     if !blocked {
-                        self.tools.picking = false;
-                        self.tools.coordinates = false;
+                        self.tool = gesture::Tool::Select;
                         self.tools.picker_open = false;
                         self.tools.inspector = false;
                         self.tools.export_open = false;

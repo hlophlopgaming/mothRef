@@ -25,8 +25,6 @@ pub(super) struct Tools {
     pub disk_cache_busy: bool,
     pub clear_disk_cache: bool,
     pub bake_pending: usize,
-    pub coordinates: bool,
-    pub picking: bool,
     pub color_format: u8,
     pub factor: f32,
     pub path: String,
@@ -56,8 +54,6 @@ impl Default for Tools {
             disk_cache_busy: false,
             clear_disk_cache: false,
             bake_pending: 0,
-            coordinates: false,
-            picking: false,
             color_format: 0,
             factor: 1.,
             path: String::new(),
@@ -131,6 +127,7 @@ impl Tools {
         ui: &mut egui::Ui,
         board: &Document,
         settings: &mut Settings,
+        tool: &mut super::gesture::Tool,
         enabled: &[bool],
         registry: &Registry,
     ) -> Vec<Intent> {
@@ -352,8 +349,8 @@ impl Tools {
                         ui.selectable_value(&mut self.color_format, i as u8, label);
                     }
                 });
-                if self.picking || self.coordinates {
-                    ui.label(text(if self.coordinates {
+                if tool.picks() {
+                    ui.label(text(if *tool == super::gesture::Tool::PickInfo {
                         Text::PickCoordinatesHint
                     } else {
                         Text::PickColorHint
@@ -373,8 +370,7 @@ impl Tools {
             });
         self.picker_open = open;
         if !open {
-            self.picking = false;
-            self.coordinates = false;
+            *tool = super::gesture::Tool::Select;
         }
         intents
     }
