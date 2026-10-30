@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix boards with groups opening as a partial "Untitled" board from the library.
 - Fix a group backdrop that sometimes stayed too large after an image was dragged out of it.
 - Fix the View window bar popping in place instead of sliding down from the top edge; it now slides in and out quickly.
 - Fix the navigator ignoring its opacity since it shows thumbnails. Settings › Canvas › "Images in the navigator" switches between thumbnails and plain blocks.

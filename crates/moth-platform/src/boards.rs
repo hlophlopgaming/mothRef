@@ -487,13 +487,26 @@ impl State {
             bounds: loaded.scene.bounds(),
             ..LoadBatch::default()
         };
-        let mut items: Vec<_> = loaded.scene.items().collect();
-        let mut copied = HashSet::new();
-        items.sort_unstable_by_key(|item| {
+        // Groups first, parents before their members, so no insert names a group
+        // that does not exist yet; then everything else in file order, which keeps
+        // reading the originals sequential.
+        let parents_first = loaded.scene.items_parent_first();
+        let mut items: Vec<_> = parents_first
+            .iter()
+            .copied()
+            .filter(|i| i.is_group())
+            .collect();
+        let mut rest: Vec<_> = parents_first
+            .into_iter()
+            .filter(|i| !i.is_group())
+            .collect();
+        rest.sort_by_key(|item| {
             item.blob()
                 .and_then(|hash| loaded.blobs.get(&hash))
                 .map_or(u64::MAX, |blob| blob.offset)
         });
+        items.extend(rest);
+        let mut copied = HashSet::new();
         let loading = (|| -> io::Result<()> {
             for item in items {
                 if let Some(hash) = item.blob()
@@ -1235,6 +1248,24 @@ mod tests {
             clipboard: None,
             undo_limit: 256,
         }
+    }
+    #[test]
+    fn opening_inserts_groups_before_their_members() {
+        let mut state = state();
+        let path = state.storage.base_directory().unwrap().join("groups.moth");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let bytes = include_bytes!("../../../corpus/moth/v6.moth");
+        std::fs::write(&path, bytes).unwrap();
+        let expected = board::read(&mut std::io::Cursor::new(&bytes[..])).unwrap();
+        assert!(expected.scene.items().any(|i| i.parent.is_some()));
+        state.request(Request::Open(path)).unwrap();
+        assert_eq!(state.scene.len(), expected.scene.len());
+        for item in expected.scene.items() {
+            assert_eq!(state.scene.get(item.id).unwrap().parent, item.parent);
+        }
+        state.journal = None;
+        state.journal_guard = None;
+        state.storage.discard().unwrap();
     }
     #[test]
     fn saving_schema_three_atomically_upgrades_appearance() {
