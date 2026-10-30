@@ -43,12 +43,15 @@ pub struct Backdrop {
     pub fill: [f32; 4],
     /// One-pixel edge.
     pub border: [f32; 4],
+    /// Corner radius in pixels whatever the zoom; `None` scales with the board.
+    pub radius: Option<f32>,
 }
 impl Default for Backdrop {
     fn default() -> Self {
         Self {
             fill: [0.5, 0.5, 0.5, 0.08],
             border: [0.5, 0.5, 0.5, 0.35],
+            radius: None,
         }
     }
 }
@@ -154,7 +157,10 @@ fn backdrop_instance(
         frame,
         region: style.fill,
         layer: 0,
-        lod: BACKDROP_RADIUS * camera.zoom * scale,
+        lod: style
+            .radius
+            .map_or(BACKDROP_RADIUS * camera.zoom, |radius| radius)
+            * scale,
         appearance: style.border,
     }
 }
@@ -227,6 +233,9 @@ pub struct Registry {
     pub keep_all: bool,
     /// Group backdrop colors by palette code; the app sets them from theme tokens.
     pub backdrops: [Backdrop; moth_scene::GROUP_COLORS as usize],
+    /// Opaque panels the app draws through the backdrop pipeline (the minimap), marked
+    /// by a group color code past the palette.
+    pub panel: Backdrop,
     /// UI GPU resources share the renderer lifetime and are freed with the registry.
     pub ui: egui_wgpu::Renderer,
     arrays: Vec<Option<Array>>,
@@ -375,6 +384,7 @@ impl Registry {
             tile_threshold: moth_io::MAX_SIDE,
             keep_all: false,
             backdrops: [Backdrop::default(); moth_scene::GROUP_COLORS as usize],
+            panel: Backdrop::default(),
             ui: egui_wgpu::Renderer::new(device, format, Default::default()),
             arrays: Vec::new(),
             locations: std::collections::HashMap::new(),
@@ -1065,6 +1075,39 @@ impl Registry {
         }
         Ok(())
     }
+    /// Draws on top of what is already in the target (the minimap) with resident
+    /// textures only: nothing is requested, grown or shrunk for these items.
+    pub fn draw_overlay(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: Target<'_>,
+        items: &[&Item],
+        camera: Camera,
+    ) {
+        if items.is_empty() {
+            return;
+        }
+        let scale = target.view.texture().width() as f32 / target.screen[0];
+        let mut instances = Vec::with_capacity(items.len().min(MAX_INSTANCES));
+        let mut classes = Vec::with_capacity(items.len().min(MAX_INSTANCES));
+        let target = Target {
+            grid: false,
+            ..target
+        };
+        let mut first = false;
+        for item in items {
+            self.item_instances(item, camera, target, scale, &mut instances, &mut classes);
+            if instances.len() >= MAX_INSTANCES {
+                self.submit_instances(device, queue, target, &instances, &classes, &mut first);
+                instances.clear();
+                classes.clear();
+            }
+        }
+        if !instances.is_empty() {
+            self.submit_instances(device, queue, target, &instances, &classes, &mut first);
+        }
+    }
     fn draw_images(
         &mut self,
         device: &wgpu::Device,
@@ -1117,7 +1160,11 @@ impl Registry {
         classes: &mut Vec<usize>,
     ) {
         if let Some(group) = item.group_style() {
-            let style = self.backdrops[group.color as usize % self.backdrops.len()];
+            let style = self
+                .backdrops
+                .get(group.color as usize)
+                .copied()
+                .unwrap_or(self.panel);
             instances.push(backdrop_instance(
                 item.rect,
                 style,

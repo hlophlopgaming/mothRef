@@ -57,7 +57,14 @@ pub fn minimap(
     camera: egui::Rect,
 ) -> Option<egui::Pos2> {
     let mut click = None;
+    let (mut panel, mut map) = (None, None);
     if viewport.width() < 600. || viewport.height() < 300. {
+        ctx.data_mut(|d| {
+            d.insert_temp::<Option<(egui::Rect, egui::Rect, f32)>>(
+                egui::Id::new("minimap_layout"),
+                None,
+            )
+        });
         return None;
     }
     let tokens = crate::tokens(ctx);
@@ -85,9 +92,9 @@ pub fn minimap(
         .constrain_to(viewport)
         .show(ctx, |ui| {
             ui.set_opacity(options.opacity);
-            egui::Frame::new()
-                .fill(ui.visuals().panel_fill)
-                .corner_radius(crate::tokens(ui.ctx()).radius_card)
+            // No fill here: the renderer draws the panel and the thumbnails below this
+            // layer (see `minimap_layout`); egui only adds the viewport frame on top.
+            let frame = egui::Frame::new()
                 .inner_margin(crate::tokens(ui.ctx()).space_badge as i8)
                 .show(ui, |ui| {
                     let (r, response) = ui.allocate_exact_size(
@@ -96,19 +103,16 @@ pub fn minimap(
                     );
                     let transform =
                         |p: egui::Pos2| r.min + egui::vec2(p.x * r.width(), p.y * r.height());
-                    for item in items {
-                        ui.painter().rect_filled(
-                            egui::Rect::from_min_max(transform(item.min), transform(item.max))
-                                .intersect(r),
-                            crate::tokens(ui.ctx()).radius_none as f32,
-                            crate::tokens(ui.ctx()).minimap_item,
-                        );
-                    }
-                    ui.painter().rect_stroke(
+                    let _ = items;
+                    map = Some(r);
+                    // What the window shows: a soft veil outside, a clear frame inside.
+                    let view =
                         egui::Rect::from_min_max(transform(camera.min), transform(camera.max))
-                            .intersect(r),
-                        crate::tokens(ui.ctx()).radius_none as f32,
-                        egui::Stroke::new(1., crate::tokens(ui.ctx()).accent),
+                            .intersect(r);
+                    ui.painter().rect_stroke(
+                        view,
+                        crate::tokens(ui.ctx()).radius_s as f32,
+                        egui::Stroke::new(1.5, crate::tokens(ui.ctx()).accent),
                         egui::StrokeKind::Inside,
                     );
                     if (response.clicked() || response.dragged())
@@ -120,8 +124,33 @@ pub fn minimap(
                         ));
                     }
                 });
+            panel = Some(frame.response.rect);
         });
+    ctx.data_mut(|d| {
+        d.insert_temp(
+            egui::Id::new("minimap_layout"),
+            panel
+                .zip(map)
+                .map(|(panel, map)| (panel, map, options.opacity)),
+        )
+    });
     click
+}
+/// Forgets the minimap until it is drawn again, so a hidden one leaves no panel behind.
+pub fn clear_minimap(ctx: &Context) {
+    ctx.data_mut(|d| {
+        d.insert_temp::<Option<(egui::Rect, egui::Rect, f32)>>(
+            egui::Id::new("minimap_layout"),
+            None,
+        )
+    });
+}
+/// Where the last frame's minimap sits: its panel, the map inside it, and opacity.
+pub fn minimap_layout(ctx: &Context) -> Option<(egui::Rect, egui::Rect, f32)> {
+    ctx.data(|d| {
+        d.get_temp::<Option<(egui::Rect, egui::Rect, f32)>>(egui::Id::new("minimap_layout"))
+    })
+    .flatten()
 }
 
 fn minimap_size(

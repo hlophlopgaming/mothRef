@@ -123,7 +123,7 @@ impl Tokens {
     /// Backdrop fill and border of a group, translucent so the canvas reads through.
     pub fn group_backdrop(self, code: u8) -> [Color32; 2] {
         let [r, g, b, _] = self.group(code).to_array();
-        let (fill, border) = if self.dark { (24, 92) } else { (34, 110) };
+        let (fill, border) = if self.dark { (34, 120) } else { (38, 120) };
         [
             Color32::from_rgba_unmultiplied(r, g, b, fill),
             Color32::from_rgba_unmultiplied(r, g, b, border),
@@ -458,8 +458,28 @@ impl Tokens {
             self.canvas = Color32::from_rgb(r, g, b);
         }
         if let Some([r, g, b]) = selection {
-            self.selection = Color32::from_rgb(r, g, b);
-            self.accent = self.selection;
+            let chosen = Color32::from_rgb(r, g, b);
+            // The chosen color is the accent; fills under selected rows and buttons get a
+            // calm tone of it, so a saturated pick never turns lists into solid color.
+            self.accent = chosen;
+            self.selection = self
+                .surface
+                .lerp_to_gamma(chosen, if self.dark { 0.38 } else { 0.3 });
+            let luma = |c: Color32| {
+                let [r, g, b, _] = c.to_array();
+                0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32
+            };
+            // Text in the accent color stays readable on the surface.
+            self.accent_text = if self.dark {
+                chosen.lerp_to_gamma(Color32::WHITE, if luma(chosen) < 140. { 0.35 } else { 0. })
+            } else {
+                chosen.lerp_to_gamma(Color32::BLACK, if luma(chosen) > 110. { 0.45 } else { 0. })
+            };
+            self.on_accent = if luma(chosen) > 150. {
+                Self::DARK.on_accent
+            } else {
+                Self::LIGHT.surface
+            };
         }
     }
 }
@@ -478,7 +498,13 @@ mod custom_color_tests {
             tokens.custom_colors(color, color, color);
             assert_eq!(tokens.canvas.to_array(), [16, 128, 255, 255]);
             assert_eq!(tokens.surface, tokens.canvas);
-            assert_eq!(tokens.selection, tokens.canvas);
+            assert_eq!(tokens.accent, tokens.canvas);
+            // Selection fills are a tone of the chosen color, never the raw color on
+            // another surface.
+            let mut quiet = Tokens::DARK;
+            quiet.custom_colors(None, None, Some([232, 80, 74]));
+            assert_eq!(quiet.accent.to_array(), [232, 80, 74, 255]);
+            assert_ne!(quiet.selection, quiet.accent);
         }
     }
 }

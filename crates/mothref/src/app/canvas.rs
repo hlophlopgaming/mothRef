@@ -50,6 +50,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, ctx: Canvas<'_>) -> Vec<Intent> {
         activate,
     } = ctx;
     let mut view = board.view;
+    moth_ui::canvas::clear_minimap(ui.ctx());
     if !compact {
         intents.extend(tools.show(ui, board, settings, enabled, registry));
     }

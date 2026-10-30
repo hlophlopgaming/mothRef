@@ -2461,7 +2461,20 @@ impl App {
             }
         }
         groups::backdrops_first(&self.workspace.board.scene, &mut visible);
-        match self.shell.render(output, &visible, camera, frame)? {
+        let overlay = if stage.is_some() || self.workspace.library {
+            Vec::new()
+        } else {
+            minimap_items(
+                &self.workspace.board.scene,
+                moth_ui::canvas::minimap_layout(self.shell.context()),
+                camera,
+            )
+        };
+        let overlay: Vec<_> = overlay.iter().collect();
+        match self
+            .shell
+            .render(output, &visible, &overlay, camera, frame)?
+        {
             shell::Present::Presented => {}
             shell::Present::Recovered => {
                 self.reset_renderer_ui();
@@ -2890,6 +2903,62 @@ impl App {
     }
 }
 
+/// The minimap as renderer items in board coordinates: an opaque panel, then a small
+/// copy of every image (at most a few thousand, which covers the board's shape), placed
+/// where the minimap shows it on screen.
+fn minimap_items(
+    scene: &Scene,
+    layout: Option<(egui::Rect, egui::Rect, f32)>,
+    camera: moth_scene::Camera,
+) -> Vec<moth_scene::Item> {
+    const MAX_THUMBNAILS: usize = 4000;
+    let (Some((panel, map, _)), Some(bounds)) = (layout, scene.bounds()) else {
+        return Vec::new();
+    };
+    let world = |p: egui::Pos2| camera.world([p.x, p.y]);
+    let to_world = |rect: egui::Rect| {
+        let (a, b) = (world(rect.min), world(rect.max));
+        Rect {
+            x: a[0],
+            y: a[1],
+            width: b[0] - a[0],
+            height: b[1] - a[1],
+        }
+    };
+    let mut items = vec![moth_scene::Item::group(
+        moth_scene::Group {
+            title: String::new(),
+            color: moth_scene::GROUP_COLORS,
+        },
+        to_world(panel),
+        Default::default(),
+    )];
+    let scale = egui::vec2(map.width() / bounds.width, map.height() / bounds.height);
+    let mut sorted: Vec<_> = scene
+        .items()
+        .filter(|item| item.blob().is_some() || item.is_group())
+        .take(MAX_THUMBNAILS)
+        .collect();
+    sorted.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
+    groups::backdrops_first(scene, &mut sorted);
+    for item in sorted {
+        let screen = egui::Rect::from_min_size(
+            map.min
+                + egui::vec2(
+                    (item.rect.x - bounds.x) * scale.x,
+                    (item.rect.y - bounds.y) * scale.y,
+                ),
+            egui::vec2(item.rect.width * scale.x, item.rect.height * scale.y),
+        );
+        let rect = to_world(screen);
+        if rect.valid() {
+            let mut copy = item.clone();
+            copy.rect = rect;
+            items.push(copy);
+        }
+    }
+    items
+}
 /// Selection transforms share one definition so the menu and the keys cannot drift apart.
 fn rotated(transform: Transform, quarters: f32) -> Transform {
     Transform {

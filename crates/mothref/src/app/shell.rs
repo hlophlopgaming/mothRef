@@ -187,6 +187,7 @@ impl Shell {
         &mut self,
         mut output: egui::FullOutput,
         items: &[&Item],
+        overlay: &[&Item],
         camera: Camera,
         frame: Frame,
     ) -> anyhow::Result<Present> {
@@ -219,7 +220,13 @@ impl Shell {
         let size = texture.texture.size();
         gpu.registry.grayscale = frame.grayscale;
         gpu.registry.sampling = frame.sampling;
-        gpu.registry.backdrops = backdrops(moth_ui::tokens(&self.ctx));
+        let tokens = moth_ui::tokens(&self.ctx);
+        gpu.registry.backdrops = backdrops(tokens);
+        gpu.registry.panel = moth_render::Backdrop {
+            fill: linear(tokens.surface),
+            border: linear(tokens.border),
+            radius: Some(tokens.radius_card as f32),
+        };
         let mut jobs = self.ctx.tessellate(output.shapes, output.pixels_per_point);
         if frame.ui_opacity < 1. {
             for job in &mut jobs {
@@ -266,6 +273,26 @@ impl Shell {
             items,
             camera,
         );
+        if draw_result.is_ok() {
+            gpu.registry.draw_overlay(
+                &gpu.device,
+                &gpu.queue,
+                moth_render::Target {
+                    grid: false,
+                    opacity: 1.,
+                    view: &view,
+                    screen: [size.width as f32 / scale, size.height as f32 / scale],
+                    clip: Some(canvas::canvas_clip(
+                        frame.viewport,
+                        scale,
+                        [size.width, size.height],
+                    )),
+                    clear: frame.clear,
+                },
+                overlay,
+                camera,
+            );
+        }
         if let Err(error) = draw_result {
             for id in &output.textures_delta.free {
                 gpu.registry.ui.free_texture(id);
@@ -310,20 +337,22 @@ impl Shell {
 pub(super) fn backdrops(
     tokens: moth_ui::Tokens,
 ) -> [moth_render::Backdrop; moth_scene::GROUP_COLORS as usize] {
-    let linear = |color: egui::Color32| {
-        let [r, g, b, a] = color.to_srgba_unmultiplied();
-        [
-            egui::ecolor::linear_f32_from_gamma_u8(r),
-            egui::ecolor::linear_f32_from_gamma_u8(g),
-            egui::ecolor::linear_f32_from_gamma_u8(b),
-            a as f32 / 255.,
-        ]
-    };
     std::array::from_fn(|code| {
         let [fill, border] = tokens.group_backdrop(code as u8);
         moth_render::Backdrop {
             fill: linear(fill),
             border: linear(border),
+            radius: None,
         }
     })
+}
+/// A theme color in the renderer's straight-alpha linear form.
+fn linear(color: egui::Color32) -> [f32; 4] {
+    let [r, g, b, a] = color.to_srgba_unmultiplied();
+    [
+        egui::ecolor::linear_f32_from_gamma_u8(r),
+        egui::ecolor::linear_f32_from_gamma_u8(g),
+        egui::ecolor::linear_f32_from_gamma_u8(b),
+        a as f32 / 255.,
+    ]
 }

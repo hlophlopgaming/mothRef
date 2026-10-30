@@ -385,10 +385,14 @@ fn selection_position(
     size: egui::Vec2,
     gap: f32,
 ) -> egui::Pos2 {
+    // Above the selection, else below it, else (a selection filling the window) at
+    // the top of the free area, so the bar never sits on the toolbar.
     let y = if bounds.top() - gap - size.y >= viewport.top() {
         bounds.top() - gap - size.y
-    } else {
+    } else if bounds.bottom() + gap + size.y <= viewport.bottom() {
         bounds.bottom() + gap
+    } else {
+        viewport.top() + gap
     };
     egui::pos2(
         (bounds.center().x - size.x / 2.).clamp(
@@ -415,9 +419,12 @@ pub(super) fn selection(
     let top = ctx
         .data(|data| data.get_temp::<f32>(egui::Id::new("window_bar_bottom")))
         .unwrap_or(viewport.top());
+    let bottom = ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("bottom_toolbar")))
+        .map_or(viewport.bottom(), |toolbar| toolbar.top() - gap);
     let viewport = egui::Rect::from_min_max(
         egui::pos2(viewport.left(), top.max(viewport.top())),
-        viewport.max,
+        egui::pos2(viewport.right(), bottom.max(top.max(viewport.top()))),
     );
     let size = ctx
         .memory(|memory| memory.area_rect(egui::Id::new("selection_bar")))
@@ -611,6 +618,9 @@ mod tests {
         let position = selection_position(near_top, viewport, size, 8.);
         assert_eq!(position, egui::pos2(0., near_top.bottom() + 8.));
         assert!(viewport.contains_rect(egui::Rect::from_min_size(position, size)));
+        // A selection filling the window puts the bar at the top of the free area.
+        let position = selection_position(viewport.expand(20.), viewport, size, 8.);
+        assert_eq!(position.y, viewport.top() + 8.);
     }
 
     #[test]
