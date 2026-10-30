@@ -5,6 +5,18 @@ use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Plural form of a count noun.
+    BoardOne,
+    /// Plural form of a count noun.
+    BoardFew,
+    /// Plural form of a count noun.
+    BoardMany,
+    /// Plural form of a count noun.
+    ItemOne,
+    /// Plural form of a count noun.
+    ItemFew,
+    /// Plural form of a count noun.
+    ItemMany,
     /// Selects every item at the current level.
     SelectAll,
     /// Setup: a time per image other than the presets.
@@ -950,7 +962,9 @@ pub enum Text {
     ImportSkipped,
 }
 mod localization;
-pub use localization::{Locale, Message, item_counts, locale, set_locale, text, translated};
+pub use localization::{
+    Locale, Message, counted, item_counts, locale, set_locale, text, translated,
+};
 
 /// House theme tokens and application.
 pub mod theme;

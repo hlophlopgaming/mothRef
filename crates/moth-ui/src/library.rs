@@ -109,9 +109,9 @@ impl Library {
                     }
                     ui.add_space(crate::tokens(ui.ctx()).space_section as f32);
                     ui.label(
-                        egui::RichText::new(text(Text::Stacks))
-                            .monospace()
-                            .size(10.)
+                        egui::RichText::new(text(Text::Stacks).to_uppercase())
+                            .small()
+                            .strong()
                             .color(crate::tokens(ui.ctx()).text_muted),
                     );
                     let mut stacks: Vec<&str> = cards
@@ -141,9 +141,9 @@ impl Library {
                     }
                     ui.add_space(crate::tokens(ui.ctx()).space_xl as f32);
                     ui.label(
-                        egui::RichText::new(text(Text::SmartCollections))
-                            .monospace()
-                            .size(10.)
+                        egui::RichText::new(text(Text::SmartCollections).to_uppercase())
+                            .small()
+                            .strong()
                             .color(crate::tokens(ui.ctx()).text_muted),
                     );
                     for tag in tags.iter().take(12) {
@@ -215,13 +215,15 @@ impl Library {
                 });
                 ui.label(
                     egui::RichText::new(format!(
-                        "{} {}  ·  {:.1} MB",
-                        cards.len(),
-                        text(Text::Boards),
+                        "{}  ·  {:.1} MB",
+                        crate::counted(
+                            crate::locale(),
+                            cards.len(),
+                            [Text::BoardOne, Text::BoardFew, Text::BoardMany]
+                        ),
                         cards.iter().map(|c| c.bytes).sum::<u64>() as f64 / 1_000_000.
                     ))
-                    .monospace()
-                    .size(11.)
+                    .small()
                     .color(crate::tokens(ui.ctx()).text_muted),
                 );
                 ui.add_space(crate::tokens(ui.ctx()).space_l as f32);
@@ -424,13 +426,15 @@ impl Library {
                                         });
                                         ui.label(
                                             egui::RichText::new(format!(
-                                                "{} {}  ·  {}",
-                                                c.count,
-                                                text(Text::Items),
+                                                "{}  ·  {}",
+                                                crate::counted(
+                                                    crate::locale(),
+                                                    c.count,
+                                                    [Text::ItemOne, Text::ItemFew, Text::ItemMany]
+                                                ),
                                                 c.stack
                                             ))
-                                            .monospace()
-                                            .size(10.)
+                                            .small()
                                             .color(crate::tokens(ui.ctx()).text_muted),
                                         );
                                         ui.horizontal_wrapped(|ui| {
@@ -479,12 +483,30 @@ impl Library {
         intent
     }
     fn search(&mut self, ui: &mut egui::Ui) {
-        ui.add(
-            egui::TextEdit::singleline(&mut self.search)
-                .hint_text(text(Text::Search))
-                .char_limit(256)
-                .desired_width(f32::INFINITY),
-        );
+        // A rounded field with a search icon, not a bare strip.
+        let tokens = crate::tokens(ui.ctx());
+        egui::Frame::new()
+            .fill(tokens.surface_raised)
+            .stroke(egui::Stroke::new(1., tokens.border))
+            .corner_radius(tokens.radius_m)
+            .inner_margin(egui::Margin::symmetric(
+                tokens.space_s as i8,
+                tokens.space_xs as i8,
+            ))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let (icon, _) =
+                        ui.allocate_exact_size(egui::Vec2::splat(16.), egui::Sense::hover());
+                    crate::icons::paint(ui, icon, crate::icons::Icon::Search, tokens.text_muted);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.search)
+                            .hint_text(text(Text::Search))
+                            .frame(egui::Frame::NONE)
+                            .char_limit(256)
+                            .desired_width(f32::INFINITY),
+                    );
+                });
+            });
     }
 }
 

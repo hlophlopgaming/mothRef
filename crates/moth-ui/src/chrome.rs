@@ -156,8 +156,7 @@ pub fn toolbar(
                 if !compact && status.library {
                     ui.label(
                         egui::RichText::new(text(Text::Library))
-                            .color(crate::tokens(ui.ctx()).text_muted)
-                            .monospace(),
+                            .color(crate::tokens(ui.ctx()).text_muted),
                     );
                 }
                 let summary = format!(

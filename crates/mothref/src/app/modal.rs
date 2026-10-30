@@ -27,52 +27,95 @@ impl Modal {
         let recovery_paths = workspace.recovery_paths();
         if workspace.library && !recovery_paths.is_empty() && board.scene.is_empty() {
             self.recovery = self.recovery.min(recovery_paths.len() - 1);
-            egui::Modal::new(egui::Id::new("recovery")).show(ui.ctx(), |ui| {
-                moth_ui::icons::dialog_title(ui, moth_ui::text(moth_ui::Text::Recovery));
-                egui::ScrollArea::vertical()
-                    .max_height(ui.ctx().content_rect().height() / 2.)
-                    .show(ui, |ui| {
-                        for (index, entry) in recovery_paths.iter().enumerate() {
-                            let age = entry.modified.elapsed().unwrap_or_default().as_secs();
-                            let (key, count) = if age < 60 {
-                                (moth_ui::Text::ChangedNow, 0)
-                            } else if age < 3600 {
-                                (moth_ui::Text::ChangedMinutes, age / 60)
-                            } else if age < 86400 {
-                                (moth_ui::Text::ChangedHours, age / 3600)
-                            } else {
-                                (moth_ui::Text::ChangedDays, age / 86400)
-                            };
-                            let changed = moth_ui::Message::Count(key, count as usize)
-                                .render(moth_ui::locale());
-                            let label = format!(
-                                "{} · {}",
-                                entry
-                                    .title
-                                    .as_deref()
-                                    .unwrap_or(moth_ui::text(moth_ui::Text::Untitled)),
-                                changed
+            // A card in the corner, not a modal: the library stays usable, and each
+            // board left in a journal can be reopened or thrown away on its own row.
+            let tokens = moth_ui::tokens(ui.ctx());
+            egui::Area::new(egui::Id::new("recovery"))
+                .order(egui::Order::Foreground)
+                .anchor(
+                    egui::Align2::RIGHT_BOTTOM,
+                    egui::vec2(-(tokens.space_l as f32), -(tokens.space_l as f32)),
+                )
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style())
+                        .corner_radius(tokens.radius_l)
+                        .inner_margin(egui::Margin::same(tokens.space_m as i8))
+                        .show(ui, |ui| {
+                            ui.set_width(tokens.space_xl as f32 * 13.);
+                            moth_ui::icons::dialog_title(
+                                ui,
+                                moth_ui::text(moth_ui::Text::Recovery),
                             );
-                            ui.selectable_value(&mut self.recovery, index, label);
-                        }
-                    });
-                ui.add_enabled_ui(board.idle(), |ui| {
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button(moth_ui::text(moth_ui::Text::RestoreRecovery))
-                            .clicked()
-                        {
-                            intents.push(Intent::Action(Action::RestoreRecovery));
-                        }
-                        if ui
-                            .button(moth_ui::text(moth_ui::Text::DiscardRecovery))
-                            .clicked()
-                        {
-                            intents.push(Intent::Action(Action::DismissRecovery));
-                        }
-                    });
+                            ui.add_space(tokens.space_xs as f32);
+                            egui::ScrollArea::vertical()
+                                .max_height(ui.ctx().content_rect().height() / 3.)
+                                .show(ui, |ui| {
+                                    for (index, entry) in recovery_paths.iter().enumerate() {
+                                        let age =
+                                            entry.modified.elapsed().unwrap_or_default().as_secs();
+                                        let (key, count) = if age < 60 {
+                                            (moth_ui::Text::ChangedNow, 0)
+                                        } else if age < 3600 {
+                                            (moth_ui::Text::ChangedMinutes, age / 60)
+                                        } else if age < 86400 {
+                                            (moth_ui::Text::ChangedHours, age / 3600)
+                                        } else {
+                                            (moth_ui::Text::ChangedDays, age / 86400)
+                                        };
+                                        let changed = moth_ui::Message::Count(key, count as usize)
+                                            .render(moth_ui::locale());
+                                        let title = entry
+                                            .title
+                                            .as_deref()
+                                            .unwrap_or(moth_ui::text(moth_ui::Text::Untitled));
+                                        ui.horizontal(|ui| {
+                                            ui.vertical(|ui| {
+                                                ui.spacing_mut().item_spacing.y = 0.;
+                                                ui.label(title);
+                                                ui.label(
+                                                    egui::RichText::new(changed)
+                                                        .small()
+                                                        .color(tokens.text_muted),
+                                                );
+                                            });
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    ui.add_enabled_ui(board.idle(), |ui| {
+                                                        if moth_ui::icons::button(
+                                                            ui,
+                                                            moth_ui::icons::Icon::Close,
+                                                            moth_ui::text(
+                                                                moth_ui::Text::DiscardRecovery,
+                                                            ),
+                                                            false,
+                                                        )
+                                                        .clicked()
+                                                        {
+                                                            self.recovery = index;
+                                                            intents.push(Intent::Action(
+                                                                Action::DismissRecovery,
+                                                            ));
+                                                        }
+                                                        if ui
+                                                            .button(moth_ui::text(
+                                                                moth_ui::Text::RestoreRecovery,
+                                                            ))
+                                                            .clicked()
+                                                        {
+                                                            self.recovery = index;
+                                                            intents.push(Intent::Action(
+                                                                Action::RestoreRecovery,
+                                                            ));
+                                                        }
+                                                    });
+                                                },
+                                            );
+                                        });
+                                    }
+                                });
+                        });
                 });
-            });
         }
 
         if board.conversion_prompt && self.dialog.is_none() && !workspace.confirm_close {

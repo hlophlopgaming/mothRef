@@ -123,24 +123,26 @@ mod tests {
 pub fn translated(language: Locale, key: Text) -> &'static str {
     CATALOGS[language.0].strings[index(key)]
 }
-/// Inflects board counts using the selected catalog's plural rules.
-pub fn item_counts(language: Locale, images: usize, notes: usize) -> String {
-    let noun = |count: usize, forms: [Text; 3]| {
-        let form = if language == Locale::RU {
-            if count % 10 == 1 && count % 100 != 11 {
-                0
-            } else if (2..=4).contains(&(count % 10)) && !(12..=14).contains(&(count % 100)) {
-                1
-            } else {
-                2
-            }
-        } else if count == 1 {
+/// `count` with the noun in the right plural form for the catalog ("1 board", "5 досок").
+pub fn counted(language: Locale, count: usize, forms: [Text; 3]) -> String {
+    let form = if language == Locale::RU {
+        if count % 10 == 1 && count % 100 != 11 {
             0
+        } else if (2..=4).contains(&(count % 10)) && !(12..=14).contains(&(count % 100)) {
+            1
         } else {
             2
-        };
-        format!("{count} {}", translated(language, forms[form]))
+        }
+    } else if count == 1 {
+        0
+    } else {
+        2
     };
+    format!("{count} {}", translated(language, forms[form]))
+}
+/// Inflects board counts using the selected catalog's plural rules.
+pub fn item_counts(language: Locale, images: usize, notes: usize) -> String {
+    let noun = |count: usize, forms: [Text; 3]| counted(language, count, forms);
     let image_count = noun(images, [Text::ImageOne, Text::ImageFew, Text::ImageMany]);
     let note_count = noun(notes, [Text::NoteOne, Text::NoteFew, Text::NoteMany]);
     match (images, notes) {
