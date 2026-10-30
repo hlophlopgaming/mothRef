@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix a group backdrop that sometimes stayed too large after an image was dragged out of it.
 - Fix the View window bar popping in place instead of sliding down from the top edge; it now slides in and out quickly.
 - Fix the navigator ignoring its opacity since it shows thumbnails. Settings › Canvas › "Images in the navigator" switches between thumbnails and plain blocks.
 - A calmer interface: the title bar is a quiet strip where the open board sits on a soft tab and other boards are plain text, with a dot for unsaved changes; icon buttons have no box until you point at them; the Layers drawer is a compact tree with fold arrows, group colors and type icons; selection bars show plain words; the arrange question after adding images is a small dialog with four picture choices, and Esc leaves the images as they are; the shortcut hint is a short-lived pill without buttons.

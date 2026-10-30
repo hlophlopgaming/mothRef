@@ -467,24 +467,46 @@ pub struct Scene {
     /// Frame a group shows while empty and restores to when it empties again.
     rests: HashMap<Uuid, Rect>,
     /// Union of the members' footprints, without padding; absent for empty groups.
-    hulls: HashMap<Uuid, Rect>,
+    hulls: HashMap<Uuid, Hull>,
 }
-fn union(a: Rect, b: Rect) -> Rect {
-    let x = a.x.min(b.x);
-    let y = a.y.min(b.y);
-    Rect {
-        x,
-        y,
-        width: (a.x + a.width).max(b.x + b.width) - x,
-        height: (a.y + a.height).max(b.y + b.height) - y,
+/// Footprint edges kept as min/max rather than a `Rect`: min and max are exact,
+/// so a hull grown one member at a time equals a rescan bit for bit, and a member
+/// on the edge compares equal to it. `x + width` sums would round differently
+/// per order and leave stale or mismatched backdrops.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Hull {
+    min: [f32; 2],
+    max: [f32; 2],
+}
+impl Hull {
+    fn of(item: &Item) -> Self {
+        let envelope = item.rect.rotated_envelope(item.transform.rotation);
+        Self {
+            min: envelope.lower(),
+            max: envelope.upper(),
+        }
     }
-}
-/// True when `inner` touches an edge of `outer`, so removing it may shrink `outer`.
-fn touches(inner: Rect, outer: Rect) -> bool {
-    inner.x <= outer.x
-        || inner.y <= outer.y
-        || inner.x + inner.width >= outer.x + outer.width
-        || inner.y + inner.height >= outer.y + outer.height
+    fn union(self, other: Self) -> Self {
+        Self {
+            min: [self.min[0].min(other.min[0]), self.min[1].min(other.min[1])],
+            max: [self.max[0].max(other.max[0]), self.max[1].max(other.max[1])],
+        }
+    }
+    /// True when `self` reaches an edge of `outer`, so removing it may shrink `outer`.
+    fn touches(self, outer: Self) -> bool {
+        self.min[0] <= outer.min[0]
+            || self.min[1] <= outer.min[1]
+            || self.max[0] >= outer.max[0]
+            || self.max[1] >= outer.max[1]
+    }
+    fn rect(self) -> Rect {
+        Rect {
+            x: self.min[0],
+            y: self.min[1],
+            width: self.max[0] - self.min[0],
+            height: self.max[1] - self.min[1],
+        }
+    }
 }
 /// The backdrop around a member hull.
 pub fn group_frame(hull: Rect) -> Rect {
@@ -504,15 +526,7 @@ fn entry(item: &Item) -> Entry {
 }
 /// Axis-aligned footprint an item contributes to its group's backdrop.
 pub fn footprint(item: &Item) -> Rect {
-    let envelope = item.rect.rotated_envelope(item.transform.rotation);
-    let [x, y] = envelope.lower();
-    let [right, bottom] = envelope.upper();
-    Rect {
-        x,
-        y,
-        width: right - x,
-        height: bottom - y,
-    }
+    Hull::of(item).rect()
 }
 impl Scene {
     /// The only mutable entry point for board content.
@@ -547,7 +561,7 @@ impl Scene {
                 }
                 self.tree.insert(entry(&item));
                 self.order.insert((item.z.clone(), id));
-                let footprint = footprint(&item);
+                let footprint = Hull::of(&item);
                 self.items.insert(id, item);
                 if let Some(parent) = parent {
                     self.join(id, parent, footprint);
@@ -559,7 +573,7 @@ impl Scene {
                 if self.children.get(&id).is_some_and(|c| !c.is_empty()) {
                     return Err(SceneError::Occupied);
                 }
-                let footprint = footprint(item);
+                let footprint = Hull::of(item);
                 if let Some(parent) = item.parent {
                     self.leave(id, parent, footprint);
                 }
@@ -581,9 +595,10 @@ impl Scene {
                 if let Some(rest) = self.rests.get_mut(&id) {
                     let old = std::mem::replace(rest, rect);
                     if !self.hulls.contains_key(&id) {
-                        let frame = item.rect;
+                        let before = Hull::of(item);
                         if let Some(parent) = self.reframe(id, rect) {
-                            self.moved(parent, frame, rect);
+                            let after = Hull::of(&self.items[&id]);
+                            self.moved(parent, before, after);
                         }
                     }
                     return Ok(Command::SetRect { id, rect: old });
@@ -638,7 +653,7 @@ impl Scene {
                         return Err(SceneError::Invalid);
                     }
                 }
-                let footprint = footprint(item);
+                let footprint = Hull::of(item);
                 if let Some(old) = old {
                     self.leave(id, old, footprint);
                 }
@@ -695,45 +710,45 @@ impl Scene {
         let Some(item) = self.items.get_mut(&id) else {
             return;
         };
-        let before = footprint(item);
+        let before = Hull::of(item);
         self.tree.remove(&entry(item));
         change(item);
         self.tree.insert(entry(item));
-        let (after, parent) = (footprint(item), item.parent);
+        let (after, parent) = (Hull::of(item), item.parent);
         if let Some(parent) = parent {
             self.moved(parent, before, after);
         }
     }
-    fn join(&mut self, id: Uuid, group: Uuid, footprint: Rect) {
+    fn join(&mut self, id: Uuid, group: Uuid, footprint: Hull) {
         self.children.entry(group).or_default().insert(id);
         self.moved_into(group, None, Some(footprint));
     }
-    fn leave(&mut self, id: Uuid, group: Uuid, footprint: Rect) {
+    fn leave(&mut self, id: Uuid, group: Uuid, footprint: Hull) {
         if let Some(children) = self.children.get_mut(&group) {
             children.remove(&id);
         }
         self.moved_into(group, Some(footprint), None);
     }
-    fn moved(&mut self, group: Uuid, before: Rect, after: Rect) {
+    fn moved(&mut self, group: Uuid, before: Hull, after: Hull) {
         self.moved_into(group, Some(before), Some(after));
     }
     /// Updates a group's hull after one member footprint changed, then walks up.
     /// Growth is O(1); only a member that touched the hull edge forces a rescan.
-    fn moved_into(&mut self, mut group: Uuid, mut before: Option<Rect>, mut after: Option<Rect>) {
+    fn moved_into(&mut self, mut group: Uuid, mut before: Option<Hull>, mut after: Option<Hull>) {
         loop {
             let Some(item) = self.items.get(&group) else {
                 return;
             };
-            let old_frame = item.rect;
+            let (old_frame, old_edges) = (item.rect, Hull::of(item));
             let hull = match (self.hulls.get(&group).copied(), before) {
-                (Some(hull), Some(before)) if touches(before, hull) => self.rescan(group),
-                (Some(hull), _) => after.map_or(Some(hull), |after| Some(union(hull, after))),
+                (Some(hull), Some(before)) if before.touches(hull) => self.rescan(group),
+                (Some(hull), _) => after.map_or(Some(hull), |after| Some(hull.union(after))),
                 (None, _) => after,
             };
             let frame = match hull {
                 Some(hull) => {
                     self.hulls.insert(group, hull);
-                    group_frame(hull)
+                    group_frame(hull.rect())
                 }
                 None => {
                     self.hulls.remove(&group);
@@ -746,17 +761,18 @@ impl Scene {
             let Some(parent) = self.reframe(group, frame) else {
                 return;
             };
-            (before, after, group) = (Some(old_frame), Some(frame), parent);
+            let new_edges = Hull::of(&self.items[&group]);
+            (before, after, group) = (Some(old_edges), Some(new_edges), parent);
         }
     }
     /// Recomputes a hull from scratch.
-    fn rescan(&self, group: Uuid) -> Option<Rect> {
+    fn rescan(&self, group: Uuid) -> Option<Hull> {
         self.children
             .get(&group)?
             .iter()
             .filter_map(|id| self.items.get(id))
-            .map(footprint)
-            .reduce(union)
+            .map(Hull::of)
+            .reduce(Hull::union)
     }
     /// Moves a group's backdrop in the index and returns its parent, which must follow.
     fn reframe(&mut self, group: Uuid, frame: Rect) -> Option<Uuid> {
@@ -1191,9 +1207,9 @@ mod tests {
             }
             let expected = scene
                 .children(item.id)
-                .map(footprint)
-                .reduce(union)
-                .map_or(scene.rests[&item.id], group_frame);
+                .map(Hull::of)
+                .reduce(Hull::union)
+                .map_or(scene.rests[&item.id], |hull| group_frame(hull.rect()));
             item.rect == expected
         }) && scene.tree.size() == scene.len()
             && scene.items().all(|item| {

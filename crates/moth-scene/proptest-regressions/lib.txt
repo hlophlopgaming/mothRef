@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 2d300c730baee0b6ed1cf66aab2a69ac985b642258f8e4304e46fcf219ecaa0f # group_edits_undo_to_identity: a nested empty group moved by SetRect
+cc 0e586b3a5046c9a63b367ac175b0f6c04b8c3a72ca044ca2ec0e49050e359b37 # shrinks to steps = [(2, 9, 0, -446.3223, 0.0), (0, 2, 3, 0.0, 0.0), (0, 9, 3, 0.0, 0.0), (2, 7, 0, -171.4605, 0.0), (0, 7, 3, 0.0, 0.0)]
