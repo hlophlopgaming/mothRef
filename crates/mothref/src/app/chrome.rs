@@ -156,7 +156,13 @@ fn view_bar(
         intents.push(Intent::WindowBar(false));
     }
     let show = explicit || focused || reveal_window_bar(&context, last, f32::from(tokens.space_l));
-    let reveal = context.animate_bool(id.with("reveal"), show);
+    // Quick start both ways: egui mirrors the easing while hiding.
+    let reveal = context.animate_bool_with_time_and_easing(
+        id.with("reveal"),
+        show,
+        context.global_style().animation_time * 1.6,
+        egui::emath::easing::cubic_out,
+    );
     // Floating over the canvas, the bar never pushes the selection bar down.
     context.data_mut(|d| d.insert_temp(egui::Id::new("window_bar_bottom"), content.top()));
     if reveal <= 0. {
@@ -168,6 +174,10 @@ fn view_bar(
         .pivot(egui::Align2::CENTER_TOP)
         .fixed_pos(egui::pos2(content.center().x, top))
         .order(egui::Order::Foreground)
+        // The bar slides in from above the window: a constrained area would be
+        // clamped back inside it, and egui's own fade would double ours.
+        .constrain(false)
+        .fade_in(false)
         .show(&context, |ui| {
             ui.set_max_width((content.width() - gap * 2.).max(ui.spacing().interact_size.x));
             ui.multiply_opacity(reveal);
