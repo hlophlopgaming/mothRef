@@ -10,11 +10,13 @@ pub(super) struct ImageWindow {
 impl App {
     pub(super) fn float_selection(&mut self, event_loop: &ActiveEventLoop) {
         if self
+            .window
             .floating
             .iter()
             .any(|w| self.workspace.board.selection.contains(&w.item))
         {
-            self.floating
+            self.window
+                .floating
                 .retain(|w| !self.workspace.board.selection.contains(&w.item));
             return;
         }
@@ -31,9 +33,9 @@ impl App {
                     .get(*id)
                     .is_some_and(|i| i.blob().is_some())
             })
-            .filter(|id| !self.floating.iter().any(|w| w.item == *id))
+            .filter(|id| !self.window.floating.iter().any(|w| w.item == *id))
             .collect();
-        if self.floating.len() + ids.len() > 32 {
+        if self.window.floating.len() + ids.len() > 32 {
             self.workspace.board.notices.message = moth_ui::Text::OverlayWindowLimit.into();
             return;
         }
@@ -63,7 +65,7 @@ impl App {
                 })
             })();
             match result {
-                Ok(image) => self.floating.push(image),
+                Ok(image) => self.window.floating.push(image),
                 Err(error) => {
                     self.workspace.board.notices.message = error.to_string().into();
                     break;
@@ -73,18 +75,23 @@ impl App {
         self.redraw();
     }
     pub(super) fn floating_event(&mut self, id: WindowId, event: &WindowEvent) -> bool {
-        let Some(index) = self.floating.iter().position(|w| w.window.id() == id) else {
+        let Some(index) = self
+            .window
+            .floating
+            .iter()
+            .position(|w| w.window.id() == id)
+        else {
             return false;
         };
         if matches!(event, WindowEvent::CloseRequested)
             || matches!(event,WindowEvent::KeyboardInput {event,..} if event.logical_key == Key::Named(NamedKey::Escape))
         {
-            self.floating.remove(index);
+            self.window.floating.remove(index);
             return true;
         }
         // Native input is translated through the same mouse/touch/pen abstraction.
-        let window = self.floating[index].window.clone();
-        if let Some(Input::Pointer(pointer)) = self.floating[index]
+        let window = self.window.floating[index].window.clone();
+        if let Some(Input::Pointer(pointer)) = self.window.floating[index]
             .input
             .event(event, window.scale_factor())
             && pointer.phase == Phase::Down
@@ -115,7 +122,7 @@ impl App {
                 window.drag_window()
             };
             match result {
-                Ok(()) => self.floating[index].input.release_mouse(),
+                Ok(()) => self.window.floating[index].input.release_mouse(),
                 Err(error) => tracing::warn!(%error,"floating image move failed"),
             }
         }
@@ -134,9 +141,9 @@ impl App {
         true
     }
     fn draw_floating(&mut self, index: usize) -> anyhow::Result<()> {
-        let image = &mut self.floating[index];
+        let image = &mut self.window.floating[index];
         let Some(item) = self.workspace.board.scene.get(image.item) else {
-            self.floating.remove(index);
+            self.window.floating.remove(index);
             return Ok(());
         };
         let Some(gpu) = &mut self.shell.gpu else {

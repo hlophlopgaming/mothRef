@@ -155,7 +155,7 @@ impl App {
     }
     pub(super) fn compact(&self) -> bool {
         !self.workspace.library
-            && (self.overlay.is_some()
+            && (self.window.overlay.is_some()
                 || self.workspace.board.appearance.compact(
                     self.shell.window.as_ref().map_or(1000., |w| {
                         w.inner_size().width as f32 / self.shell.context().pixels_per_point()
@@ -249,7 +249,7 @@ pub(super) fn adjust_opacity(value: f32, increase: bool) -> f32 {
 }
 impl App {
     pub(super) fn window_position_locked(&self) -> bool {
-        self.locked_position.is_some()
+        self.window.locked_position.is_some()
             && self.shell.window.as_ref().is_some_and(|w| {
                 w.fullscreen().is_none() && (!w.is_maximized() || self.settings.lock_maximized)
             })
@@ -299,7 +299,7 @@ impl App {
                 as u32,
         );
         self.camera_motion.stop();
-        self.resize_bounds = Some(bounds);
+        self.window.resize_bounds = Some(bounds);
         let applied = window.request_inner_size(target);
         self.resized(applied);
         self.redraw();

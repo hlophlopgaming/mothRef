@@ -26,20 +26,9 @@ macro_rules! pane {
 }
 
 pane! {
+    window: WindowState,
     workspace: workspace::Workspace,
     settings_window: settings::SettingsWindow,
-    overlay: Option<overlay::Overlay>,
-    floating: Vec<floating::ImageWindow>,
-    applied_background: Option<(WindowId, bool, bool)>,
-    pinned: bool,
-    window_bar: bool,
-    bottom: bool,
-    resize_bounds: Option<Rect>,
-    locked_position: Option<winit::dpi::PhysicalPosition<i32>>,
-    target_pin: bool,
-    picking_window: bool,
-    moving_window: bool,
-    pin: moth_platform::pin::Pin,
     library_screen: library::LibraryScreen,
     modal: modal::Modal,
     camera_motion: camera_motion::CameraMotion,
@@ -54,16 +43,17 @@ pane! {
     drag_anchor: Option<[f32; 2]>,
     drag_pointer: Option<(moth_platform::input::Kind, u64)>,
     input: InputState,
-    window_closed: bool,
-    session_window: Option<session_window::SavedWindow>,
-    restoring: Option<(winit::dpi::PhysicalSize<u32>, Instant)>,
 }
 
 impl Pane {
     fn owns(&self, id: WindowId) -> bool {
         self.shell.window.as_ref().is_some_and(|w| w.id() == id)
-            || self.overlay.as_ref().is_some_and(|o| o.window.id() == id)
-            || self.floating.iter().any(|f| f.window.id() == id)
+            || self
+                .window
+                .overlay
+                .as_ref()
+                .is_some_and(|o| o.window.id() == id)
+            || self.window.floating.iter().any(|f| f.window.id() == id)
     }
     /// "MothRef (2) — board", so windows with the same board stay apart.
     fn title(&self) -> String {
@@ -78,6 +68,52 @@ impl Pane {
     /// Closes the window, handing over its boards.
     fn into_documents(self) -> Vec<Document> {
         self.workspace.into_documents()
+    }
+}
+
+/// Everything about one main window that is not its board or screens: its mode,
+/// pin and placement, and the overlay and floating windows it owns. Swapped in
+/// and out as one value, so a field added here can never leak between windows.
+pub(super) struct WindowState {
+    pub(super) overlay: Option<overlay::Overlay>,
+    pub(super) floating: Vec<floating::ImageWindow>,
+    pub(super) applied_background: Option<(WindowId, bool, bool)>,
+    pub(super) pinned: bool,
+    /// The View window bar was opened explicitly and stays until dismissed.
+    pub(super) window_bar: bool,
+    pub(super) bottom: bool,
+    pub(super) resize_bounds: Option<Rect>,
+    pub(super) locked_position: Option<winit::dpi::PhysicalPosition<i32>>,
+    pub(super) target_pin: bool,
+    pub(super) picking_window: bool,
+    pub(super) moving_window: bool,
+    pub(super) pin: moth_platform::pin::Pin,
+    /// This window's last board closed; it is dropped after the event.
+    pub(super) window_closed: bool,
+    /// The window as it was before a drawing session took it over.
+    pub(super) session_window: Option<session_window::SavedWindow>,
+    /// The size a session restore asked for, re-requested until this instant.
+    pub(super) restoring: Option<(winit::dpi::PhysicalSize<u32>, Instant)>,
+}
+impl WindowState {
+    pub(super) fn new(wake: Arc<dyn Fn() + Send + Sync>) -> Self {
+        Self {
+            overlay: None,
+            floating: Vec::new(),
+            applied_background: None,
+            pinned: false,
+            window_bar: false,
+            bottom: false,
+            resize_bounds: None,
+            locked_position: None,
+            target_pin: false,
+            picking_window: false,
+            moving_window: false,
+            pin: moth_platform::pin::Pin::new(wake),
+            window_closed: false,
+            session_window: None,
+            restoring: None,
+        }
     }
 }
 
@@ -100,8 +136,12 @@ pub(super) fn attributes() -> winit::window::WindowAttributes {
 impl App {
     fn owns(&self, id: WindowId) -> bool {
         self.shell.window.as_ref().is_some_and(|w| w.id() == id)
-            || self.overlay.as_ref().is_some_and(|o| o.window.id() == id)
-            || self.floating.iter().any(|f| f.window.id() == id)
+            || self
+                .window
+                .overlay
+                .as_ref()
+                .is_some_and(|o| o.window.id() == id)
+            || self.window.floating.iter().any(|f| f.window.id() == id)
     }
     /// Makes the main window that owns `id` (or its overlay controller or
     /// floating views) current. False when no window owns it.
@@ -137,8 +177,8 @@ impl App {
     }
     /// Drops closed windows. Returns false when the last window closed.
     pub(super) fn reap_windows(&mut self) -> bool {
-        self.panes.retain(|pane| !pane.window_closed);
-        if self.window_closed {
+        self.panes.retain(|pane| !pane.window.window_closed);
+        if self.window.window_closed {
             let Some(mut next) = self.panes.pop() else {
                 return false;
             };
@@ -204,20 +244,9 @@ impl App {
             tracing::warn!(%error, "native input startup failed");
         }
         let mut pane = Pane {
+            window: WindowState::new(wake),
             workspace,
             settings_window: settings::SettingsWindow::default(),
-            overlay: None,
-            floating: Vec::new(),
-            applied_background: None,
-            pinned: false,
-            window_bar: false,
-            bottom: false,
-            resize_bounds: None,
-            locked_position: None,
-            target_pin: false,
-            picking_window: false,
-            moving_window: false,
-            pin: moth_platform::pin::Pin::new(wake),
             library_screen: library::LibraryScreen::new(library),
             modal: modal::Modal::default(),
             camera_motion: camera_motion::CameraMotion::default(),
@@ -232,9 +261,6 @@ impl App {
             drag_anchor: None,
             drag_pointer: None,
             input,
-            window_closed: false,
-            session_window: None,
-            restoring: None,
             shell: shell::Parts {
                 window: Some(window),
                 ctx,
@@ -254,7 +280,7 @@ impl App {
     fn after_board_moved(&mut self) {
         self.reset_board_ui();
         self.adapt_gpu_budget();
-        self.applied_background = None;
+        self.window.applied_background = None;
         if let Some(window) = &self.shell.window {
             let _ = moth_platform::Desktop.window_effects(window, false, false, false);
             window.focus_window();

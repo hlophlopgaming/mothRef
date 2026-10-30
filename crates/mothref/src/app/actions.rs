@@ -46,7 +46,7 @@ impl App {
                 && self.workspace.board.image_count > 0;
         }
         if action == ClickThrough {
-            return self.overlay.is_some()
+            return self.window.overlay.is_some()
                 && self
                     .shell
                     .window
@@ -124,7 +124,7 @@ impl App {
             return !self.workspace.library;
         }
         if matches!(action, Pin | Bottom) {
-            return self.overlay.is_none()
+            return self.window.overlay.is_none()
                 && self.shell.window.as_ref().is_some_and(|w| {
                     let caps = moth_platform::Desktop.window_capabilities(w);
                     if action == Pin {
@@ -384,7 +384,7 @@ impl App {
                 return;
             }
             WindowBar => {
-                self.window_bar = !self.window_bar;
+                self.window.window_bar = !self.window.window_bar;
                 return;
             }
             ShellIntegration => {
@@ -579,7 +579,7 @@ impl App {
             Overlay => Intent::Overlay,
             Pin => Intent::Pin,
             ClickThrough => {
-                if let Some(overlay) = &mut self.overlay {
+                if let Some(overlay) = &mut self.window.overlay {
                     overlay.click_through = !overlay.click_through;
                     overlay.window.request_redraw();
                 }
@@ -590,16 +590,16 @@ impl App {
                 return;
             }
             Bottom => {
-                let enabled = !self.bottom;
+                let enabled = !self.window.bottom;
                 self.apply_pin(false);
-                self.bottom = enabled;
+                self.window.bottom = enabled;
                 if let Some(window) = &self.shell.window {
                     moth_platform::Desktop.window_bottom(window, enabled);
                 }
                 return;
             }
             LockWindow => {
-                self.locked_position = if self.locked_position.is_some() {
+                self.window.locked_position = if self.window.locked_position.is_some() {
                     None
                 } else {
                     self.shell
@@ -618,7 +618,7 @@ impl App {
                 let appearance = &mut self.workspace.board.appearance;
                 appearance.window =
                     window_mode::adjust_opacity(appearance.window, action == OpacityUp);
-                if let Some(overlay) = &mut self.overlay {
+                if let Some(overlay) = &mut self.window.overlay {
                     overlay.appearance = *appearance;
                 }
                 self.remember_appearance();
@@ -626,9 +626,9 @@ impl App {
             }
             MoveWindow => {
                 self.cancel_drag();
-                let moving = !self.moving_window;
+                let moving = !self.window.moving_window;
                 self.cancel_window_mode();
-                self.moving_window = moving;
+                self.window.moving_window = moving;
                 return;
             }
             Fullscreen => Intent::Fullscreen,

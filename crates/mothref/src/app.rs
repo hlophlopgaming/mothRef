@@ -88,21 +88,8 @@ pub struct App {
     settings_window: settings::SettingsWindow,
     shortcuts: shortcuts::Shortcuts,
     global_shortcuts: Option<moth_platform::shortcuts::Shortcuts>,
-    overlay: Option<overlay::Overlay>,
-    floating: Vec<floating::ImageWindow>,
     window_preferences: std::collections::BTreeMap<String, String>,
-    applied_background: Option<(WindowId, bool, bool)>,
     window_preferences_dirty: bool,
-    pinned: bool,
-    /// The View window bar was opened explicitly and stays until dismissed.
-    window_bar: bool,
-    bottom: bool,
-    resize_bounds: Option<Rect>,
-    locked_position: Option<winit::dpi::PhysicalPosition<i32>>,
-    target_pin: bool,
-    picking_window: bool,
-    moving_window: bool,
-    pin: moth_platform::pin::Pin,
     library_screen: library::LibraryScreen,
     modal: modal::Modal,
     camera_motion: camera_motion::CameraMotion,
@@ -115,6 +102,8 @@ pub struct App {
     editing: Option<Editing>,
     pub startup_error: Option<anyhow::Error>,
     shell: shell::Shell,
+    /// This main window's mode, pin and auxiliary windows; see `panes.rs`.
+    window: panes::WindowState,
     drag: Option<([f32; 2], [f32; 2], bool)>,
     /// World point under the pointer when an item or selection drag started. The
     /// screen start in `drag` is rebuilt from it whenever the camera moves, so zooming
@@ -125,12 +114,6 @@ pub struct App {
     startup: Vec<std::path::PathBuf>,
     /// The other main windows; see `panes.rs`.
     panes: Vec<panes::Pane>,
-    /// This window's last board closed; it is dropped after the event.
-    window_closed: bool,
-    /// The window as it was before a drawing session took it over.
-    session_window: Option<session_window::SavedWindow>,
-    /// The size a session restore asked for, re-requested until this instant.
-    restoring: Option<(winit::dpi::PhysicalSize<u32>, Instant)>,
     /// Tab moves between windows, run after the frame that requested them.
     window_ops: Vec<(WindowId, panes::WindowOp)>,
 }
@@ -170,20 +153,8 @@ impl App {
             settings_window: settings::SettingsWindow::default(),
             shortcuts: shortcuts::Shortcuts::default(),
             global_shortcuts: None,
-            overlay: None,
-            floating: Vec::new(),
             window_preferences: Default::default(),
-            applied_background: None,
             window_preferences_dirty: false,
-            pinned: false,
-            window_bar: false,
-            bottom: false,
-            resize_bounds: None,
-            locked_position: None,
-            target_pin: false,
-            picking_window: false,
-            moving_window: false,
-            pin: moth_platform::pin::Pin::new(shell.wake()),
             library_screen: library::LibraryScreen::new(library_worker),
             modal: modal::Modal::default(),
             camera_motion: camera_motion::CameraMotion::default(),
@@ -195,6 +166,7 @@ impl App {
             drag_duplicate: false,
             editing: None,
             startup_error: None,
+            window: panes::WindowState::new(shell.wake()),
             shell,
             drag: None,
             drag_anchor: None,
@@ -206,14 +178,11 @@ impl App {
                 .map(std::path::PathBuf::from)
                 .collect(),
             panes: Vec::new(),
-            window_closed: false,
-            session_window: None,
-            restoring: None,
             window_ops: Vec::new(),
         })
     }
     fn pick_window(&mut self) {
-        self.applied_background = None;
+        self.window.applied_background = None;
         let Some(window) = &self.shell.window else {
             return;
         };
@@ -224,29 +193,29 @@ impl App {
             return;
         }
         let result = moth_platform::Desktop
-            .pin_target(&mut self.pin, window, false)
+            .pin_target(&mut self.window.pin, window, false)
             .and_then(|()| moth_platform::Desktop.window_effects(window, false, false, false));
         match result {
             Ok(()) => {
                 self.cancel_drag();
-                self.moving_window = false;
-                self.picking_window = true;
+                self.window.moving_window = false;
+                self.window.picking_window = true;
             }
             Err(error) => self.workspace.board.notices.message = error.into(),
         }
     }
     fn cancel_window_mode(&mut self) {
-        self.moving_window = false;
-        if self.picking_window {
-            self.picking_window = false;
-            self.apply_pin(self.pinned);
+        self.window.moving_window = false;
+        if self.window.picking_window {
+            self.window.picking_window = false;
+            self.apply_pin(self.window.pinned);
         }
     }
     fn apply_pin(&mut self, enabled: bool) {
         if enabled {
-            self.bottom = false;
+            self.window.bottom = false;
         }
-        self.applied_background = None;
+        self.window.applied_background = None;
         let Some(window) = &self.shell.window else {
             return;
         };
@@ -254,47 +223,51 @@ impl App {
         // Release the target pin first: leaving it may reset stacking that
         // above-all mode is about to set.
         let result = (|| {
-            moth_platform::Desktop.pin_target(&mut self.pin, window, enabled && self.target_pin)?;
+            moth_platform::Desktop.pin_target(
+                &mut self.window.pin,
+                window,
+                enabled && self.window.target_pin,
+            )?;
             moth_platform::Desktop.window_effects(
                 window,
-                self.overlay.is_some(),
-                enabled && !self.target_pin,
+                self.window.overlay.is_some(),
+                enabled && !self.window.target_pin,
                 false,
             )
         })();
         match result {
             Ok(()) => {
-                self.pinned = enabled;
-                if self.bottom {
+                self.window.pinned = enabled;
+                if self.window.bottom {
                     moth_platform::Desktop.window_bottom(window, true);
                 }
             }
             Err(error) => {
-                self.pinned = false;
+                self.window.pinned = false;
                 self.workspace.board.notices.message = error.into();
             }
         }
     }
     fn toggle_overlay(&mut self, event_loop: &ActiveEventLoop) {
-        self.applied_background = None;
+        self.window.applied_background = None;
         let Some(window) = self.shell.window.clone() else {
             return;
         };
         self.cancel_window_mode();
-        if self.overlay.is_some() {
+        if self.window.overlay.is_some() {
             if let Err(error) = moth_platform::Desktop.window_effects(
                 &window,
                 false,
-                self.pinned && !self.target_pin,
+                self.window.pinned && !self.window.target_pin,
                 false,
             ) {
                 self.workspace.board.notices.message = error.into();
             } else {
-                self.overlay = None;
+                self.window.overlay = None;
                 self.workspace.board.appearance.over = false;
             }
         } else if self.shell.gpu.as_ref().is_some_and(|gpu| gpu.transparent) {
-            self.bottom = false;
+            self.window.bottom = false;
             match overlay::Overlay::new(
                 event_loop,
                 self.shell.wake(),
@@ -315,7 +288,7 @@ impl App {
                     self.workspace.board.appearance.over = true;
                     overlay.appearance = self.workspace.board.appearance;
                     if let Err(error) =
-                        moth_platform::Desktop.pin_target(&mut self.pin, &window, false)
+                        moth_platform::Desktop.pin_target(&mut self.window.pin, &window, false)
                     {
                         self.workspace.board.notices.message = error.into();
                     }
@@ -325,7 +298,7 @@ impl App {
                     {
                         self.workspace.board.notices.message = error.into();
                     }
-                    self.overlay = Some(overlay);
+                    self.window.overlay = Some(overlay);
                     self.workspace.library = false;
                     self.library_screen.cards.clear();
                     self.library_screen.catalog.dismiss_editor();
@@ -336,14 +309,14 @@ impl App {
             self.workspace.board.notices.message = moth_ui::Text::OverlayUnsupported.into();
         }
         self.remember_appearance();
-        if self.overlay.is_none() {
-            self.apply_pin(self.pinned);
+        if self.window.overlay.is_none() {
+            self.apply_pin(self.window.pinned);
         }
         self.redraw();
     }
 
     fn reset_board_ui(&mut self) {
-        self.floating.clear();
+        self.window.floating.clear();
         if !self.workspace.board.intake.loading {
             self.remember_appearance();
         }
@@ -404,7 +377,7 @@ impl App {
         let change = self.workspace.finish_close()?;
         if matches!(change, workspace::TabChange::WindowClosed) {
             // Other windows keep running; `about_to_wait` drops this one.
-            self.window_closed = true;
+            self.window.window_closed = true;
             if self.panes.is_empty() {
                 event_loop.exit();
             }
@@ -429,7 +402,7 @@ impl App {
             || egui::Popup::is_any_open(self.shell.context())
     }
     fn redraw(&self) {
-        for image in &self.floating {
+        for image in &self.window.floating {
             image.window.request_redraw();
         }
         if let Some(w) = &self.shell.window {
@@ -437,7 +410,7 @@ impl App {
         }
     }
     fn reset_renderer_ui(&mut self) {
-        for image in &mut self.floating {
+        for image in &mut self.window.floating {
             image.surface = None;
         }
         self.input.native_pressed = None;
@@ -893,7 +866,7 @@ impl App {
         match intent {
             Intent::Action(action) => self.run_action(action, event_loop),
             Intent::View(mut view) => {
-                if let Some(bounds) = self.resize_bounds.take() {
+                if let Some(bounds) = self.window.resize_bounds.take() {
                     view.fit_bounds(Some(bounds));
                 }
                 self.workspace.board.view = view;
@@ -984,25 +957,25 @@ impl App {
                     if target {
                         self.pick_window();
                     } else {
-                        self.picking_window = false;
-                        self.target_pin = false;
+                        self.window.picking_window = false;
+                        self.window.target_pin = false;
                         self.apply_pin(true);
                     }
                 }
             }
             Intent::CancelWindowMode => self.cancel_window_mode(),
             Intent::Pin => {
-                if self.picking_window {
+                if self.window.picking_window {
                     self.cancel_window_mode();
                     return;
                 }
-                if self.target_pin
-                    && !self.pinned
-                    && !moth_platform::Desktop.pin_target_available(&self.pin)
+                if self.window.target_pin
+                    && !self.window.pinned
+                    && !moth_platform::Desktop.pin_target_available(&self.window.pin)
                 {
                     self.pick_window();
                 } else {
-                    self.apply_pin(!self.pinned);
+                    self.apply_pin(!self.window.pinned);
                 }
             }
             Intent::Fullscreen => {
@@ -1022,7 +995,7 @@ impl App {
             Intent::CloseWindow => self.request_close(true),
             Intent::Drag => self.drag_window(None),
             Intent::Session(event) => self.session_event(event),
-            Intent::WindowBar(shown) => self.window_bar = shown,
+            Intent::WindowBar(shown) => self.window.window_bar = shown,
             // Switching the current window mid-frame would render this frame into
             // another window; these run after the frame in `about_to_wait`.
             Intent::DetachTab(slot, at) => self.queue_window_op(panes::WindowOp::Detach(slot, at)),
@@ -1228,7 +1201,7 @@ impl App {
                 if !self.settings.lock_maximized
                     && self.shell.window.as_ref().is_some_and(|w| w.is_maximized())
                 {
-                    self.locked_position = None;
+                    self.window.locked_position = None;
                 }
                 self.configure_global_shortcuts();
                 self.adapt_gpu_budget();
@@ -1365,18 +1338,18 @@ impl App {
             self.drag_window(Some(edge));
             return;
         }
-        if self.moving_window {
+        if self.window.moving_window {
             if let Input::Pointer(p) = &input
                 && p.phase == Phase::Down
                 && p.button == 1
                 && !self.shell.context().egui_wants_pointer_input()
             {
-                self.moving_window = false;
+                self.window.moving_window = false;
                 self.drag_window(None);
             }
             return;
         }
-        if self.picking_window {
+        if self.window.picking_window {
             return;
         }
         self.input.cursor = Some(match &input {
@@ -1959,7 +1932,7 @@ impl App {
             return Ok(());
         };
         let over = self.workspace.board.appearance.over && !self.workspace.library;
-        if over != self.overlay.is_some() {
+        if over != self.window.overlay.is_some() {
             if self.workspace.library {
                 let appearance = self.workspace.board.appearance;
                 self.toggle_overlay(event_loop);
@@ -1968,10 +1941,10 @@ impl App {
             } else {
                 self.toggle_overlay(event_loop);
                 // Unsupported windows must not retry creating an overlay on every frame.
-                self.workspace.board.appearance.over = self.overlay.is_some();
+                self.workspace.board.appearance.over = self.window.overlay.is_some();
             }
         }
-        if let Some(overlay) = &mut self.overlay
+        if let Some(overlay) = &mut self.window.overlay
             && overlay.appearance != self.workspace.board.appearance
         {
             overlay.appearance = self.workspace.board.appearance;
@@ -1993,15 +1966,15 @@ impl App {
             !self.workspace.library && (appearance.background != 0 || appearance.window < 1.),
             !self.workspace.library && appearance.background == 2,
         );
-        if self.applied_background != Some(background) {
+        if self.window.applied_background != Some(background) {
             moth_platform::Desktop.window_background(&window, background.1, background.2);
-            self.applied_background = Some(background);
+            self.window.applied_background = Some(background);
         }
-        if self.picking_window {
-            match moth_platform::Desktop.pick_pin_target(&mut self.pin, &window) {
+        if self.window.picking_window {
+            match moth_platform::Desktop.pick_pin_target(&mut self.window.pin, &window) {
                 Some(true) => {
-                    self.picking_window = false;
-                    self.target_pin = true;
+                    self.window.picking_window = false;
+                    self.window.target_pin = true;
                     self.apply_pin(true);
                 }
                 Some(false) => self.cancel_window_mode(),
@@ -2011,7 +1984,9 @@ impl App {
                     .request_repaint_after(std::time::Duration::from_millis(30)),
             }
         }
-        if self.pinned && self.target_pin && !moth_platform::Desktop.pin_target_available(&self.pin)
+        if self.window.pinned
+            && self.window.target_pin
+            && !moth_platform::Desktop.pin_target_available(&self.window.pin)
         {
             self.apply_pin(false);
         }
@@ -2059,8 +2034,8 @@ impl App {
                 || self.settings_window.open
                 || self.drag.is_some()
                 || self.resizing.is_some()
-                || self.moving_window
-                || self.picking_window;
+                || self.window.moving_window
+                || self.window.picking_window;
             if let Some(delta) = self.input.flying_pan(
                 &self.shortcuts.registry,
                 Instant::now(),
@@ -2138,10 +2113,10 @@ impl App {
                 if self.motion.frames.active() || self.camera_active || self.items_active {
                     ui.ctx().request_repaint();
                 }
-                if self.picking_window || self.moving_window {
+                if self.window.picking_window || self.window.moving_window {
                     egui::Panel::top("pick_window").show(ui, |ui| {
                         ui.horizontal_wrapped(|ui| {
-                            ui.label(moth_ui::text(if self.moving_window {
+                            ui.label(moth_ui::text(if self.window.moving_window {
                                 moth_ui::Text::MoveWindowHint
                             } else {
                                 moth_ui::Text::PickWindow
@@ -2187,12 +2162,12 @@ impl App {
                         tabs: &self.workspace.tabs,
                         gpu,
                         library: self.workspace.library,
-                        pinned: self.pinned,
-                        target_pin: self.target_pin,
+                        pinned: self.window.pinned,
+                        target_pin: self.window.target_pin,
                         catalog: &mut self.library_screen.catalog,
                         cards: &self.library_screen.cards,
                         window,
-                        window_bar: &mut self.window_bar,
+                        window_bar: &mut self.window.window_bar,
                         windows: &window_titles,
                         enabled: &enabled,
                         registry: &self.shortcuts.registry,
@@ -2216,7 +2191,7 @@ impl App {
                             duplicate: self.drag_duplicate,
                             gpu,
                             compact: compact_mode,
-                            overlay: self.overlay.is_some(),
+                            overlay: self.window.overlay.is_some(),
                             activate: self.moving.is_none()
                                 && self.drag.is_none()
                                 && self.resizing.is_none(),
@@ -2426,6 +2401,7 @@ impl App {
                 output.pixels_per_point,
                 self.camera_motion.target(camera),
                 &self
+                    .window
                     .floating
                     .iter()
                     .filter_map(|image| {
@@ -2536,7 +2512,7 @@ impl ApplicationHandler<Wake> for App {
         self.input.super_key = false;
         self.input.held.clear();
         self.input.pending_focus = None;
-        for image in &mut self.floating {
+        for image in &mut self.window.floating {
             image.surface = None;
         }
         self.shell.gpu = None;
@@ -2639,11 +2615,12 @@ impl App {
             return;
         }
         if self
+            .window
             .overlay
             .as_ref()
             .is_some_and(|overlay| overlay.window.id() == id)
         {
-            if let Some(overlay) = &mut self.overlay {
+            if let Some(overlay) = &mut self.window.overlay {
                 if matches!(event, WindowEvent::RedrawRequested) {
                     if let Err(error) = overlay.frame() {
                         self.workspace.board.notices.message = error.to_string().into();
@@ -2665,7 +2642,7 @@ impl App {
                     overlay.event(&event);
                 }
                 if overlay.applied != (overlay.on_top, overlay.click_through) {
-                    self.applied_background = None;
+                    self.window.applied_background = None;
                     if let Some(window) = &self.shell.window
                         && let Err(error) = moth_platform::Desktop.window_effects(
                             window,
@@ -2684,14 +2661,19 @@ impl App {
                     }
                 }
             }
-            if let Some(overlay) = &self.overlay {
+            if let Some(overlay) = &self.window.overlay {
                 let appearance = overlay.appearance;
                 if appearance != self.workspace.board.appearance {
                     self.workspace.board.appearance = appearance;
                     self.remember_appearance();
                 }
             }
-            if self.overlay.as_ref().is_some_and(|overlay| overlay.exit) {
+            if self
+                .window
+                .overlay
+                .as_ref()
+                .is_some_and(|overlay| overlay.exit)
+            {
                 self.toggle_overlay(event_loop);
             }
             self.redraw();
@@ -2753,7 +2735,7 @@ impl App {
                 if let Err(e) = self.frame(event_loop) {
                     tracing::error!(%e,"frame failed");
                     self.workspace.board.notices.message = e.to_string().into();
-                    if self.overlay.is_some() {
+                    if self.window.overlay.is_some() {
                         self.toggle_overlay(event_loop);
                     }
                 }
@@ -2761,7 +2743,7 @@ impl App {
             WindowEvent::Moved(position) => {
                 if self.window_position_locked()
                     && !window.is_maximized()
-                    && let Some(locked) = self.locked_position
+                    && let Some(locked) = self.window.locked_position
                     && position != locked
                 {
                     window.set_outer_position(locked);
@@ -2769,7 +2751,7 @@ impl App {
             }
             WindowEvent::Resized(size) => {
                 if window.is_maximized() && !self.settings.lock_maximized {
-                    self.locked_position = None;
+                    self.window.locked_position = None;
                 }
                 if let Some(gpu) = &mut self.shell.gpu {
                     gpu.resize(size.width, size.height);
@@ -2787,7 +2769,7 @@ impl App {
             WindowEvent::CloseRequested => self.request_close(true),
             WindowEvent::Focused(true) => {
                 if self.settings.disable_click_through_on_activate
-                    && let Some(overlay) = &mut self.overlay
+                    && let Some(overlay) = &mut self.window.overlay
                 {
                     overlay.click_through = false;
                     overlay.window.request_redraw();
@@ -2854,8 +2836,8 @@ impl App {
                         || self.tools.coordinates
                         || self.tools.picker_open
                         || self.settings_window.open
-                        || self.moving_window
-                        || self.picking_window;
+                        || self.window.moving_window
+                        || self.window.picking_window;
                     self.cancel_window_mode();
                     if !blocked
                         && !event.repeat
@@ -2877,7 +2859,8 @@ impl App {
                         self.redraw();
                     }
                 }
-                if pressed && !blocked && key == egui::Key::Escape && self.overlay.is_some() {
+                if pressed && !blocked && key == egui::Key::Escape && self.window.overlay.is_some()
+                {
                     self.toggle_overlay(event_loop);
                     return;
                 }

@@ -156,15 +156,15 @@ impl App {
         let Some(window) = self.shell.window.clone() else {
             return;
         };
-        match &mut self.session_window {
+        match &mut self.window.session_window {
             Some(saved) => saved.taken = true,
             None => {
-                self.session_window = Some(SavedWindow {
+                self.window.session_window = Some(SavedWindow {
                     size: window.inner_size(),
                     position: window.outer_position().ok(),
                     maximized: window.is_maximized(),
                     fullscreen: window.fullscreen().is_some(),
-                    pinned: self.pinned,
+                    pinned: self.window.pinned,
                     taken: true,
                 });
             }
@@ -197,7 +197,7 @@ impl App {
         };
         let applied = window.request_inner_size(size);
         self.resized(applied);
-        if !self.pinned {
+        if !self.window.pinned {
             self.apply_pin(true);
         }
     }
@@ -211,7 +211,12 @@ impl App {
     }
     /// Gives the window back as it was before the session.
     pub(super) fn restore_window(&mut self) {
-        let Some(saved) = self.session_window.as_mut().filter(|saved| saved.taken) else {
+        let Some(saved) = self
+            .window
+            .session_window
+            .as_mut()
+            .filter(|saved| saved.taken)
+        else {
             return;
         };
         saved.taken = false;
@@ -227,7 +232,7 @@ impl App {
         };
         // Unpin first: changing the stacking makes some compositors resend the small
         // window's geometry, which would undo a size set before it.
-        if self.pinned != pinned {
+        if self.window.pinned != pinned {
             self.apply_pin(pinned);
         }
         window.set_fullscreen(fullscreen.then_some(winit::window::Fullscreen::Borderless(None)));
@@ -241,17 +246,17 @@ impl App {
         if maximized {
             window.set_maximized(true);
         }
-        self.restoring = (!maximized && !fullscreen)
+        self.window.restoring = (!maximized && !fullscreen)
             .then(|| (size, Instant::now() + std::time::Duration::from_secs(1)));
     }
     /// A late configure from the compositor can still carry the mini window's size
     /// right after a restore; ask again for the user's size then.
     pub(super) fn keep_restored(&mut self, size: winit::dpi::PhysicalSize<u32>) {
-        let Some((target, until)) = self.restoring else {
+        let Some((target, until)) = self.window.restoring else {
             return;
         };
         if Instant::now() > until {
-            self.restoring = None;
+            self.window.restoring = None;
             return;
         }
         if size != target
@@ -264,9 +269,9 @@ impl App {
     /// Once the session is gone (closed, tab switched or board closed), the window is
     /// the user's again.
     pub(super) fn settle_session_window(&mut self) {
-        if self.session_window.is_some() && self.workspace.board.session.is_none() {
+        if self.window.session_window.is_some() && self.workspace.board.session.is_none() {
             self.restore_window();
-            self.session_window = None;
+            self.window.session_window = None;
         }
     }
 }
