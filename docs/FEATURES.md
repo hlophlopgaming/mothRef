@@ -249,7 +249,7 @@ Inventory of [Milanote](https://milanote.com) features from its [help center](ht
 - [ ] **Unsorted tray** per board: imported and clipped items land there first, then get dragged onto the canvas; the browser extension can send to it (M6)
 - [ ] **Item labels**: colored labels on any item, rename updates everywhere, usage count, find all items with a label. Same tag system as board tags in the library (M6)
 - [ ] **Synced notes**: duplicate a note as a linked copy that stays in sync, within one board file (M6); across board files (after 1.0)
-- [ ] Item **trash**: deleted items stay restorable per board until emptied, on top of undo (M5)
+- ~~Item **trash**~~: dropped by the maintainer on 2026-10-30; deleting a board goes to the OS trash, and undo covers items inside a board
 - [ ] **Templates**: "convert board to template", start a new board from a template (M5)
 - [ ] Search across boards and inside them: note text, captions, labels, link titles; jump to the item (M5)
 - [ ] Navigation: back / forward history, go to parent board, recent boards (M6)

@@ -375,7 +375,7 @@ A first slice shipped early ([decision 0004](docs/decisions/0004-reference-works
 - [ ] Board cards show item count, last edited time, file size, pinned state and an "unsaved" badge when a recovery journal is pending; the library header shows totals
 - [ ] Embed images or link to files on disk (PR): a per-image choice, linked images reload when the file changes; a format change (schema bump, migration, corpus files, `docs/FORMAT.md`). Moved from M2 on 2026-10-26
 - [ ] Library health: boards with missing linked files (with relink), duplicate images across boards by content hash, largest boards
-- [ ] All Milanote-checklist items tagged M5 (templates, search inside boards, item trash)
+- [ ] All Milanote-checklist items tagged M5 (templates, search inside boards)
 
 ### M6 — Milanote-style elements
 
