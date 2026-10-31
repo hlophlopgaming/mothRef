@@ -153,6 +153,7 @@ schema! {
             .get("scale_with_window")
             .and_then(|v| v.parse().ok())
             .unwrap_or(false);
+    autosave: u8 = 3, "autosave", General, Autosave, Kind::Choice(&[Text::AutosaveOff, Text::Autosave15s, Text::Autosave30s, Text::Autosave1m, Text::Autosave2m, Text::Autosave3m, Text::Autosave5m]), |s| s.autosave.to_string(), |values: &BTreeMap<String,String>| values.get("autosave").and_then(|v| v.parse().ok()).filter(|v| *v < 7).unwrap_or(3);
     undo_limit: usize = 256, "undo_limit", General, UndoLimit, Kind::Count(0,4096), |s| s.undo_limit.to_string(), |values: &BTreeMap<String,String>| values
             .get("undo_limit")
             .and_then(|v| v.parse().ok())
@@ -211,6 +212,14 @@ schema! {
             .unwrap_or(0);
 }
 impl Settings {
+    /// How long a board may stay unsaved before it saves itself; `None` is off.
+    pub fn autosave_interval(&self) -> Option<std::time::Duration> {
+        const SECONDS: [u64; 7] = [0, 15, 30, 60, 120, 180, 300];
+        SECONDS
+            .get(usize::from(self.autosave))
+            .filter(|&&seconds| seconds > 0)
+            .map(|&seconds| std::time::Duration::from_secs(seconds))
+    }
     pub fn tokens(&self) -> moth_ui::Tokens {
         let mut tokens = if self.dark {
             moth_ui::Tokens::DARK

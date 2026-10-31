@@ -688,13 +688,16 @@ impl Workspace {
                                 pump.events.push(Event::Saved);
                             }
                             self.board.file.dirty = false;
+                            let timed = std::mem::take(&mut self.board.file.autosaving);
                             let path = std::path::PathBuf::from(&self.board.file.path);
                             self.recent_paths.retain(|p| p != &path);
                             self.recent_paths.insert(0, path);
                             self.recent_paths
                                 .truncate(moth_platform::library::MAX_BOARDS);
                             self.refresh_library = true;
-                            self.board.notices.message = moth_ui::Text::Saved.into();
+                            if !timed {
+                                self.board.notices.message = moth_ui::Text::Saved.into();
+                            }
                             if self.board.file.close_after_save {
                                 self.discard();
                             }
@@ -798,6 +801,14 @@ impl Workspace {
                 }
             }
         }
+    }
+    /// Runs the autosave timer of every open board, the background tabs too, and
+    /// returns the earliest moment one of them needs another look.
+    pub(super) fn autosave(&mut self, interval: Duration, now: Instant) -> Option<Instant> {
+        std::iter::once(&mut self.board)
+            .chain(self.tabs.iter_mut())
+            .filter_map(|board| board.autosave(interval, now))
+            .min()
     }
     pub(super) fn pump(&mut self, mut pump: Pump<'_>) -> Vec<Event> {
         for index in 0..self.tabs.len() {

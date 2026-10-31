@@ -165,6 +165,10 @@ pub(super) struct FileState {
     pub(super) dirty: bool,
     pub(super) close_after_save: bool,
     pub(super) exporting: bool,
+    /// When the board last went from saved to unsaved, for the autosave timer.
+    pub(super) dirty_since: Option<Instant>,
+    /// The save under way is a timed one: it finishes without a message.
+    pub(super) autosaving: bool,
     pub(super) discarding: bool,
     pub(super) discarded: bool,
 }
@@ -679,6 +683,45 @@ impl Document {
             Err(_) => self.notices.message = moth_ui::Text::StorageBusy.into(),
         }
     }
+    /// Saves on the autosave timer once the board has been unsaved for `interval`,
+    /// and returns when it next needs a look. Only a board with its own `.moth`
+    /// file is saved: a new board has no destination yet, and a converted
+    /// `.bee` / `.pur` board waits for the user's choice of file.
+    pub(super) fn autosave(&mut self, interval: Duration, now: Instant) -> Option<Instant> {
+        if !self.file.dirty {
+            self.file.dirty_since = None;
+            return None;
+        }
+        let due = *self.file.dirty_since.get_or_insert(now) + interval;
+        let own_file = std::path::Path::new(&self.file.path)
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("moth"));
+        if !own_file
+            || self.file.conversion.is_some()
+            || self.file.close_after_save
+            || self.session.is_some()
+        {
+            return None;
+        }
+        if now < due || self.intake.loading || !self.idle() {
+            return Some(due.max(now));
+        }
+        match self
+            .boards
+            .requests
+            .try_send(moth_platform::boards::Request::Autosave(
+                std::path::PathBuf::from(&self.file.path),
+            )) {
+            Ok(()) => {
+                self.intake.in_flight += 1;
+                self.file.autosaving = true;
+                self.file.dirty_since = None;
+                None
+            }
+            // The storage queue is full: try again shortly.
+            Err(_) => Some(now + interval.min(Duration::from_secs(5))),
+        }
+    }
     /// Begin discarding staged originals and the journal; guarded by in-flight
     /// work so a close never loses journaled but unsaved edits.
     pub(super) fn discard(&mut self) {
@@ -1075,6 +1118,47 @@ mod tests {
         assert_eq!(workspace.board.view.camera.zoom, camera.zoom);
         assert_eq!(workspace.board.view.camera.origin, camera.origin);
         workspace.board.boards.finish().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn autosave_waits_for_the_interval_and_only_saves_own_files() {
+        let root = std::env::temp_dir().join(format!("mothref-autosave-{}", Uuid::now_v7()));
+        let mut board = Document::with_storage(
+            Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+            Arc::new(|| {}),
+            false,
+        )
+        .unwrap();
+        let interval = Duration::from_secs(15);
+        let start = Instant::now();
+        assert_eq!(board.autosave(interval, start), None, "nothing unsaved");
+        board.file.dirty = true;
+        // A new board has no file of its own yet.
+        assert_eq!(board.autosave(interval, start), None);
+        board.file.path = root.join("Board.moth").to_string_lossy().into_owned();
+        board.file.dirty_since = None;
+        assert_eq!(board.autosave(interval, start), Some(start + interval));
+        // The timer counts from the first unsaved change, not the latest.
+        let later = start + Duration::from_secs(10);
+        assert_eq!(board.autosave(interval, later), Some(start + interval));
+        assert_eq!(board.autosave(interval, start + interval), None);
+        assert!(board.file.autosaving);
+        assert_eq!(board.intake.in_flight, 1);
+        // A converted .bee / .pur board waits for its own .moth file.
+        let mut converted = Document::with_storage(
+            Arc::new(moth_platform::DesktopStorage::in_directory(
+                root.join("other"),
+            )),
+            Arc::new(|| {}),
+            false,
+        )
+        .unwrap();
+        converted.file.dirty = true;
+        converted.file.path = root.join("Board.pur").to_string_lossy().into_owned();
+        assert_eq!(converted.autosave(interval, start + interval * 2), None);
+        assert!(!converted.file.autosaving);
+        board.boards.finish().unwrap();
+        converted.boards.finish().unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]

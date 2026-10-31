@@ -29,6 +29,10 @@ pub enum Request {
     Redo,
     /// Append an atomic checkpoint, keeping the old checkpoint intact.
     Save(PathBuf),
+    /// A timed save: the same checkpoint without a backup copy, so frequent
+    /// autosaves neither copy the whole file each time nor push the backups of
+    /// deliberate saves out of the three kept.
+    Autosave(PathBuf),
     /// Load into an empty board and establish a new recovery journal.
     Open(PathBuf),
     /// Restore a validated private journal, retaining its original save destination.
@@ -367,7 +371,7 @@ impl State {
             self.undo.pop_front();
         }
     }
-    fn save(&mut self, path: PathBuf) -> io::Result<Completion> {
+    fn save(&mut self, path: PathBuf, backup: bool) -> io::Result<Completion> {
         if !path
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("moth"))
@@ -394,7 +398,7 @@ impl State {
         file.seek(SeekFrom::Start(0))?;
         let previous = board::read(&mut file).map_err(error)?;
         // Backups are immutable, uniquely named recovery files; keep the latest three.
-        if !previous.scene.is_empty() {
+        if backup && !previous.scene.is_empty() {
             let directory = self.storage.base_directory()?.join("backups").join(
                 blake3::hash(path.as_os_str().as_encoded_bytes())
                     .to_hex()
@@ -790,7 +794,8 @@ impl State {
                 .map_err(|_| error("Export decoder panicked"))??;
                 Ok(Some(Completion::Exported(result)))
             }
-            Request::Save(path) => Ok(Some(self.save(path)?)),
+            Request::Save(path) => Ok(Some(self.save(path, true)?)),
+            Request::Autosave(path) => Ok(Some(self.save(path, false)?)),
             Request::Open(path) => Ok(Some(self.open(path)?)),
             Request::Restore(path) => {
                 let directory = recovery::validate(&self.storage, &path)?;
@@ -1088,7 +1093,7 @@ mod tests {
         #[cfg(not(unix))]
         let directory = root.clone();
         let path = directory.join("Artist references.moth");
-        original.save(path.clone()).unwrap();
+        original.save(path.clone(), true).unwrap();
         let before = std::fs::read(&path).unwrap();
         let note = Item::text(
             "unsaved note",
@@ -1141,7 +1146,7 @@ mod tests {
                     .is_some_and(|extension| extension == "moth")),
             "the original journal bytes stay archived"
         );
-        restored.save(path.clone()).unwrap();
+        restored.save(path.clone(), true).unwrap();
         let loaded = board::read(&mut File::open(&path).unwrap()).unwrap();
         assert_eq!(loaded.scene.get(note.id), Some(&note));
         drop(restored);
@@ -1154,7 +1159,7 @@ mod tests {
         let root = original.storage.base_directory().unwrap();
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("original.moth");
-        original.save(path.clone()).unwrap();
+        original.save(path.clone(), true).unwrap();
         let journal = original
             .storage
             .recovery_directory()
@@ -1209,15 +1214,15 @@ mod tests {
         let directory = first.storage.base_directory().unwrap();
         std::fs::create_dir_all(&directory).unwrap();
         let path = directory.join("owned.moth");
-        first.save(path.clone()).unwrap();
+        first.save(path.clone(), true).unwrap();
         let before = std::fs::read(&path).unwrap();
         let mut second = state();
-        assert!(second.save(path.clone()).is_err());
+        assert!(second.save(path.clone(), true).is_err());
         assert!(second.open(path.clone()).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), before);
         drop(first);
         second.open(path.clone()).unwrap();
-        second.save(path.clone()).unwrap();
+        second.save(path.clone(), true).unwrap();
     }
     fn state() -> State {
         State {
@@ -1290,6 +1295,60 @@ mod tests {
         restored.journal = None;
         restored.journal_guard = None;
         restored.storage.discard().unwrap();
+    }
+    /// Timed saves checkpoint the board but leave the backups to deliberate saves:
+    /// copying the whole file every few seconds would be slow and would push the
+    /// backups of real saves out of the three kept.
+    #[test]
+    fn autosave_checkpoints_without_a_backup() {
+        let mut state = state();
+        let directory = state.storage.base_directory().unwrap();
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("timed.moth");
+        let note = Item::text(
+            "note",
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 120.,
+                height: 40.,
+            },
+            None,
+        );
+        state
+            .request(Request::Apply(Command::Insert(note.clone()), None))
+            .unwrap();
+        state.request(Request::Save(path.clone())).unwrap();
+        let backups = || {
+            let folder = directory.join("backups").join(
+                blake3::hash(path.as_os_str().as_encoded_bytes())
+                    .to_hex()
+                    .as_str(),
+            );
+            std::fs::read_dir(folder).map_or(0, |entries| entries.count())
+        };
+        let moved = Rect {
+            x: 50.,
+            ..note.rect
+        };
+        state
+            .request(Request::Apply(
+                Command::SetRect {
+                    id: note.id,
+                    rect: moved,
+                },
+                None,
+            ))
+            .unwrap();
+        state.request(Request::Autosave(path.clone())).unwrap();
+        assert_eq!(backups(), 0);
+        let saved = board::read(&mut File::open(&path).unwrap()).unwrap();
+        assert_eq!(saved.scene.get(note.id).unwrap().rect, moved);
+        state.request(Request::Save(path.clone())).unwrap();
+        assert_eq!(backups(), 1);
+        state.journal = None;
+        state.journal_guard = None;
+        state.storage.discard().unwrap();
     }
     #[test]
     fn saving_schema_three_atomically_upgrades_appearance() {
@@ -1537,7 +1596,7 @@ mod tests {
                     *hash
                 );
             }
-            restored.save(root.join("recovered.moth")).unwrap();
+            restored.save(root.join("recovered.moth"), true).unwrap();
             assert_eq!(std::fs::read(source).unwrap(), before);
             restored.journal = None;
             restored.journal_guard = None;
@@ -1600,12 +1659,12 @@ mod tests {
             };
             imported.request(request).unwrap();
             assert!(imported.destination.is_none());
-            assert!(imported.save(source.clone()).is_err());
+            assert!(imported.save(source.clone(), true).is_err());
             assert_eq!(std::fs::read(&source).unwrap(), bytes);
             let mut expected: Vec<_> = imported.scene.items().cloned().collect();
             expected.sort_by_key(|item| item.id);
             let saved = directory.join("converted.moth");
-            imported.save(saved.clone()).unwrap();
+            imported.save(saved.clone(), true).unwrap();
             imported.destination = None;
             let mut reopened = state();
             reopened.open(saved).unwrap();
@@ -1734,7 +1793,7 @@ mod tests {
             image.blob().unwrap()
         );
         let output = directory.join("saved.moth");
-        state.save(output.clone()).unwrap();
+        state.save(output.clone(), true).unwrap();
         let saved = board::read(&mut File::open(output).unwrap()).unwrap();
         assert_scene(&saved.scene);
         // Recovery itself must also open without any loose original files.

@@ -1512,6 +1512,16 @@ impl App {
         );
         selection::with_members(&board.scene, &mut board.selection, None);
     }
+    /// Saves boards whose autosave time came and wakes the window when the next
+    /// one is due, so an idle app sleeps until then.
+    fn schedule_autosave(&mut self) {
+        let Some(interval) = self.settings.autosave_interval() else {
+            return;
+        };
+        if let Some(next) = self.workspace.autosave(interval, Instant::now()) {
+            self.shell.deadline = Some(self.shell.deadline.map_or(next, |d| d.min(next)));
+        }
+    }
     /// A panel or popup (Layers, toolbars, menus) lies under `position`, above the
     /// canvas, which egui paints in the background order.
     fn over_panel(&self, position: [f32; 2]) -> bool {
@@ -1753,7 +1763,9 @@ impl App {
         }
         self.settle_session_window();
         self.rebase_drag();
-        self.render(output)
+        let result = self.render(output);
+        self.schedule_autosave();
+        result
     }
     fn run_ui(&mut self, window: &Window) -> Option<(egui::FullOutput, Vec<Intent>)> {
         let compact_mode = self.compact();

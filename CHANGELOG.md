@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Autosave: Settings › General › Save boards automatically (off, every 15 or 30 seconds, every 1, 2, 3 or 5 minutes; every minute by default). Boards with their own .moth file save themselves once they have been unsaved that long, background tabs too. Timed saves skip the backup copy, so backups still come from deliberate saves.
 - The zoom field in the bottom toolbar shows whole percents at a fixed width, so the toolbar no longer changes width while zooming.
 - Fix scrolling the Layers drawer (or any panel over the board) zooming the board underneath.
 - The grayscale view can be toned with a color: Settings › Appearance › Grayscale view tint (for example sepia or blue). Shadows stay dark and highlights light; the middle tones take the color.

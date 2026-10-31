@@ -509,6 +509,15 @@ pub enum Text {
 
     /// Bounded in-memory undo depth.
     UndoLimit,
+    /// Autosave interval setting and its choices.
+    Autosave,
+    AutosaveOff,
+    Autosave15s,
+    Autosave30s,
+    Autosave1m,
+    Autosave2m,
+    Autosave3m,
+    Autosave5m,
     /// Cache settings keep memory limits visible and adjustable.
     ImageCache,
     /// Current CPU cache bytes and retention ceiling.
@@ -1201,6 +1210,14 @@ mod tests {
             Text::WheelPan,
             Text::WheelOff,
             Text::UndoLimit,
+            Text::Autosave,
+            Text::AutosaveOff,
+            Text::Autosave15s,
+            Text::Autosave30s,
+            Text::Autosave1m,
+            Text::Autosave2m,
+            Text::Autosave3m,
+            Text::Autosave5m,
             Text::ImageCache,
             Text::RamCacheUsage,
             Text::DiskCacheUsage,
