@@ -253,6 +253,24 @@ impl Settings {
             _ => Align2::LEFT_BOTTOM,
         }
     }
+    /// Native DPI already scales egui; compensate only for the remaining logical resolution.
+    pub fn load_for_display(
+        &mut self,
+        values: &BTreeMap<String, String>,
+        size: [u32; 2],
+        native_scale: f64,
+    ) -> bool {
+        self.load(values);
+        if values.contains_key("ui_scale") {
+            return false;
+        }
+        self.ui_scale = if native_scale.is_finite() && native_scale > 0. {
+            (f64::from(size[0].min(size[1])) / native_scale / 1080.).clamp(1., 2.) as f32
+        } else {
+            1.
+        };
+        true
+    }
     pub fn load(&mut self, values: &BTreeMap<String, String>) {
         for entry in SCHEMA {
             (entry.set)(self, values);
@@ -528,6 +546,13 @@ impl SettingsWindow {
                                                         if ui
                                                             .add(
                                                                 egui::DragValue::new(&mut v)
+                                                                    .speed(
+                                                                        if entry.key == "ui_scale" {
+                                                                            0.01
+                                                                        } else {
+                                                                            1.
+                                                                        },
+                                                                    )
                                                                     .range(min..=max)
                                                                     .suffix(unit),
                                                             )
@@ -709,6 +734,40 @@ impl SettingsWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn first_launch_scale_uses_resolution_without_doubling_native_dpi() {
+        for (size, dpi, expected) in [
+            ([1920, 1080], 1., 1.),
+            ([2560, 1440], 1., 4. / 3.),
+            ([3840, 2160], 1., 2.),
+            ([3840, 2160], 2., 1.),
+            ([3840, 2160], 1.5, 4. / 3.),
+            ([1440, 2560], 1., 4. / 3.),
+            ([1280, 720], 1., 1.),
+            ([7680, 4320], 1., 2.),
+            ([0, 0], 1., 1.),
+            ([3840, 2160], f64::NAN, 1.),
+        ] {
+            let mut settings = Settings::default();
+            assert!(settings.load_for_display(&BTreeMap::new(), size, dpi));
+            assert!((settings.ui_scale - expected).abs() < 0.001);
+            let saved = settings
+                .preferences()
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value))
+                .collect();
+            assert!(!settings.load_for_display(&saved, [1920, 1080], 1.));
+            assert!((settings.ui_scale - expected).abs() < 0.001);
+        }
+        let mut settings = Settings::default();
+        assert!(!settings.load_for_display(
+            &BTreeMap::from([("ui_scale".into(), "1.25".into())]),
+            [3840, 2160],
+            1.,
+        ));
+        assert_eq!(settings.ui_scale, 1.25);
+    }
+
     #[test]
     fn minimap_opacity_and_distance_persist_with_validated_percentages() {
         for value in [0., 35., 100.] {

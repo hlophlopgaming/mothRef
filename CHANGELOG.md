@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Autosave: Settings › General › Save boards automatically (off, every 15 or 30 seconds, every 1, 2, 3 or 5 minutes; every minute by default). Boards with their own .moth file save themselves once they have been unsaved that long, background tabs too. Timed saves skip the backup copy, so backups still come from deliberate saves.
+- Hold the canvas toolbar's + or − button to zoom repeatedly; release to stop.
+- Open/Add images uses a parented file picker on a dedicated thread, avoiding Windows COM apartment conflicts and keeping the dialog above its owner.
+- On first launch, interface scale follows the monitor resolution and system DPI (including QHD and 4K), and is saved. Adjust it in Settings › Appearance › Interface scale; existing preferences are preserved.
 
 ## 0.1.0-alpha.17 — 2026-10-30
 

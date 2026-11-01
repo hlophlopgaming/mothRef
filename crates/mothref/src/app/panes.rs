@@ -71,6 +71,7 @@ impl Pane {
 /// pin and placement, and the overlay and floating windows it owns. Swapped in
 /// and out as one value, so a field added here can never leak between windows.
 pub(super) struct WindowState {
+    pub(super) file_picker: Option<crossbeam_channel::Receiver<Vec<std::path::PathBuf>>>,
     pub(super) overlay: Option<overlay::Overlay>,
     pub(super) floating: Vec<floating::ImageWindow>,
     pub(super) applied_background: Option<(WindowId, bool, bool)>,
@@ -94,6 +95,7 @@ pub(super) struct WindowState {
 impl WindowState {
     pub(super) fn new(wake: Arc<dyn Fn() + Send + Sync>) -> Self {
         Self {
+            file_picker: None,
             overlay: None,
             floating: Vec::new(),
             applied_background: None,

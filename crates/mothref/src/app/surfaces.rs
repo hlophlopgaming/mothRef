@@ -190,14 +190,18 @@ pub(super) fn button(
     let label = text(action.label());
     let enabled = enabled.get(action as usize).copied().unwrap_or(false);
     if icon_only && let Some(icon) = action.icon() {
-        return moth_ui::icons::enabled_button(
+        let response = moth_ui::icons::enabled_button(
             ui,
             icon,
             &format!("{label} {}", registry.label(action)),
             selected,
             enabled,
-        )
-        .clicked();
+        );
+        return if matches!(action, ZoomIn | ZoomOut) {
+            repeat_zoom(&response)
+        } else {
+            response.clicked()
+        };
     }
     if icon_only {
         // Bars carry words without an icon slot or a shortcut; the tooltip has both.
@@ -225,6 +229,27 @@ pub(super) fn button(
     });
     let response = result.inner;
     response.clicked()
+}
+/// Repeat only while held; a release must not add another zoom step.
+fn repeat_zoom(response: &egui::Response) -> bool {
+    let ctx = &response.ctx;
+    let id = response.id.with("zoom_repeat");
+    let now = ctx.input(|input| input.time);
+    let next = ctx.data(|data| data.get_temp::<f64>(id));
+    if response.enabled() && response.is_pointer_button_down_on() {
+        let fire = next.is_none_or(|next| now >= next);
+        let next = if fire {
+            now + if next.is_none() { 0.3 } else { 0.06 }
+        } else {
+            next.unwrap_or(now)
+        };
+        ctx.data_mut(|data| data.insert_temp(id, next));
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64((next - now).max(0.)));
+        fire
+    } else {
+        ctx.data_mut(|data| data.remove::<f64>(id));
+        response.clicked() && next.is_none()
+    }
 }
 /// Icon column of menus: one size for every row, so labels line up.
 const MENU_ICON: f32 = 16.;
@@ -620,6 +645,60 @@ pub(super) fn added(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn zoom_buttons_repeat_while_held_and_stop_on_release() {
+        for action in [ZoomIn, ZoomOut] {
+            let ctx = egui::Context::default();
+            let registry = Registry::default();
+            let enabled = vec![true; super::super::bindings::ACTIONS.len()];
+            let mut point = egui::pos2(0., 0.);
+            let mut draw = |time, events| {
+                let mut fired = false;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        egui::CentralPanel::default().show(ui, |ui| {
+                            let id = ui.next_auto_id();
+                            fired = button(ui, action, &enabled, &registry, true, false);
+                            point = ui
+                                .ctx()
+                                .read_response(id)
+                                .expect("zoom button was just drawn")
+                                .rect
+                                .center();
+                        });
+                    },
+                );
+                output.textures_delta.clear();
+                (fired, point)
+            };
+            let (_, point) = draw(0., vec![]);
+            let press = |pressed| {
+                vec![
+                    egui::Event::PointerMoved(point),
+                    egui::Event::PointerButton {
+                        pos: point,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]
+            };
+            assert!(draw(0.01, press(true)).0);
+            assert!(!draw(0.1, vec![]).0);
+            assert!(draw(0.32, vec![]).0);
+            assert!(draw(0.39, vec![]).0);
+            assert!(!draw(0.4, press(false)).0);
+            assert!(!draw(0.8, vec![]).0);
+            assert!(draw(0.9, press(true)).0);
+            assert!(!draw(0.91, press(false)).0);
+        }
+    }
+
     #[test]
     fn application_menu_replaces_top_level_file_and_view_buttons() {
         let context = egui::Context::default();

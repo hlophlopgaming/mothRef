@@ -88,3 +88,26 @@ Shapes tools and the final moth mark) remain as recorded in DESIGN.md.
 - The 300-second soak passed: 2,441 frames, RSS 438,860–452,448 KiB;
   second-half RSS spread 768 KiB, below the 16 MiB plateau guard.
 - Manual/native qualification and screenshot comparison remain pending.
+
+
+## Zoom, file picker and initial UI scale follow-up
+
+Automated coverage exercises held +/− toolbar buttons through egui pointer events,
+release without an extra step, idle behavior, QHD/4K/portrait monitor defaults,
+native DPI compensation and persisted scale overrides.
+
+Linux validation: `cargo test -p mothref` passed all 134 tests;
+`cargo fmt --all --check` and workspace Clippy with `-D warnings` passed.
+
+Native Windows/macOS interaction remains unverified in the Linux agent session:
+
+- Windows: with the board pinned and unpinned, use Insert › Images and Open;
+  verify the picker appears above its owner, cancel and reopen it, select several
+  images, then repeat from a second MothRef window. The picker now runs on a fresh
+  thread so its STA initialization cannot conflict with the caller's COM apartment.
+  The reported failure could not be reproduced locally; this addresses the thread
+  and ownership hazards, rather than establishing which caused that report.
+- macOS: repeat Open/Add images and cancellation; rfd's Cocoa backend dispatches
+  panel creation and its modal run to the main thread while the event loop runs.
+- On both: first launch with no saved scale at QHD and 4K, change Settings ›
+  Appearance › Interface scale, restart, and verify the chosen value remains.

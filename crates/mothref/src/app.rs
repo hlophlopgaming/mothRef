@@ -446,7 +446,7 @@ impl App {
     }
 
     fn open_files(&mut self, images: bool) {
-        if self.workspace.confirm_close {
+        if self.workspace.confirm_close || self.window.file_picker.is_some() {
             return;
         }
         let dialog = rfd::FileDialog::new().set_title(moth_ui::text(if images {
@@ -462,11 +462,47 @@ impl App {
         } else {
             dialog
         };
-        let files = dialog.pick_files().unwrap_or_default();
+        let Some(window) = self.shell.window.clone() else {
+            return;
+        };
+        let dialog = dialog.set_parent(window.as_ref());
+        let (send, receive) = crossbeam_channel::bounded(1);
+        let wake = self.shell.wake();
+        // A fresh thread lets Windows initialize an STA independent of graphics/clipboard COM.
+        match std::thread::Builder::new()
+            .name("file-picker".into())
+            .spawn(move || {
+                let files = std::panic::catch_unwind(move || dialog.pick_files())
+                    .unwrap_or_else(|_| {
+                        tracing::error!("native file picker panicked");
+                        None
+                    })
+                    .unwrap_or_default();
+                let _ = send.send(files);
+                wake();
+                drop(window);
+            }) {
+            Ok(_) => self.window.file_picker = Some(receive),
+            Err(error) => self.workspace.board.notices.message = error.to_string().into(),
+        }
+    }
+
+    fn picked_files(&mut self) {
+        let Some(receive) = &self.window.file_picker else {
+            return;
+        };
+        let files = match receive.try_recv() {
+            Ok(files) => files,
+            Err(crossbeam_channel::TryRecvError::Empty) => return,
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                tracing::error!("file picker disconnected before returning a result");
+                Vec::new()
+            }
+        };
+        self.window.file_picker = None;
         for path in files {
             if path
                 .extension()
-                .and_then(|e| e.to_str())
                 .is_some_and(|e| e.eq_ignore_ascii_case("moth"))
             {
                 self.open_in_tab(path);
@@ -703,6 +739,7 @@ impl App {
         }
     }
     fn results(&mut self) {
+        self.picked_files();
         self.adapt_gpu_budget();
         let cursor = self.input.cursor;
         let fallback = self
@@ -743,7 +780,24 @@ impl App {
                         .collect();
                     moth_platform::settings::trim_board_windows(&mut self.window_preferences);
                     self.restore_appearance();
-                    self.settings.load(&values);
+                    let monitor = self
+                        .shell
+                        .window
+                        .as_ref()
+                        .and_then(|w| w.current_monitor().or_else(|| w.primary_monitor()));
+                    let (size, scale) = monitor
+                        .map(|m| {
+                            let size = m.size();
+                            ([size.width, size.height], m.scale_factor())
+                        })
+                        .unwrap_or(([1920, 1080], 1.));
+                    if self.settings.load_for_display(&values, size, scale) {
+                        self.workspace
+                            .persist(moth_platform::boards::Request::Preferences(
+                                [("ui_scale".to_owned(), self.settings.ui_scale.to_string())]
+                                    .into(),
+                            ));
+                    }
                     self.configure_global_shortcuts();
                     if !self.shortcuts.registry.load(&values) {
                         self.workspace.board.notices.message = moth_ui::Text::InvalidBinding.into();

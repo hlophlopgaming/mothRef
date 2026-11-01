@@ -241,6 +241,8 @@ Open:
 <details>
 <summary>Done</summary>
 
+- [x] Canvas zoom buttons repeat while held; parented file picker; initial interface scale accounts for monitor resolution and native DPI, with a persisted override in Settings › Appearance.
+
 - [x] **Step 1 — Theme tokens.** One `moth-ui` theme module owns every color, radius and spacing value as named tokens, with a dark set (today's look) and a light set; `theme()` takes the active set; no `Color32` literal remains outside the module. Appearance unchanged.
 - [x] **Step 2 — Buttons run actions.** Every button in the Board tools window, the toolbar, the canvas context menu and modals runs a registered `Action` through `Intent::Action`; missing actions are added to `app/bindings.rs`; no surface builds a `Command`. Each action gains an icon id. Behavior unchanged.
 - [x] **Step 3 — Settings model and window.** Move every persisted preference out of `Tools` into one `Settings` struct with a schema (section, label, kind, default, range); persistence, a settings window opened by Ctrl/⌘+, and settings search in the palette are built from the schema. The settings part of Board tools is removed. Sections: General, Appearance, Canvas and navigation, Adding images, Window and overlay, Performance and memory, Keys and mouse, Integrations, For developers.
