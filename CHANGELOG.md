@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.19 — 2026-11-04
+
+- Fix the empty board's Choose files and Paste buttons losing clicks to canvas selection, including on first launch on Windows.
+
 ## 0.1.0-alpha.18 — 2026-11-02
 
 - Autosave: Settings › General › Save boards automatically (off, every 15 or 30 seconds, every 1, 2, 3 or 5 minutes; every minute by default). Boards with their own .moth file save themselves once they have been unsaved that long, background tabs too. Timed saves skip the backup copy, so backups still come from deliberate saves.

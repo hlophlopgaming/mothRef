@@ -1044,49 +1044,56 @@ pub fn empty_board(ui: &mut egui::Ui) -> Actions {
         egui::StrokeKind::Inside,
     );
     let mut actions = Actions::default();
-    ui.scope_builder(egui::UiBuilder::new().max_rect(rect.shrink(16.)), |ui| {
-        ui.vertical_centered(|ui| {
-            ui.add_space((size.y * 0.17).max(0.));
-            let (icon, _) = ui.allocate_exact_size(egui::vec2(38., 32.), egui::Sense::hover());
-            let stroke = egui::Stroke::new(1.5, crate::tokens(ui.ctx()).empty_icon);
-            ui.painter().rect_stroke(
-                icon,
-                crate::tokens(ui.ctx()).radius_picture as f32,
-                stroke,
-                egui::StrokeKind::Inside,
-            );
-            ui.painter()
-                .circle_stroke(icon.min + egui::vec2(11., 10.), 3., stroke);
-            ui.painter().line_segment(
-                [
-                    icon.left_bottom() + egui::vec2(3., -3.),
-                    icon.center() + egui::vec2(5., 0.),
-                ],
-                stroke,
-            );
-            ui.painter().line_segment(
-                [
-                    icon.center() + egui::vec2(5., 0.),
-                    icon.right_bottom() - egui::vec2(3., 5.),
-                ],
-                stroke,
-            );
-            ui.add_space(crate::tokens(ui.ctx()).space_content as f32);
-            ui.label(text(Text::Empty));
-            ui.add_space(crate::tokens(ui.ctx()).space_xs as f32);
-            ui.small(text(Text::Volatile));
-            ui.add_space(crate::tokens(ui.ctx()).space_content as f32);
-            ui.horizontal(|ui| {
-                ui.add_space(((ui.available_width() - 230.) / 2.).max(0.));
-                actions.open = ui
-                    .add_sized([125., 36.], egui::Button::new(text(Text::ChooseFiles)))
-                    .clicked();
-                actions.paste = ui
-                    .add_sized([105., 36.], egui::Button::new(text(Text::Paste)))
-                    .clicked();
+    // Keep the prompt above both egui's canvas hit target and native selection input.
+    egui::Area::new(egui::Id::new("empty_board"))
+        .order(egui::Order::Middle)
+        .movable(false)
+        .fixed_pos(rect.shrink(16.).min)
+        .show(ui.ctx(), |ui| {
+            ui.set_min_size(rect.shrink(16.).size());
+            ui.set_max_size(rect.shrink(16.).size());
+            ui.vertical_centered(|ui| {
+                ui.add_space((size.y * 0.17).max(0.));
+                let (icon, _) = ui.allocate_exact_size(egui::vec2(38., 32.), egui::Sense::hover());
+                let stroke = egui::Stroke::new(1.5, crate::tokens(ui.ctx()).empty_icon);
+                ui.painter().rect_stroke(
+                    icon,
+                    crate::tokens(ui.ctx()).radius_picture as f32,
+                    stroke,
+                    egui::StrokeKind::Inside,
+                );
+                ui.painter()
+                    .circle_stroke(icon.min + egui::vec2(11., 10.), 3., stroke);
+                ui.painter().line_segment(
+                    [
+                        icon.left_bottom() + egui::vec2(3., -3.),
+                        icon.center() + egui::vec2(5., 0.),
+                    ],
+                    stroke,
+                );
+                ui.painter().line_segment(
+                    [
+                        icon.center() + egui::vec2(5., 0.),
+                        icon.right_bottom() - egui::vec2(3., 5.),
+                    ],
+                    stroke,
+                );
+                ui.add_space(crate::tokens(ui.ctx()).space_content as f32);
+                ui.label(text(Text::Empty));
+                ui.add_space(crate::tokens(ui.ctx()).space_xs as f32);
+                ui.small(text(Text::Volatile));
+                ui.add_space(crate::tokens(ui.ctx()).space_content as f32);
+                ui.horizontal(|ui| {
+                    ui.add_space(((ui.available_width() - 230.) / 2.).max(0.));
+                    actions.open = ui
+                        .add_sized([125., 36.], egui::Button::new(text(Text::ChooseFiles)))
+                        .clicked();
+                    actions.paste = ui
+                        .add_sized([105., 36.], egui::Button::new(text(Text::Paste)))
+                        .clicked();
+                });
             });
         });
-    });
     actions
 }
 
@@ -1549,6 +1556,71 @@ mod tests {
         let count = output.shapes.iter().filter(|shape| matches!(&shape.shape, egui::Shape::Text(text_shape) if text_shape.galley.text() == text(Text::OpenFile))).count();
         assert_eq!(count, 1);
         output.textures_delta.clear();
+    }
+
+    #[test]
+    fn empty_board_buttons_stay_above_canvas_input() {
+        for label in [Text::ChooseFiles, Text::Paste] {
+            let ctx = Context::default();
+            theme(&ctx, &Tokens::DARK);
+            let mut actions = Actions::default();
+            let mut frame = |events| {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(800., 600.),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        egui::CentralPanel::default().show(ui, |ui| {
+                            actions = empty_board(ui);
+                            ui.interact(
+                                ui.max_rect(),
+                                egui::Id::new("canvas_context"),
+                                egui::Sense::click(),
+                            );
+                        });
+                    },
+                );
+                output.textures_delta.clear();
+                output
+            };
+            let _ = frame(Vec::new());
+            let output = frame(Vec::new());
+            let position = output
+                .shapes
+                .iter()
+                .find_map(|shape| {
+                    if let egui::Shape::Text(shape) = &shape.shape
+                        && shape.galley.text() == text(label)
+                    {
+                        Some(shape.pos + shape.galley.size() / 2.)
+                    } else {
+                        None
+                    }
+                })
+                .expect("the empty-board button must be visible");
+            assert_eq!(
+                ctx.layer_id_at(position).map(|layer| layer.order),
+                Some(egui::Order::Middle)
+            );
+            for pressed in [true, false] {
+                let _ = frame(vec![
+                    egui::Event::PointerMoved(position),
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
+            assert_eq!(actions.open, label == Text::ChooseFiles);
+            assert_eq!(actions.paste, label == Text::Paste);
+        }
     }
 
     #[test]

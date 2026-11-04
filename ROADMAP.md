@@ -37,7 +37,7 @@ Every milestone and every pull request is judged against these, in this order:
 
 ## Where we are
 
-Latest release: **0.1.0-alpha.18** (2026-11-02). Pre-alpha builds for Windows, macOS and Linux are attached to every tagged release on GitHub Releases.
+Latest release: **0.1.0-alpha.19** (2026-11-04). Pre-alpha builds for Windows, macOS and Linux are attached to every tagged release on GitHub Releases.
 
 | Milestone | State | What is left |
 | --- | --- | --- |
@@ -242,6 +242,7 @@ Open:
 <summary>Done</summary>
 
 - [x] Canvas zoom buttons repeat while held; parented file picker; initial interface scale accounts for monitor resolution and native DPI, with a persisted override in Settings › Appearance.
+- [x] Empty-board file and paste buttons sit above canvas input so clicking them does not start a selection.
 
 - [x] **Step 1 — Theme tokens.** One `moth-ui` theme module owns every color, radius and spacing value as named tokens, with a dark set (today's look) and a light set; `theme()` takes the active set; no `Color32` literal remains outside the module. Appearance unchanged.
 - [x] **Step 2 — Buttons run actions.** Every button in the Board tools window, the toolbar, the canvas context menu and modals runs a registered `Action` through `Intent::Action`; missing actions are added to `app/bindings.rs`; no surface builds a `Command`. Each action gains an icon id. Behavior unchanged.
