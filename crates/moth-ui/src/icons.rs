@@ -621,13 +621,15 @@ pub fn tile(ui: &mut Ui, icon: Icon, label: &str) -> Response {
 pub fn dialog_title(ui: &mut Ui, title: &str) {
     ui.label(egui::RichText::new(title).size(17.).strong());
 }
-/// The one filled button of a dialog: what Enter does.
+/// The one filled button of a dialog: what Enter does. Filled in the text color
+/// rather than the accent: a user's accent may be red, which reads as danger on a
+/// safe choice such as Save.
 pub fn primary_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
     let tokens = crate::tokens(ui.ctx());
     ui.add_enabled(
         enabled,
-        egui::Button::new(egui::RichText::new(label).color(tokens.on_accent).strong())
-            .fill(tokens.accent)
+        egui::Button::new(egui::RichText::new(label).color(tokens.surface).strong())
+            .fill(tokens.text)
             .min_size(Vec2::new(
                 0.,
                 ui.spacing().interact_size.y + tokens.space_xs as f32,
