@@ -150,18 +150,18 @@ Open:
 
 - [ ] New app icon and README logo — **on hold** until the final mark is drawn
 - [ ] Parity leftovers from [FEATURES.md](docs/FEATURES.md) (a few were tagged M0/M1 there but never done, so they are collected here):
-  - [ ] Color picker: keep picking outside the window while the button is held (the rest is done)
+  - [ ] Color picker: keep picking outside the window while the button is held (the rest is done) — wanted (maintainer, 2026-11-05)
   - [ ] Coordinate picker: check every field (pixel X/Y, image name, source, size, selection size)
-  - [ ] Show the color gamut of an image (BR)
-  - [ ] Open image source — the URL or path the image came from (PR)
+  - [ ] Show the color gamut of an image (BR) — waiting for a decision: the maintainer asked what it shows (2026-11-05)
+  - [ ] Open image source — the URL or path the image came from (PR). Wanted; handle the edge cases explicitly: an image from inside a `.zip` (show the archive and the entry, open the archive's folder), a web URL (open on click only), clipboard pastes and images embedded in `.bee` / `.pur` files (no source: say so), a file that was moved or deleted since (say it is missing, offer the last known path)
   - [ ] Arrange by file path (PR)
-  - [ ] Setting "bring selected images to front" (PR)
-  - [ ] Optional scrollbars and menu bar (BR)
-  - [ ] Optional auto-downscale of very large images on import (PR)
-  - [ ] Load the most recent scene; option to reopen the last scene on start (PR)
-  - [ ] Open files from the command line: the first `.moth` / `.bee` / `.pur` argument opens a board, image paths are added (BR)
-  - [ ] Notify when pasting from an empty or unusable clipboard (BR)
-  - [ ] Debug log viewer in the app (BR)
+  - [ ] Setting "bring selected images to front" (PR) — wanted, as a setting
+  - [ ] Optional scrollbars and menu bar (BR) — waiting for a decision: the maintainer asked what it means (2026-11-05)
+  - [ ] Optional auto-downscale of very large images on import (PR) — only as a setting, off by default: images are not reduced unless the user asks (maintainer, 2026-11-05)
+  - [ ] Reopen the last board on start — as a setting (maintainer, 2026-11-05)
+  - [ ] Open files from the command line: the first `.moth` / `.bee` / `.pur` argument opens a board, image paths are added (BR). Designed together with M13: the goal is that an agent can load, lay out and annotate images by itself from the documented CLI, without an MCP server (maintainer, 2026-11-05)
+  - [ ] Notify when pasting from an empty or unusable clipboard (BR) — wanted
+  - [ ] Debug log viewer in the app (BR) — wanted
 
 Validation notes: [editing and export](docs/M2-EDITING-VALIDATION.md), [import](docs/M2-IMPORT-VALIDATION.md), [load performance](docs/LOAD-PERFORMANCE.md), target layout [DESIGN.md](docs/DESIGN.md).
 
@@ -491,6 +491,8 @@ A headless mode of the `mothref` binary, so agents, scripts and power users can 
 - [ ] Batch: run a sequence of commands or a script file in one invocation, journaled like interactive edits
 - [ ] Data safety: the single `moth-platform` storage worker, checkpoint plus atomic replace, never an in-place write, never a panic on a corrupt file
 - [ ] Every command and flag documented in `--help` and in a CLI reference under `docs/`
+
+- [ ] Agent-ready without an MCP server (maintainer, 2026-11-05): a short "how to use MothRef from an agent" guide shipped with the CLI (what to call to load images, lay them out, add notes and groups, and check the result), so a coding agent told "load these references and arrange them" knows the commands on its own
 
 **Exit criteria:** an agent creates a board, fetches reference images from the internet, arranges them into a tidy layout, and exports a preview — in one scripted invocation, producing files the GUI opens unchanged.
 
