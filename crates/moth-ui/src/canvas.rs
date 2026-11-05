@@ -18,29 +18,29 @@ pub fn selection(ui: &egui::Ui, corners: [egui::Pos2; 4], hot: Option<usize>) {
 /// order. `hot` is the corner under the pointer: drawn larger and filled, so it is
 /// clear what a drag will pull. A faint `alpha` shows them on a hovered item.
 pub fn handles(ui: &egui::Ui, corners: [egui::Pos2; 4], alpha: f32, hot: Option<usize>) {
+    for (index, corner) in corners.into_iter().enumerate() {
+        handle(ui, corner, alpha, hot == Some(index));
+    }
+}
+/// One resize handle centered on `corner`; a hot one is larger and filled.
+pub fn handle(ui: &egui::Ui, corner: egui::Pos2, alpha: f32, hot: bool) {
     let tokens = crate::tokens(ui.ctx());
     let accent = tokens.accent.gamma_multiply(alpha);
-    for (index, corner) in corners.into_iter().enumerate() {
-        let hot = hot == Some(index);
-        let side = if hot { tokens.space_m } else { tokens.space_s } as f32;
-        let handle = egui::Rect::from_center_size(corner, egui::vec2(side, side));
-        let radius = tokens.radius_none as f32;
-        ui.painter().rect_filled(
-            handle,
-            radius,
-            if hot {
-                accent
-            } else {
-                tokens.canvas.gamma_multiply(alpha)
-            },
-        );
-        ui.painter().rect_stroke(
-            handle,
-            radius,
-            egui::Stroke::new(1., accent),
-            egui::StrokeKind::Inside,
-        );
-    }
+    let side = if hot { tokens.space_m } else { tokens.space_s } as f32;
+    let rect = egui::Rect::from_center_size(corner, egui::vec2(side, side));
+    let radius = tokens.radius_none as f32;
+    let fill = if hot {
+        accent
+    } else {
+        tokens.canvas.gamma_multiply(alpha)
+    };
+    ui.painter().rect_filled(rect, radius, fill);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1., accent),
+        egui::StrokeKind::Inside,
+    );
 }
 /// Persisted presentation choices supplied by the application's settings model.
 pub struct Minimap {
@@ -63,7 +63,8 @@ pub fn minimap(
     board_size: egui::Vec2,
     options: Minimap,
     camera: egui::Rect,
-) -> Option<egui::Pos2> {
+) -> MinimapResponse {
+    let mut response_out = MinimapResponse::default();
     let mut click = None;
     let (mut panel, mut map) = (None, None);
     if viewport.width() < 600. || viewport.height() < 300. {
@@ -73,10 +74,15 @@ pub fn minimap(
                 None,
             )
         });
-        return None;
+        return response_out;
     }
     let tokens = crate::tokens(ctx);
     let size = minimap_size(viewport.size(), board_size, options.size, &tokens);
+    // The navigator never covers more than this share of the canvas; resizing stops
+    // there instead of storing a size it cannot show.
+    let largest = MINIMAP_MAX
+        .min(viewport.width() * 0.3)
+        .min(viewport.height() * 0.3);
     let gap = f32::from(tokens.space_m);
     let inset = f32::from(tokens.space_badge);
     let bottom = ctx.memory(|memory| {
@@ -149,6 +155,37 @@ pub fn minimap(
                     }
                 });
             panel = options.images.then_some(frame.response.rect);
+            // A grip in the corner that faces the board resizes the navigator; it shows
+            // while the pointer is over the panel.
+            let outer = frame.response.rect;
+            let [sx, sy] = [options.alignment.x(), options.alignment.y()]
+                .map(|align| if align == egui::Align::Max { -1f32 } else { 1. });
+            let corner = outer.center() + egui::vec2(sx * outer.width(), sy * outer.height()) / 2.;
+            let side = f32::from(tokens.space_l);
+            let grip = egui::Rect::from_center_size(corner, egui::vec2(side, side));
+            let drag = ui.interact(grip, egui::Id::new("minimap_resize"), egui::Sense::drag());
+            let shown = ui.ctx().animate_bool_with_time(
+                egui::Id::new("minimap_resize_shown"),
+                ui.rect_contains_pointer(outer) || drag.dragged(),
+                ui.style().animation_time,
+            );
+            if shown > 0. {
+                handle(ui, corner, shown, drag.hovered() || drag.dragged());
+            }
+            if drag.hovered() || drag.dragged() {
+                ui.ctx().set_cursor_icon(if sx * sy > 0. {
+                    egui::CursorIcon::ResizeNwSe
+                } else {
+                    egui::CursorIcon::ResizeNeSw
+                });
+            }
+            if drag.dragged() {
+                let delta = drag.drag_delta();
+                let grow = (delta.x * sx + delta.y * sy) / 2.;
+                response_out.size =
+                    Some((size.x.max(size.y) + grow).clamp(MINIMAP_MIN, largest.max(MINIMAP_MIN)));
+            }
+            response_out.resized = drag.drag_stopped();
         });
     ctx.data_mut(|d| {
         d.insert_temp(
@@ -158,8 +195,24 @@ pub fn minimap(
                 .map(|(panel, map)| (panel, map, options.opacity)),
         )
     });
-    click
+    response_out.navigate = click;
+    response_out
 }
+/// Smallest and largest navigator side the resize grip allows, matching the
+/// range of the size setting.
+pub const MINIMAP_MIN: f32 = 120.;
+pub const MINIMAP_MAX: f32 = 600.;
+/// What the navigator asks of the app this frame.
+#[derive(Debug, Default)]
+pub struct MinimapResponse {
+    /// A click or drag on the map: where to center the camera, in board fractions.
+    pub navigate: Option<egui::Pos2>,
+    /// The grip is being dragged: the navigator's new longest side.
+    pub size: Option<f32>,
+    /// The grip was released: the size is final and can be saved.
+    pub resized: bool,
+}
+
 /// Forgets the minimap until it is drawn again, so a hidden one leaves no panel behind.
 pub fn clear_minimap(ctx: &Context) {
     ctx.data_mut(|d| {

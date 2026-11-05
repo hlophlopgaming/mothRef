@@ -51,7 +51,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, mut c: Canvas<'_>) -> Vec<Intent> {
                 selection(ui, &c, &view, &returning, hot, &mut intents);
                 input(ui, &mut c, &view, &mut intents);
             }
-            minimap(ui, &c, &mut view);
+            minimap(ui, &mut c, &mut view, &mut intents);
             marquee(ui, &c);
         });
     intents.insert(0, Intent::View(view));
@@ -608,8 +608,8 @@ fn input(ui: &mut egui::Ui, c: &mut Canvas<'_>, view: &View, intents: &mut Vec<I
     }
 }
 
-/// The navigator; clicking it moves the camera.
-fn minimap(ui: &mut egui::Ui, c: &Canvas<'_>, view: &mut View) {
+/// The navigator: clicking it moves the camera, its corner grip resizes it.
+fn minimap(ui: &mut egui::Ui, c: &mut Canvas<'_>, view: &mut View, intents: &mut Vec<Intent>) {
     let board = c.board;
     let settings = &*c.settings;
     let compact = c.compact;
@@ -644,7 +644,7 @@ fn minimap(ui: &mut egui::Ui, c: &Canvas<'_>, view: &mut View) {
         let world_max = view
             .camera
             .world([view.viewport.right(), view.viewport.bottom()]);
-        if let Some(p) = moth_ui::canvas::minimap(
+        let response = moth_ui::canvas::minimap(
             ui.ctx(),
             view.safe_area,
             &samples,
@@ -660,7 +660,16 @@ fn minimap(ui: &mut egui::Ui, c: &Canvas<'_>, view: &mut View) {
                 normalize(world_min[0], world_min[1]),
                 normalize(world_max[0], world_max[1]),
             ),
-        ) {
+        );
+        // While the grip moves only the shown size changes; the setting is saved
+        // once, on release.
+        if let Some(size) = response.size {
+            c.settings.minimap_size = size;
+        }
+        if response.resized {
+            intents.push(Intent::PreferencesDirty);
+        }
+        if let Some(p) = response.navigate {
             view.camera.origin = [
                 bounds.x + p.x * bounds.width - view.viewport.center().x / view.camera.zoom,
                 bounds.y + p.y * bounds.height - view.viewport.center().y / view.camera.zoom,
