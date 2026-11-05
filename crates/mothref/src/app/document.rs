@@ -1121,6 +1121,55 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    fn resize_grabs_the_selection_first_then_a_hovered_corner() {
+        let root = std::env::temp_dir().join(format!("mothref-grab-{}", Uuid::now_v7()));
+        let mut board = Document::with_storage(
+            Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+            Arc::new(|| {}),
+            false,
+        )
+        .unwrap();
+        let square = |x: f32| Rect {
+            x,
+            y: 0.,
+            width: 100.,
+            height: 100.,
+        };
+        let loose = Item::image(BlobId::from_bytes([1; 32]), square(0.), None);
+        let group = Item::group(
+            moth_scene::Group::default(),
+            square(300.),
+            Default::default(),
+        );
+        let mut member = Item::image(BlobId::from_bytes([2; 32]), square(300.), None);
+        member.parent = Some(group.id);
+        for item in [loose.clone(), group.clone(), member.clone()] {
+            board.apply_visual(Command::Insert(item)).unwrap();
+        }
+        let camera = moth_scene::Camera::default();
+        let grab = |board: &Document, at: [f32; 2]| {
+            super::super::resize::grab(board, camera, at, 12.).map(|g| (g.select, g.corner))
+        };
+        // A corner of an unselected image is grabbed without clicking it first;
+        // its middle is not a handle.
+        assert_eq!(grab(&board, [98., 101.]), Some((Some(loose.id), 3)));
+        assert_eq!(grab(&board, [50., 50.]), None);
+        // A member of a group not entered moves with the group instead.
+        let corner = board.scene.get(member.id).unwrap().rect;
+        assert_eq!(grab(&board, [corner.x, corner.y]), None);
+        board.entered = Some(group.id);
+        assert_eq!(
+            grab(&board, [corner.x, corner.y]),
+            Some((Some(member.id), 0))
+        );
+        // The selection's frame comes first.
+        board.entered = None;
+        board.selection = HashSet::from([loose.id]);
+        assert_eq!(grab(&board, [0., 0.]), Some((None, 0)));
+        board.boards.finish().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn autosave_waits_for_the_interval_and_only_saves_own_files() {
         let root = std::env::temp_dir().join(format!("mothref-autosave-{}", Uuid::now_v7()));
         let mut board = Document::with_storage(

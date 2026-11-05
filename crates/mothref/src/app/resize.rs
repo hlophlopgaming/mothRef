@@ -11,31 +11,103 @@ pub(super) struct Resize {
     note_height: Option<f32>,
     pub released: bool,
 }
+/// Corners a resize grabs, in `Rect::corners` order (top left, top right, bottom
+/// left, bottom right): the frame of one item, or the bounds of several.
+fn corners(items: &[Item]) -> Option<[[f32; 2]; 4]> {
+    let first = items.first()?;
+    if items.len() == 1 {
+        return Some(first.rect.corners(first.transform.rotation));
+    }
+    let bounds = items.iter().fold(egui::Rect::NOTHING, |bounds, item| {
+        let e = item.rect.rotated_envelope(item.transform.rotation);
+        bounds.union(egui::Rect::from_min_max(
+            egui::pos2(e.lower()[0], e.lower()[1]),
+            egui::pos2(e.upper()[0], e.upper()[1]),
+        ))
+    });
+    Some(
+        [
+            bounds.left_top(),
+            bounds.right_top(),
+            bounds.left_bottom(),
+            bounds.right_bottom(),
+        ]
+        .map(|p| [p.x, p.y]),
+    )
+}
+/// The corner within `radius` screen pixels of `pointer`.
+fn corner_near(
+    corners: &[[f32; 2]; 4],
+    camera: Camera,
+    pointer: [f32; 2],
+    radius: f32,
+) -> Option<usize> {
+    corners.iter().position(|corner| {
+        let p = camera.screen(*corner);
+        (p[0] - pointer[0]).hypot(p[1] - pointer[1]) <= radius
+    })
+}
+/// What a press at the pointer would resize.
+pub(super) struct Grab {
+    pub items: Vec<Item>,
+    pub corner: usize,
+    /// An unselected item grabbed by its corner, selected when the press starts.
+    pub select: Option<moth_scene::Uuid>,
+}
+/// The corner a press at `pointer` would grab: the selection's first, else a corner
+/// of the topmost unselected item, so resizing needs no click beforehand. Items
+/// of a group the user has not entered are moved with their group, not resized.
+pub(super) fn grab(
+    board: &super::Document,
+    camera: Camera,
+    pointer: [f32; 2],
+    radius: f32,
+) -> Option<Grab> {
+    let selected: Vec<Item> = board
+        .selection
+        .iter()
+        .filter_map(|id| board.scene.get(*id).cloned())
+        .collect();
+    if let Some(corner) = corners(&selected).and_then(|c| corner_near(&c, camera, pointer, radius))
+    {
+        return Some(Grab {
+            items: selected,
+            corner,
+            select: None,
+        });
+    }
+    let world = camera.world(pointer);
+    let reach = radius / camera.zoom;
+    board
+        .scene
+        .query(Rect {
+            x: world[0] - reach,
+            y: world[1] - reach,
+            width: reach * 2.,
+            height: reach * 2.,
+        })
+        .into_iter()
+        .rev()
+        .filter(|item| {
+            !item.is_group()
+                && !board.selection.contains(&item.id)
+                && board.presented(item)
+                && super::selection::target(&board.scene, board.entered, item.id) == item.id
+        })
+        .find_map(|item| {
+            let items = vec![item.clone()];
+            let corner = corners(&items).and_then(|c| corner_near(&c, camera, pointer, radius))?;
+            Some(Grab {
+                select: Some(item.id),
+                items,
+                corner,
+            })
+        })
+}
 impl Resize {
     pub fn start(items: Vec<Item>, camera: Camera, pointer: [f32; 2], radius: f32) -> Option<Self> {
-        let first = items.first()?;
-        let corners = if items.len() == 1 {
-            first.rect.corners(first.transform.rotation)
-        } else {
-            let bounds = items.iter().fold(egui::Rect::NOTHING, |bounds, item| {
-                let e = item.rect.rotated_envelope(item.transform.rotation);
-                bounds.union(egui::Rect::from_min_max(
-                    egui::pos2(e.lower()[0], e.lower()[1]),
-                    egui::pos2(e.upper()[0], e.upper()[1]),
-                ))
-            });
-            [
-                bounds.left_top(),
-                bounds.right_top(),
-                bounds.left_bottom(),
-                bounds.right_bottom(),
-            ]
-            .map(|p| [p.x, p.y])
-        };
-        let index = corners.iter().position(|corner| {
-            let p = camera.screen(*corner);
-            (p[0] - pointer[0]).hypot(p[1] - pointer[1]) <= radius
-        })?;
+        let corners = corners(&items)?;
+        let index = corner_near(&corners, camera, pointer, radius)?;
         Some(Self {
             items,
             anchor: corners[3 - index],
@@ -45,6 +117,10 @@ impl Resize {
             note_height: None,
             released: false,
         })
+    }
+    /// Which corner is being dragged, for the cursor.
+    pub fn corner(&self) -> usize {
+        self.corner_index
     }
     pub fn update(&mut self, point: [f32; 2]) {
         let diagonal = [

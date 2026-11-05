@@ -44,11 +44,11 @@ pub(super) fn canvas(ui: &mut egui::Ui, mut c: Canvas<'_>) -> Vec<Intent> {
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
-            let (hover_id, fade) = hover(ui, &c, &view);
+            let (hover_id, fade, hot) = hover(ui, &c, &view);
             layout(ui, &c, &mut view, &mut actions, &mut intents);
-            let returning = items(ui, &c, &view, hover_id, fade, &mut intents);
+            let returning = items(ui, &c, &view, hover_id, fade, hot, &mut intents);
             if !c.overlay {
-                selection(ui, &c, &view, &returning, &mut intents);
+                selection(ui, &c, &view, &returning, hot, &mut intents);
                 input(ui, &mut c, &view, &mut intents);
             }
             minimap(ui, &c, &mut view);
@@ -61,7 +61,22 @@ pub(super) fn canvas(ui: &mut egui::Ui, mut c: Canvas<'_>) -> Vec<Intent> {
 
 /// The item under the pointer, the cursor for it, and how far its hover outline
 /// has faded in.
-fn hover(ui: &mut egui::Ui, c: &Canvas<'_>, view: &View) -> (Option<Uuid>, f32) {
+/// The resize handle under the pointer: a corner of the selection (`item` is
+/// `None`) or of a hovered item that is not selected yet.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct HotCorner {
+    pub item: Option<Uuid>,
+    pub corner: usize,
+}
+/// Diagonal resize cursor for a corner in `Rect::corners` order.
+fn resize_cursor(corner: usize) -> egui::CursorIcon {
+    if corner == 0 || corner == 3 {
+        egui::CursorIcon::ResizeNwSe
+    } else {
+        egui::CursorIcon::ResizeNeSw
+    }
+}
+fn hover(ui: &mut egui::Ui, c: &Canvas<'_>, view: &View) -> (Option<Uuid>, f32, Option<HotCorner>) {
     let board = c.board;
     let settings = &*c.settings;
     let drag = c.drag;
@@ -89,9 +104,35 @@ fn hover(ui: &mut egui::Ui, c: &Canvas<'_>, view: &View) -> (Option<Uuid>, f32) 
                 .map(|item| item.id)
         });
     let over_canvas = pointer.is_some_and(|p| view.viewport.contains(egui::pos2(p[0], p[1])));
+    // The same rule the press uses (`resize::grab`), so a lit handle is exactly what
+    // a drag will pull.
+    let hot = pointer
+        .filter(|_| {
+            over_canvas
+                && drag.is_none()
+                && resizing.is_none()
+                && !tool.picks()
+                && settings.show_outlines
+                && !board.locked
+                && board.idle()
+        })
+        .and_then(|p| {
+            super::resize::grab(
+                board,
+                view.camera,
+                p,
+                moth_ui::tokens(ui.ctx()).space_m as f32,
+            )
+        })
+        .map(|grab| HotCorner {
+            item: grab.select,
+            corner: grab.corner,
+        });
     if over_canvas || drag.is_some() {
-        ui.ctx().set_cursor_icon(if resizing.is_some() {
-            egui::CursorIcon::ResizeNwSe
+        ui.ctx().set_cursor_icon(if let Some(resize) = resizing {
+            resize_cursor(resize.corner())
+        } else if let Some(hot) = hot {
+            resize_cursor(hot.corner)
         } else if tool.picks() {
             egui::CursorIcon::Crosshair
         } else if drag.is_some_and(|(_, _, pan)| pan) || moving.is_some() {
@@ -118,7 +159,7 @@ fn hover(ui: &mut egui::Ui, c: &Canvas<'_>, view: &View) -> (Option<Uuid>, f32) 
         },
     );
     let hover_id = ui.ctx().data(|data| data.get_temp::<Uuid>(hover_key));
-    (hover_id, fade)
+    (hover_id, fade, hot)
 }
 
 /// Fits the view to this frame: toolbar, the area bars leave free, scaling with
@@ -206,6 +247,7 @@ fn items(
     view: &View,
     hover_id: Option<Uuid>,
     fade: f32,
+    hot: Option<HotCorner>,
     intents: &mut Vec<Intent>,
 ) -> std::collections::HashMap<Uuid, Item> {
     let board = c.board;
@@ -318,18 +360,27 @@ fn items(
             Some(_) => {}
         }
         if !overlay {
+            let selected = board.selection.len() == 1 && board.selection.contains(&item.id);
+            let hot = hot
+                .filter(|hot| hot.item.map_or(selected, |id| id == item.id))
+                .map(|hot| hot.corner);
+            // Hovered items show faint handles where they can be resized; members of
+            // a group the user has not entered move with the group instead.
+            let resizable = !item.is_group()
+                && !board.locked
+                && super::selection::target(&board.scene, board.entered, item.id) == item.id;
             outline(
                 ui,
                 &view.camera,
                 item,
-                board.selection.len() == 1
-                    && board.selection.contains(&item.id)
+                selected
                     && !(duplicate
                         && moving.is_none()
                         && !returning.is_empty()
                         && !returning.contains_key(&item.id)),
                 if hover_id == Some(item.id) { fade } else { 0. },
                 settings.show_outlines,
+                Handles { resizable, hot },
             );
         }
     }
@@ -344,7 +395,15 @@ fn items(
             draw_note(ui, &view.camera, ghost);
         }
         if !overlay && board.scene.get(ghost.id).is_none() {
-            outline(ui, &view.camera, ghost, true, 0., settings.show_outlines);
+            outline(
+                ui,
+                &view.camera,
+                ghost,
+                true,
+                0.,
+                settings.show_outlines,
+                Handles::default(),
+            );
         }
     }
     for ghost in transitions.into_iter().filter(|item| board.presented(item)) {
@@ -362,6 +421,7 @@ fn selection(
     c: &Canvas<'_>,
     view: &View,
     returning: &std::collections::HashMap<Uuid, Item>,
+    hot: Option<HotCorner>,
     intents: &mut Vec<Intent>,
 ) {
     let board = c.board;
@@ -424,7 +484,13 @@ fn selection(
                     egui::pos2(p[0], p[1])
                 };
                 let frame = egui::Rect::from_min_max(screen(bounds.min), screen(bounds.max));
-                selection_frame(ui, frame, board.selection.len() > 1, settings.show_outlines);
+                selection_frame(
+                    ui,
+                    frame,
+                    board.selection.len() > 1,
+                    settings.show_outlines,
+                    hot.filter(|hot| hot.item.is_none()).map(|hot| hot.corner),
+                );
                 if !compact {
                     let group = super::selection::single_group(&board.scene, &board.selection);
                     let kind = if let Some(group) = group {
@@ -619,7 +685,13 @@ fn marquee(ui: &mut egui::Ui, c: &Canvas<'_>) {
     }
 }
 
-fn selection_frame(ui: &mut egui::Ui, frame: egui::Rect, multiple: bool, show: bool) {
+fn selection_frame(
+    ui: &mut egui::Ui,
+    frame: egui::Rect,
+    multiple: bool,
+    show: bool,
+    hot: Option<usize>,
+) {
     if multiple && show {
         moth_ui::canvas::selection(
             ui,
@@ -629,11 +701,19 @@ fn selection_frame(ui: &mut egui::Ui, frame: egui::Rect, multiple: bool, show: b
                 frame.left_bottom(),
                 frame.right_bottom(),
             ],
+            hot,
         );
     }
 }
 
 /// Outlines share the displayed geometry, including sway, lift and transitions.
+/// Resize handles of an outline: whether a hovered item shows them, and the corner
+/// under the pointer.
+#[derive(Clone, Copy, Default)]
+struct Handles {
+    resizable: bool,
+    hot: Option<usize>,
+}
 fn outline(
     ui: &mut egui::Ui,
     camera: &Camera,
@@ -641,25 +721,25 @@ fn outline(
     selected: bool,
     hover: f32,
     enabled: bool,
+    Handles { resizable, hot }: Handles,
 ) {
-    if !enabled || (!selected && hover <= 0.) {
+    if !enabled || (!selected && hover <= 0. && hot.is_none()) {
         return;
     }
     let opacity = ui.opacity();
     ui.multiply_opacity(item.transform.opacity);
     let corners = screen_corners(camera, item.rect, item.transform.rotation);
     if selected {
-        moth_ui::canvas::selection(ui, corners);
+        moth_ui::canvas::selection(ui, corners, hot);
     } else {
+        let alpha = if hot.is_some() { 1f32 } else { hover }.max(hover) * 0.65;
         ui.painter().add(egui::Shape::closed_line(
             vec![corners[0], corners[1], corners[3], corners[2]],
-            egui::Stroke::new(
-                1.,
-                moth_ui::tokens(ui.ctx())
-                    .accent
-                    .gamma_multiply(hover * 0.65),
-            ),
+            egui::Stroke::new(1., moth_ui::tokens(ui.ctx()).accent.gamma_multiply(alpha)),
         ));
+        if resizable {
+            moth_ui::canvas::handles(ui, corners, alpha, hot);
+        }
     }
     ui.set_opacity(opacity);
 }
@@ -1045,7 +1125,7 @@ mod tests {
         moth_ui::theme(&context, &moth_ui::Tokens::DARK);
         let frame = egui::Rect::from_min_size(egui::pos2(20., 30.), egui::vec2(100., 80.));
         let mut output = context.run_ui(Default::default(), |ui| {
-            selection_frame(ui, frame, true, true);
+            selection_frame(ui, frame, true, true, None);
         });
         output.textures_delta.clear();
         assert!(
@@ -1072,7 +1152,15 @@ mod tests {
         for selected in [false, true] {
             let ctx = egui::Context::default();
             let mut output = ctx.run_ui(Default::default(), |ui| {
-                outline(ui, &Camera::default(), &item, selected, 1., false)
+                outline(
+                    ui,
+                    &Camera::default(),
+                    &item,
+                    selected,
+                    1.,
+                    false,
+                    Handles::default(),
+                )
             });
             output.textures_delta.clear();
             assert!(
@@ -1118,7 +1206,15 @@ mod tests {
         for selected in [true, false] {
             let ctx = egui::Context::default();
             let mut output = ctx.run_ui(Default::default(), |ui| {
-                outline(ui, &camera, &presented, selected, 1., true)
+                outline(
+                    ui,
+                    &camera,
+                    &presented,
+                    selected,
+                    1.,
+                    true,
+                    Handles::default(),
+                )
             });
             output.textures_delta.clear();
             let path = output

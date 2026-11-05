@@ -1292,21 +1292,18 @@ impl App {
     }
     /// A press on a selection handle starts resizing the selection.
     fn start_resize(&mut self, p: moth_platform::input::Pointer) -> bool {
-        let items = self
-            .workspace
-            .board
-            .selection
-            .iter()
-            .filter_map(|id| self.workspace.board.scene.get(*id).cloned())
-            .collect();
-        let Some(resize) = resize::Resize::start(
-            items,
-            self.workspace.board.view.camera,
-            p.position,
-            moth_ui::tokens(self.shell.context()).space_m as f32,
-        ) else {
+        let radius = moth_ui::tokens(self.shell.context()).space_m as f32;
+        let camera = self.workspace.board.view.camera;
+        let Some(grab) = resize::grab(&self.workspace.board, camera, p.position, radius) else {
             return false;
         };
+        let Some(resize) = resize::Resize::start(grab.items, camera, p.position, radius) else {
+            return false;
+        };
+        // A corner of an unselected item selects it as the drag begins.
+        if let Some(id) = grab.select {
+            self.workspace.board.selection = HashSet::from([id]);
+        }
         let _ = self.input.gestures.update(p);
         self.camera_motion.stop();
         self.motion

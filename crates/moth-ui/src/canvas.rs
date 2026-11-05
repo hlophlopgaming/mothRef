@@ -6,34 +6,40 @@ use super::*;
 ///
 /// Corners arrive in world-rotation order: top-left, top-right, bottom-left,
 /// bottom-right. Handles land on the same 3x3 grid an unrotated frame has.
-pub fn selection(ui: &egui::Ui, corners: [egui::Pos2; 4]) {
+pub fn selection(ui: &egui::Ui, corners: [egui::Pos2; 4], hot: Option<usize>) {
     let [top_left, top_right, bottom_left, bottom_right] = corners;
     ui.painter().add(egui::Shape::closed_line(
         vec![top_left, top_right, bottom_right, bottom_left],
         egui::Stroke::new(1., crate::tokens(ui.ctx()).accent),
     ));
-    for across in [0, 2u8] {
-        for down in [0, 2u8] {
-            if across == 1 && down == 1 {
-                continue;
-            }
-            let ratio = |step: u8| step as f32 / 2.;
-            let top = top_left.lerp(top_right, ratio(across));
-            let bottom = bottom_left.lerp(bottom_right, ratio(across));
-            let handle =
-                egui::Rect::from_center_size(top.lerp(bottom, ratio(down)), egui::vec2(6., 6.));
-            ui.painter().rect_filled(
-                handle,
-                crate::tokens(ui.ctx()).radius_none as f32,
-                crate::tokens(ui.ctx()).canvas,
-            );
-            ui.painter().rect_stroke(
-                handle,
-                crate::tokens(ui.ctx()).radius_none as f32,
-                egui::Stroke::new(1., crate::tokens(ui.ctx()).accent),
-                egui::StrokeKind::Inside,
-            );
-        }
+    handles(ui, corners, 1., hot);
+}
+/// Corner handles of a frame, in `[top left, top right, bottom left, bottom right]`
+/// order. `hot` is the corner under the pointer: drawn larger and filled, so it is
+/// clear what a drag will pull. A faint `alpha` shows them on a hovered item.
+pub fn handles(ui: &egui::Ui, corners: [egui::Pos2; 4], alpha: f32, hot: Option<usize>) {
+    let tokens = crate::tokens(ui.ctx());
+    let accent = tokens.accent.gamma_multiply(alpha);
+    for (index, corner) in corners.into_iter().enumerate() {
+        let hot = hot == Some(index);
+        let side = if hot { tokens.space_m } else { tokens.space_s } as f32;
+        let handle = egui::Rect::from_center_size(corner, egui::vec2(side, side));
+        let radius = tokens.radius_none as f32;
+        ui.painter().rect_filled(
+            handle,
+            radius,
+            if hot {
+                accent
+            } else {
+                tokens.canvas.gamma_multiply(alpha)
+            },
+        );
+        ui.painter().rect_stroke(
+            handle,
+            radius,
+            egui::Stroke::new(1., accent),
+            egui::StrokeKind::Inside,
+        );
     }
 }
 /// Persisted presentation choices supplied by the application's settings model.
@@ -426,6 +432,38 @@ mod tests {
     }
 
     #[test]
+    fn hot_handle_is_larger_and_filled() {
+        let ctx = Context::default();
+        crate::theme(&ctx, &crate::Tokens::DARK);
+        let tokens = crate::tokens(&ctx);
+        let corners = [
+            egui::pos2(20., 20.),
+            egui::pos2(120., 20.),
+            egui::pos2(20., 80.),
+            egui::pos2(120., 80.),
+        ];
+        let mut output = ctx.run_ui(Default::default(), |ui| handles(ui, corners, 1., Some(3)));
+        output.textures_delta.clear();
+        let fills: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Rect(rect) if rect.fill != egui::Color32::TRANSPARENT => {
+                    Some((rect.rect, rect.fill))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fills.len(), 4);
+        for (index, (rect, fill)) in fills.into_iter().enumerate() {
+            assert_eq!(rect.center(), corners[index]);
+            let hot = index == 3;
+            let side = if hot { tokens.space_m } else { tokens.space_s } as f32;
+            assert_eq!(rect.width(), side);
+            assert_eq!(fill == tokens.accent, hot);
+        }
+    }
+    #[test]
     fn selection_outline_follows_frame_perimeter() {
         let ctx = Context::default();
         let corners = [
@@ -434,7 +472,7 @@ mod tests {
             egui::pos2(10., 80.),
             egui::pos2(110., 90.),
         ];
-        let mut output = ctx.run_ui(Default::default(), |ui| selection(ui, corners));
+        let mut output = ctx.run_ui(Default::default(), |ui| selection(ui, corners, None));
         output.textures_delta.clear();
         let path = output
             .shapes

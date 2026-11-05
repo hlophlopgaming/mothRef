@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Resizing is easier to find: hovering an image shows its corner handles, the corner under the pointer grows and fills with the accent color and the cursor turns into a resize arrow, and an image can be resized by its corner without selecting it first.
 - The dialog when closing an unsaved board is clearer: “Save changes to “board”?”, one line on what is lost, “Don’t save” on its own at the left, Cancel and Save at the right. Enter saves, Esc cancels.
 ## 0.1.0-alpha.19 — 2026-11-04
 
