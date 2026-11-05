@@ -328,26 +328,20 @@ pub fn apply(ctx: &Context, tokens: &Tokens) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    /// WCAG relative luminance.
-    fn luminance(color: Color32) -> f32 {
-        let channel = |v: u8| {
-            let v = v as f32 / 255.;
-            if v <= 0.039_28 {
-                v / 12.92
-            } else {
-                ((v + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        let [r, g, b, _] = color.to_array();
-        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
-    }
-    fn contrast(a: Color32, b: Color32) -> f32 {
-        let (a, b) = (luminance(a), luminance(b));
-        (a.max(b) + 0.05) / (a.min(b) + 0.05)
-    }
     #[test]
     fn text_stays_readable_on_every_background() {
-        for palette in [Tokens::DARK, Tokens::LIGHT] {
+        // Every palette, light and dark, with its own accent and with each quick pick.
+        let palettes = Palette::ALL.into_iter().flat_map(|palette| {
+            [true, false].into_iter().flat_map(move |dark| {
+                let base = Tokens::palette(palette, dark);
+                std::iter::once(base).chain(ACCENTS.into_iter().map(move |[r, g, b]| {
+                    let mut tokens = base;
+                    tokens.set_accent(Color32::from_rgb(r, g, b));
+                    tokens
+                }))
+            })
+        });
+        for palette in palettes {
             for background in [
                 palette.canvas,
                 palette.surface,
@@ -458,31 +452,259 @@ impl Tokens {
             self.canvas = Color32::from_rgb(r, g, b);
         }
         if let Some([r, g, b]) = selection {
-            let chosen = Color32::from_rgb(r, g, b);
-            // The chosen color is the accent; fills under selected rows and buttons get a
-            // calm tone of it, so a saturated pick never turns lists into solid color.
-            self.accent = chosen;
-            self.selection = self
-                .surface
-                .lerp_to_gamma(chosen, if self.dark { 0.38 } else { 0.3 });
-            let luma = |c: Color32| {
-                let [r, g, b, _] = c.to_array();
-                0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32
-            };
-            // Text in the accent color stays readable on the surface.
-            self.accent_text = if self.dark {
-                chosen.lerp_to_gamma(Color32::WHITE, if luma(chosen) < 140. { 0.35 } else { 0. })
-            } else {
-                chosen.lerp_to_gamma(Color32::BLACK, if luma(chosen) > 110. { 0.45 } else { 0. })
-            };
-            self.on_accent = if luma(chosen) > 150. {
-                Self::DARK.on_accent
-            } else {
-                Self::LIGHT.surface
-            };
+            self.set_accent(Color32::from_rgb(r, g, b));
         }
     }
+    /// Makes `chosen` the accent. Fills under selected rows and buttons get a calm
+    /// tone of it, so a saturated pick never turns lists into solid color, and text
+    /// in it stays readable on the surface.
+    pub fn set_accent(&mut self, chosen: Color32) {
+        self.accent = chosen;
+        self.selection = self
+            .surface
+            .lerp_to_gamma(chosen, if self.dark { 0.22 } else { 0.3 });
+        // Text in the accent color is lightened (dark theme) or darkened (light theme)
+        // just enough to read on the canvas.
+        let toward = if self.dark {
+            Color32::WHITE
+        } else {
+            Color32::BLACK
+        };
+        self.accent_text = (0..=20)
+            .map(|step| chosen.lerp_to_gamma(toward, step as f32 / 20.))
+            .find(|color| contrast(*color, self.canvas) >= 4.5)
+            .unwrap_or(toward);
+        // Text on an accent fill: whichever of dark and light reads better.
+        self.on_accent = [Self::DARK.on_accent, Self::LIGHT.surface]
+            .into_iter()
+            .max_by(|a, b| contrast(*a, chosen).total_cmp(&contrast(*b, chosen)))
+            .unwrap_or(Self::DARK.on_accent);
+    }
+    /// The base light or dark tokens in one of the palettes.
+    pub fn palette(palette: Palette, dark: bool) -> Self {
+        let mut tokens = if dark { Self::DARK } else { Self::LIGHT };
+        let Some(neutrals) = palette.neutrals(dark) else {
+            return tokens;
+        };
+        let c = |[r, g, b]: [u8; 3]| Color32::from_rgb(r, g, b);
+        tokens.canvas = c(neutrals.canvas);
+        tokens.surface = c(neutrals.surface);
+        tokens.surface_raised = c(neutrals.raised);
+        tokens.sidebar = c(neutrals.sidebar);
+        tokens.border = c(neutrals.border);
+        tokens.divider = c(neutrals.divider);
+        tokens.hover = c(neutrals.hover);
+        tokens.text = c(neutrals.text);
+        tokens.text_muted = c(neutrals.muted);
+        tokens.empty_border = c(neutrals.empty_border);
+        tokens.empty_icon = c(neutrals.empty_icon);
+        tokens.minimap_item = c(neutrals.minimap_item);
+        tokens.note_fill = c(neutrals.surface);
+        tokens.groups[0] = c(neutrals.muted);
+        tokens.set_accent(c(palette.accent()));
+        tokens
+    }
 }
+
+/// WCAG relative luminance of an sRGB color.
+fn luminance(color: Color32) -> f32 {
+    let channel = |value: u8| {
+        let v = value as f32 / 255.;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let [r, g, b, _] = color.to_array();
+    0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+}
+/// WCAG contrast ratio between two colors, 1 to 21.
+fn contrast(a: Color32, b: Color32) -> f32 {
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+/// The base colors of the interface. Sage is MothRef's original green-tinted
+/// palette; the others keep the same structure with other neutrals.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Palette {
+    Sage,
+    /// Plain gray, with no tint.
+    #[default]
+    Graphite,
+    /// Cool blue-gray.
+    Ink,
+    /// Warm brown-gray.
+    Umber,
+}
+/// Neutral colors of a palette: everything that is not an accent.
+struct Neutrals {
+    canvas: [u8; 3],
+    surface: [u8; 3],
+    raised: [u8; 3],
+    sidebar: [u8; 3],
+    border: [u8; 3],
+    divider: [u8; 3],
+    hover: [u8; 3],
+    text: [u8; 3],
+    muted: [u8; 3],
+    empty_border: [u8; 3],
+    empty_icon: [u8; 3],
+    minimap_item: [u8; 3],
+}
+impl Palette {
+    pub const ALL: [Self; 4] = [Self::Sage, Self::Graphite, Self::Ink, Self::Umber];
+    pub fn from_code(code: u8) -> Self {
+        Self::ALL
+            .get(usize::from(code))
+            .copied()
+            .unwrap_or_default()
+    }
+    /// The accent a palette starts with; a chosen accent replaces it.
+    fn accent(self) -> [u8; 3] {
+        match self {
+            Self::Sage => [166, 196, 122],
+            Self::Graphite => [143, 184, 222],
+            Self::Ink => [143, 184, 222],
+            Self::Umber => [224, 180, 108],
+        }
+    }
+    fn neutrals(self, dark: bool) -> Option<Neutrals> {
+        let n = |canvas,
+                 surface,
+                 raised,
+                 sidebar,
+                 border,
+                 divider,
+                 hover,
+                 text,
+                 muted,
+                 empty_border,
+                 empty_icon,
+                 minimap_item| Neutrals {
+            canvas,
+            surface,
+            raised,
+            sidebar,
+            border,
+            divider,
+            hover,
+            text,
+            muted,
+            empty_border,
+            empty_icon,
+            minimap_item,
+        };
+        Some(match (self, dark) {
+            (Self::Sage, _) => return None,
+            (Self::Graphite, true) => n(
+                [28, 28, 30],
+                [36, 36, 39],
+                [44, 44, 48],
+                [22, 22, 24],
+                [58, 58, 63],
+                [50, 50, 54],
+                [52, 52, 57],
+                [232, 232, 236],
+                [152, 152, 160],
+                [70, 70, 76],
+                [138, 138, 146],
+                [74, 74, 80],
+            ),
+            (Self::Graphite, false) => n(
+                [240, 240, 242],
+                [248, 248, 250],
+                [228, 228, 232],
+                [233, 233, 237],
+                [196, 196, 202],
+                [210, 210, 216],
+                [226, 227, 232],
+                [32, 32, 36],
+                [104, 104, 112],
+                [182, 182, 190],
+                [90, 90, 100],
+                [178, 178, 186],
+            ),
+            (Self::Ink, true) => n(
+                [24, 28, 36],
+                [31, 36, 46],
+                [38, 44, 56],
+                [19, 22, 29],
+                [52, 60, 76],
+                [45, 51, 64],
+                [46, 53, 67],
+                [226, 232, 242],
+                [148, 158, 176],
+                [62, 72, 90],
+                [132, 144, 166],
+                [66, 76, 94],
+            ),
+            (Self::Ink, false) => n(
+                [236, 240, 246],
+                [246, 248, 252],
+                [224, 230, 240],
+                [229, 234, 242],
+                [190, 198, 212],
+                [206, 213, 226],
+                [222, 229, 240],
+                [28, 34, 46],
+                [98, 108, 126],
+                [176, 186, 204],
+                [70, 90, 130],
+                [170, 180, 198],
+            ),
+            (Self::Umber, true) => n(
+                [34, 30, 27],
+                [42, 37, 33],
+                [50, 44, 39],
+                [27, 24, 21],
+                [66, 58, 51],
+                [56, 49, 43],
+                [60, 52, 46],
+                [236, 228, 216],
+                [164, 154, 140],
+                [78, 69, 61],
+                [150, 138, 122],
+                [84, 74, 64],
+            ),
+            (Self::Umber, false) => n(
+                [244, 238, 230],
+                [250, 246, 240],
+                [232, 224, 212],
+                [238, 231, 221],
+                [200, 190, 176],
+                [214, 204, 190],
+                [230, 222, 210],
+                [40, 34, 28],
+                [112, 102, 90],
+                [190, 178, 162],
+                [120, 90, 60],
+                [184, 172, 156],
+            ),
+        })
+    }
+}
+/// Quick picks for the accent: the group colors plus coral, teal and graphite.
+pub const ACCENTS: [[u8; 3]; 8] = [
+    [166, 196, 122],
+    [224, 180, 108],
+    [143, 184, 222],
+    [229, 143, 174],
+    [180, 160, 216],
+    [232, 128, 104],
+    [110, 196, 184],
+    [176, 176, 184],
+];
+/// Quick picks for the canvas: neutral grays from near black to near white.
+pub const CANVASES: [[u8; 3]; 7] = [
+    [18, 18, 20],
+    [28, 28, 30],
+    [40, 40, 44],
+    [64, 64, 68],
+    [128, 128, 132],
+    [204, 204, 208],
+    [238, 238, 240],
+];
 
 #[cfg(test)]
 mod custom_color_tests {

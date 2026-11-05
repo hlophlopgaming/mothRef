@@ -417,7 +417,12 @@ BackgroundColor = Background color
 
 CanvasColor = Canvas color
 
-SelectionColor = Selection color
+SelectionColor = Accent color
+Palette = Palette
+PaletteSage = Sage
+PaletteGraphite = Graphite
+PaletteInk = Ink
+PaletteUmber = Umber
 GrayscaleTint = Grayscale view tint
 
 OverlaySelection = Overlay selection

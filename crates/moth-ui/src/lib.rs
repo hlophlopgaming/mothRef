@@ -652,6 +652,12 @@ pub enum Text {
     CanvasGrayscale,
     /// Color the board's grayscale view is toned with.
     GrayscaleTint,
+    /// Interface palette setting and its choices.
+    Palette,
+    PaletteSage,
+    PaletteGraphite,
+    PaletteInk,
+    PaletteUmber,
     /// Localized PackFit control.
     PackFit,
     /// Localized CoordinatePicker control.
@@ -1290,6 +1296,11 @@ mod tests {
             Text::PreviousImage,
             Text::CanvasGrayscale,
             Text::GrayscaleTint,
+            Text::Palette,
+            Text::PaletteSage,
+            Text::PaletteGraphite,
+            Text::PaletteInk,
+            Text::PaletteUmber,
             Text::PackFit,
             Text::CoordinatePicker,
             Text::ExportZip,

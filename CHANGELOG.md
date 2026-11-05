@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Palettes: Settings › Appearance › Palette picks the base colors of the interface, light and dark: Graphite (plain gray, the new default), Ink (cool blue-gray), Umber (warm brown-gray) or Sage (the former green-tinted look). The accent color (formerly “Selection color”), the canvas color and the grayscale tint get one-click color samples next to the color picker. Text on and in the accent now picks its shade by real contrast, so any accent stays readable.
 - Saving a board for the first time (Ctrl/⌘+S, or Save when closing) opens the system “Save as” dialog with the board’s name filled in, instead of a field for typing a path. A board converted from .bee or .pur is offered the folder it came from.
 - Resize the navigator by dragging the grip in its corner facing the board; the size is remembered.
 - Resizing is easier to find: hovering an image shows its corner handles, the corner under the pointer grows and fills with the accent color and the cursor turns into a resize arrow, and an image can be resized by its corner without selecting it first.

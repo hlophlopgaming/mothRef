@@ -59,7 +59,8 @@ impl Section {
 }
 pub(super) enum Kind {
     Toggle,
-    Color,
+    /// A color with optional quick picks shown under the picker.
+    Color(&'static [[u8; 3]]),
     Language,
     VideoLimit,
     Number(f64, f64, &'static str),
@@ -91,10 +92,11 @@ schema! {
     over_hint: bool = true, "over_hint", Window, OverHintSetting, Kind::Toggle, |s| s.over_hint.to_string(), |values: &BTreeMap<String,String>| values.get("over_hint").and_then(|v|v.parse().ok()).unwrap_or(true);
     global_shortcuts: bool = false, "global_shortcuts", Window, GlobalShortcuts, Kind::Toggle, |s| s.global_shortcuts.to_string(), |values: &BTreeMap<String,String>| values.get("global_shortcuts").and_then(|v|v.parse().ok()).unwrap_or(false);
     disable_click_through_on_activate: bool = true, "disable_click_through_on_activate", Window, DisableClickThroughOnActivate, Kind::Toggle, |s| s.disable_click_through_on_activate.to_string(), |values: &BTreeMap<String,String>| values.get("disable_click_through_on_activate").and_then(|v|v.parse().ok()).unwrap_or(true);
-    background_color: Option<[u8; 3]> = None, "background_color", Appearance, BackgroundColor, Kind::Color, |s| moth_ui::theme::encode_color(s.background_color), |values: &BTreeMap<String,String>| values.get("background_color").and_then(|v| moth_ui::theme::decode_color(v));
-    canvas_color: Option<[u8; 3]> = None, "canvas_color", Appearance, CanvasColor, Kind::Color, |s| moth_ui::theme::encode_color(s.canvas_color), |values: &BTreeMap<String,String>| values.get("canvas_color").and_then(|v| moth_ui::theme::decode_color(v));
-    grayscale_tint: Option<[u8; 3]> = None, "grayscale_tint", Appearance, GrayscaleTint, Kind::Color, |s| moth_ui::theme::encode_color(s.grayscale_tint), |values: &BTreeMap<String,String>| values.get("grayscale_tint").and_then(|v| moth_ui::theme::decode_color(v));
-    selection_color: Option<[u8; 3]> = None, "selection_color", Appearance, SelectionColor, Kind::Color, |s| moth_ui::theme::encode_color(s.selection_color), |values: &BTreeMap<String,String>| values.get("selection_color").and_then(|v| moth_ui::theme::decode_color(v));
+    palette: u8 = 1, "palette", Appearance, Palette, Kind::Choice(&[Text::PaletteSage, Text::PaletteGraphite, Text::PaletteInk, Text::PaletteUmber]), |s| s.palette.to_string(), |values: &BTreeMap<String,String>| values.get("palette").and_then(|v| v.parse().ok()).filter(|v| *v < 4).unwrap_or(1);
+    background_color: Option<[u8; 3]> = None, "background_color", Appearance, BackgroundColor, Kind::Color(&[]), |s| moth_ui::theme::encode_color(s.background_color), |values: &BTreeMap<String,String>| values.get("background_color").and_then(|v| moth_ui::theme::decode_color(v));
+    canvas_color: Option<[u8; 3]> = None, "canvas_color", Appearance, CanvasColor, Kind::Color(&moth_ui::theme::CANVASES), |s| moth_ui::theme::encode_color(s.canvas_color), |values: &BTreeMap<String,String>| values.get("canvas_color").and_then(|v| moth_ui::theme::decode_color(v));
+    grayscale_tint: Option<[u8; 3]> = None, "grayscale_tint", Appearance, GrayscaleTint, Kind::Color(&moth_ui::theme::ACCENTS), |s| moth_ui::theme::encode_color(s.grayscale_tint), |values: &BTreeMap<String,String>| values.get("grayscale_tint").and_then(|v| moth_ui::theme::decode_color(v));
+    selection_color: Option<[u8; 3]> = None, "selection_color", Appearance, SelectionColor, Kind::Color(&moth_ui::theme::ACCENTS), |s| moth_ui::theme::encode_color(s.selection_color), |values: &BTreeMap<String,String>| values.get("selection_color").and_then(|v| moth_ui::theme::decode_color(v));
     lock_maximized: bool = true, "lock_maximized", Window, LockWhileMaximized, Kind::Toggle, |s| s.lock_maximized.to_string(), |values: &BTreeMap<String,String>| values.get("lock_maximized").and_then(|v|v.parse().ok()).unwrap_or(true);
 
     language: moth_ui::Locale = moth_ui::locale(), "language", General, Language, Kind::Language, |s| s.language.code().to_owned(), |values: &BTreeMap<String,String>| values.get("language").and_then(|v|moth_ui::Locale::from_code(v)).unwrap_or_else(moth_ui::locale);
@@ -221,11 +223,8 @@ impl Settings {
             .map(|&seconds| std::time::Duration::from_secs(seconds))
     }
     pub fn tokens(&self) -> moth_ui::Tokens {
-        let mut tokens = if self.dark {
-            moth_ui::Tokens::DARK
-        } else {
-            moth_ui::Tokens::LIGHT
-        };
+        let mut tokens =
+            moth_ui::Tokens::palette(moth_ui::theme::Palette::from_code(self.palette), self.dark);
         tokens.custom_colors(
             self.background_color,
             self.canvas_color,
@@ -485,16 +484,17 @@ impl SettingsWindow {
                                                         });
                                                     next = language.code().to_owned();
                                                 }
-                                                Kind::Color => {
+                                                Kind::Color(presets) => {
                                                     ui.label(label);
-                                                    let defaults = if settings.dark {
-                                                        moth_ui::Tokens::DARK
-                                                    } else {
-                                                        moth_ui::Tokens::LIGHT
-                                                    };
+                                                    let defaults = moth_ui::Tokens::palette(
+                                                        moth_ui::theme::Palette::from_code(
+                                                            settings.palette,
+                                                        ),
+                                                        settings.dark,
+                                                    );
                                                     let fallback = match entry.key {
                                                         "background_color" => defaults.surface,
-                                                        "selection_color" => defaults.selection,
+                                                        "selection_color" => defaults.accent,
                                                         _ => defaults.canvas,
                                                     }
                                                     .to_array();
@@ -505,17 +505,37 @@ impl SettingsWindow {
                                                                 fallback[1],
                                                                 fallback[2],
                                                             ]);
-                                                    if ui.color_edit_button_srgb(&mut rgb).changed()
-                                                    {
-                                                        next =
-                                                            moth_ui::theme::encode_color(Some(rgb));
-                                                    }
-                                                    if ui
-                                                        .small_button(text(Text::ResetColor))
-                                                        .clicked()
-                                                    {
-                                                        next.clear();
-                                                    }
+                                                    ui.horizontal_wrapped(|ui| {
+                                                        if ui
+                                                            .color_edit_button_srgb(&mut rgb)
+                                                            .changed()
+                                                        {
+                                                            next = moth_ui::theme::encode_color(
+                                                                Some(rgb),
+                                                            );
+                                                        }
+                                                        // Quick picks: one click instead of
+                                                        // hunting in the color wheel.
+                                                        for preset in presets.iter() {
+                                                            if moth_ui::icons::swatch(
+                                                                ui,
+                                                                *preset,
+                                                                rgb == *preset,
+                                                            )
+                                                            .clicked()
+                                                            {
+                                                                next = moth_ui::theme::encode_color(
+                                                                    Some(*preset),
+                                                                );
+                                                            }
+                                                        }
+                                                        if ui
+                                                            .small_button(text(Text::ResetColor))
+                                                            .clicked()
+                                                        {
+                                                            next.clear();
+                                                        }
+                                                    });
                                                 }
                                                 Kind::Toggle => {
                                                     let mut v = value == "true";

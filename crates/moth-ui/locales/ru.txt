@@ -417,7 +417,12 @@ BackgroundColor = Цвет фона
 
 CanvasColor = Цвет холста
 
-SelectionColor = Цвет выделения
+SelectionColor = Акцентный цвет
+Palette = Палитра
+PaletteSage = Шалфей
+PaletteGraphite = Графит
+PaletteInk = Чернила
+PaletteUmber = Умбра
 GrayscaleTint = Оттенок чёрно-белого режима
 
 OverlaySelection = Выделение в отдельных окнах

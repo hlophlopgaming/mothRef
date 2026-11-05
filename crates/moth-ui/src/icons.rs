@@ -621,6 +621,23 @@ pub fn tile(ui: &mut Ui, icon: Icon, label: &str) -> Response {
 pub fn dialog_title(ui: &mut Ui, title: &str) {
     ui.label(egui::RichText::new(title).size(17.).strong());
 }
+/// A round color sample to click; a ring marks the chosen one.
+pub fn swatch(ui: &mut Ui, [r, g, b]: [u8; 3], chosen: bool) -> Response {
+    let tokens = crate::tokens(ui.ctx());
+    let side = ui.spacing().interact_size.y;
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::click());
+    let radius = side / 2. - f32::from(tokens.space_xs) / 2.;
+    ui.painter()
+        .circle_filled(rect.center(), radius, egui::Color32::from_rgb(r, g, b));
+    if chosen || response.hovered() {
+        ui.painter().circle_stroke(
+            rect.center(),
+            radius + 1.5,
+            egui::Stroke::new(if chosen { 2. } else { 1. }, tokens.text),
+        );
+    }
+    response
+}
 /// The one filled button of a dialog: what Enter does. Filled in the text color
 /// rather than the accent: a user's accent may be red, which reads as danger on a
 /// safe choice such as Save.
