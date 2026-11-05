@@ -179,7 +179,7 @@ NotSaved = Untitled board · not saved yet
 Untitled = Untitled
 Items = items
 Selected = selected
-SaveQuestion = Save this board?
+SaveQuestion = Save changes to “{name}”?
 StorageBusy = Storage is busy; wait for pending operations.
 OpenEmpty = Save and restart before opening another board.
 Recovered = Recovered the last valid checkpoint; torn bytes were ignored.
@@ -207,9 +207,8 @@ Select = Select
 ClipboardBusy = Clipboard is busy; try again shortly.
 Empty = Drop images here
 Volatile = PNG / JPEG / WebP / GIF / BMP
-Close = Discard and close
-Keep = Keep working
-CloseWarning = Save this board before closing? Discard deletes this session’s recovery files.
+Close = Don’t save
+CloseWarning = Changes since the last save will be lost.
 
 ReducedMotion = Reduce motion
 

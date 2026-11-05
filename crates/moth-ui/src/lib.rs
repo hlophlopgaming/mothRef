@@ -817,8 +817,6 @@ pub enum Text {
     Volatile,
     /// Shared localization key for Close.
     Close,
-    /// Shared localization key for Keep.
-    Keep,
     /// Shared localization key for CloseWarning.
     CloseWarning,
     /// Shared localization key for BoardFull.
@@ -1341,7 +1339,6 @@ mod tests {
             Text::Empty,
             Text::Volatile,
             Text::Close,
-            Text::Keep,
             Text::CloseWarning,
             Text::BoardFull,
             Text::AllBoards,

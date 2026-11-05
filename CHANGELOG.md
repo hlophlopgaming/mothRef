@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The dialog when closing an unsaved board is clearer: “Save changes to “board”?”, one line on what is lost, “Don’t save” on its own at the left, Cancel and Save at the right. Enter saves, Esc cancels.
 ## 0.1.0-alpha.19 — 2026-11-04
 
 - Fix the empty board's Choose files and Paste buttons losing clicks to canvas selection, including on first launch on Windows.

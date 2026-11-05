@@ -112,7 +112,7 @@ actions! {
     ZoomDrag, ZoomDrag, "Cmd+Mouse3", None;
     SaveAndClose, SaveClose, "", Some(moth_ui::icons::Icon::Save);
     Discard, Close, "", Some(moth_ui::icons::Icon::Close);
-    KeepOpen, Keep, "", None;
+    KeepOpen, Cancel, "", None;
     CancelDialog, Cancel, "", None;
     ContinueConversion, ContinueConversion, "", None;
     SaveConversion, SaveAsMoth, "", Some(moth_ui::icons::Icon::Save);

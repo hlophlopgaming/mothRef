@@ -621,6 +621,37 @@ pub fn tile(ui: &mut Ui, icon: Icon, label: &str) -> Response {
 pub fn dialog_title(ui: &mut Ui, title: &str) {
     ui.label(egui::RichText::new(title).size(17.).strong());
 }
+/// The one filled button of a dialog: what Enter does.
+pub fn primary_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
+    let tokens = crate::tokens(ui.ctx());
+    ui.add_enabled(
+        enabled,
+        egui::Button::new(egui::RichText::new(label).color(tokens.on_accent).strong())
+            .fill(tokens.accent)
+            .min_size(Vec2::new(
+                0.,
+                ui.spacing().interact_size.y + tokens.space_xs as f32,
+            )),
+    )
+}
+/// A dialog button that loses work, kept apart from the safe choices.
+pub fn danger_button(ui: &mut Ui, label: &str) -> Response {
+    let tokens = crate::tokens(ui.ctx());
+    ui.add(
+        egui::Button::new(egui::RichText::new(label).color(tokens.danger)).min_size(Vec2::new(
+            0.,
+            ui.spacing().interact_size.y + tokens.space_xs as f32,
+        )),
+    )
+}
+/// A plain dialog button the same height as [`primary_button`].
+pub fn dialog_button(ui: &mut Ui, label: &str) -> Response {
+    let tokens = crate::tokens(ui.ctx());
+    ui.add(egui::Button::new(label).min_size(Vec2::new(
+        0.,
+        ui.spacing().interact_size.y + tokens.space_xs as f32,
+    )))
+}
 /// A reserved vector slot keeps labels, focus and touch targets in the native button layout.
 pub fn labeled_button(ui: &mut Ui, icon: Icon, label: &str, selected: bool) -> Response {
     let id = ui.next_auto_id().with("icon");

@@ -171,47 +171,64 @@ impl Modal {
             });
         }
         if workspace.confirm_close && self.dialog.is_none() {
-            egui::Modal::new(egui::Id::new("confirm_close")).show(ui.ctx(), |ui| {
-                ui.set_max_width(380.);
-                moth_ui::icons::dialog_title(ui, moth_ui::text(moth_ui::Text::SaveQuestion));
-                ui.add_space(moth_ui::tokens(ui.ctx()).space_s as f32);
-                ui.label(moth_ui::text(moth_ui::Text::CloseWarning));
-                ui.add_space(moth_ui::tokens(ui.ctx()).space_m as f32);
-                ui.separator();
-                ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                egui::RichText::new(moth_ui::text(moth_ui::Text::Close))
-                                    .color(moth_ui::tokens(ui.ctx()).danger),
+            let tokens = moth_ui::tokens(ui.ctx());
+            let ready = board.intake.in_flight == 0
+                && board.intake.pasting == 0
+                && board.intake.pending.is_empty()
+                && board.intake.waiting.is_empty();
+            let modal = egui::Modal::new(egui::Id::new("confirm_close"))
+                .frame(
+                    egui::Frame::popup(&ui.ctx().global_style())
+                        .corner_radius(tokens.radius_l)
+                        .inner_margin(egui::Margin::same(tokens.space_xl as i8)),
+                )
+                .show(ui.ctx(), |ui| {
+                    ui.set_max_width(tokens.space_xl as f32 * 15.6);
+                    moth_ui::icons::dialog_title(
+                        ui,
+                        &moth_ui::text(moth_ui::Text::SaveQuestion)
+                            .replace("{name}", board.title()),
+                    );
+                    ui.add_space(tokens.space_xs as f32);
+                    ui.label(
+                        egui::RichText::new(moth_ui::text(moth_ui::Text::CloseWarning))
+                            .color(tokens.text_muted),
+                    );
+                    ui.add_space(tokens.space_l as f32);
+                    // "Don't save" stands apart on the left; Cancel and Save sit together
+                    // on the right, Save filled because Enter chooses it.
+                    ui.horizontal(|ui| {
+                        if moth_ui::icons::danger_button(ui, moth_ui::text(moth_ui::Text::Close))
+                            .clicked()
+                        {
+                            intents.push(Intent::Action(Action::Discard));
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if moth_ui::icons::primary_button(
+                                ui,
+                                moth_ui::text(moth_ui::Text::Save),
+                                ready,
                             )
-                            .frame(false),
-                        )
-                        .clicked()
-                    {
-                        intents.push(Intent::Action(Action::Discard));
-                    }
-                    if ui.button(moth_ui::text(moth_ui::Text::Keep)).clicked() {
-                        intents.push(Intent::Action(Action::KeepOpen));
-                    }
-                    if ui
-                        .add_enabled(
-                            board.intake.in_flight == 0
-                                && board.intake.pasting == 0
-                                && board.intake.pending.is_empty()
-                                && board.intake.waiting.is_empty(),
-                            egui::Button::new(
-                                egui::RichText::new(moth_ui::text(moth_ui::Text::Save))
-                                    .color(moth_ui::tokens(ui.ctx()).on_accent),
+                            .clicked()
+                                || (ready && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                            {
+                                intents.push(Intent::Action(Action::SaveAndClose));
+                            }
+                            if moth_ui::icons::dialog_button(
+                                ui,
+                                moth_ui::text(moth_ui::Text::Cancel),
                             )
-                            .fill(moth_ui::tokens(ui.ctx()).accent),
-                        )
-                        .clicked()
-                    {
-                        intents.push(Intent::Action(Action::SaveAndClose));
-                    }
+                            .clicked()
+                            {
+                                intents.push(Intent::Action(Action::KeepOpen));
+                            }
+                        });
+                    });
                 });
-            });
+            // Esc or a click beside the dialog keeps the board open.
+            if modal.should_close() {
+                intents.push(Intent::Action(Action::KeepOpen));
+            }
         }
         if let Some(ids) = board.notices.arrange_prompt.clone() {
             if settings.auto_arrange || ids.len() <= settings.threshold {
