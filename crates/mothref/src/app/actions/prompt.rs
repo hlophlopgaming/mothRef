@@ -19,7 +19,6 @@ impl App {
             }
             Discard | KeepOpen => self.workspace.confirm_close,
             CancelDialog => self.modal.dialog.is_some(),
-            SavePath => self.modal.dialog.is_some() && !self.modal.dialog_path.trim().is_empty(),
             DismissRecovery | RestoreRecovery => {
                 !self.workspace.recovery_paths().is_empty() && self.workspace.board.idle()
             }
@@ -77,7 +76,6 @@ impl App {
             UndoAdded => Intent::Undo,
             AddedHorizontal | AddedVertical | AddedGrid | AddedOptimal => return None,
             CancelArrange => Intent::DismissArrangePrompt,
-            SavePath => Intent::SaveAs(std::path::PathBuf::from(&self.modal.dialog_path)),
             _ => return None,
         };
         Some(intent)

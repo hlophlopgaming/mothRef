@@ -116,7 +116,6 @@ actions! {
     CancelDialog, Cancel, "", None;
     ContinueConversion, ContinueConversion, "", None;
     SaveConversion, SaveAsMoth, "", Some(moth_ui::icons::Icon::Save);
-    SavePath, Save, "", Some(moth_ui::icons::Icon::Save);
     DismissRecovery, DiscardRecovery, "", None;
     RestoreRecovery, RestoreRecovery, "", None;
     CancelArrange, Cancel, "", None;

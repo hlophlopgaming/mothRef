@@ -10,7 +10,6 @@ impl App {
         _event_loop: &ActiveEventLoop,
     ) -> bool {
         match intent {
-            Intent::DialogFocused => self.modal.dialog_focus = false,
             Intent::Library(request) => {
                 if self
                     .library_screen
@@ -33,9 +32,7 @@ impl App {
             Intent::Save => {
                 self.workspace.board.notices.conversion_prompt = false;
                 if self.workspace.board.file.path.is_empty() {
-                    self.modal.dialog = Some(());
-                    self.modal.dialog_focus = true;
-                    self.modal.dialog_path.clear();
+                    self.choose_save_path();
                 } else {
                     self.workspace.board.save();
                 }
@@ -72,9 +69,7 @@ impl App {
                 self.workspace.board.notices.conversion_prompt = false;
                 self.workspace.board.file.close_after_save = true;
                 if self.workspace.board.file.path.is_empty() {
-                    self.modal.dialog_path.clear();
-                    self.modal.dialog = Some(());
-                    self.modal.dialog_focus = true;
+                    self.choose_save_path();
                 } else {
                     self.workspace.board.save();
                 }

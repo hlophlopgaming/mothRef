@@ -487,6 +487,74 @@ impl App {
         }
     }
 
+    /// Asks where to save a board that has no file yet, with the system "Save as"
+    /// dialog on its own thread like the open picker. `modal.dialog` marks it open,
+    /// so the board stays blocked until it answers.
+    fn choose_save_path(&mut self) {
+        if self.window.save_picker.is_some() {
+            return;
+        }
+        let Some(window) = self.shell.window.clone() else {
+            return;
+        };
+        let board = &self.workspace.board;
+        let mut dialog = rfd::FileDialog::new()
+            .set_title(moth_ui::text(moth_ui::Text::PathDialog))
+            .add_filter(moth_ui::text(moth_ui::Text::Path), &["moth"])
+            .set_file_name(format!("{}.moth", board.title()))
+            .set_parent(window.as_ref());
+        // A converted .bee / .pur board is offered the folder it came from.
+        if let Some(folder) = board
+            .file
+            .conversion
+            .as_ref()
+            .and_then(|(source, _)| source.parent())
+        {
+            dialog = dialog.set_directory(folder);
+        }
+        let (send, receive) = crossbeam_channel::bounded(1);
+        let wake = self.shell.wake();
+        match std::thread::Builder::new()
+            .name("save-picker".into())
+            .spawn(move || {
+                let path =
+                    std::panic::catch_unwind(move || dialog.save_file()).unwrap_or_else(|_| {
+                        tracing::error!("native save dialog panicked");
+                        None
+                    });
+                let _ = send.send(path);
+                wake();
+                drop(window);
+            }) {
+            Ok(_) => {
+                self.window.save_picker = Some(receive);
+                self.modal.dialog = Some(());
+            }
+            Err(error) => self.workspace.board.notices.message = error.to_string().into(),
+        }
+    }
+    /// The "Save as" dialog answered: save there, or treat closing it as Cancel.
+    fn picked_save_path(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(receive) = &self.window.save_picker else {
+            return;
+        };
+        let path = match receive.try_recv() {
+            Ok(path) => path,
+            Err(crossbeam_channel::TryRecvError::Empty) => return,
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                tracing::error!("save dialog disconnected before returning a result");
+                None
+            }
+        };
+        self.window.save_picker = None;
+        self.apply(
+            match path {
+                Some(path) => Intent::SaveAs(path),
+                None => Intent::CancelDialog,
+            },
+            event_loop,
+        );
+    }
     fn picked_files(&mut self) {
         let Some(receive) = &self.window.file_picker else {
             return;
@@ -955,7 +1023,6 @@ impl App {
             | Intent::OpenPath(..)
             | Intent::SaveAs(..)
             | Intent::CancelDialog
-            | Intent::DialogFocused
             | Intent::SaveAndClose
             | Intent::Discard
             | Intent::KeepOpen
@@ -1734,6 +1801,7 @@ impl App {
             self.workspace.board.notices.message = error.into();
         }
         self.results();
+        self.picked_save_path(event_loop);
         if let Some(gpu) = &mut self.shell.gpu {
             let active = self.shell.refinements.step(
                 Instant::now(),
@@ -2342,6 +2410,7 @@ impl App {
         }
         self.native_input();
         self.results();
+        self.picked_save_path(event_loop);
         if self.workspace.board.file.discarded
             && let Err(error) = self.finish_close(event_loop)
         {

@@ -72,6 +72,8 @@ impl Pane {
 /// and out as one value, so a field added here can never leak between windows.
 pub(super) struct WindowState {
     pub(super) file_picker: Option<crossbeam_channel::Receiver<Vec<std::path::PathBuf>>>,
+    /// The system "Save as" dialog is open; it answers with the chosen path.
+    pub(super) save_picker: Option<crossbeam_channel::Receiver<Option<std::path::PathBuf>>>,
     pub(super) overlay: Option<overlay::Overlay>,
     pub(super) floating: Vec<floating::ImageWindow>,
     pub(super) applied_background: Option<(WindowId, bool, bool)>,
@@ -96,6 +98,7 @@ impl WindowState {
     pub(super) fn new(wake: Arc<dyn Fn() + Send + Sync>) -> Self {
         Self {
             file_picker: None,
+            save_picker: None,
             overlay: None,
             floating: Vec::new(),
             applied_background: None,

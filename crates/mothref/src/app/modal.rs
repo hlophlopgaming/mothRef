@@ -6,9 +6,8 @@ use super::{Intent, arrange, bindings::Action, workspace::Workspace};
 /// Modal state owned by the application, drawn as egui popups each frame.
 #[derive(Default)]
 pub(super) struct Modal {
+    /// The system "Save as" dialog is open; the board waits for its answer.
     pub(super) dialog: Option<()>,
-    pub(super) dialog_path: String,
-    pub(super) dialog_focus: bool,
     pub(super) recovery: usize,
 }
 
@@ -133,39 +132,6 @@ impl Modal {
                         if ui.button(moth_ui::text(label)).clicked() {
                             intents.push(Intent::Action(action));
                         }
-                    }
-                });
-            });
-        }
-        if self.dialog.is_some() {
-            egui::Modal::new(egui::Id::new("board_path")).show(ui.ctx(), |ui| {
-                ui.set_width(ui.ctx().content_rect().width().min(460.) - 40.);
-                moth_ui::icons::dialog_title(ui, moth_ui::text(moth_ui::Text::PathDialog));
-                conversion_report(ui, board);
-                ui.label(moth_ui::text(moth_ui::Text::Path));
-                let input = ui.add(
-                    egui::TextEdit::singleline(&mut self.dialog_path)
-                        .char_limit(4096)
-                        .desired_width(f32::INFINITY),
-                );
-                if self.dialog_focus {
-                    input.request_focus();
-                    intents.push(Intent::DialogFocused);
-                }
-                let submit = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                ui.horizontal(|ui| {
-                    if ui.button(moth_ui::text(moth_ui::Text::Cancel)).clicked() {
-                        intents.push(Intent::Action(Action::CancelDialog));
-                    }
-                    if ui
-                        .add_enabled(
-                            !self.dialog_path.trim().is_empty(),
-                            egui::Button::new(moth_ui::text(moth_ui::Text::Save)),
-                        )
-                        .clicked()
-                        || submit
-                    {
-                        intents.push(Intent::Action(Action::SavePath));
                     }
                 });
             });

@@ -21,8 +21,6 @@ pub(super) enum Intent {
     Appearance(super::window_mode::Appearance),
     /// Acknowledge the inline editor focus request.
     NoteFocused,
-    /// Acknowledge the save-path widget focus request.
-    DialogFocused,
     /// Send an explicit catalog action to the library worker.
     Library(moth_platform::library::Request),
 

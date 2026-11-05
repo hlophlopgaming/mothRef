@@ -37,8 +37,8 @@ pub(super) fn area(action: Action) -> Area {
     use Action::*;
     match action {
         SaveAndClose | Discard | KeepOpen | CancelDialog | ContinueConversion | SaveConversion
-        | SavePath | DismissRecovery | RestoreRecovery | CancelArrange | AddedHorizontal
-        | AddedVertical | AddedGrid | AddedOptimal | UndoAdded | DismissAdded => Area::Prompt,
+        | DismissRecovery | RestoreRecovery | CancelArrange | AddedHorizontal | AddedVertical
+        | AddedGrid | AddedOptimal | UndoAdded | DismissAdded => Area::Prompt,
         Palette | Shortcuts | BindingSettings | Settings | New | Open | Images | Save | Library
         | CloseTab | NextTab | CloseWindow | ClearDiskCache | ShellIntegration => Area::Application,
         WindowBar | Overlay | Pin | ClickThrough | OverlaySelection | Bottom | LockWindow
@@ -85,8 +85,8 @@ pub(super) fn gate(action: Action) -> Gate {
     use Action::*;
     match action {
         SaveAndClose | Discard | KeepOpen | CancelDialog | ContinueConversion | SaveConversion
-        | SavePath | DismissRecovery | RestoreRecovery | CancelArrange | AddedHorizontal
-        | AddedVertical | AddedGrid | AddedOptimal | UndoAdded | DismissAdded => Gate::None,
+        | DismissRecovery | RestoreRecovery | CancelArrange | AddedHorizontal | AddedVertical
+        | AddedGrid | AddedOptimal | UndoAdded | DismissAdded => Gate::None,
         Layers | DrawingSession | ClickThrough => Gate::NoSession,
         Palette | BindingSettings | Shortcuts | Settings | CloseWindow | New | Open | Images
         | Library | CloseTab | NextTab | Overlay | Minimize | Maximize | Fullscreen | WindowBar
