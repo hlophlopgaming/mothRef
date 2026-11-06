@@ -971,14 +971,26 @@ mod tests {
         )
         .unwrap();
         assert_eq!(tile.original, [12000, 8334]);
-        // Only the header matters for the refusal, so the body can stay empty.
-        let mut oversized = Vec::new();
-        drop(
-            png::Encoder::new(&mut oversized, 16384, 16384)
-                .write_header()
-                .unwrap(),
-        );
-        assert!(matches!(decode(&oversized, 256), Err(DecodeError::Budget)));
+        // A valid 1 × 1 PNG whose header claims 16,384 × 16,384 (268 megapixels): the size
+        // check must refuse it before any pixel is decoded. The header CRC is recomputed so
+        // the decoder reaches the size check instead of failing on a damaged chunk.
+        let mut oversized = png(1, 1);
+        oversized[16..20].copy_from_slice(&16384u32.to_be_bytes());
+        oversized[20..24].copy_from_slice(&16384u32.to_be_bytes());
+        let crc = oversized[12..29].iter().fold(!0u32, |mut crc, &byte| {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xedb8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+            crc
+        });
+        oversized[29..33].copy_from_slice(&(!crc).to_be_bytes());
+        let refused = decode(&oversized, 256).err();
+        assert!(matches!(refused, Some(DecodeError::Budget)), "{refused:?}");
     }
     #[test]
     fn coarse_fallback_does_not_cache_a_megapixel_preview() {
@@ -1350,10 +1362,17 @@ mod tests {
             .position(|marker| marker == [0xff, 0xc0])
             .unwrap();
         progressive[marker + 1] = 0xc2;
-        assert!(matches!(
-            decode(&progressive, 256),
-            Err(DecodeError::Budget)
-        ));
+        // 33 megapixels of progressive coefficients fit the 100-megapixel budget now; the
+        // forged scan data may still fail to decode, but not for being too large.
+        let admitted = decode(&progressive, 256).err();
+        assert!(
+            !matches!(admitted, Some(DecodeError::Budget)),
+            "{admitted:?}"
+        );
+        // 32,768 × 32,768 progressive (about 6 GiB of coefficients) stays refused.
+        progressive[marker + 5..marker + 9].copy_from_slice(&[0x80, 0x00, 0x80, 0x00]);
+        let refused = decode(&progressive, 256).err();
+        assert!(matches!(refused, Some(DecodeError::Budget)), "{refused:?}");
     }
     #[test]
     fn jpeg_orientation_and_cmyk() {
