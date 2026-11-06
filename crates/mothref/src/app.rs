@@ -2207,13 +2207,20 @@ impl App {
         }
         // While the full-resolution preload covers the board, viewport requests would
         // only duplicate its work.
+        if let Some((items, _, _)) = &stage {
+            visible = items.iter().collect();
+        }
         if !covered {
             self.workspace.board.request_images(
                 &mut gpu.registry,
                 &visible,
                 self.workspace.library,
                 output.pixels_per_point,
-                self.camera_motion.target(camera),
+                if stage.is_some() {
+                    camera
+                } else {
+                    self.camera_motion.target(camera)
+                },
                 &self
                     .window
                     .floating
@@ -2236,19 +2243,6 @@ impl App {
                     })
                     .collect::<Vec<_>>(),
             );
-        }
-        if let Some((items, _, _)) = &stage {
-            visible = items.iter().collect();
-            if !covered {
-                self.workspace.board.request_images(
-                    &mut gpu.registry,
-                    &visible,
-                    false,
-                    output.pixels_per_point,
-                    camera,
-                    &[],
-                );
-            }
         }
         groups::backdrops_first(&self.workspace.board.scene, &mut visible);
         let overlay = if stage.is_some() || self.workspace.library {

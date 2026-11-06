@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix drawing sessions requesting image detail with the board camera and cancelling their own image loads; use the session viewport and camera to preserve reference quality.
+
 ## 0.1.0-alpha.20 — 2026-11-05
 
 - Palettes: Settings › Appearance › Palette picks the base colors of the interface, light and dark: Graphite (plain gray, the new default), Ink (cool blue-gray), Umber (warm brown-gray) or Sage (the former green-tinted look). The accent color (formerly “Selection color”), the canvas color and the grayscale tint get one-click color samples next to the color picker. Text on and in the accent now picks its shade by real contrast, so any accent stays readable.
@@ -9,6 +11,7 @@
 - Resize the navigator by dragging the grip in its corner facing the board; the size is remembered.
 - Resizing is easier to find: hovering an image shows its corner handles, the corner under the pointer grows and fills with the accent color and the cursor turns into a resize arrow, and an image can be resized by its corner without selecting it first.
 - The dialog when closing an unsaved board is clearer: “Save changes to “board”?”, one line on what is lost, “Don’t save” on its own at the left, Cancel and Save at the right. Enter saves, Esc cancels.
+
 ## 0.1.0-alpha.19 — 2026-11-04
 
 - Fix the empty board's Choose files and Paste buttons losing clicks to canvas selection, including on first launch on Windows.

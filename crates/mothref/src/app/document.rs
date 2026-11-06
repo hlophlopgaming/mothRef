@@ -401,7 +401,13 @@ impl Document {
             registry.retain_tiles(&HashSet::new());
             return;
         }
-        let viewport = self.view.viewport;
+        let stage = self.session.as_ref().filter(|s| s.covers_board());
+        let (viewport, camera) = image_request_view(
+            self.view.viewport,
+            self.view.camera,
+            stage.map(|s| s.clip.unwrap_or(self.view.viewport)),
+            target,
+        );
         registry.tile_detail = self.decode.cache().mode() != moth_io::CacheMode::MemoryLowQuality;
         let screen = [viewport.max.x.max(1.), viewport.max.y.max(1.)];
         let clip = [
@@ -415,6 +421,7 @@ impl Document {
             HashMap::<(BlobId, Option<moth_io::tiles::Tile>), (moth_io::Request, f32, f32)>::new();
         let mut scheduling = visible.to_vec();
         if !library
+            && stage.is_none()
             && (target.zoom != self.view.camera.zoom || target.origin != self.view.camera.origin)
         {
             let ids: HashSet<_> = visible.iter().map(|item| item.id).collect();
@@ -433,7 +440,7 @@ impl Document {
         }
         registry.fit_tile_budget(
             &scheduling,
-            [self.view.camera, target],
+            [camera, target],
             screen,
             clip,
             pixels_per_point,
@@ -481,7 +488,7 @@ impl Document {
                     })
                     .or_insert((request, area, distance));
             }
-            for camera in [self.view.camera, target] {
+            for camera in [camera, target] {
                 for tile in registry.visible_tiles(item, camera, screen, clip, pixels_per_point) {
                     let key = tile.key(blob);
                     wanted_tiles.insert(key);
@@ -1473,5 +1480,39 @@ mod tests {
         assert!(save_path.is_file());
         workspace.board.boards.finish().unwrap();
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+// Session items are already in screen points, independent of the board camera.
+fn image_request_view(
+    viewport: egui::Rect,
+    camera: Camera,
+    stage: Option<egui::Rect>,
+    target: Camera,
+) -> (egui::Rect, Camera) {
+    stage.map_or((viewport, camera), |clip| (clip, target))
+}
+
+#[cfg(test)]
+mod image_request_tests {
+    use super::*;
+
+    #[test]
+    fn session_detail_uses_stage_coordinates_instead_of_zoomed_board() {
+        let board = egui::Rect::from_min_max(egui::pos2(200., 100.), egui::pos2(800., 600.));
+        let stage = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1920., 1080.));
+        let camera = Camera {
+            zoom: 0.05,
+            origin: [5000., 3000.],
+        };
+        let target = Camera::default();
+        let (clip, actual) = image_request_view(board, camera, Some(stage), target);
+        assert_eq!(clip, stage);
+        assert_eq!(actual.zoom, target.zoom);
+        assert_eq!(actual.origin, target.origin);
+        let (clip, actual) = image_request_view(board, camera, None, target);
+        assert_eq!(clip, board);
+        assert_eq!(actual.zoom, camera.zoom);
+        assert_eq!(actual.origin, camera.origin);
     }
 }
