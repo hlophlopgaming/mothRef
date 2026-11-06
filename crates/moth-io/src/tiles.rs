@@ -82,6 +82,14 @@ pub(crate) struct Probe {
     pub(crate) orientation: Orientation,
     /// Whole-frame DCT coefficients a progressive JPEG keeps while it is decoded.
     coefficients: u64,
+    /// The original's content hash, computed once per pass when first needed.
+    hash: std::cell::OnceCell<blake3::Hash>,
+}
+impl Probe {
+    /// Content hash of `bytes` (the same bytes this probe read), hashed at most once.
+    pub(crate) fn hash(&self, bytes: &[u8]) -> blake3::Hash {
+        *self.hash.get_or_init(|| crate::content_hash(bytes))
+    }
 }
 /// Validates the input and its header before any pixel allocation.
 pub(crate) fn probe(bytes: &[u8]) -> Result<Probe, DecodeError> {
@@ -148,6 +156,7 @@ pub(crate) fn probe(bytes: &[u8]) -> Result<Probe, DecodeError> {
         size: [w, h],
         orientation,
         coefficients,
+        hash: std::cell::OnceCell::new(),
     })
 }
 fn rotated(orientation: Orientation) -> bool {
@@ -271,7 +280,7 @@ where
             // Large frames are shared between tile batches and the bake of the same
             // image, so the viewport does not decode the whole frame per batch.
             let source = if frame_bytes >= crate::frames::SHARED_FROM {
-                crate::frames::shared(blake3::hash(bytes), decode)?
+                crate::frames::shared(probe.hash(bytes), decode)?
             } else {
                 std::sync::Arc::new(decode()?)
             };
@@ -340,7 +349,7 @@ fn decode_inner(
         Ok(())
     };
     scan(bytes, &probe, jpeg_scale, row_end, cancel, &mut row_sink)?;
-    let hash = blake3::hash(bytes);
+    let hash = probe.hash(bytes);
     let original = oriented_size(probe.size, probe.orientation);
     Ok(outputs
         .into_iter()
@@ -426,7 +435,7 @@ fn bake_inner(
     if tile_count(original, levels.clone()) > MAX_BAKED_TILES {
         return Err(DecodeError::Budget);
     }
-    let hash = blake3::hash(bytes);
+    let hash = probe.hash(bytes);
     let mut pixels = frame(bytes, &probe, cancel)?;
     let mut size = original;
     let mut level = 0;

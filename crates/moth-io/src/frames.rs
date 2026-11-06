@@ -48,13 +48,16 @@ pub(crate) fn admit(bytes: u64) -> Option<Admission> {
 /// The one large whole frame kept between tile batches (WebP has no row decoder).
 /// Viewport batches of the same image would otherwise each decode the full frame,
 /// up to one per decode worker at once. Budget: one frame, released when the image's
-/// tiles are baked (they are then read from the pack) or another large frame replaces it.
+/// tiles are baked (they are then read from the pack), another large frame replaces
+/// it, or it goes unused for a while ([`release_idle`]).
 struct Memo {
     slot: Option<(blake3::Hash, Arc<image::RgbaImage>)>,
+    used: Option<std::time::Instant>,
     decoding: Vec<blake3::Hash>,
 }
 static MEMO: Mutex<Memo> = Mutex::new(Memo {
     slot: None,
+    used: None,
     decoding: Vec::new(),
 });
 static DECODED: Condvar = Condvar::new();
@@ -70,7 +73,9 @@ pub(crate) fn shared(
         if let Some((held, frame)) = &memo.slot
             && *held == hash
         {
-            return Ok(frame.clone());
+            let frame = frame.clone();
+            memo.used = Some(std::time::Instant::now());
+            return Ok(frame);
         }
         if !memo.decoding.contains(&hash) {
             break;
@@ -84,11 +89,21 @@ pub(crate) fn shared(
     memo.decoding.retain(|other| *other != hash);
     if let Ok(frame) = &result {
         memo.slot = Some((hash, frame.clone()));
+        memo.used = Some(std::time::Instant::now());
     }
     DECODED.notify_all();
     result
 }
 
+/// Drops the kept frame when nothing used it for `idle`: without a bake (turned off,
+/// or not finished) it would otherwise stay until another large WebP replaces it.
+pub fn release_idle(idle: std::time::Duration) {
+    let mut memo = MEMO.lock().unwrap_or_else(PoisonError::into_inner);
+    if memo.used.is_some_and(|used| used.elapsed() >= idle) {
+        memo.slot = None;
+        memo.used = None;
+    }
+}
 /// Drops the kept frame of `hash`: its tiles are baked and come from the pack now.
 pub(crate) fn forget(hash: blake3::Hash) {
     let mut memo = MEMO.lock().unwrap_or_else(PoisonError::into_inner);

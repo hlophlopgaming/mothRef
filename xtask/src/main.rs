@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![forbid(unsafe_code)]
 //! MothRef measurement tools.
+mod large;
 mod load;
 mod reliability;
 mod tiles;
@@ -31,6 +32,9 @@ fn main() -> anyhow::Result<()> {
             reliability::writer(args.get(1).ok_or_else(|| anyhow::anyhow!("missing path"))?)?
         }
         Some("fixture") => reliability::fixture()?,
+        Some("large-inputs") => large::run(std::path::Path::new(
+            args.get(1).map_or("target/large-inputs", String::as_str),
+        ))?,
         Some("zoom") => zoom::run(
             args.get(1).map_or("memory", String::as_str),
             args.get(2).map(std::path::Path::new),

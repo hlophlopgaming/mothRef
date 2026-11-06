@@ -4,6 +4,7 @@
 mod bake;
 pub mod cache;
 mod frames;
+pub use frames::release_idle as release_idle_frames;
 mod pack;
 mod preload;
 mod preview;
@@ -123,6 +124,18 @@ pub enum DecodeError {
     #[error("GIF: {0}")]
     Gif(#[from] gif::DecodingError),
 }
+/// The content hash of an original, as board blob ids use it. Large originals are
+/// hashed across the decode pool: a tile batch of a 100 MiB file otherwise spends
+/// most of its time hashing on one core.
+pub fn content_hash(bytes: &[u8]) -> blake3::Hash {
+    const PARALLEL_FROM: usize = 8 * 1024 * 1024;
+    if bytes.len() < PARALLEL_FROM {
+        return blake3::hash(bytes);
+    }
+    let mut hasher = blake3::Hasher::new();
+    hasher.update_rayon(bytes);
+    hasher.finalize()
+}
 /// Header checks precede pixel allocation, even for JPEG's scaled path.
 pub fn decode(bytes: &[u8], side: u32) -> Result<Decoded, DecodeError> {
     catch_unwind(AssertUnwindSafe(|| decode_inner(bytes, side))).map_err(|_| DecodeError::Panic)?
@@ -234,8 +247,18 @@ fn decode_inner(bytes: &[u8], side: u32) -> Result<Decoded, DecodeError> {
         limits.max_image_height = Some(MAX_DIMENSION);
         decoder.set_limits(limits)?;
         orientation = decoder.orientation()?;
-        let _frame = frames::admit(u64::from(w) * u64::from(h) * 4);
-        let source = DynamicImage::from_decoder(decoder)?.into_rgba8();
+        let frame_bytes = u64::from(w) * u64::from(h) * 4;
+        let decode = || -> Result<image::RgbaImage, DecodeError> {
+            let _frame = frames::admit(frame_bytes);
+            Ok(DynamicImage::from_decoder(decoder)?.into_rgba8())
+        };
+        // The same shared frame as the tile batches: zooming in after the preview
+        // (and the bake that follows) does not decode it again.
+        let source = if frame_bytes >= frames::SHARED_FROM {
+            frames::shared(content_hash(bytes), decode)?
+        } else {
+            std::sync::Arc::new(decode()?)
+        };
         DynamicImage::ImageRgba8(preview::rgba(source.as_raw(), w, h, side)?)
     } else {
         return Err(DecodeError::Budget);
@@ -253,7 +276,7 @@ fn decode_inner(bytes: &[u8], side: u32) -> Result<Decoded, DecodeError> {
     } else {
         image
     };
-    Ok(pyramid(image.into_rgba8(), blake3::hash(bytes), original))
+    Ok(pyramid(image.into_rgba8(), content_hash(bytes), original))
 }
 pub(crate) fn pyramid(
     mut level: image::RgbaImage,

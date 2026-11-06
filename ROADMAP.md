@@ -208,7 +208,7 @@ Validation notes: [editing and export](docs/M2-EDITING-VALIDATION.md), [import](
 
 Open:
 
-- [ ] Measure per mode on reference hardware: warm-cache zoom latency to 2048 px, RSS after zooming in and back out, board open time; record results in [load performance](docs/LOAD-PERFORMANCE.md)
+- [ ] Measure per mode on reference hardware: warm-cache zoom latency to 2048 px, RSS after zooming in and back out, board open time; record results in [load performance](docs/LOAD-PERFORMANCE.md). 100-megapixel inputs and the procedure are ready (`xtask large-inputs`, [100-megapixel originals](docs/LOAD-PERFORMANCE.md#100-megapixel-originals--2026-11-06)); container numbers are recorded, reference-hardware runs remain
 
 <details>
 <summary>Done</summary>
