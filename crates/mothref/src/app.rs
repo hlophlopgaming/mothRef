@@ -1797,6 +1797,7 @@ impl App {
         }
         self.results();
         self.picked_save_path(event_loop);
+        self.picked_export_path(event_loop);
         if let Some(gpu) = &mut self.shell.gpu {
             let active = self.shell.refinements.step(
                 Instant::now(),
@@ -2400,6 +2401,7 @@ impl App {
         self.native_input();
         self.results();
         self.picked_save_path(event_loop);
+        self.picked_export_path(event_loop);
         if self.workspace.board.file.discarded
             && let Err(error) = self.finish_close(event_loop)
         {

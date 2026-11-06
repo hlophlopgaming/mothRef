@@ -5,7 +5,9 @@ impl App {
     /// Whether an action of this area is available once its [`Gate`] is passed.
     pub(super) fn export_enabled(&self, action: Action) -> bool {
         use Action::*;
-        let export_ready = !self.tools.export.path.is_empty()
+        // The destination is chosen in the system dialog once the action runs, so only
+        // an export already waiting for one, or an invalid crop, holds the actions back.
+        let export_ready = self.window.export_picker.is_none()
             && (!self.tools.export.crop || self.tools.export.region.valid());
         let single_image = || {
             self.workspace.board.idle()
@@ -60,37 +62,32 @@ impl App {
                 self.tools.pickers.open = true;
                 return None;
             }
-            OpenOriginal | CopyImage | ExportScene | ExportSelection | ExportOriginal
-            | ExportOriginals | ExportZip => {
-                use moth_platform::export::Target;
-                let path = std::path::PathBuf::from(&self.tools.export.path);
-                let target = match action {
-                    OpenOriginal => {
-                        let [item] = items.as_slice() else {
-                            return None;
-                        };
-                        self.tools.viewer = Some(super::super::tools::ViewerNotice::new());
-                        Target::Viewer(item.id)
-                    }
-                    CopyImage => {
-                        let [item] = items.as_slice() else {
-                            return None;
-                        };
-                        Target::Clipboard(item.id)
-                    }
+            OpenOriginal => {
+                let [item] = items.as_slice() else {
+                    return None;
+                };
+                self.tools.viewer = Some(super::super::tools::ViewerNotice::new());
+                Intent::Export(moth_platform::export::Target::Viewer(item.id))
+            }
+            CopyImage => {
+                let [item] = items.as_slice() else {
+                    return None;
+                };
+                Intent::Export(moth_platform::export::Target::Clipboard(item.id))
+            }
+            ExportScene | ExportSelection | ExportOriginal | ExportOriginals | ExportZip => {
+                use super::super::tools::PendingExport;
+                let pending = match action {
                     ExportOriginal => {
                         let [item] = items.as_slice() else {
                             return None;
                         };
-                        Target::Original { path, id: item.id }
+                        PendingExport::Original(item.id, item.name.clone())
                     }
-                    ExportOriginals => Target::Originals(path),
-                    ExportZip => Target::Archive {
-                        path,
-                        ids: items.iter().map(|i| i.id).collect(),
-                    },
-                    _ => Target::Scene {
-                        path,
+                    ExportOriginals => PendingExport::Originals,
+                    ExportZip => PendingExport::Archive(items.iter().map(|i| i.id).collect()),
+                    _ => PendingExport::Scene {
+                        selection: action == ExportSelection,
                         ids: if action == ExportSelection {
                             items.iter().map(|i| i.id).collect()
                         } else {
@@ -100,10 +97,61 @@ impl App {
                         side: self.tools.export.side,
                     },
                 };
-                Intent::Export(target)
+                self.choose_export_path(pending);
+                return None;
             }
             _ => return None,
         };
         Some(intent)
+    }
+    /// Asks where to export with the system "Save as" dialog, on its own thread like
+    /// the board save dialog; [`Self::picked_export_path`] sends the export once it answers.
+    fn choose_export_path(&mut self, pending: super::super::tools::PendingExport) {
+        if self.window.export_picker.is_some() {
+            return;
+        }
+        let Some(window) = self.shell.window.clone() else {
+            return;
+        };
+        self.workspace.board.notices.export_message = None;
+        let title = self.workspace.board.title().replace(['/', '\\'], "-");
+        let dialog = pending.dialog(&title).set_parent(window.as_ref());
+        let (send, receive) = crossbeam_channel::bounded(1);
+        let wake = self.shell.wake();
+        match std::thread::Builder::new()
+            .name("export-picker".into())
+            .spawn(move || {
+                let path =
+                    std::panic::catch_unwind(move || dialog.save_file()).unwrap_or_else(|_| {
+                        tracing::error!("native export dialog panicked");
+                        None
+                    });
+                let _ = send.send(path);
+                wake();
+                drop(window);
+            }) {
+            Ok(_) => self.window.export_picker = Some((receive, pending)),
+            Err(error) => self.workspace.board.notices.message = error.to_string().into(),
+        }
+    }
+    /// The export dialog answered: export there, or do nothing when it was closed.
+    pub(in crate::app) fn picked_export_path(&mut self, event_loop: &ActiveEventLoop) {
+        let Some((receive, _)) = &self.window.export_picker else {
+            return;
+        };
+        let path = match receive.try_recv() {
+            Ok(path) => path,
+            Err(crossbeam_channel::TryRecvError::Empty) => return,
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                tracing::error!("export dialog disconnected before returning a result");
+                None
+            }
+        };
+        let Some((_, pending)) = self.window.export_picker.take() else {
+            return;
+        };
+        if let Some(path) = path {
+            self.apply(Intent::Export(pending.target(path)), event_loop);
+        }
     }
 }

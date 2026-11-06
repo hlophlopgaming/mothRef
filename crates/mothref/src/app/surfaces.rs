@@ -59,14 +59,16 @@ const ALIGN: &[Slot] = &[
     A(DistributeVertical),
     A(Stack),
 ];
+/// The Export dialog: a picture of the board, then the original files.
 pub(super) const EXPORT: &[Slot] = &[
-    A(ExportScene),
-    A(ExportSelection),
-    A(ExportOriginal),
-    A(ExportOriginals),
-    A(ExportZip),
-    A(CopyImage),
-    A(OpenOriginal),
+    G(
+        Text::ExportBoardSection,
+        &[A(ExportScene), A(ExportSelection)],
+    ),
+    G(
+        Text::ExportFilesSection,
+        &[A(ExportOriginal), A(ExportOriginals), A(ExportZip)],
+    ),
 ];
 const INSERT: &[Slot] = &[A(Images), A(Paste), A(Note)];
 const FILE: &[Slot] = &[A(New), A(Open), A(Save), A(Library)];

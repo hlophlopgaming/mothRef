@@ -141,11 +141,11 @@ actions! {
     SampleColor, SampleColor, "", Some(moth_ui::icons::Icon::Pointer);
     CoordinatePicker, CoordinatePicker, "", Some(moth_ui::icons::Icon::Pointer);
     Export, Export, "", Some(moth_ui::icons::Icon::Folder);
-    ExportScene, ExportScene, "", None;
-    ExportSelection, ExportSelection, "", None;
-    ExportOriginal, ExportOriginal, "", None;
-    ExportOriginals, ExportOriginals, "", None;
-    ExportZip, ExportZip, "", None;
+    ExportScene, ExportScene, "", Some(moth_ui::icons::Icon::Image);
+    ExportSelection, ExportSelection, "", Some(moth_ui::icons::Icon::Select);
+    ExportOriginal, ExportOriginal, "", Some(moth_ui::icons::Icon::OpenExternal);
+    ExportOriginals, ExportOriginals, "", Some(moth_ui::icons::Icon::Folder);
+    ExportZip, ExportZip, "", Some(moth_ui::icons::Icon::Save);
     SamplingDefault, SamplingDefault, "", None;
     SamplingSmooth, SamplingSmooth, "", None;
     SamplingNearest, SamplingNearest, "", None;

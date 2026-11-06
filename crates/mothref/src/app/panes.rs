@@ -74,6 +74,11 @@ pub(super) struct WindowState {
     pub(super) file_picker: Option<crossbeam_channel::Receiver<Vec<std::path::PathBuf>>>,
     /// The system "Save as" dialog is open; it answers with the chosen path.
     pub(super) save_picker: Option<crossbeam_channel::Receiver<Option<std::path::PathBuf>>>,
+    /// The export "Save as" dialog is open, with the export waiting for its answer.
+    pub(super) export_picker: Option<(
+        crossbeam_channel::Receiver<Option<std::path::PathBuf>>,
+        super::tools::PendingExport,
+    )>,
     pub(super) overlay: Option<overlay::Overlay>,
     pub(super) floating: Vec<floating::ImageWindow>,
     pub(super) applied_background: Option<(WindowId, bool, bool)>,
@@ -99,6 +104,7 @@ impl WindowState {
         Self {
             file_picker: None,
             save_picker: None,
+            export_picker: None,
             overlay: None,
             floating: Vec::new(),
             applied_background: None,
