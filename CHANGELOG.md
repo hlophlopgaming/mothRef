@@ -2,36 +2,26 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.21 — 2026-11-06
+
 - Zooming into a very large WebP is several times faster and uses a fraction of the memory: WebP has to be decoded as a whole frame, and each batch of tiles on screen used to decode it again, up to four at once (about 1.3 GB for an 81-megapixel image). The frame is now decoded once, shared by the tile batches and the tile bake, and released once the image's tiles are baked.
-
 - The color picker takes colors from the whole screen. On X11 and Windows press on the board and drag outside the window: Image pickers shows the color under the pointer, and releasing copies it. On Linux (including Wayland, through the desktop's own picker) and macOS, Image pickers › Pick a color from the screen… opens the system picker. The last screen color stays in the panel as a sample.
-
 - Settings › Adding › Reduce very large images when adding: Never (the default), or to 4096 or 8192 px on the longer side. When on, an added file larger than that is stored on the board as a smaller copy under the file's name (a JPEG stays a JPEG); the file itself is never changed.
-
 - Settings › For developers shows the recent log: the last 400 lines, a filter for warnings and errors, a Copy button for bug reports and where the full log files are.
 - The Settings window has the dialog look of the rest of the app: its own title and close button instead of a gray title bar, and the sections as a plain list where only the chosen one is filled.
-
 - The coordinate picker answers in labelled rows in the Image pickers panel: image, pixel, original size, file format and size, size on the board and selection size. It reads only the image header, so it answers at once even on a 100-megapixel image (it used to decode the whole image on every click).
-
 - Settings › General › Open the last board on start (off by default) opens the most recent board instead of the library, unless files were given on the command line or a recovered board is waiting.
 - Settings › Adding › Bring clicked images to the front (off by default): clicking an image, or a selection, raises it above the rest.
 - Command line: `mothref board.moth a.png b.jpg` opens the board and adds the images to it once it has loaded (they used to be dropped while it loaded); further boards open in their own tabs.
 - The “Save as .moth to continue” dialog after opening a .bee or .pur board matches the other dialogs: the source path in its own field, Save as .moth… as the filled button (Enter), Continue without saving beside it (Esc).
-
 - Pasting when the clipboard holds nothing usable says so in a short notice above the bottom toolbar (it used to appear only in the status line's tooltip). Bottom notices no longer float too high after the “Added images” notice closes.
-
 - Export is a dialog card in the app's style instead of a bare window: it lists what each export gives (the board or the selection as PNG, SVG or PDF, one original, all originals to a folder, originals as ZIP) and asks where to save in the system “Save as” dialog, so there is no path to type. Copy image and Open original stay in the image menus.
 - Edit selection, Arrange options and Image pickers open as panels at the right edge, under the window bar, with a title and a close button; several open panels stack instead of overlapping. Edit selection puts position and size side by side and its Apply button is the filled one; the pickers show which one is active.
-
 - Images up to 100 megapixels (for example 12,000 × 8,334) are added at full resolution and keep every pixel when zoomed in, instead of being refused above 32 megapixels. Originals up to 256 MiB are accepted (was 64 MiB), WebP up to 100 megapixels (was 2), and large WebP and progressive JPEG decodes share one memory budget so several at once cannot exhaust RAM.
 - Open original in viewer no longer opens an empty window on the board: a short notice near the bottom toolbar says it is opening, then that the image opened or why it could not. On Linux, when `xdg-open` is missing, `gio open` and `kde-open` are tried before showing an error. The menu item has its own “open externally” icon.
-
 - Keep summary buttons clickable when dragging the session window by its background.
-
 - Restore saved drawing-session plans and the last session setup after restarting the app.
-
 - Support moving and resizing the drawing session mini window with a stylus on Wayland, and dragging the session summary by its background or heading. Session summaries open full screen even after a mini session; closing them restores the original window.
-
 - Fix drawing sessions requesting image detail with the board camera and cancelling their own image loads; use the session viewport and camera to preserve reference quality.
 
 ## 0.1.0-alpha.20 — 2026-11-05
