@@ -369,8 +369,9 @@ pub fn tile_count(original: [u32; 2], levels: std::ops::Range<u32>) -> u64 {
         })
         .sum()
 }
-/// Displayed size of an original, reading only its header.
-pub(crate) fn dimensions(bytes: &[u8]) -> Result<[u32; 2], DecodeError> {
+/// Displayed size of an original (after EXIF orientation), reading only its header:
+/// the same checks as decoding, so an image it accepts also decodes.
+pub fn dimensions(bytes: &[u8]) -> Result<[u32; 2], DecodeError> {
     catch_unwind(AssertUnwindSafe(|| {
         let probe = probe(bytes)?;
         Ok(oriented_size(probe.size, probe.orientation))
@@ -803,6 +804,16 @@ impl<'a> Accumulator<'a> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn header_dimensions_follow_orientation_without_decoding() {
+        let oriented = include_bytes!("../../../corpus/images/oriented.jpg");
+        assert_eq!(dimensions(oriented).unwrap(), [4, 8]);
+        assert_eq!(
+            dimensions(include_bytes!("../../../corpus/images/large-dct.jpg")).unwrap(),
+            [8192, 4097]
+        );
+        assert!(dimensions(b"not an image").is_err());
+    }
     use super::*;
     #[cfg(not(target_arch = "wasm32"))]
     #[test]

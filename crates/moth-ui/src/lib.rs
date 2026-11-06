@@ -247,6 +247,18 @@ pub enum Text {
     OriginalsFolder,
     /// Close button of a side panel.
     ClosePanel,
+    /// Coordinate picker row label.
+    PixelInfoName,
+    /// Coordinate picker row label.
+    PixelInfoPixel,
+    /// Coordinate picker row label.
+    PixelInfoOriginal,
+    /// Coordinate picker row label.
+    PixelInfoFile,
+    /// Coordinate picker row label.
+    PixelInfoFrame,
+    /// Coordinate picker row label.
+    PixelInfoSelection,
     /// Label of the order choice in Arrange options.
     ArrangeOrder,
     /// Edit panel without exactly one selected item.

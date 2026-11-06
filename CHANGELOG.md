@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The coordinate picker answers in labelled rows in the Image pickers panel: image, pixel, original size, file format and size, size on the board and selection size. It reads only the image header, so it answers at once even on a 100-megapixel image (it used to decode the whole image on every click).
+
 - Settings › General › Open the last board on start (off by default) opens the most recent board instead of the library, unless files were given on the command line or a recovered board is waiting.
 - Settings › Adding › Bring clicked images to the front (off by default): clicking an image, or a selection, raises it above the rest.
 - Command line: `mothref board.moth a.png b.jpg` opens the board and adds the images to it once it has loaded (they used to be dropped while it loaded); further boards open in their own tabs.

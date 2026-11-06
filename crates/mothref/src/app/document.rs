@@ -152,6 +152,8 @@ pub(super) struct Notices {
     pub(super) export_message: Option<moth_ui::Message>,
     /// A short notice above the bottom toolbar, for things that did not happen.
     pub(super) flash: Option<(moth_ui::Message, Instant)>,
+    /// The coordinate picker's last answer, shown in the Image pickers panel.
+    pub(super) pixel_info: Option<moth_platform::export::PixelInfo>,
     /// Ids of a finished burst awaiting an arrangement choice while the prompt is shown.
     pub(super) arrange_prompt: Option<Vec<Uuid>>,
     /// One import notification; its layouts share the insertion undo group until dismissed.

@@ -670,6 +670,12 @@ impl Workspace {
                             };
                             self.board.fit();
                         }
+                        Completion::PixelInfo(info) => {
+                            self.board.file.exporting = false;
+                            self.board.notices.message = info.summary().into();
+                            self.board.notices.export_message = None;
+                            self.board.notices.pixel_info = Some(info);
+                        }
                         Completion::Exported(value) => {
                             self.board.file.exporting = false;
                             self.board.notices.message = if value == "Image opened in system viewer"
