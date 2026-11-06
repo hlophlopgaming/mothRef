@@ -150,6 +150,8 @@ pub(super) struct Intake {
 pub(super) struct Notices {
     pub(super) message: moth_ui::Message,
     pub(super) export_message: Option<moth_ui::Message>,
+    /// A short notice above the bottom toolbar, for things that did not happen.
+    pub(super) flash: Option<(moth_ui::Message, Instant)>,
     /// Ids of a finished burst awaiting an arrangement choice while the prompt is shown.
     pub(super) arrange_prompt: Option<Vec<Uuid>>,
     /// One import notification; its layouts share the insertion undo group until dismissed.

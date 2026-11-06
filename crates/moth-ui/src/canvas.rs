@@ -288,6 +288,20 @@ pub fn selection_badge(ctx: &Context, viewport: egui::Rect, count: usize, size: 
         });
 }
 
+/// Top of the lowest bottom-edge surface (toolbar, badges, notices) that was shown last
+/// frame: a new bottom notice sits above it. A surface that has closed still has a
+/// remembered rect in egui's memory, so only visible ones count.
+pub fn notice_bottom(ctx: &egui::Context, viewport: egui::Rect, ids: &[&str]) -> f32 {
+    ctx.memory(|memory| {
+        let visible = memory.areas().visible_layer_ids();
+        ids.iter()
+            .map(|id| egui::Id::new(*id))
+            .filter(|id| visible.iter().any(|layer| layer.id == *id))
+            .filter_map(|id| memory.area_rect(id))
+            .map(|rect| rect.top())
+            .fold(viewport.bottom(), f32::min)
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
