@@ -366,7 +366,9 @@ impl Soak {
                     break;
                 }
                 Completion::Opened(_, _, _, _) => anyhow::bail!("unexpected open completion"),
-                Completion::Exported(_) => anyhow::bail!("unexpected export completion"),
+                Completion::Exported(_) | Completion::PixelInfo(_) => {
+                    anyhow::bail!("unexpected export completion")
+                }
                 Completion::Imported(_, _, _) => anyhow::bail!("unexpected import completion"),
             }
         }
