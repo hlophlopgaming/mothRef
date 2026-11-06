@@ -67,7 +67,7 @@ impl Sampler {
         std::thread::Builder::new()
             .name("screen-color".into())
             .spawn(move || {
-                let mut screen = backend::Screen::default();
+                let mut screen = backend::Screen::new();
                 while let Ok(job) = inbox.recv() {
                     let picked =
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job {
@@ -139,6 +139,9 @@ mod backend {
         x11: Option<(x11rb::rust_connection::RustConnection, u32)>,
     }
     impl Screen {
+        pub(super) fn new() -> Self {
+            Self::default()
+        }
         pub(super) fn at(&mut self, [x, y]: [i32; 2]) -> io::Result<[u8; 3]> {
             if self.x11.is_none() {
                 let (connection, screen) = x11rb::connect(None).map_err(io::Error::other)?;
@@ -261,9 +264,11 @@ mod backend {
 #[cfg(target_os = "windows")]
 mod backend {
     use std::io;
-    #[derive(Default)]
     pub(super) struct Screen;
     impl Screen {
+        pub(super) fn new() -> Self {
+            Self
+        }
         pub(super) fn at(&mut self, [x, y]: [i32; 2]) -> io::Result<[u8; 3]> {
             use windows_sys::Win32::Graphics::Gdi::{CLR_INVALID, GetDC, GetPixel, ReleaseDC};
             // SAFETY: a null window asks for the whole-screen DC, released below on the
@@ -290,9 +295,11 @@ mod backend {
 mod backend {
     use super::Picked;
     use std::io;
-    #[derive(Default)]
     pub(super) struct Screen;
     impl Screen {
+        pub(super) fn new() -> Self {
+            Self
+        }
         pub(super) fn at(&mut self, _: [i32; 2]) -> io::Result<[u8; 3]> {
             // Reading the screen needs a recording permission; the sampler needs none.
             Err(io::ErrorKind::Unsupported.into())
@@ -331,9 +338,11 @@ mod backend {
 #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 mod backend {
     use std::io;
-    #[derive(Default)]
     pub(super) struct Screen;
     impl Screen {
+        pub(super) fn new() -> Self {
+            Self
+        }
         pub(super) fn at(&mut self, _: [i32; 2]) -> io::Result<[u8; 3]> {
             Err(io::ErrorKind::Unsupported.into())
         }
