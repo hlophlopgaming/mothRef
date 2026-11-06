@@ -59,8 +59,10 @@ pub(super) fn area(action: Action) -> Area {
         | NormalizeWidth | NormalizeHeight | NormalizeSize | NormalizeArea | AlignLeft
         | AlignRight | AlignTop | AlignBottom | Stack | DistributeHorizontal
         | DistributeVertical | ArrangeOptions | ScaleApply => Area::Arrange,
-        Export | SampleColor | CoordinatePicker | OpenOriginal | CopyImage | ExportScene
-        | ExportSelection | ExportOriginal | ExportOriginals | ExportZip => Area::Export,
+        Export | SampleColor | PickScreen | CoordinatePicker | OpenOriginal | CopyImage
+        | ExportScene | ExportSelection | ExportOriginal | ExportOriginals | ExportZip => {
+            Area::Export
+        }
         DrawingSession => Area::Session,
         MoveDrag | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag | PanSpaceDrag
         | PanAltDrag | ZoomDrag => Area::Pointer,
@@ -95,10 +97,9 @@ pub(super) fn gate(action: Action) -> Gate {
         PanLeft | PanRight | PanUp | PanDown | Fit | Focus | Previous | Next | ZoomIn | ZoomOut
         | ZoomReset | ResetCamera | Select | ToggleView | Deselect | SelectAll | Lock
         | Grayscale | Save | ExportScene | ExportSelection | ExportOriginal | ExportOriginals
-        | ExportZip | CopyImage | OpenOriginal | Export | SampleColor | CoordinatePicker
-        | SamplingDefault | SamplingSmooth | SamplingNearest | SamplingAutomatic | EditNote => {
-            Gate::Board
-        }
+        | ExportZip | CopyImage | OpenOriginal | Export | SampleColor | PickScreen
+        | CoordinatePicker | SamplingDefault | SamplingSmooth | SamplingNearest
+        | SamplingAutomatic | EditNote => Gate::Board,
         Paste | Undo | Redo | Note | Delete | Duplicate | RotateCw | RotateCcw | FlipHorizontal
         | FlipVertical | ResetTransform | ResetCrop | NudgeLeft | NudgeRight | NudgeUp
         | NudgeDown | NudgeLeftFast | NudgeRightFast | NudgeUpFast | NudgeDownFast | BringFront

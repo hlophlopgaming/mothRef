@@ -168,6 +168,12 @@ impl Default for ExportForm {
 #[derive(Default)]
 pub(super) struct Pickers {
     pub open: bool,
+    /// The screen pixel under the held pointer outside the window.
+    pub hover: Option<[u8; 3]>,
+    /// The last color picked from the screen, shown as a sample.
+    pub last_screen: Option<[u8; 3]>,
+    /// The system lets the picker read the screen while dragging outside the window.
+    pub screen_drag: bool,
     /// HEX, RGB or HSV for sampled colors.
     pub color_format: u8,
 }
@@ -460,9 +466,20 @@ impl Tools {
             &mut top,
             |ui| {
                 let tokens = moth_ui::tokens(ui.ctx());
-                for action in [Action::SampleColor, Action::CoordinatePicker] {
+                for action in [
+                    Action::SampleColor,
+                    Action::PickScreen,
+                    Action::CoordinatePicker,
+                ] {
+                    // The system picker only where the system has one.
+                    if action == Action::PickScreen
+                        && !enabled.get(action as usize).copied().unwrap_or(false)
+                    {
+                        continue;
+                    }
                     let active = match action {
                         Action::SampleColor => *tool == super::gesture::Tool::PickColor,
+                        Action::PickScreen => false,
                         _ => *tool == super::gesture::Tool::PickInfo,
                     };
                     let response = ui.add_enabled_ui(
@@ -487,6 +504,26 @@ impl Tools {
                         ui.selectable_value(&mut self.pickers.color_format, i as u8, label);
                     }
                 });
+                // The color under the held pointer outside the window, else the last one
+                // taken from the screen.
+                let screen = self
+                    .pickers
+                    .hover
+                    .map(|rgb| (Text::ScreenColorHover, rgb))
+                    .or(self
+                        .pickers
+                        .last_screen
+                        .map(|rgb| (Text::ScreenColorLast, rgb)));
+                if let Some((label, rgb)) = screen {
+                    ui.add_space(tokens.space_s as f32);
+                    ui.horizontal(|ui| {
+                        // The ring keeps white and canvas-colored samples visible.
+                        moth_ui::icons::swatch(ui, rgb, true);
+                        let (hex, _, _) = moth_platform::screen_color::texts(rgb);
+                        ui.label(egui::RichText::new(text(label)).color(tokens.text_muted));
+                        ui.label(egui::RichText::new(hex).monospace());
+                    });
+                }
                 if let Some(info) = &board.notices.pixel_info {
                     ui.add_space(tokens.space_s as f32);
                     pixel_info(ui, info, board);
@@ -496,6 +533,8 @@ impl Tools {
                     ui.label(
                         egui::RichText::new(text(if *tool == super::gesture::Tool::PickInfo {
                             Text::PickCoordinatesHint
+                        } else if self.pickers.screen_drag {
+                            Text::PickColorDragHint
                         } else {
                             Text::PickColorHint
                         }))
@@ -865,7 +904,7 @@ enum NoticeContent<'a> {
 /// A short-lived message about something that did not happen (for now: a paste with
 /// nothing usable on the clipboard), so it is seen instead of hiding in the status line.
 fn flash_notice(ctx: &egui::Context, board: &Document, reduced_motion: bool) {
-    let Some((message, at)) = &board.notices.flash else {
+    let Some((message, ok, at)) = &board.notices.flash else {
         return;
     };
     let age = at.elapsed().as_secs_f32();
@@ -890,7 +929,7 @@ fn flash_notice(ctx: &egui::Context, board: &Document, reduced_motion: bool) {
         ],
         alpha,
         reduced_motion,
-        NoticeContent::Done { message, ok: false },
+        NoticeContent::Done { message, ok: *ok },
     );
 }
 /// The pill above the bottom toolbar shared by the short notices.

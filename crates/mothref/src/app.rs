@@ -108,6 +108,10 @@ pub struct App {
     input: InputState,
     /// What a press on the canvas does; see `gesture.rs`.
     tool: gesture::Tool,
+    /// The color picker's press, held: outside the window it samples the screen.
+    screen_pick: Option<(moth_platform::input::Kind, u64)>,
+    /// Reads screen colors off the event loop; started on the picker's first use.
+    screen_sampler: Option<moth_platform::screen_color::Sampler>,
     /// What the current press is doing, until release.
     gesture: gesture::Gesture,
     /// What the last gesture left on screen until the journal acknowledges it.
@@ -179,6 +183,8 @@ impl App {
             shell,
             input: InputState::default(),
             tool: gesture::Tool::default(),
+            screen_pick: None,
+            screen_sampler: None,
             gesture: gesture::Gesture::default(),
             settling: gesture::Settling::default(),
             startup: std::env::args_os()
@@ -835,6 +841,11 @@ impl App {
             .unwrap_or([0., 0.]);
         let format = self.image_format();
         self.workspace.reduce_side = self.settings.reduce_side();
+        self.tools.pickers.screen_drag = self
+            .shell
+            .window
+            .as_ref()
+            .is_some_and(|w| moth_platform::screen_color::capabilities(w).drag);
         let events = self.workspace.pump(workspace::Pump {
             format,
             cursor,
@@ -897,6 +908,7 @@ impl App {
         }
         // Command-line images go into the first board once it has finished loading: an
         // import reports "opened" while it streams, then replaces the scene at the end.
+        self.drain_screen_colors();
         let preferences_known =
             self.reopen_last.is_none() || self.started.elapsed() > Duration::from_secs(3);
         let board_ready = !self.startup_board
@@ -1295,6 +1307,28 @@ impl App {
                 {
                     return;
                 }
+                // The color picker answers on release: over an image it samples the
+                // original, outside the window (where the system allows) the screen.
+                if self.tool == gesture::Tool::PickColor
+                    && p.phase == Phase::Down
+                    && self.workspace.board.idle()
+                {
+                    self.screen_pick = Some((p.kind, p.id));
+                    self.tools.pickers.hover = None;
+                    return;
+                }
+                if self.screen_pick == Some((p.kind, p.id)) {
+                    match p.phase {
+                        Phase::Move => self.screen_pick_move(p.position),
+                        Phase::Up => self.screen_pick_up(p.position),
+                        Phase::Cancel => {
+                            self.screen_pick = None;
+                            self.tools.pickers.hover = None;
+                        }
+                        Phase::Down => {}
+                    }
+                    return;
+                }
                 if self.tool.picks() && p.phase == Phase::Down && self.workspace.board.idle() {
                     self.pick(p.position);
                     return;
@@ -1359,6 +1393,117 @@ impl App {
                     Phase::Cancel => self.cancel_drag(),
                 }
             }
+        }
+    }
+    /// The physical screen position of a window point, where the system reports it.
+    fn screen_point(&self, position: [f32; 2]) -> Option<[i32; 2]> {
+        let window = self.shell.window.as_ref()?;
+        let origin = window.inner_position().ok()?;
+        let scale = self.shell.context().pixels_per_point();
+        Some([
+            origin.x + (position[0] * scale).round() as i32,
+            origin.y + (position[1] * scale).round() as i32,
+        ])
+    }
+    /// Whether a window point lies outside the window, where the screen is sampled.
+    fn outside_window(&self, position: [f32; 2]) -> bool {
+        let rect = self.shell.context().content_rect();
+        !rect.contains(egui::pos2(position[0], position[1]))
+    }
+    fn screen_sampler(&mut self) -> Option<&moth_platform::screen_color::Sampler> {
+        if self.screen_sampler.is_none() {
+            match moth_platform::screen_color::Sampler::new(self.shell.wake()) {
+                Ok(sampler) => self.screen_sampler = Some(sampler),
+                Err(error) => {
+                    tracing::warn!(%error, "screen color picker unavailable");
+                    return None;
+                }
+            }
+        }
+        self.screen_sampler.as_ref()
+    }
+    fn screen_pick_move(&mut self, position: [f32; 2]) {
+        let drag = self
+            .shell
+            .window
+            .as_ref()
+            .is_some_and(|w| moth_platform::screen_color::capabilities(w).drag);
+        if !drag || !self.outside_window(position) {
+            self.tools.pickers.hover = None;
+            return;
+        }
+        if let Some(point) = self.screen_point(position)
+            && let Some(sampler) = self.screen_sampler()
+        {
+            sampler.sample(point);
+        }
+    }
+    fn screen_pick_up(&mut self, position: [f32; 2]) {
+        self.screen_pick = None;
+        if self.outside_window(position) {
+            if let Some(color) = self.tools.pickers.hover.take() {
+                self.copy_screen_color(color);
+            }
+            self.tool = gesture::Tool::Select;
+            return;
+        }
+        self.tools.pickers.hover = None;
+        self.pick(position);
+    }
+    /// Copies a color from the screen in the chosen format and says so.
+    fn copy_screen_color(&mut self, rgb: [u8; 3]) {
+        let (hex, rgb_text, hsv) = moth_platform::screen_color::texts(rgb);
+        let text = match self.tools.pickers.color_format {
+            1 => rgb_text,
+            2 => hsv,
+            _ => hex,
+        };
+        self.shell.context().copy_text(text.clone());
+        self.tools.pickers.last_screen = Some(rgb);
+        self.workspace.board.notices.flash = Some((
+            moth_ui::Message::Detail(format!(
+                "{} {text}",
+                moth_ui::text(moth_ui::Text::ColorCopied)
+            )),
+            true,
+            Instant::now(),
+        ));
+    }
+    /// Screen colors that arrived from the sampler: live hover, or the system picker.
+    fn drain_screen_colors(&mut self) {
+        let Some(sampler) = &self.screen_sampler else {
+            return;
+        };
+        let picked: Vec<_> = sampler.results.try_iter().collect();
+        for picked in picked {
+            match picked {
+                moth_platform::screen_color::Picked::Hover(rgb) => {
+                    if self.screen_pick.is_some() {
+                        self.tools.pickers.hover = Some(rgb);
+                    }
+                }
+                moth_platform::screen_color::Picked::Chosen(Ok(Some(rgb))) => {
+                    self.copy_screen_color(rgb)
+                }
+                moth_platform::screen_color::Picked::Chosen(Ok(None)) => {}
+                moth_platform::screen_color::Picked::Chosen(Err(error)) => {
+                    tracing::warn!(%error, "system color picker failed");
+                    self.workspace.board.notices.flash =
+                        Some((moth_ui::Text::NoSystemPicker.into(), false, Instant::now()));
+                }
+            }
+        }
+    }
+    /// Starts the system color picker (the desktop portal, or the macOS sampler).
+    fn pick_from_screen(&mut self) {
+        let result = match self.screen_sampler() {
+            Some(sampler) => sampler.interactive(),
+            None => Err(std::io::Error::other("screen color picker unavailable")),
+        };
+        if let Err(error) = result {
+            tracing::warn!(%error, "system color picker unavailable");
+            self.workspace.board.notices.flash =
+                Some((moth_ui::Text::NoSystemPicker.into(), false, Instant::now()));
         }
     }
     /// A one-shot picker tool: reports the color or details of the image under

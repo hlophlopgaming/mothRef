@@ -150,10 +150,9 @@ Open:
 
 - [ ] New app icon and README logo — **on hold** until the final mark is drawn
 - [ ] Parity leftovers from [FEATURES.md](docs/FEATURES.md) (a few were tagged M0/M1 there but never done, so they are collected here):
-  - [ ] Color picker: keep picking outside the window while the button is held (the rest is done) — wanted (maintainer, 2026-11-05)
   - [ ] Show the color gamut of an image (BR) — waiting for a decision: the maintainer asked what it shows (2026-11-05)
-  - [ ] Open image source — the URL or path the image came from (PR). Wanted; handle the edge cases explicitly: an image from inside a `.zip` (show the archive and the entry, open the archive's folder), a web URL (open on click only), clipboard pastes and images embedded in `.bee` / `.pur` files (no source: say so), a file that was moved or deleted since (say it is missing, offer the last known path)
-  - [ ] Arrange by file path (PR)
+  - [ ] Open image source — the URL or path the image came from (PR). Needs the source stored per image (schema 7; paths are not written to boards today) — on hold with linked files (maintainer, 2026-11-06). Wanted; handle the edge cases explicitly: an image from inside a `.zip` (show the archive and the entry, open the archive's folder), a web URL (open on click only), clipboard pastes and images embedded in `.bee` / `.pur` files (no source: say so), a file that was moved or deleted since (say it is missing, offer the last known path)
+  - [ ] Arrange by file path (PR) — needs the stored source, see above
   - [ ] Optional scrollbars and menu bar (BR) — waiting for a decision: the maintainer asked what it means (2026-11-05)
   - [ ] Open files from the command line: the first `.moth` / `.bee` / `.pur` argument opens a board, image paths are added (BR). Opening is done (the first board opens, images are added to it once it has loaded, further boards open in tabs); the documented agent-ready CLI remains with M13. Designed together with M13: the goal is that an agent can load, lay out and annotate images by itself from the documented CLI, without an MCP server (maintainer, 2026-11-05)
 
@@ -162,6 +161,7 @@ Validation notes: [editing and export](docs/M2-EDITING-VALIDATION.md), [import](
 <details>
 <summary>Done</summary>
 
+- [x] Color picker: keep picking outside the window while the button is held — on X11 and Windows press on the board and drag out: the panel shows the color under the pointer and the release copies it; on Linux (the desktop portal, the only way on Wayland) and macOS (`NSColorSampler`) “Pick a color from the screen…” opens the system picker. See [editing validation](docs/M2-EDITING-VALIDATION.md#screen-color-picker--2026-11-06)
 - [x] Optional auto-downscale of very large images on import (PR) — Settings › Adding › Reduce very large images when adding: never (default), to 4096 or to 8192 px on the longer side; the board keeps the reduced copy under the file's name (JPEG stays JPEG), the file on disk is untouched; pasted pixels are not reduced
 - [x] Debug log viewer in the app (BR) — Settings › For developers › Log: the last 400 lines in memory, warnings-and-errors filter, copy, and the folder of the full log files
 - [x] Coordinate picker: check every field (pixel X/Y, image name, source, size, selection size) — labelled rows in the Image pickers panel: image, pixel, original size, file format and size, size on the board, selection size; read from the header only. The source path waits for “Open image source”
@@ -376,7 +376,6 @@ A first slice shipped early ([decision 0004](docs/decisions/0004-reference-works
 - [ ] Library sidebar (All boards, Pinned, Stacks and Smart collections exist): All boards, Recent, Pinned, Stacks, Smart collections. No in-app trash: deleting a board moves it straight to the OS trash (maintainer, 2026-10-30); counts next to each entry; an icon per entry (pin for Pinned); stack colors picked from a palette and repeated as a dot on the board cards
 - [ ] Library view options: sort by last opened, last edited, name, item count or size; grid / list view; tag filter chips above the grid — last opened / name sort and grid / list exist
 - [ ] Board cards show item count, last edited time, file size, pinned state and an "unsaved" badge when a recovery journal is pending; the library header shows totals
-- [ ] Embed images or link to files on disk (PR): a per-image choice, linked images reload when the file changes; a format change (schema bump, migration, corpus files, `docs/FORMAT.md`). Moved from M2 on 2026-10-26
 - [ ] Library health: boards with missing linked files (with relink), duplicate images across boards by content hash, largest boards
 - [ ] All Milanote-checklist items tagged M5 (templates, search inside boards)
 
@@ -540,6 +539,7 @@ PureRef handles images and GIFs only; a PDF (an artbook, a model sheet, a manual
 
 ### Ideas without a milestone
 
+- Link to files on disk instead of embedding them (moved out of M5 on 2026-11-06: the maintainer is not sure it is needed). A board must still open everywhere: if it returns, it needs embedded previews, a "file not found" placeholder with bulk relink, "Embed into the board" and "Save a copy for sharing", and stays off by default, for plain files only (never ZIP members, pastes or URLs).
 - [ ] **2.0 candidate only:** 3D model reference items; scope, formats, interaction and resource budgets remain open. Do not start before 1.0.
 - Android port: portability rules are built in from M0 (see [AGENTS.md](AGENTS.md)); no milestone yet. Mobile items are listed in [FEATURES.md](docs/FEATURES.md#mobile-and-tablet-future-android-port).
 - Checks and ideas moved out of M3 on 2026-10-26: [docs/DEFERRED.md](docs/DEFERRED.md).
