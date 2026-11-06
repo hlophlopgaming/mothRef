@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Settings › For developers shows the recent log: the last 400 lines, a filter for warnings and errors, a Copy button for bug reports and where the full log files are.
+- The Settings window has the dialog look of the rest of the app: its own title and close button instead of a gray title bar, and the sections as a plain list where only the chosen one is filled.
+
 - The coordinate picker answers in labelled rows in the Image pickers panel: image, pixel, original size, file format and size, size on the board and selection size. It reads only the image header, so it answers at once even on a 100-megapixel image (it used to decode the whole image on every click).
 
 - Settings › General › Open the last board on start (off by default) opens the most recent board instead of the library, unless files were given on the command line or a recovered board is waiting.
