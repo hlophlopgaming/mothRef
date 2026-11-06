@@ -311,6 +311,8 @@ pub(super) struct SettingsWindow {
     pub section: Option<Section>,
     query: String,
     pub focus_row: Option<usize>,
+    /// The log viewer in For developers shows only warnings and errors.
+    log_problems_only: bool,
 }
 impl SettingsWindow {
     pub fn open_row(&mut self, index: usize) {
@@ -342,8 +344,14 @@ impl SettingsWindow {
             - egui::Vec2::splat(moth_ui::tokens(ui.ctx()).space_xl as f32))
         .min(egui::vec2(760., 620.))
         .max(egui::Vec2::splat(1.));
+        let tokens = moth_ui::tokens(ui.ctx());
         egui::Window::new(text(Text::Settings))
-            .open(&mut open)
+            .title_bar(false)
+            .frame(
+                egui::Frame::popup(&ui.ctx().global_style())
+                    .corner_radius(tokens.radius_l)
+                    .inner_margin(egui::Margin::same(tokens.space_l as i8)),
+            )
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .fixed_size(size)
             .movable(false)
@@ -351,6 +359,23 @@ impl SettingsWindow {
             .collapsible(false)
             .vscroll(false)
             .show(ui.ctx(), |ui| {
+                // The dialog's own header, like the other dialogs: title and close.
+                ui.horizontal(|ui| {
+                    moth_ui::icons::dialog_title(ui, text(Text::Settings));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if moth_ui::icons::button(
+                            ui,
+                            moth_ui::icons::Icon::Close,
+                            text(Text::ClosePanel),
+                            false,
+                        )
+                        .clicked()
+                        {
+                            open = false;
+                        }
+                    });
+                });
+                ui.add_space(tokens.space_s as f32);
                 ui.add(
                     egui::TextEdit::singleline(&mut self.query)
                         .desired_width(f32::INFINITY)
@@ -378,6 +403,10 @@ impl SettingsWindow {
                                     if !narrow {
                                         ui.set_width(190.);
                                     }
+                                    // Sections read as a list: only the chosen one is filled.
+                                    let widgets = &mut ui.visuals_mut().widgets;
+                                    widgets.inactive.weak_bg_fill = tokens.surface;
+                                    widgets.inactive.bg_stroke = egui::Stroke::NONE;
                                     for section in Section::ALL {
                                         if moth_ui::icons::labeled_button(
                                             ui,
@@ -729,6 +758,8 @@ impl SettingsWindow {
                                             if let Some(video) = &diagnostics.video {
                                                 ui.label(super::tools::video_summary(video));
                                             }
+                                            ui.add_space(moth_ui::tokens(ui.ctx()).space_m as f32);
+                                            log_viewer(ui, &mut self.log_problems_only);
                                         }
                                         if ui.button(text(Text::ResetSection)).clicked() {
                                             for entry in
@@ -757,6 +788,75 @@ impl SettingsWindow {
             intents.push(Intent::PreferencesDirty);
         }
         intents
+    }
+}
+/// The recent log lines, newest at the bottom, with a warnings-only filter and a copy
+/// button for bug reports. The full log stays in files in the folder it names.
+fn log_viewer(ui: &mut egui::Ui, problems_only: &mut bool) {
+    let tokens = moth_ui::tokens(ui.ctx());
+    moth_ui::icons::dialog_section(ui, text(Text::LogViewer));
+    let lines = moth_platform::diagnostics::recent();
+    let problem = |line: &&String| line.contains(" WARN ") || line.contains(" ERROR ");
+    let shown: Vec<&String> = lines
+        .iter()
+        .filter(|line| !*problems_only || problem(line))
+        .collect();
+    ui.horizontal(|ui| {
+        ui.checkbox(problems_only, text(Text::LogProblemsOnly));
+        if ui.button(text(Text::LogCopy)).clicked() {
+            ui.ctx().copy_text(
+                shown
+                    .iter()
+                    .map(|line| line.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+        }
+    });
+    egui::Frame::new()
+        .fill(tokens.surface_raised)
+        .stroke(egui::Stroke::new(1., tokens.border))
+        .corner_radius(tokens.radius_m)
+        .inner_margin(egui::Margin::same(tokens.space_s as i8))
+        .show(ui, |ui| {
+            egui::ScrollArea::both()
+                .id_salt("log_viewer")
+                .max_height(tokens.space_xl as f32 * 10.)
+                .stick_to_bottom(true)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    if shown.is_empty() {
+                        ui.label(
+                            egui::RichText::new(text(Text::LogEmpty)).color(tokens.text_muted),
+                        );
+                    }
+                    for line in shown {
+                        let color = if line.contains(" ERROR ") {
+                            tokens.danger
+                        } else if line.contains(" WARN ") {
+                            tokens.accent_text
+                        } else {
+                            tokens.text
+                        };
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(line).monospace().small().color(color),
+                            )
+                            .extend(),
+                        );
+                    }
+                });
+        });
+    if let Ok(directory) = moth_platform::diagnostics::log_directory() {
+        ui.label(
+            egui::RichText::new(format!(
+                "{}: {}",
+                text(Text::LogFolder),
+                directory.display()
+            ))
+            .small()
+            .color(tokens.text_muted),
+        );
     }
 }
 #[cfg(test)]

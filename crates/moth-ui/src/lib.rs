@@ -247,6 +247,16 @@ pub enum Text {
     OriginalsFolder,
     /// Close button of a side panel.
     ClosePanel,
+    /// Log viewer text.
+    LogViewer,
+    /// Log viewer text.
+    LogProblemsOnly,
+    /// Log viewer text.
+    LogCopy,
+    /// Log viewer text.
+    LogEmpty,
+    /// Log viewer text.
+    LogFolder,
     /// Coordinate picker row label.
     PixelInfoName,
     /// Coordinate picker row label.
