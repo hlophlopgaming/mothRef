@@ -17,7 +17,7 @@ impl Source {
     pub fn open(&self) -> io::Result<Box<dyn moth_format::ReadSeek>> {
         let mut file = File::open(&self.path)?;
         if let Some(member) = &self.member {
-            if file.metadata()?.len() > moth_io::MAX_INPUT_BYTES * 16 {
+            if file.metadata()?.len() > moth_io::MAX_INPUT_BYTES * 4 {
                 return Err(io::Error::other("ZIP archive exceeds 1 GiB"));
             }
             let mut archive = zip::ZipArchive::new(file).map_err(io::Error::other)?;

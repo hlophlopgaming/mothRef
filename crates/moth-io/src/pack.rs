@@ -143,7 +143,9 @@ fn trailer(
     {
         return Err(invalid("pack identity mismatch"));
     }
-    if original.iter().any(|v| *v == 0 || *v > 32768)
+    if original
+        .iter()
+        .any(|v| *v == 0 || *v > crate::MAX_DIMENSION)
         || count > crate::tiles::MAX_BAKED_TILES
         || index != count * payload(format)
         || index + count * ENTRY + TRAILER != len
