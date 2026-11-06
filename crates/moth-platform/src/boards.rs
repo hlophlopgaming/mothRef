@@ -80,8 +80,10 @@ pub enum Completion {
     Preferences(std::collections::BTreeMap<String, String>),
     /// Confirms a settings write reached the catalog file.
     SettingsSaved,
-    /// Export succeeded; sampling/coordinate details are returned when applicable.
+    /// Export succeeded; sampling details are returned when applicable.
     Exported(String),
+    /// The coordinate picker's answer, labelled by the UI.
+    PixelInfo(super::export::PixelInfo),
     /// Applies an already-journaled mutation on the UI thread.
     Applied(Command, Option<(BlobId, Handle)>),
     /// Applies a whole journaled group as one unit.
@@ -780,6 +782,13 @@ impl State {
                     .pop_back()
                     .ok_or_else(|| error("Nothing to redo"))?;
                 Ok(Some(self.replay_redo(step)?))
+            }
+            Request::Export(super::export::Target::Info { id, point }) => {
+                let info = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    super::export::pixel_info(&self.storage, &self.scene, &self.sources, id, point)
+                }))
+                .map_err(|_| error("Export decoder panicked"))??;
+                Ok(Some(Completion::PixelInfo(info)))
             }
             Request::Export(target) => {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

@@ -84,6 +84,65 @@ pub enum Target {
         point: [f32; 2],
     },
 }
+/// What the coordinate picker found under the pointer, for the UI to label.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PixelInfo {
+    /// The image item's name (its file name when it came from a file).
+    pub name: String,
+    /// The original pixel under the pointer, counted from the top-left corner.
+    pub pixel: [u32; 2],
+    /// The original's size in pixels, after EXIF orientation.
+    pub size: [u32; 2],
+    /// Encoding of the original: "PNG", "JPEG", "GIF", "BMP", "WebP" or "RGBA".
+    pub format: &'static str,
+    /// Size of the original file in bytes.
+    pub bytes: u64,
+    /// The item's frame on the board, in board units.
+    pub frame: [f32; 2],
+}
+impl PixelInfo {
+    /// One line, for logs and tests; the UI shows labelled rows instead.
+    pub fn summary(&self) -> String {
+        format!(
+            "{} · X {} Y {} · {} × {}",
+            self.name, self.pixel[0], self.pixel[1], self.size[0], self.size[1]
+        )
+    }
+}
+/// Reads the original's header only (not its pixels), so a click on a 100-megapixel
+/// image answers at once.
+pub(super) fn pixel_info(
+    storage: &DesktopStorage,
+    scene: &Scene,
+    sources: &HashMap<BlobId, Handle>,
+    id: Uuid,
+    point: [f32; 2],
+) -> io::Result<PixelInfo> {
+    let item = item(scene, id)?;
+    let bytes = original(storage, sources, item)?;
+    let size = moth_io::tiles::dimensions(&bytes).map_err(error)?;
+    let uv = item
+        .source_uv(point, size)
+        .ok_or_else(|| error("No image pixel at this position"))?;
+    let pixel =
+        |axis: usize| ((uv[axis] * size[axis] as f32).floor().max(0.) as u32).min(size[axis] - 1);
+    let format = match extension(&bytes) {
+        "png" => "PNG",
+        "jpg" => "JPEG",
+        "gif" => "GIF",
+        "bmp" => "BMP",
+        "webp" => "WebP",
+        _ => "RGBA",
+    };
+    Ok(PixelInfo {
+        name: item.name.clone(),
+        pixel: [pixel(0), pixel(1)],
+        size,
+        format,
+        bytes: bytes.len() as u64,
+        frame: [item.rect.width, item.rect.height],
+    })
+}
 /// A single slot bounds viewer copies to one original per board (MAX_RECORD bytes).
 fn viewer_image(
     storage: &DesktopStorage,
@@ -363,24 +422,7 @@ pub(super) fn run(
             zip.finish().map_err(error)?.sync_all()?;
         }
         Target::Info { id, point } => {
-            let item = item(scene, id)?;
-            let bytes = original(storage, sources, item)?;
-            let decoded = moth_io::decode(&bytes, 1).map_err(error)?;
-            let uv = item
-                .source_uv(point, decoded.original)
-                .ok_or_else(|| error("No image pixel at this position"))?;
-            return Ok(format!(
-                "{} · X {} Y {} · {} × {}",
-                item.name,
-                (uv[0] * decoded.original[0] as f32)
-                    .floor()
-                    .min((decoded.original[0] - 1) as f32),
-                (uv[1] * decoded.original[1] as f32)
-                    .floor()
-                    .min((decoded.original[1] - 1) as f32),
-                decoded.original[0],
-                decoded.original[1]
-            ));
+            return pixel_info(storage, scene, sources, id, point).map(|info| info.summary());
         }
         Target::Original { path, id } => {
             copy_original(storage, sources, item(scene, id)?, &path)?;

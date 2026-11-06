@@ -151,7 +151,6 @@ Open:
 - [ ] New app icon and README logo — **on hold** until the final mark is drawn
 - [ ] Parity leftovers from [FEATURES.md](docs/FEATURES.md) (a few were tagged M0/M1 there but never done, so they are collected here):
   - [ ] Color picker: keep picking outside the window while the button is held (the rest is done) — wanted (maintainer, 2026-11-05)
-  - [ ] Coordinate picker: check every field (pixel X/Y, image name, source, size, selection size)
   - [ ] Show the color gamut of an image (BR) — waiting for a decision: the maintainer asked what it shows (2026-11-05)
   - [ ] Open image source — the URL or path the image came from (PR). Wanted; handle the edge cases explicitly: an image from inside a `.zip` (show the archive and the entry, open the archive's folder), a web URL (open on click only), clipboard pastes and images embedded in `.bee` / `.pur` files (no source: say so), a file that was moved or deleted since (say it is missing, offer the last known path)
   - [ ] Arrange by file path (PR)
@@ -165,6 +164,7 @@ Validation notes: [editing and export](docs/M2-EDITING-VALIDATION.md), [import](
 <details>
 <summary>Done</summary>
 
+- [x] Coordinate picker: check every field (pixel X/Y, image name, source, size, selection size) — labelled rows in the Image pickers panel: image, pixel, original size, file format and size, size on the board, selection size; read from the header only. The source path waits for “Open image source”
 - [x] Setting "bring selected images to front" (PR) — wanted, as a setting — Settings › Adding › Bring clicked images to the front (off by default); a click on a selection already on top adds no undo step
 - [x] Reopen the last board on start — as a setting (maintainer, 2026-11-05) — Settings › General › Open the last board on start (off by default); skipped when files are given on the command line or a recovery is waiting
 - [x] Notify when pasting from an empty or unusable clipboard (BR) — wanted — a short notice above the bottom toolbar

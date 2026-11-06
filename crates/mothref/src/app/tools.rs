@@ -487,6 +487,10 @@ impl Tools {
                         ui.selectable_value(&mut self.pickers.color_format, i as u8, label);
                     }
                 });
+                if let Some(info) = &board.notices.pixel_info {
+                    ui.add_space(tokens.space_s as f32);
+                    pixel_info(ui, info, board);
+                }
                 if tool.picks() {
                     ui.add_space(tokens.space_xs as f32);
                     ui.label(
@@ -613,6 +617,71 @@ fn pairs(ui: &mut egui::Ui, fields: &mut [(Text, &mut f32, std::ops::RangeInclus
                 }
             }
         });
+}
+/// The coordinate picker's answer as labelled rows, plus the current selection's size.
+fn pixel_info(ui: &mut egui::Ui, info: &moth_platform::export::PixelInfo, board: &Document) {
+    let tokens = moth_ui::tokens(ui.ctx());
+    let selection = board
+        .selection
+        .iter()
+        .filter_map(|id| board.scene.get(*id))
+        .map(|item| {
+            let corners = item.rect.rotated_envelope(item.transform.rotation);
+            egui::Rect::from_min_max(
+                egui::pos2(corners.lower()[0], corners.lower()[1]),
+                egui::pos2(corners.upper()[0], corners.upper()[1]),
+            )
+        })
+        .reduce(|a, b| a.union(b));
+    let rows = [
+        (Text::PixelInfoName, info.name.clone()),
+        (
+            Text::PixelInfoPixel,
+            format!("X {} · Y {}", info.pixel[0], info.pixel[1]),
+        ),
+        (
+            Text::PixelInfoOriginal,
+            format!(
+                "{} × {} {}",
+                info.size[0],
+                info.size[1],
+                text(Text::PixelsShort)
+            ),
+        ),
+        (
+            Text::PixelInfoFile,
+            format!("{} · {}", info.format, file_size(info.bytes)),
+        ),
+        (
+            Text::PixelInfoFrame,
+            format!("{:.0} × {:.0}", info.frame[0], info.frame[1]),
+        ),
+    ];
+    egui::Grid::new("pixel_info")
+        .num_columns(2)
+        .spacing([tokens.space_m as f32, tokens.space_xs as f32])
+        .show(ui, |ui| {
+            for (label, value) in rows {
+                ui.label(egui::RichText::new(text(label)).color(tokens.text_muted));
+                ui.add(egui::Label::new(value).truncate());
+                ui.end_row();
+            }
+            if let Some(bounds) = selection {
+                ui.label(
+                    egui::RichText::new(text(Text::PixelInfoSelection)).color(tokens.text_muted),
+                );
+                ui.label(format!("{:.0} × {:.0}", bounds.width(), bounds.height()));
+                ui.end_row();
+            }
+        });
+}
+/// A file size in the unit people read: bytes, KB or MB (decimal, as file managers show).
+fn file_size(bytes: u64) -> String {
+    match bytes {
+        0..1_000 => format!("{bytes} B"),
+        1_000..1_000_000 => format!("{:.0} KB", bytes as f64 / 1e3),
+        _ => format!("{:.1} MB", bytes as f64 / 1e6),
+    }
 }
 /// What each export gives, shown under its label in the Export dialog.
 fn export_hint(action: Action) -> Text {
