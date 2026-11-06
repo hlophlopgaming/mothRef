@@ -13,3 +13,5 @@ moth-format.workspace = true
 moth-render.workspace = true
 pollster.workspace = true
 moth-platform.workspace = true
+# Generates the large measurement inputs (`xtask large-inputs`).
+image.workspace = true

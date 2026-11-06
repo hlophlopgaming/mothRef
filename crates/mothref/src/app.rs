@@ -732,6 +732,8 @@ impl App {
             mode.uses_memory(),
         ));
         cache.set_bake_mode(self.settings.bake_mode);
+        // A large WebP frame kept for zooming is let go once zooming has stopped.
+        moth_io::release_idle_frames(Duration::from_secs(15));
         if let Some(gpu) = &self.shell.gpu {
             self.workspace
                 .board

@@ -718,3 +718,56 @@ A separate JPEG-only allocation regression is included in the focused mip fix, s
 it does not depend on the other pending PNG optimizations. On the 1920×1080
 detail level it fails with the old filter (26,956,816 peak Rust bytes) and passes
 with the new filter under a strict three-RGBA-frame bound (24,883,200 bytes).
+
+## 100-megapixel originals — 2026-11-06
+
+MothRef keeps originals up to 100 Mi pixels at full detail. These inputs make the
+zoom probes reproducible on any machine (the content comes only from code: a
+gradient checkerboard with faint position-hashed grain, so the codecs work about as
+hard as on a photo):
+
+```sh
+cargo build --release -p xtask
+target/release/xtask large-inputs target/large-inputs
+# 100mp.png 12000×8334 (143 MB), 100mp.jpg 12000×8334 (3.5 MB, the encoder's
+# default quality drops the grain), 81mp.webp 9000×9000 lossless (121 MB)
+mkdir -p target/load-profile
+for f in 100mp.png 100mp.jpg 81mp.webp; do for m in memory disk none; do
+  TMPDIR="$PWD/target/load-profile" target/release/xtask zoom $m target/large-inputs/$f
+done; done
+```
+
+`zoom` is the probe described under “Repeatable per-mode probes”: a 2048 px zoom
+target, five warm repeats, zoom-out, RAM-cache release. The xtask pool does not bake
+tile packs, so “cold zoom” is the worst case the app's background bake removes
+after the first visit.
+
+### This container (not reference hardware)
+
+Intel Xeon @ 2.10 GHz, 4 vCPUs, 15 GiB RAM, Rust 1.97.0, nothing else running;
+one run per cell, so treat differences under ~15% as noise.
+
+| Input | Mode | Open ms | Cold zoom ms | Warm zoom ms | Source opens cold / warm | RSS after zoom-out MiB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 100mp.png | Memory | 872 | 12 275 | 7.5 | 16 / 0 | 195 |
+| 100mp.png | Disk | 837 | 12 125 | 16.1 | 16 / 0 | 149 |
+| 100mp.png | NoCache | 873 | 19 833 | 19 312 | 27 / 128 | 150 |
+| 100mp.jpg | Memory | 180 | 2 010 | 8.1 | 16 / 0 | 68 |
+| 100mp.jpg | Disk | 180 | 1 859 | 15.0 | 16 / 0 | 57 |
+| 100mp.jpg | NoCache | 216 | 2 934 | 2 777 | 27 / 125 | 56 |
+| 81mp.webp | Memory | 330 | 1 899 | 5.8 | 12 / 0 | 476 |
+| 81mp.webp | Disk | 352 | 2 123 | 10.8 | 12 / 0 | 446 |
+| 81mp.webp | NoCache | 333 | 2 760 | 2 834 | 20 / 100 | 451 |
+
+WebP before the shared frame (`4838f3c^`, same machine): open 1 624 ms, cold zoom
+17 919 ms (Memory) and 17 889 ms (Disk): every tile batch decoded the whole 324 MB
+frame again, up to four at once. Now one decode serves the preview, every batch and
+the bake; a batch from the kept frame takes 9–33 ms (mostly reading and hashing the
+121 MB source, which stays to catch a changed file). The kept frame is the WebP RSS
+above: one frame, released after the image's bake, or 15 s after its last use.
+
+PNG cold zoom is dominated by re-reading rows above each batch (16 passes over
+143 MB of compressed rows); the bake removes it after the first visit, as for
+sequential JPEG. On reference hardware, record the same table with three runs per
+cell (medians), plus the app's board open time with these images on a board.
+
