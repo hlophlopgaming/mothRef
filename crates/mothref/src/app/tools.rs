@@ -218,9 +218,11 @@ impl Tools {
     ) -> Vec<Intent> {
         if !self.edit.open && !self.arrange.open && !self.export.open && !self.pickers.open {
             viewer_notice(ui.ctx(), &mut self.viewer, board, settings.reduced_motion);
+            flash_notice(ui.ctx(), board, settings.reduced_motion);
             return Vec::new();
         }
         viewer_notice(ui.ctx(), &mut self.viewer, board, settings.reduced_motion);
+        flash_notice(ui.ctx(), board, settings.reduced_motion);
         let mut intents = Vec::new();
         let items: Vec<_> = board
             .selection
@@ -732,8 +734,8 @@ fn viewer_notice(
     board: &Document,
     reduced_motion: bool,
 ) {
-    const SHOWN: f32 = 2.4;
-    const FADE: f32 = 0.35;
+    const SHOWN: f32 = NOTICE_SHOWN;
+    const FADE: f32 = NOTICE_FADE;
     const PATIENCE: f32 = 30.;
     let Some(notice) = slot else {
         return;
@@ -764,20 +766,78 @@ fn viewer_notice(
         *slot = None;
         return;
     }
+    let content = match answer {
+        None => NoticeContent::Busy(Text::OpeningOriginal),
+        Some(message) => NoticeContent::Done {
+            ok: matches!(message, moth_ui::Message::Text(Text::ViewerOpened)),
+            message,
+        },
+    };
+    bottom_notice(
+        ctx,
+        "viewer_feedback",
+        &["bottom_toolbar", "selection_badge", "added_feedback"],
+        alpha,
+        reduced_motion,
+        content,
+    );
+}
+/// How long a finished notice stays, then how long it fades.
+const NOTICE_SHOWN: f32 = 2.4;
+const NOTICE_FADE: f32 = 0.35;
+/// What a bottom notice says: work under way, or how it ended.
+enum NoticeContent<'a> {
+    Busy(Text),
+    Done {
+        message: &'a moth_ui::Message,
+        ok: bool,
+    },
+}
+/// A short-lived message about something that did not happen (for now: a paste with
+/// nothing usable on the clipboard), so it is seen instead of hiding in the status line.
+fn flash_notice(ctx: &egui::Context, board: &Document, reduced_motion: bool) {
+    let Some((message, at)) = &board.notices.flash else {
+        return;
+    };
+    let age = at.elapsed().as_secs_f32();
+    if age >= NOTICE_SHOWN + NOTICE_FADE {
+        return;
+    }
+    let alpha = if age < NOTICE_SHOWN {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f32(NOTICE_SHOWN - age));
+        1.
+    } else {
+        ctx.request_repaint();
+        ((NOTICE_SHOWN + NOTICE_FADE - age) / NOTICE_FADE).clamp(0., 1.)
+    };
+    bottom_notice(
+        ctx,
+        "flash_feedback",
+        &[
+            "bottom_toolbar",
+            "selection_badge",
+            "added_feedback",
+            "viewer_feedback",
+        ],
+        alpha,
+        reduced_motion,
+        NoticeContent::Done { message, ok: false },
+    );
+}
+/// The pill above the bottom toolbar shared by the short notices.
+fn bottom_notice(
+    ctx: &egui::Context,
+    id: &str,
+    below: &[&str],
+    alpha: f32,
+    reduced_motion: bool,
+    content: NoticeContent<'_>,
+) {
     let tokens = moth_ui::tokens(ctx);
     let gap = tokens.space_m as f32;
     let viewport = ctx.content_rect();
-    // The import notice keeps its last rect after it closes; count it only while shown.
-    let added = board.notices.added.is_some();
-    let bottom = ctx.memory(|memory| {
-        ["bottom_toolbar", "selection_badge", "added_feedback"]
-            .into_iter()
-            .filter(|id| added || *id != "added_feedback")
-            .filter_map(|id| memory.area_rect(egui::Id::new(id)))
-            .map(|rect| rect.top())
-            .fold(viewport.bottom(), f32::min)
-    });
-    egui::Area::new(egui::Id::new("viewer_feedback"))
+    let bottom = moth_ui::canvas::notice_bottom(ctx, viewport, below);
+    egui::Area::new(egui::Id::new(id))
         .order(egui::Order::Foreground)
         .interactable(false)
         .constrain_to(viewport)
@@ -793,20 +853,18 @@ fn viewer_notice(
                     tokens.space_xs as i8,
                 ))
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| match answer {
-                        None => {
+                    ui.horizontal(|ui| match content {
+                        NoticeContent::Busy(label) => {
                             ui.spinner();
-                            ui.label(text(Text::OpeningOriginal));
+                            ui.label(text(label));
                         }
-                        Some(message) => {
+                        NoticeContent::Done { message, ok } => {
                             let (icon, _) = ui.allocate_exact_size(
                                 egui::Vec2::splat(ui.text_style_height(&egui::TextStyle::Body)),
                                 egui::Sense::hover(),
                             );
-                            // Success gets a check; an error is plain text in the warning tone.
-                            let opened =
-                                matches!(message, moth_ui::Message::Text(Text::ViewerOpened));
-                            let (glyph, color) = if opened {
+                            // Success gets a check; an error a cross in the danger tone.
+                            let (glyph, color) = if ok {
                                 (moth_ui::icons::Icon::Check, tokens.accent_text)
                             } else {
                                 (moth_ui::icons::Icon::Close, tokens.danger)

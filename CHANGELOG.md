@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Pasting when the clipboard holds nothing usable says so in a short notice above the bottom toolbar (it used to appear only in the status line's tooltip). Bottom notices no longer float too high after the “Added images” notice closes.
+
 - Export is a dialog card in the app's style instead of a bare window: it lists what each export gives (the board or the selection as PNG, SVG or PDF, one original, all originals to a folder, originals as ZIP) and asks where to save in the system “Save as” dialog, so there is no path to type. Copy image and Open original stay in the image menus.
 - Edit selection, Arrange options and Image pickers open as panels at the right edge, under the window bar, with a title and a close button; several open panels stack instead of overlapping. Edit selection puts position and size side by side and its Apply button is the filled one; the pickers show which one is active.
 

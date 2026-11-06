@@ -777,10 +777,16 @@ impl Workspace {
                 )) => {
                     self.board.intake.pasting = self.board.intake.pasting.saturating_sub(1);
                     self.board.notices.message = moth_ui::Text::ClipboardEmpty.into();
+                    self.board.notices.flash = Some((
+                        moth_ui::Text::ClipboardEmpty.into(),
+                        std::time::Instant::now(),
+                    ));
                 }
                 moth_platform::ClipboardCompletion::Pasted(Err(e)) => {
                     self.board.intake.pasting = self.board.intake.pasting.saturating_sub(1);
                     self.board.notices.message = e.to_string().into();
+                    self.board.notices.flash =
+                        Some((e.to_string().into(), std::time::Instant::now()));
                 }
             }
         }

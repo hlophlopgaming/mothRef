@@ -568,13 +568,8 @@ pub(super) fn added(
 ) -> Vec<Intent> {
     let mut intents = Vec::new();
     let gap = moth_ui::tokens(ctx).space_m as f32;
-    let bottom = ctx.memory(|memory| {
-        ["bottom_toolbar", "selection_badge"]
-            .into_iter()
-            .filter_map(|id| memory.area_rect(egui::Id::new(id)))
-            .map(|rect| rect.top())
-            .fold(viewport.bottom(), f32::min)
-    });
+    let bottom =
+        moth_ui::canvas::notice_bottom(ctx, viewport, &["bottom_toolbar", "selection_badge"]);
     egui::Area::new(egui::Id::new("added_feedback"))
         .order(egui::Order::Foreground)
         .constrain_to(viewport)

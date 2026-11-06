@@ -53,13 +53,16 @@ impl Shortcuts {
         let tokens = moth_ui::tokens(ctx);
         let gap = tokens.space_m as f32;
         let viewport = ctx.content_rect();
-        let bottom = ctx.memory(|memory| {
-            ["bottom_toolbar", "selection_badge", "added_feedback"]
-                .into_iter()
-                .filter_map(|id| memory.area_rect(egui::Id::new(id)))
-                .map(|rect| rect.top())
-                .fold(viewport.bottom(), f32::min)
-        });
+        let bottom = moth_ui::canvas::notice_bottom(
+            ctx,
+            viewport,
+            &[
+                "bottom_toolbar",
+                "selection_badge",
+                "added_feedback",
+                "viewer_feedback",
+            ],
+        );
         let label = text(toast.action.label());
         let keys = self.registry.label(toast.action);
         egui::Area::new(egui::Id::new("hotkey_feedback"))
