@@ -7,6 +7,7 @@ mod frames;
 mod pack;
 mod preload;
 mod preview;
+pub mod reduce;
 mod scheduler;
 pub mod tiles;
 pub use bake::BakeMode;

@@ -141,6 +141,8 @@ pub(super) struct Intake {
     pub(super) pending: HashMap<Handle, Pending>,
     pub(super) failed: HashSet<Handle>,
     pub(super) waiting: Vec<Handle>,
+    /// Added files waiting for the clipboard worker to reduce them (Settings › Adding).
+    pub(super) reducing: std::collections::VecDeque<std::path::PathBuf>,
     pub(super) batching: bool,
     /// Item ids inserted in the current import/paste burst, cleared when it drains.
     pub(super) burst: Vec<Uuid>,
@@ -661,6 +663,7 @@ impl Document {
             && self.intake.in_flight == 0
             && self.intake.pending.is_empty()
             && self.intake.waiting.is_empty()
+            && self.intake.reducing.is_empty()
             && !self.file.discarding
     }
     pub(super) fn title(&self) -> &str {

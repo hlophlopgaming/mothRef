@@ -30,6 +30,8 @@ pub(super) struct Workspace {
     recovery_paths: Vec<moth_platform::boards::Recovery>,
     recent_paths: Vec<std::path::PathBuf>,
     pub(super) refresh_library: bool,
+    /// Longest side added images are reduced to, or 0 to keep them (Settings › Adding).
+    pub(super) reduce_side: u32,
     pub(super) confirm_close: bool,
     pub(super) closing_window: bool,
     wake: Arc<dyn Fn() + Send + Sync>,
@@ -69,6 +71,7 @@ impl Workspace {
             library: true,
             recovery_paths: Vec::new(),
             recent_paths: Vec::new(),
+            reduce_side: 0,
             refresh_library: false,
             confirm_close: false,
             closing_window: false,
@@ -334,7 +337,45 @@ impl Workspace {
         path: std::path::PathBuf,
         format: moth_io::ImageFormat,
     ) -> TabChange {
+        let image = !path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+            ["moth", "bee", "pur"]
+                .iter()
+                .any(|board| e.eq_ignore_ascii_case(board))
+        });
+        if self.reduce_side > 0
+            && image
+            && !self.board.locked
+            && !self.board.intake.loading
+            && !self.board.file.discarding
+        {
+            // Reduction reads the file, so it runs on the clipboard worker; the file
+            // comes back as a reduced copy or, when it already fits, unchanged.
+            self.board.intake.reducing.push_back(path);
+            self.send_reductions();
+            return TabChange::None;
+        }
         self.import_source(path, None, format)
+    }
+    /// Hands queued files to the clipboard worker, one at a time (its queue holds one).
+    pub(super) fn send_reductions(&mut self) {
+        while let Some(path) = self.board.intake.reducing.pop_front() {
+            match self
+                .board
+                .clipboard()
+                .requests
+                .try_send(moth_platform::ClipboardRequest::Reduce(
+                    path,
+                    self.reduce_side,
+                )) {
+                Ok(()) => self.board.intake.pasting += 1,
+                Err(error) => {
+                    if let moth_platform::ClipboardRequest::Reduce(path, _) = error.into_inner() {
+                        self.board.intake.reducing.push_front(path);
+                    }
+                    break;
+                }
+            }
+        }
     }
     pub(super) fn import_zip(
         &mut self,
@@ -768,6 +809,40 @@ impl Workspace {
                     } else {
                         self.board.notices.message = moth_ui::Text::BoardFull.into();
                     }
+                }
+                moth_platform::ClipboardCompletion::Reduced(Ok((handle, image))) => {
+                    self.board.intake.pasting = self.board.intake.pasting.saturating_sub(1);
+                    self.board.intake.pending.insert(handle, Pending::Import);
+                    self.complete(
+                        moth_io::Completion {
+                            request: moth_io::Request {
+                                tile: None,
+                                handle,
+                                side: 256,
+                                format: pump.format,
+                                blob: None,
+                            },
+                            result: Ok(image),
+                            failure_hash: None,
+                        },
+                        point,
+                        active,
+                        pump,
+                    );
+                    self.send_reductions();
+                }
+                moth_platform::ClipboardCompletion::Reduced(Err(error)) => {
+                    self.board.intake.pasting = self.board.intake.pasting.saturating_sub(1);
+                    self.board.notices.message = error.to_string().into();
+                    self.send_reductions();
+                }
+                moth_platform::ClipboardCompletion::Keep(path) => {
+                    self.board.intake.pasting = self.board.intake.pasting.saturating_sub(1);
+                    let change = self.import_source(path, None, pump.format);
+                    if active && matches!(change, TabChange::Switched) {
+                        pump.events.push(Event::TabChanged);
+                    }
+                    self.send_reductions();
                 }
                 moth_platform::ClipboardCompletion::Files(paths) => {
                     self.board.intake.pasting = self.board.intake.pasting.saturating_sub(1);

@@ -11,6 +11,9 @@ pub(crate) struct Source {
     pub path: PathBuf,
     pub range: Option<moth_format::board::Blob>,
     pub member: Option<String>,
+    /// Name shown for the image instead of the file's own (a reduced copy keeps the
+    /// name of the file it was made from).
+    pub label: Option<String>,
 }
 
 impl Source {
@@ -141,6 +144,7 @@ mod tests {
         std::fs::write(&path, b"prefixIMAGEsuffix").unwrap();
         let source = Source {
             member: None,
+            label: None,
             path: path.clone(),
             range: Some(moth_format::board::Blob {
                 offset: 6,
@@ -168,6 +172,7 @@ mod tests {
         assert!(matches!(source.open(), Err(e) if e.kind() == io::ErrorKind::UnexpectedEof));
         let overflow = Source {
             member: None,
+            label: None,
             path: path.clone(),
             range: Some(moth_format::board::Blob {
                 offset: u64::MAX,

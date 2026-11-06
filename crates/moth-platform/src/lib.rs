@@ -128,6 +128,7 @@ impl DesktopStorage {
             path,
             range: None,
             member: None,
+            label: None,
         })
     }
     /// Registers a read-only ZIP entry without doing I/O on the caller.
@@ -136,6 +137,7 @@ impl DesktopStorage {
             path,
             range: None,
             member: Some(member),
+            label: None,
         })
     }
     fn register_range(&self, path: PathBuf, range: moth_format::board::Blob) -> io::Result<Handle> {
@@ -143,6 +145,7 @@ impl DesktopStorage {
             path,
             range: Some(range),
             member: None,
+            label: None,
         })
     }
     fn register_source(&self, source: source::Source) -> io::Result<Handle> {
@@ -170,6 +173,9 @@ impl DesktopStorage {
                     .get(&handle)
                     .filter(|source| source.range.is_none())
                     .and_then(|source| {
+                        if let Some(label) = &source.label {
+                            return Some(std::ffi::OsStr::new(label.as_str()));
+                        }
                         source
                             .member
                             .as_ref()
@@ -277,6 +283,13 @@ impl DesktopStorage {
         Ok((directory, used))
     }
     fn stage_encoded(&self, bytes: &[u8]) -> Result<(Handle, moth_io::Decoded), PlatformError> {
+        self.stage_labelled(bytes, None)
+    }
+    fn stage_labelled(
+        &self,
+        bytes: &[u8],
+        label: Option<String>,
+    ) -> Result<(Handle, moth_io::Decoded), PlatformError> {
         let image = moth_io::decode(bytes, 256)?;
         let (directory, _) = self.staging_directory(bytes.len() as u64)?;
         let path = directory.join(format!("{}.image", uuid::Uuid::now_v7()));
@@ -296,7 +309,12 @@ impl DesktopStorage {
                 File::open(&directory)?.sync_all()?;
                 File::open(self.base_directory()?)?.sync_all()?;
             }
-            Ok(self.register(path.clone())?)
+            Ok(self.register_source(source::Source {
+                path: path.clone(),
+                range: None,
+                member: None,
+                label,
+            })?)
         })();
         match result {
             Ok(handle) => Ok((handle, image)),
@@ -610,6 +628,9 @@ pub(crate) fn wayland(window: &winit::window::Window) -> bool {
 pub enum ClipboardRequest {
     /// Capture the clipboard on the worker.
     Paste,
+    /// Settings › Adding › Reduce large images: add a smaller copy of this file when
+    /// its longer side exceeds the limit, else add the file itself.
+    Reduce(PathBuf, u32),
     /// Discard this board before the app exits.
     Discard,
 }
@@ -619,6 +640,10 @@ pub enum ClipboardCompletion {
     Pasted(Result<(Handle, moth_io::Decoded), PlatformError>),
     /// Native file lists use the same bounded import path as dropped files.
     Files(Vec<PathBuf>),
+    /// A reduced copy of an added file, staged like a pasted image.
+    Reduced(Result<(Handle, moth_io::Decoded), PlatformError>),
+    /// The file fits the limit (or cannot be reduced): add it unchanged.
+    Keep(PathBuf),
     /// Acknowledges cleanup before the application exits.
     Discarded(io::Result<()>),
 }
@@ -629,6 +654,44 @@ fn file_payload(paths: Vec<PathBuf>) -> Result<ClipboardCompletion, PlatformErro
         ));
     }
     Ok(ClipboardCompletion::Files(paths))
+}
+/// Reads a dropped or opened file within the input budget and stages a reduced copy
+/// when it is larger than `side`; anything it cannot reduce is added unchanged.
+fn reduce_file(storage: &DesktopStorage, path: PathBuf, side: u32) -> ClipboardCompletion {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+        || -> Result<Option<(Handle, moth_io::Decoded)>, PlatformError> {
+            let file = File::open(&path)?;
+            if file.metadata()?.len() > moth_io::MAX_INPUT_BYTES {
+                return Ok(None);
+            }
+            let mut bytes = Vec::new();
+            io::Read::read_to_end(
+                &mut io::Read::take(file, moth_io::MAX_INPUT_BYTES + 1),
+                &mut bytes,
+            )?;
+            let Some(reduced) = moth_io::reduce::reduce(&bytes, side)? else {
+                return Ok(None);
+            };
+            tracing::info!(
+                original = ?reduced.original,
+                reduced = ?reduced.size,
+                "reduced a large image on import"
+            );
+            let label = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned());
+            Ok(Some(storage.stage_labelled(&reduced.bytes, label)?))
+        },
+    ))
+    .unwrap_or(Err(PlatformError::Panic));
+    match result {
+        Ok(Some(image)) => ClipboardCompletion::Reduced(Ok(image)),
+        Ok(None) => ClipboardCompletion::Keep(path),
+        Err(error) => {
+            tracing::warn!(%error, "could not reduce an image; adding the original");
+            ClipboardCompletion::Keep(path)
+        }
+    }
 }
 /// Serializes clipboard staging and explicit board disposal.
 pub struct ClipboardWorker {
@@ -659,6 +722,14 @@ impl ClipboardWorker {
                         if discarded {
                             break;
                         }
+                        continue;
+                    }
+                    if let ClipboardRequest::Reduce(path, side) = request {
+                        let completion = reduce_file(&storage, path, side);
+                        if tx.send(completion).is_err() {
+                            break;
+                        }
+                        wake();
                         continue;
                     }
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

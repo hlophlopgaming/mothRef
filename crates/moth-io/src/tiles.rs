@@ -75,16 +75,16 @@ pub(crate) fn decode_batch(
         .map_err(|_| DecodeError::Panic)?
 }
 /// Header facts every tile pass needs before any pixel is decoded.
-struct Probe {
-    format: Option<image::ImageFormat>,
+pub(crate) struct Probe {
+    pub(crate) format: Option<image::ImageFormat>,
     raw: bool,
-    size: [u32; 2],
-    orientation: Orientation,
+    pub(crate) size: [u32; 2],
+    pub(crate) orientation: Orientation,
     /// Whole-frame DCT coefficients a progressive JPEG keeps while it is decoded.
     coefficients: u64,
 }
 /// Validates the input and its header before any pixel allocation.
-fn probe(bytes: &[u8]) -> Result<Probe, DecodeError> {
+pub(crate) fn probe(bytes: &[u8]) -> Result<Probe, DecodeError> {
     if bytes.len() as u64 > MAX_INPUT_BYTES {
         return Err(DecodeError::Budget);
     }
@@ -168,7 +168,7 @@ fn oriented_size(size: [u32; 2], orientation: Orientation) -> [u32; 2] {
     }
 }
 /// Streams source rows `0..row_end` (at `1 / 2^jpeg_scale` for JPEG) into `row_sink`.
-fn scan<F>(
+pub(crate) fn scan<F>(
     bytes: &[u8],
     probe: &Probe,
     jpeg_scale: u32,

@@ -155,7 +155,6 @@ Open:
   - [ ] Open image source — the URL or path the image came from (PR). Wanted; handle the edge cases explicitly: an image from inside a `.zip` (show the archive and the entry, open the archive's folder), a web URL (open on click only), clipboard pastes and images embedded in `.bee` / `.pur` files (no source: say so), a file that was moved or deleted since (say it is missing, offer the last known path)
   - [ ] Arrange by file path (PR)
   - [ ] Optional scrollbars and menu bar (BR) — waiting for a decision: the maintainer asked what it means (2026-11-05)
-  - [ ] Optional auto-downscale of very large images on import (PR) — only as a setting, off by default: images are not reduced unless the user asks (maintainer, 2026-11-05)
   - [ ] Open files from the command line: the first `.moth` / `.bee` / `.pur` argument opens a board, image paths are added (BR). Opening is done (the first board opens, images are added to it once it has loaded, further boards open in tabs); the documented agent-ready CLI remains with M13. Designed together with M13: the goal is that an agent can load, lay out and annotate images by itself from the documented CLI, without an MCP server (maintainer, 2026-11-05)
 
 Validation notes: [editing and export](docs/M2-EDITING-VALIDATION.md), [import](docs/M2-IMPORT-VALIDATION.md), [load performance](docs/LOAD-PERFORMANCE.md), target layout [DESIGN.md](docs/DESIGN.md).
@@ -163,6 +162,7 @@ Validation notes: [editing and export](docs/M2-EDITING-VALIDATION.md), [import](
 <details>
 <summary>Done</summary>
 
+- [x] Optional auto-downscale of very large images on import (PR) — Settings › Adding › Reduce very large images when adding: never (default), to 4096 or to 8192 px on the longer side; the board keeps the reduced copy under the file's name (JPEG stays JPEG), the file on disk is untouched; pasted pixels are not reduced
 - [x] Debug log viewer in the app (BR) — Settings › For developers › Log: the last 400 lines in memory, warnings-and-errors filter, copy, and the folder of the full log files
 - [x] Coordinate picker: check every field (pixel X/Y, image name, source, size, selection size) — labelled rows in the Image pickers panel: image, pixel, original size, file format and size, size on the board, selection size; read from the header only. The source path waits for “Open image source”
 - [x] Setting "bring selected images to front" (PR) — wanted, as a setting — Settings › Adding › Bring clicked images to the front (off by default); a click on a selection already on top adds no undo step
