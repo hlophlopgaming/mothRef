@@ -387,7 +387,7 @@ ConversionTitle = Save as .moth to continue working in MothRef
 ConversionRetained = The original board stays untouched and available at the path below. The .moth copy retains original image bytes, supported layout and edits, and plain notes.
 ConversionPur = Unsupported: groups and their children, drawings, links without embedded images, rich or fixed-size notes, opacity, and unsupported transforms or image flags. These items are skipped.
 ConversionBee = Unsupported: unknown items, missing images and invalid geometry. Opacity, grayscale, note formatting and crop offsets are not retained.
-SaveAsMoth = Save As .moth…
+SaveAsMoth = Save as .moth…
 ContinueConversion = Continue without saving
 
 ToggleView = Collect / View
@@ -545,3 +545,5 @@ ClosePanel = Close panel
 ColorFormat = Copy as
 SelectOneItem = Select one item to edit its size, rotation and look.
 ArrangeOrder = Order
+ReopenLast = Open the last board on start
+RaiseOnSelect = Bring clicked images to the front

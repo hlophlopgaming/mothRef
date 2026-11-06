@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Settings › General › Open the last board on start (off by default) opens the most recent board instead of the library, unless files were given on the command line or a recovered board is waiting.
+- Settings › Adding › Bring clicked images to the front (off by default): clicking an image, or a selection, raises it above the rest.
+- Command line: `mothref board.moth a.png b.jpg` opens the board and adds the images to it once it has loaded (they used to be dropped while it loaded); further boards open in their own tabs.
+- The “Save as .moth to continue” dialog after opening a .bee or .pur board matches the other dialogs: the source path in its own field, Save as .moth… as the filled button (Enter), Continue without saving beside it (Esc).
+
 - Pasting when the clipboard holds nothing usable says so in a short notice above the bottom toolbar (it used to appear only in the status line's tooltip). Bottom notices no longer float too high after the “Added images” notice closes.
 
 - Export is a dialog card in the app's style instead of a bare window: it lists what each export gives (the board or the selection as PNG, SVG or PDF, one original, all originals to a folder, originals as ZIP) and asks where to save in the system “Save as” dialog, so there is no path to type. Copy image and Open original stay in the image menus.

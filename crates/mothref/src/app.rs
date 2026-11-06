@@ -113,6 +113,12 @@ pub struct App {
     /// What the last gesture left on screen until the journal acknowledges it.
     settling: gesture::Settling,
     startup: Vec<std::path::PathBuf>,
+    /// Command-line images and further boards, added once the first board has opened:
+    /// opening is asynchronous and a loading board refuses new images.
+    startup_pending: Vec<std::path::PathBuf>,
+    /// Files were given on the command line (or nothing to reopen): the last board is
+    /// not reopened over them. Cleared by the first preferences load.
+    reopen_last: Option<bool>,
     /// The other main windows; see `panes.rs`.
     panes: Vec<panes::Pane>,
     /// Tab moves between windows, run after the frame that requested them.
@@ -176,6 +182,8 @@ impl App {
                 .filter(|a| a != "--software")
                 .map(std::path::PathBuf::from)
                 .collect(),
+            startup_pending: Vec::new(),
+            reopen_last: Some(true),
             panes: Vec::new(),
             window_ops: Vec::new(),
         })
@@ -867,6 +875,33 @@ impl App {
                     }
                     moth_ui::theme::apply(self.shell.context(), &self.settings.tokens());
                     self.shell.context().set_zoom_factor(self.settings.ui_scale);
+                    // Only on the first load: the recent list arrives just before it.
+                    if self.reopen_last.take() == Some(true)
+                        && self.settings.reopen_last
+                        && self.workspace.library
+                        && self.workspace.board.scene.is_empty()
+                        && self.workspace.recovery_paths().is_empty()
+                        && let Some(path) = self.workspace.recent_paths().first().cloned()
+                    {
+                        self.open_in_tab(path);
+                    }
+                }
+            }
+        }
+        // Command-line images go into the first board once it has finished loading: an
+        // import reports "opened" while it streams, then replaces the scene at the end.
+        if !self.startup_pending.is_empty()
+            && !self.workspace.library
+            && !self.workspace.board.intake.loading
+            && self.workspace.board.idle()
+            && (!self.workspace.board.scene.is_empty()
+                || self.workspace.board.file.conversion.is_some())
+        {
+            for path in std::mem::take(&mut self.startup_pending) {
+                if is_board_file(&path) {
+                    self.open_in_tab(path);
+                } else {
+                    self.import(path);
                 }
             }
         }
@@ -1461,6 +1496,17 @@ impl App {
                 grabbed = board.scene.get(id).map(|item| (item.id, item.rect));
                 self.settling.copies =
                     self.input.pointer_action == Some(bindings::Action::DuplicateDrag);
+                // Settings › Adding: a clicked selection comes to the front, unless
+                // it is there already (no undo step for a click that changes nothing).
+                if self.settings.raise_on_select
+                    && !self.settling.copies
+                    && !board.locked
+                    && !arrange::is_front(&board.scene, &board.selection)
+                {
+                    let commands = arrange::reorder(&board.scene, &board.selection, true, true);
+                    self.workspace
+                        .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+                }
             }
         }
         if grabbed.is_some() {
@@ -2298,9 +2344,20 @@ impl ApplicationHandler<Wake> for App {
         let startup = std::mem::take(&mut self.startup);
         if !startup.is_empty() {
             self.workspace.library = false;
+            self.reopen_last = Some(false);
         }
-        for path in startup {
-            self.import(path);
+        let (first, rest) = startup_order(startup);
+        match first {
+            // The first board opens here; images and other boards follow once it is open.
+            Some(board) => {
+                self.import(board);
+                self.startup_pending = rest;
+            }
+            None => {
+                for path in rest {
+                    self.import(path);
+                }
+            }
         }
         self.redraw();
     }
@@ -3062,5 +3119,47 @@ mod tests {
             assert_eq!(clicked, expected, "{phases:?}");
             assert!(!ctx.input(|input| input.pointer.primary_down()));
         }
+    }
+}
+/// Whether a path names a board (opened) rather than an image (added).
+fn is_board_file(path: &std::path::Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        ["moth", "bee", "pur"]
+            .iter()
+            .any(|b| e.eq_ignore_ascii_case(b))
+    })
+}
+/// Command-line files: the first board, then the images (added to it), then the other
+/// boards (each in its own tab). Without a board, everything is an image to add.
+fn startup_order(
+    paths: Vec<std::path::PathBuf>,
+) -> (Option<std::path::PathBuf>, Vec<std::path::PathBuf>) {
+    let (mut boards, images): (Vec<_>, Vec<_>) =
+        paths.into_iter().partition(|path| is_board_file(path));
+    if boards.is_empty() {
+        return (None, images);
+    }
+    let first = boards.remove(0);
+    (Some(first), images.into_iter().chain(boards).collect())
+}
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+    #[test]
+    fn command_line_opens_the_first_board_then_adds_images_then_other_boards() {
+        let paths = ["a.png", "one.MOTH", "b.jpg", "two.pur"]
+            .map(std::path::PathBuf::from)
+            .to_vec();
+        let (first, rest) = startup_order(paths);
+        assert_eq!(first, Some("one.MOTH".into()));
+        assert_eq!(
+            rest,
+            ["a.png", "b.jpg", "two.pur"]
+                .map(std::path::PathBuf::from)
+                .to_vec()
+        );
+        let (first, rest) = startup_order(vec!["x.webp".into()]);
+        assert_eq!(first, None);
+        assert_eq!(rest, vec![std::path::PathBuf::from("x.webp")]);
     }
 }
