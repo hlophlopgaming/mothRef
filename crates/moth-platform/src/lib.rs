@@ -662,7 +662,7 @@ fn file_payload(paths: Vec<PathBuf>) -> Result<ClipboardCompletion, PlatformErro
 fn reduce_file(storage: &DesktopStorage, path: PathBuf, side: u32) -> ClipboardCompletion {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
         || -> Result<Option<(Handle, moth_io::Decoded)>, PlatformError> {
-            let file = File::open(&path)?;
+            let file = std::fs::File::open(&path)?;
             if file.metadata()?.len() > moth_io::MAX_INPUT_BYTES {
                 return Ok(None);
             }
