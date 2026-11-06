@@ -243,6 +243,34 @@ pub enum Text {
     ImagesOnly,
     /// Export destination, distinct from the native board save path.
     ExportPath,
+    /// Suffix of the folder that "All originals" suggests.
+    OriginalsFolder,
+    /// Close button of a side panel.
+    ClosePanel,
+    /// Label of the order choice in Arrange options.
+    ArrangeOrder,
+    /// Edit panel without exactly one selected item.
+    SelectOneItem,
+    /// Label before the color formats of the color picker.
+    ColorFormat,
+    /// Export dialog text.
+    ExportBoardSection,
+    /// Export dialog text.
+    ExportFilesSection,
+    /// Export dialog text.
+    ExportSceneHint,
+    /// Export dialog text.
+    ExportSelectionHint,
+    /// Export dialog text.
+    ExportOriginalHint,
+    /// Export dialog text.
+    ExportOriginalsHint,
+    /// Export dialog text.
+    ExportZipHint,
+    /// Export dialog text.
+    PixelsShort,
+    /// Export dialog text.
+    DoneButton,
     /// Short heading for color and coordinate tools.
     ImagePickers,
     /// Explains the armed color picker.

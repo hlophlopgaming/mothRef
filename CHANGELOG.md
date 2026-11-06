@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Export is a dialog card in the app's style instead of a bare window: it lists what each export gives (the board or the selection as PNG, SVG or PDF, one original, all originals to a folder, originals as ZIP) and asks where to save in the system “Save as” dialog, so there is no path to type. Copy image and Open original stay in the image menus.
+- Edit selection, Arrange options and Image pickers open as panels at the right edge, under the window bar, with a title and a close button; several open panels stack instead of overlapping. Edit selection puts position and size side by side and its Apply button is the filled one; the pickers show which one is active.
+
 - Images up to 100 megapixels (for example 12,000 × 8,334) are added at full resolution and keep every pixel when zoomed in, instead of being refused above 32 megapixels. Originals up to 256 MiB are accepted (was 64 MiB), WebP up to 100 megapixels (was 2), and large WebP and progressive JPEG decodes share one memory budget so several at once cannot exhaust RAM.
 - Open original in viewer no longer opens an empty window on the board: a short notice near the bottom toolbar says it is opening, then that the image opened or why it could not. On Linux, when `xdg-open` is missing, `gio open` and `kde-open` are tried before showing an error. The menu item has its own “open externally” icon.
 

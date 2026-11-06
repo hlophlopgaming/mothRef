@@ -587,6 +587,83 @@ pub fn enabled_button(
     response.on_hover_text(label)
 }
 
+/// A full-width choice in a dialog list: icon, label and one muted line saying what
+/// it does. Disabled rows stay in place, dimmed, so the list never reflows.
+pub fn option_row(ui: &mut Ui, icon: Icon, label: &str, detail: &str, enabled: bool) -> Response {
+    let tokens = crate::tokens(ui.ctx());
+    let pad = f32::from(tokens.space_s);
+    let body = egui::TextStyle::Body.resolve(ui.style());
+    let small = egui::TextStyle::Small.resolve(ui.style());
+    let height = pad * 2. + ui.fonts_mut(|f| f.row_height(&body) + f.row_height(&small));
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), height),
+        if enabled {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        },
+    );
+    let hover = ui.ctx().animate_bool_with_time(
+        response.id.with("hover"),
+        enabled && response.hovered(),
+        ui.style().animation_time,
+    );
+    let painter = ui.painter();
+    let dim = |c: Color32| if enabled { c } else { c.gamma_multiply(0.45) };
+    painter.rect(
+        rect,
+        tokens.radius_m,
+        tokens.surface.lerp_to_gamma(tokens.surface_raised, hover),
+        Stroke::new(1., tokens.border.lerp_to_gamma(tokens.accent, hover)),
+        egui::StrokeKind::Inside,
+    );
+    let icon_rect = Rect::from_center_size(
+        egui::pos2(rect.left() + pad + 11., rect.center().y),
+        Vec2::splat(22.),
+    );
+    paint(
+        ui,
+        icon_rect,
+        icon,
+        dim(if hover > 0.5 {
+            tokens.accent_text
+        } else {
+            tokens.text
+        }),
+    );
+    let left = icon_rect.right() + pad;
+    let top = rect.top() + pad;
+    painter.text(
+        egui::pos2(left, top),
+        egui::Align2::LEFT_TOP,
+        label,
+        body.clone(),
+        dim(tokens.text),
+    );
+    painter.text(
+        egui::pos2(left, rect.bottom() - pad),
+        egui::Align2::LEFT_BOTTOM,
+        detail,
+        small,
+        dim(tokens.text_muted),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    if enabled {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    }
+}
+/// A muted, small heading above a group of controls in a dialog.
+pub fn dialog_section(ui: &mut Ui, label: &str) {
+    let tokens = crate::tokens(ui.ctx());
+    ui.label(
+        egui::RichText::new(label)
+            .small()
+            .strong()
+            .color(tokens.text_muted),
+    );
+}
 /// A square choice: icon above its label, all tiles of a row the same size.
 pub fn tile(ui: &mut Ui, icon: Icon, label: &str) -> Response {
     let tokens = crate::tokens(ui.ctx());
