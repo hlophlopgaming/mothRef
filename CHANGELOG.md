@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Zooming into a very large WebP is several times faster and uses a fraction of the memory: WebP has to be decoded as a whole frame, and each batch of tiles on screen used to decode it again, up to four at once (about 1.3 GB for an 81-megapixel image). The frame is now decoded once, shared by the tile batches and the tile bake, and released once the image's tiles are baked.
+
 - The color picker takes colors from the whole screen. On X11 and Windows press on the board and drag outside the window: Image pickers shows the color under the pointer, and releasing copies it. On Linux (including Wayland, through the desktop's own picker) and macOS, Image pickers › Pick a color from the screen… opens the system picker. The last screen color stays in the panel as a sample.
 
 - Settings › Adding › Reduce very large images when adding: Never (the default), or to 4096 or 8192 px on the longer side. When on, an added file larger than that is stored on the board as a smaller copy under the file's name (a JPEG stays a JPEG); the file itself is never changed.

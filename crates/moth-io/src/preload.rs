@@ -349,6 +349,8 @@ fn run(
         send(shared, job, tx, wake, tile)
     })?;
     drop(bytes);
+    // Every tile is on its way to the GPU; the whole frame is not needed any more.
+    crate::frames::forget(job.hash);
     if let Some(pack) = writer {
         pack.finish(job.hash, original)?.commit()?;
     }

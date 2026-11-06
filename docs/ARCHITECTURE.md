@@ -55,6 +55,7 @@ still pending.
 | Header dimensions / pixel count | 32,768 per side / 100 × 1024² pixels (every 100-megapixel original) |
 | JPEG reduced planes / progressive coefficients | 400 MiB / 800 MiB (2 bytes per sample, up to four components) |
 | Whole-frame decodes (WebP, progressive JPEG) over 64 MiB | Share one 800 MiB budget across decode workers; a lone frame is always admitted |
+| Kept whole WebP frame (64 MiB and larger) | One frame, shared by tile batches and the bake of that image; released after its bake or when another large frame replaces it |
 | Area accumulator | At most 2048² × 32 bytes |
 | PNG decoder internal allocations | 8 MiB |
 | Clipboard requests / results | 1 / 1 |
