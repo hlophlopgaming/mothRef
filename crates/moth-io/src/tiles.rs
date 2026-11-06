@@ -260,11 +260,21 @@ where
             limits.max_image_width = Some(crate::MAX_DIMENSION);
             limits.max_image_height = Some(crate::MAX_DIMENSION);
             decoder.set_limits(limits)?;
-            let _frame = crate::frames::admit(u64::from(w) * u64::from(h) * 4);
-            if cancel.load(Ordering::Relaxed) {
-                return Err(DecodeError::Cancelled);
-            }
-            let source = image::DynamicImage::from_decoder(decoder)?.into_rgba8();
+            let frame_bytes = u64::from(w) * u64::from(h) * 4;
+            let decode = || -> Result<image::RgbaImage, DecodeError> {
+                let _frame = crate::frames::admit(frame_bytes);
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(DecodeError::Cancelled);
+                }
+                Ok(image::DynamicImage::from_decoder(decoder)?.into_rgba8())
+            };
+            // Large frames are shared between tile batches and the bake of the same
+            // image, so the viewport does not decode the whole frame per batch.
+            let source = if frame_bytes >= crate::frames::SHARED_FROM {
+                crate::frames::shared(blake3::hash(bytes), decode)?
+            } else {
+                std::sync::Arc::new(decode()?)
+            };
             for (y, row) in source.as_raw().chunks_exact(w as usize * 4).enumerate() {
                 row_sink(y as u32, 0, 1, row, png::ColorType::Rgba)?;
             }

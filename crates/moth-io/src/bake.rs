@@ -278,6 +278,8 @@ fn run(
     drop(bytes);
     // An unfinished writer is dropped without committing, which discards it.
     writer.finish(job.hash, original)?.commit()?;
+    // Its tiles come from the pack now; a whole frame kept for them is not needed.
+    crate::frames::forget(job.hash);
     Ok(())
 }
 
