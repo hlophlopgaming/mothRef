@@ -201,6 +201,11 @@ schema! {
             .get("raise_on_select")
             .and_then(|v| v.parse().ok())
             .unwrap_or(false);
+    reduce_large: u8 = 0, "reduce_large_images", Adding, ReduceLarge, Kind::Choice(&[Text::ReduceOff,Text::Reduce4096,Text::Reduce8192]), |s| s.reduce_large.to_string(), |values: &BTreeMap<String,String>| values
+            .get("reduce_large_images")
+            .and_then(|v| v.parse().ok())
+            .filter(|v| *v < 3)
+            .unwrap_or(0);
     auto_arrange: bool = false, "auto_arrange", Adding, AutoArrange, Kind::Toggle, |s| s.auto_arrange.to_string(), |values: &BTreeMap<String,String>| values
             .get("auto_arrange")
             .and_then(|v| v.parse().ok())
@@ -223,6 +228,14 @@ schema! {
 }
 impl Settings {
     /// How long a board may stay unsaved before it saves itself; `None` is off.
+    /// Longest side of added images, or 0 to keep them as they are (the default).
+    pub fn reduce_side(&self) -> u32 {
+        match self.reduce_large {
+            1 => 4096,
+            2 => 8192,
+            _ => 0,
+        }
+    }
     pub fn autosave_interval(&self) -> Option<std::time::Duration> {
         const SECONDS: [u64; 7] = [0, 15, 30, 60, 120, 180, 300];
         SECONDS

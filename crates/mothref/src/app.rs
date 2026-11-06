@@ -119,6 +119,10 @@ pub struct App {
     /// Files were given on the command line (or nothing to reopen): the last board is
     /// not reopened over them. Cleared by the first preferences load.
     reopen_last: Option<bool>,
+    /// The first command-line file is a board being opened; pending files wait for it.
+    startup_board: bool,
+    /// When the app started: pending files stop waiting for preferences after a while.
+    started: Instant,
     /// The other main windows; see `panes.rs`.
     panes: Vec<panes::Pane>,
     /// Tab moves between windows, run after the frame that requested them.
@@ -184,6 +188,8 @@ impl App {
                 .collect(),
             startup_pending: Vec::new(),
             reopen_last: Some(true),
+            startup_board: false,
+            started: Instant::now(),
             panes: Vec::new(),
             window_ops: Vec::new(),
         })
@@ -828,6 +834,7 @@ impl App {
             })
             .unwrap_or([0., 0.]);
         let format = self.image_format();
+        self.workspace.reduce_side = self.settings.reduce_side();
         let events = self.workspace.pump(workspace::Pump {
             format,
             cursor,
@@ -890,13 +897,20 @@ impl App {
         }
         // Command-line images go into the first board once it has finished loading: an
         // import reports "opened" while it streams, then replaces the scene at the end.
+        let preferences_known =
+            self.reopen_last.is_none() || self.started.elapsed() > Duration::from_secs(3);
+        let board_ready = !self.startup_board
+            || !self.workspace.board.scene.is_empty()
+            || self.workspace.board.file.conversion.is_some();
         if !self.startup_pending.is_empty()
+            && preferences_known
+            && board_ready
             && !self.workspace.library
             && !self.workspace.board.intake.loading
             && self.workspace.board.idle()
-            && (!self.workspace.board.scene.is_empty()
-                || self.workspace.board.file.conversion.is_some())
         {
+            // The preferences may have arrived in this very pump.
+            self.workspace.reduce_side = self.settings.reduce_side();
             for path in std::mem::take(&mut self.startup_pending) {
                 if is_board_file(&path) {
                     self.open_in_tab(path);
@@ -2347,18 +2361,13 @@ impl ApplicationHandler<Wake> for App {
             self.reopen_last = Some(false);
         }
         let (first, rest) = startup_order(startup);
-        match first {
-            // The first board opens here; images and other boards follow once it is open.
-            Some(board) => {
-                self.import(board);
-                self.startup_pending = rest;
-            }
-            None => {
-                for path in rest {
-                    self.import(path);
-                }
-            }
+        // The first board opens here; images and other boards follow once it is open
+        // and the preferences are known (they say whether to reduce large images).
+        if let Some(board) = first {
+            self.import(board);
+            self.startup_board = true;
         }
+        self.startup_pending = rest;
         self.redraw();
     }
     fn suspended(&mut self, _: &ActiveEventLoop) {

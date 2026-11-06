@@ -558,3 +558,7 @@ LogProblemsOnly = Only warnings and errors
 LogCopy = Copy
 LogEmpty = Nothing logged yet.
 LogFolder = Full log files
+ReduceLarge = Reduce very large images when adding
+ReduceOff = Never (keep originals)
+Reduce4096 = To 4096 px on the longer side
+Reduce8192 = To 8192 px on the longer side

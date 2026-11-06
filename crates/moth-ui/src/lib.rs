@@ -565,6 +565,14 @@ pub enum Text {
     ReopenLast,
     /// Setting: a click brings the selection to the front.
     RaiseOnSelect,
+    /// Setting: reduce very large images on import.
+    ReduceLarge,
+    /// Setting: reduce very large images on import.
+    ReduceOff,
+    /// Setting: reduce very large images on import.
+    Reduce4096,
+    /// Setting: reduce very large images on import.
+    Reduce8192,
     AutosaveOff,
     Autosave15s,
     Autosave30s,
