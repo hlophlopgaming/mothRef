@@ -204,3 +204,27 @@ No native system-viewer or GUI qualification was performed on Linux, Windows or
 macOS for this change. Export text uses the bundled Noto Sans font; fallback glyphs
 can differ from the canvas. Viewer copies are disposable; export a file to retain
 external edits. Old builds cannot read schema-5 saves.
+
+## Screen color picker — 2026-11-06
+
+Nested KWin 5.27 stand, MothRef through XWayland (`stand.sh kde app x11`):
+
+- Pick image color, press on the board, drag over another X11 window (white): the
+  panel showed “Under the pointer #FFFFFF” live; the release copied `#FFFFFF` and
+  showed “Copied #FFFFFF”. Rootless XWayland refuses `GetImage` on the root window
+  (BadMatch), so the sampler reads the top-level window under the pointer instead;
+  over Wayland-native windows nothing is readable and no color is shown.
+- A click on an image inside the window still samples the original, as before.
+- Pick a color from the screen… without a portal: the notice “This desktop has no
+  color picker to open…” appears; with `xdg-desktop-portal` and the KDE backend
+  started by hand the request was accepted but the nested KWin showed no picker, so
+  the portal answer itself is **not qualified** here.
+
+Not run here, to check natively:
+
+- Windows: drag out of the window over another app and a second monitor (left of
+  the primary, negative coordinates); per-monitor DPI.
+- macOS: Pick a color from the screen… opens `NSColorSampler`; Esc cancels without
+  a notice; the color is sRGB.
+- GNOME and Plasma Wayland: the portal picker opens and its color is copied.
+

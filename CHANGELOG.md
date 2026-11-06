@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The color picker takes colors from the whole screen. On X11 and Windows press on the board and drag outside the window: Image pickers shows the color under the pointer, and releasing copies it. On Linux (including Wayland, through the desktop's own picker) and macOS, Image pickers › Pick a color from the screen… opens the system picker. The last screen color stays in the panel as a sample.
+
 - Settings › Adding › Reduce very large images when adding: Never (the default), or to 4096 or 8192 px on the longer side. When on, an added file larger than that is stored on the board as a smaller copy under the file's name (a JPEG stays a JPEG); the file itself is never changed.
 
 - Settings › For developers shows the recent log: the last 400 lines, a filter for warnings and errors, a Copy button for bug reports and where the full log files are.

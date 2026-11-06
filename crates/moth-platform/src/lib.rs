@@ -24,6 +24,8 @@ pub mod lod_store;
 mod macos;
 /// Background sampling of available physical RAM for bounded image residency.
 pub mod memory;
+/// Colors from anywhere on the screen for the color picker.
+pub mod screen_color;
 /// Plain-text app preferences.
 pub mod settings;
 /// Event-driven system shortcuts and backend capability checks.

@@ -177,6 +177,10 @@ fn viewer_image(
     }
     Ok(path)
 }
+/// HEX, RGB and HSV texts of a color, as the pickers copy them.
+pub(crate) fn color_texts(p: [u8; 3]) -> (String, String, String) {
+    color(p)
+}
 fn color(p: [u8; 3]) -> (String, String, String) {
     let hex = format!("#{:02X}{:02X}{:02X}", p[0], p[1], p[2]);
 

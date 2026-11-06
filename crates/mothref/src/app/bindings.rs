@@ -139,6 +139,7 @@ actions! {
     ResetScale, ResetScale, "", None;
     NormalizeScale, NormalizeScale, "", None;
     SampleColor, SampleColor, "", Some(moth_ui::icons::Icon::Pointer);
+    PickScreen, PickScreenColor, "", Some(moth_ui::icons::Icon::Pointer);
     CoordinatePicker, CoordinatePicker, "", Some(moth_ui::icons::Icon::Pointer);
     Export, Export, "", Some(moth_ui::icons::Icon::Folder);
     ExportScene, ExportScene, "", Some(moth_ui::icons::Icon::Image);

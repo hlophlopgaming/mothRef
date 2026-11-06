@@ -33,6 +33,10 @@ impl App {
             }
             ExportOriginal => export_ready && single_image(),
             CopyImage | OpenOriginal => single_image(),
+            // The system picker, where there is one (the desktop portal, macOS).
+            PickScreen => self.shell.window.as_ref().is_some_and(|window| {
+                moth_platform::screen_color::capabilities(window).interactive
+            }),
             _ => self.workspace.board.idle() && !self.workspace.board.scene.is_empty(),
         }
     }
@@ -54,6 +58,10 @@ impl App {
                 self.workspace.board.notices.export_message = None;
                 self.tool = super::gesture::Tool::PickColor;
                 self.tools.pickers.open = true;
+                return None;
+            }
+            PickScreen => {
+                self.pick_from_screen();
                 return None;
             }
             CoordinatePicker => {

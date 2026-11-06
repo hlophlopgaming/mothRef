@@ -247,6 +247,18 @@ pub enum Text {
     OriginalsFolder,
     /// Close button of a side panel.
     ClosePanel,
+    /// The system color picker could not be opened.
+    NoSystemPicker,
+    /// Screen color picker text.
+    ColorCopied,
+    /// Screen color picker text.
+    PickScreenColor,
+    /// Screen color picker text.
+    PickColorDragHint,
+    /// Screen color picker text.
+    ScreenColorHover,
+    /// Screen color picker text.
+    ScreenColorLast,
     /// Log viewer text.
     LogViewer,
     /// Log viewer text.
