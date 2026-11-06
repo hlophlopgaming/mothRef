@@ -121,7 +121,7 @@ pub(super) fn import(
             .and_then(|v| v.parse::<u64>().ok())
             .is_some_and(|n| n > moth_io::MAX_INPUT_BYTES)
         {
-            return Err(PlatformError::Budget("Downloaded image exceeds 64 MiB"));
+            return Err(PlatformError::Budget("Downloaded image exceeds 256 MiB"));
         }
         let mut bytes = Vec::new();
         response
@@ -131,7 +131,7 @@ pub(super) fn import(
             .read_to_end(&mut bytes)
             .map_err(|_| PlatformError::Download("incomplete or timed out response"))?;
         if bytes.len() as u64 > moth_io::MAX_INPUT_BYTES {
-            return Err(PlatformError::Budget("Downloaded image exceeds 64 MiB"));
+            return Err(PlatformError::Budget("Downloaded image exceeds 256 MiB"));
         }
         return storage.stage_encoded(&bytes);
     }

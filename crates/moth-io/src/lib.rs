@@ -3,6 +3,7 @@
 //! Bounded image workers. Pixels never enter the scene model.
 mod bake;
 pub mod cache;
+mod frames;
 mod pack;
 mod preload;
 mod preview;
@@ -22,13 +23,25 @@ use std::{
 };
 
 /// Prevents compressed input from exhausting memory before header validation.
-pub const MAX_INPUT_BYTES: u64 = 64 * 1024 * 1024;
-/// Bounds transient decoding allocations, including malicious image headers.
-pub const MAX_PIXELS: u64 = 32 * 1024 * 1024;
+///
+/// Matches the largest `.moth` record, so every original a board can hold also decodes:
+/// a 100-megapixel PNG commonly takes 150–250 MiB.
+pub const MAX_INPUT_BYTES: u64 = moth_format::board::MAX_RECORD;
+/// Largest original, in pixels: 100 Mi (about 105 million), so every 100-megapixel
+/// original keeps full detail through tiles. Row-streamed formats (PNG, JPEG, GIF, BMP) never hold the full frame, so this
+/// bounds geometry and the few full-frame paths below, not ordinary decoding memory.
+pub const MAX_PIXELS: u64 = 100 * 1024 * 1024;
+/// Largest side of an original; tile indices and LOD headers are bounded by it.
+pub const MAX_DIMENSION: u32 = 32768;
 /// Largest whole-image preview; visible tiles provide detail beyond this ceiling.
 pub const MAX_SIDE: u32 = 2048;
-/// WebP has no reduced-output API; bound the permitted full RGBA frame to 8 MiB.
-pub const MAX_WEBP_FRAME_BYTES: u64 = 8 * 1024 * 1024;
+/// WebP has no reduced-output API, so its whole RGBA frame is decoded at once.
+pub const MAX_WEBP_FRAME_BYTES: u64 = MAX_PIXELS * 4;
+/// Compressed WebP input; lossless 100-megapixel files stay well below this.
+pub const MAX_WEBP_INPUT_BYTES: u64 = 128 * 1024 * 1024;
+/// Progressive JPEG keeps whole-frame DCT coefficients (2 bytes per sample, up to four
+/// components) even for scaled output.
+pub const MAX_COEFFICIENT_BYTES: u64 = MAX_PIXELS * 8;
 /// GPU texture format for the decoded mips, chosen at runtime from the adapter.
 ///
 /// `Rgba8` is the portable baseline; `Bc7` (desktop) halves texture memory for
@@ -124,22 +137,22 @@ fn decode_inner(bytes: &[u8], side: u32) -> Result<Decoded, DecodeError> {
     let mut reader = ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
     let mut header_limits = image::Limits::default();
     header_limits.max_alloc = Some(8 * 1024 * 1024);
-    header_limits.max_image_width = Some(32768);
-    header_limits.max_image_height = Some(32768);
+    header_limits.max_image_width = Some(MAX_DIMENSION);
+    header_limits.max_image_height = Some(MAX_DIMENSION);
     reader.limits(header_limits);
     let format = reader.format();
     let (w, h) = reader.into_dimensions()?;
     if w == 0
         || h == 0
-        || w > 32768
-        || h > 32768
+        || w > MAX_DIMENSION
+        || h > MAX_DIMENSION
         || (format != Some(image::ImageFormat::Jpeg) && u64::from(w) * u64::from(h) > MAX_PIXELS)
     {
         return Err(DecodeError::Budget);
     }
     if format == Some(image::ImageFormat::WebP)
         && (u64::from(w) * u64::from(h) * 4 > MAX_WEBP_FRAME_BYTES
-            || bytes.len() as u64 > 8 * 1024 * 1024)
+            || bytes.len() as u64 > MAX_WEBP_INPUT_BYTES)
     {
         return Err(DecodeError::Budget);
     }
@@ -155,16 +168,21 @@ fn decode_inner(bytes: &[u8], side: u32) -> Result<Decoded, DecodeError> {
             jpeg.scale(w.div_ceil(divisor) as u16, h.div_ceil(divisor) as u16)?;
         let info = jpeg.info().ok_or(DecodeError::Budget)?;
         let channels = info.pixel_format.pixel_bytes() as u64;
-        let mut allocation = u64::from(scaled_w) * u64::from(scaled_h) * channels * 2;
+        let output = u64::from(scaled_w) * u64::from(scaled_h) * channels * 2;
         // Progressive scans retain source-sized coefficient planes even after DCT scaling.
-        if info.coding_process == jpeg_decoder::CodingProcess::DctProgressive {
-            allocation +=
-                u64::from(w.div_ceil(8) * 8) * u64::from(h.div_ceil(8) * 8) * channels * 2;
-        }
-        if allocation > MAX_PIXELS * 4 {
+        let coefficients = if info.coding_process == jpeg_decoder::CodingProcess::DctProgressive {
+            u64::from(w.div_ceil(8) * 8) * u64::from(h.div_ceil(8) * 8) * channels * 2
+        } else {
+            0
+        };
+        // Block padding may round a 100-megapixel frame up by a few rows of blocks.
+        let padded_budget = MAX_COEFFICIENT_BYTES + MAX_COEFFICIENT_BYTES / 64;
+        if output > MAX_PIXELS * 4 || coefficients > padded_budget {
             return Err(DecodeError::Budget);
         }
-        jpeg.set_max_decoding_buffer_size((MAX_PIXELS * 4) as usize);
+        let allocation = output + coefficients;
+        jpeg.set_max_decoding_buffer_size(usize::try_from(padded_budget).unwrap_or(usize::MAX));
+        let _frame = frames::admit(allocation);
         let pixels = jpeg.decode()?;
         orientation = jpeg
             .exif_data()
@@ -211,10 +229,11 @@ fn decode_inner(bytes: &[u8], side: u32) -> Result<Decoded, DecodeError> {
         }
         let mut limits = image::Limits::default();
         limits.max_alloc = Some(MAX_WEBP_FRAME_BYTES);
-        limits.max_image_width = Some(32768);
-        limits.max_image_height = Some(32768);
+        limits.max_image_width = Some(MAX_DIMENSION);
+        limits.max_image_height = Some(MAX_DIMENSION);
         decoder.set_limits(limits)?;
         orientation = decoder.orientation()?;
+        let _frame = frames::admit(u64::from(w) * u64::from(h) * 4);
         let source = DynamicImage::from_decoder(decoder)?.into_rgba8();
         DynamicImage::ImageRgba8(preview::rgba(source.as_raw(), w, h, side)?)
     } else {
@@ -418,11 +437,10 @@ impl<W: Write> Write for HashWriter<W> {
 fn validate_rgba(width: u32, height: u32, len: usize) -> Result<(), DecodeError> {
     if width == 0
         || height == 0
-        || width > 32768
-        || height > 32768
+        || width > MAX_DIMENSION
+        || height > MAX_DIMENSION
         || u64::from(width) * u64::from(height) > MAX_PIXELS
         || u64::from(width) * u64::from(height) * 4 != len as u64
-        || len as u64 + 48 > MAX_INPUT_BYTES
     {
         return Err(DecodeError::Budget);
     }
@@ -919,6 +937,49 @@ impl DecodePool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// A 100-megapixel original is accepted and keeps its size; larger ones stay refused.
+    #[test]
+    fn hundred_megapixel_png_decodes_and_larger_headers_are_refused() {
+        let png = |width: u32, height: u32| {
+            let mut bytes = Vec::new();
+            {
+                let mut encoder = png::Encoder::new(&mut bytes, width, height);
+                encoder.set_color(png::ColorType::Rgb);
+                encoder.set_compression(png::Compression::Fastest);
+                let mut writer = encoder.write_header().unwrap();
+                let mut stream = writer.stream_writer().unwrap();
+                let row = vec![200u8; width as usize * 3];
+                for _ in 0..height {
+                    stream.write_all(&row).unwrap();
+                }
+                stream.finish().unwrap();
+            }
+            bytes
+        };
+        // 12,000 × 8,334 is just over 100 million pixels.
+        let bytes = png(12000, 8334);
+        let decoded = decode(&bytes, 256).unwrap();
+        assert_eq!(decoded.original, [12000, 8334]);
+        let tile = tiles::decode(
+            &bytes,
+            tiles::Tile {
+                level: 0,
+                x: 47,
+                y: 32,
+            },
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(tile.original, [12000, 8334]);
+        // Only the header matters for the refusal, so the body can stay empty.
+        let mut oversized = Vec::new();
+        drop(
+            png::Encoder::new(&mut oversized, 16384, 16384)
+                .write_header()
+                .unwrap(),
+        );
+        assert!(matches!(decode(&oversized, 256), Err(DecodeError::Budget)));
+    }
     #[test]
     fn coarse_fallback_does_not_cache_a_megapixel_preview() {
         struct Source;
@@ -1097,14 +1158,15 @@ mod tests {
             Err(DecodeError::Budget)
         ));
         let mut oversized_input = include_bytes!("../../../corpus/images/lossless.webp").to_vec();
-        oversized_input.resize(8 * 1024 * 1024 + 1, 0);
+        oversized_input.resize(MAX_WEBP_INPUT_BYTES as usize + 1, 0);
         assert!(matches!(
             decode(&oversized_input, 64),
             Err(DecodeError::Budget)
         ));
         let mut oversized = include_bytes!("../../../corpus/images/budget.webp").to_vec();
         assert_eq!(&oversized[12..16], b"VP8L");
-        let dimensions = (3840u32 - 1) | ((2160u32 - 1) << 14);
+        // 16384 × 16384 is above the 100-megapixel frame budget.
+        let dimensions = (16384u32 - 1) | ((16384u32 - 1) << 14);
         oversized[21..25].copy_from_slice(&dimensions.to_le_bytes());
         assert!(matches!(decode(&oversized, 64), Err(DecodeError::Budget)));
     }

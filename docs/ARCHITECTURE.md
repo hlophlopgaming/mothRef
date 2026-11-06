@@ -51,9 +51,10 @@ still pending.
 | Decode requests / completed images | 8 / 2 |
 | Concurrent decode consumers | min(cores − 1, 4), at least 1 |
 | Rayon pool threads | cores − 1, at least 1 |
-| Compressed source / raw scratch input | 64 MiB |
-| Header dimensions / non-JPEG pixel count | 32,768 per side / 32 × 1024² pixels |
-| JPEG reduced planes + estimated progressive coefficients | 128 MiB admission budget |
+| Compressed source / raw scratch input | 256 MiB (the `.moth` record limit); WebP 128 MiB |
+| Header dimensions / pixel count | 32,768 per side / 100 × 1024² pixels (every 100-megapixel original) |
+| JPEG reduced planes / progressive coefficients | 400 MiB / 800 MiB (2 bytes per sample, up to four components) |
+| Whole-frame decodes (WebP, progressive JPEG) over 64 MiB | Share one 800 MiB budget across decode workers; a lone frame is always admitted |
 | Area accumulator | At most 2048² × 32 bytes |
 | PNG decoder internal allocations | 8 MiB |
 | Clipboard requests / results | 1 / 1 |
@@ -93,7 +94,7 @@ payloads and saturated queues have localized feedback. When no native file/image
 payload exists, explicit Paste can import a direct HTTP(S) image URL or the first
 HTML `img[src]`. The worker parses at most 1 MiB of captured text/HTML and validates
 URLs up to 8 KiB. Downloads have a shared 20-second HTTP deadline, at most five
-redirects and a 64 MiB input limit; existing decoder limits also apply. Every
+redirects and a 256 MiB input limit; existing decoder limits also apply. Every
 redirect is validated, embedded credentials and HTTPS downgrades are rejected,
 and TLS uses OS trust roots. Original downloaded bytes are synced in the same
 budgeted recovery directory, then pass through the existing command/journal path.

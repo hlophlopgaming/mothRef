@@ -199,8 +199,7 @@ impl DesktopStorage {
     ) -> Result<(Handle, blake3::Hash), PlatformError> {
         if width == 0
             || height == 0
-            || u64::from(width) * u64::from(height) > 32 * 1024 * 1024
-            || rgba.len() as u64 + 48 > moth_io::MAX_INPUT_BYTES
+            || u64::from(width) * u64::from(height) > moth_io::MAX_PIXELS
             || u64::from(width) * u64::from(height) * 4 != rgba.len() as u64
         {
             return Err(PlatformError::Budget(

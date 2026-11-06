@@ -80,6 +80,8 @@ struct Probe {
     raw: bool,
     size: [u32; 2],
     orientation: Orientation,
+    /// Whole-frame DCT coefficients a progressive JPEG keeps while it is decoded.
+    coefficients: u64,
 }
 /// Validates the input and its header before any pixel allocation.
 fn probe(bytes: &[u8]) -> Result<Probe, DecodeError> {
@@ -104,19 +106,21 @@ fn probe(bytes: &[u8]) -> Result<Probe, DecodeError> {
         let (w, h) = reader.into_dimensions()?;
         (format, w, h)
     };
-    if w == 0 || h == 0 || w > 32768 || h > 32768 {
+    if w == 0 || h == 0 || w > crate::MAX_DIMENSION || h > crate::MAX_DIMENSION {
         return Err(DecodeError::Budget);
     }
     let mut orientation = Orientation::NoTransforms;
+    let mut coefficients = 0;
     if format == Some(image::ImageFormat::Jpeg) {
         let mut header = jpeg_decoder::Decoder::new(Cursor::new(bytes));
         header.read_info()?;
         let info = header.info().ok_or(DecodeError::Budget)?;
         // Progressive JPEG needs whole-frame coefficient planes even with scanline output.
-        if info.coding_process != jpeg_decoder::CodingProcess::DctSequential
-            && u64::from(w) * u64::from(h) * 12 > MAX_PIXELS * 4
-        {
-            return Err(DecodeError::Budget);
+        if info.coding_process != jpeg_decoder::CodingProcess::DctSequential {
+            coefficients = u64::from(w) * u64::from(h) * info.pixel_format.pixel_bytes() as u64 * 2;
+            if coefficients > crate::MAX_COEFFICIENT_BYTES {
+                return Err(DecodeError::Budget);
+            }
         }
         orientation = header
             .exif_data()
@@ -127,7 +131,7 @@ fn probe(bytes: &[u8]) -> Result<Probe, DecodeError> {
     }
     if format == Some(image::ImageFormat::WebP) {
         if u64::from(w) * u64::from(h) * 4 > crate::MAX_WEBP_FRAME_BYTES
-            || bytes.len() as u64 > 8 * 1024 * 1024
+            || bytes.len() as u64 > crate::MAX_WEBP_INPUT_BYTES
         {
             return Err(DecodeError::Budget);
         }
@@ -143,6 +147,7 @@ fn probe(bytes: &[u8]) -> Result<Probe, DecodeError> {
         raw,
         size: [w, h],
         orientation,
+        coefficients,
     })
 }
 fn rotated(orientation: Orientation) -> bool {
@@ -186,6 +191,10 @@ where
             return Err(DecodeError::Budget);
             #[cfg(not(target_arch = "wasm32"))]
             {
+                let _frame = crate::frames::admit(probe.coefficients);
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(DecodeError::Cancelled);
+                }
                 let mut decoder = mozjpeg::Decompress::new_mem(bytes)?;
                 if decoder.width() != w as usize || decoder.height() != h as usize {
                     return Err(DecodeError::Budget);
@@ -248,9 +257,13 @@ where
             let mut decoder = image::codecs::webp::WebPDecoder::new(Cursor::new(bytes))?;
             let mut limits = image::Limits::default();
             limits.max_alloc = Some(crate::MAX_WEBP_FRAME_BYTES);
-            limits.max_image_width = Some(32768);
-            limits.max_image_height = Some(32768);
+            limits.max_image_width = Some(crate::MAX_DIMENSION);
+            limits.max_image_height = Some(crate::MAX_DIMENSION);
             decoder.set_limits(limits)?;
+            let _frame = crate::frames::admit(u64::from(w) * u64::from(h) * 4);
+            if cancel.load(Ordering::Relaxed) {
+                return Err(DecodeError::Cancelled);
+            }
             let source = image::DynamicImage::from_decoder(decoder)?.into_rgba8();
             for (y, row) in source.as_raw().chunks_exact(w as usize * 4).enumerate() {
                 row_sink(y as u32, 0, 1, row, png::ColorType::Rgba)?;

@@ -604,8 +604,8 @@ fn read(
         || header[18..50] != hash.as_bytes()[..]
         || original[0] == 0
         || original[1] == 0
-        || original[0] > 32768
-        || original[1] > 32768
+        || original[0] > crate::MAX_DIMENSION
+        || original[1] > crate::MAX_DIMENSION
     {
         return Err(invalid("LOD cache identity mismatch"));
     }
