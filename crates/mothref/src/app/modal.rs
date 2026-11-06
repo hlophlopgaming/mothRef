@@ -118,23 +118,47 @@ impl Modal {
         }
 
         if board.notices.conversion_prompt && self.dialog.is_none() && !workspace.confirm_close {
-            egui::Modal::new(egui::Id::new("conversion")).show(ui.ctx(), |ui| {
-                moth_ui::icons::dialog_title(ui, moth_ui::text(moth_ui::Text::ConversionTitle));
-                conversion_report(ui, board);
-                ui.horizontal_wrapped(|ui| {
-                    for (label, action) in [
-                        (moth_ui::Text::SaveAsMoth, Action::SaveConversion),
-                        (
-                            moth_ui::Text::ContinueConversion,
-                            Action::ContinueConversion,
-                        ),
-                    ] {
-                        if ui.button(moth_ui::text(label)).clicked() {
-                            intents.push(Intent::Action(action));
-                        }
-                    }
+            let tokens = moth_ui::tokens(ui.ctx());
+            let modal = egui::Modal::new(egui::Id::new("conversion"))
+                .frame(
+                    egui::Frame::popup(&ui.ctx().global_style())
+                        .corner_radius(tokens.radius_l)
+                        .inner_margin(egui::Margin::same(tokens.space_xl as i8)),
+                )
+                .show(ui.ctx(), |ui| {
+                    ui.set_max_width(tokens.space_xl as f32 * 18.);
+                    moth_ui::icons::dialog_title(ui, moth_ui::text(moth_ui::Text::ConversionTitle));
+                    ui.add_space(tokens.space_xs as f32);
+                    conversion_report(ui, board);
+                    ui.add_space(tokens.space_l as f32);
+                    // Save is what Enter does; continuing without a file sits beside it.
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if moth_ui::icons::primary_button(
+                                ui,
+                                moth_ui::text(moth_ui::Text::SaveAsMoth),
+                                true,
+                            )
+                            .clicked()
+                                || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                            {
+                                intents.push(Intent::Action(Action::SaveConversion));
+                            }
+                            if moth_ui::icons::dialog_button(
+                                ui,
+                                moth_ui::text(moth_ui::Text::ContinueConversion),
+                            )
+                            .clicked()
+                            {
+                                intents.push(Intent::Action(Action::ContinueConversion));
+                            }
+                        });
+                    });
                 });
-            });
+            // Esc keeps working on the board without a file, like the second button.
+            if modal.should_close() {
+                intents.push(Intent::Action(Action::ContinueConversion));
+            }
         }
         if workspace.confirm_close && self.dialog.is_none() {
             let tokens = moth_ui::tokens(ui.ctx());
@@ -276,22 +300,49 @@ impl Modal {
 }
 
 fn conversion_report(ui: &mut egui::Ui, board: &super::document::Document) {
-    if let Some((source, skipped)) = &board.file.conversion {
-        ui.label(moth_ui::text(moth_ui::Text::ConversionRetained));
-        ui.label(source.to_string_lossy());
-        ui.label(moth_ui::text(
-            if source
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("pur"))
-            {
-                moth_ui::Text::ConversionPur
-            } else {
-                moth_ui::Text::ConversionBee
-            },
-        ));
+    let Some((source, skipped)) = &board.file.conversion else {
+        return;
+    };
+    let tokens = moth_ui::tokens(ui.ctx());
+    ui.label(moth_ui::text(moth_ui::Text::ConversionRetained));
+    ui.add_space(tokens.space_xs as f32);
+    // The source path in a quiet well, so a long path reads as one value.
+    egui::Frame::new()
+        .fill(tokens.surface_raised)
+        .stroke(egui::Stroke::new(1., tokens.border))
+        .corner_radius(tokens.radius_m)
+        .inner_margin(egui::Margin::symmetric(
+            tokens.space_s as i8,
+            tokens.space_xs as i8,
+        ))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(source.to_string_lossy())
+                        .monospace()
+                        .small(),
+                )
+                .wrap(),
+            );
+        });
+    ui.add_space(tokens.space_s as f32);
+    let unsupported = if source
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("pur"))
+    {
+        moth_ui::Text::ConversionPur
+    } else {
+        moth_ui::Text::ConversionBee
+    };
+    ui.label(egui::RichText::new(moth_ui::text(unsupported)).color(tokens.text_muted));
+    if *skipped > 0 {
         ui.label(
-            moth_ui::Message::Count(moth_ui::Text::ImportSkippedCount, *skipped)
-                .render(moth_ui::locale()),
+            egui::RichText::new(
+                moth_ui::Message::Count(moth_ui::Text::ImportSkippedCount, *skipped)
+                    .render(moth_ui::locale()),
+            )
+            .color(tokens.danger),
         );
     }
 }

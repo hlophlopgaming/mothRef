@@ -156,6 +156,10 @@ schema! {
             .and_then(|v| v.parse().ok())
             .unwrap_or(false);
     autosave: u8 = 3, "autosave", General, Autosave, Kind::Choice(&[Text::AutosaveOff, Text::Autosave15s, Text::Autosave30s, Text::Autosave1m, Text::Autosave2m, Text::Autosave3m, Text::Autosave5m]), |s| s.autosave.to_string(), |values: &BTreeMap<String,String>| values.get("autosave").and_then(|v| v.parse().ok()).filter(|v| *v < 7).unwrap_or(3);
+    reopen_last: bool = false, "reopen_last_board", General, ReopenLast, Kind::Toggle, |s| s.reopen_last.to_string(), |values: &BTreeMap<String,String>| values
+            .get("reopen_last_board")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(false);
     undo_limit: usize = 256, "undo_limit", General, UndoLimit, Kind::Count(0,4096), |s| s.undo_limit.to_string(), |values: &BTreeMap<String,String>| values
             .get("undo_limit")
             .and_then(|v| v.parse().ok())
@@ -193,6 +197,10 @@ schema! {
             .and_then(|v| v.parse().ok())
             .filter(|v| *v <= 10000)
             .unwrap_or(5);
+    raise_on_select: bool = false, "raise_on_select", Adding, RaiseOnSelect, Kind::Toggle, |s| s.raise_on_select.to_string(), |values: &BTreeMap<String,String>| values
+            .get("raise_on_select")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(false);
     auto_arrange: bool = false, "auto_arrange", Adding, AutoArrange, Kind::Toggle, |s| s.auto_arrange.to_string(), |values: &BTreeMap<String,String>| values
             .get("auto_arrange")
             .and_then(|v| v.parse().ok())

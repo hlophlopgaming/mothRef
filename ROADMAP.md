@@ -155,12 +155,9 @@ Open:
   - [ ] Show the color gamut of an image (BR) — waiting for a decision: the maintainer asked what it shows (2026-11-05)
   - [ ] Open image source — the URL or path the image came from (PR). Wanted; handle the edge cases explicitly: an image from inside a `.zip` (show the archive and the entry, open the archive's folder), a web URL (open on click only), clipboard pastes and images embedded in `.bee` / `.pur` files (no source: say so), a file that was moved or deleted since (say it is missing, offer the last known path)
   - [ ] Arrange by file path (PR)
-  - [ ] Setting "bring selected images to front" (PR) — wanted, as a setting
   - [ ] Optional scrollbars and menu bar (BR) — waiting for a decision: the maintainer asked what it means (2026-11-05)
   - [ ] Optional auto-downscale of very large images on import (PR) — only as a setting, off by default: images are not reduced unless the user asks (maintainer, 2026-11-05)
-  - [ ] Reopen the last board on start — as a setting (maintainer, 2026-11-05)
-  - [ ] Open files from the command line: the first `.moth` / `.bee` / `.pur` argument opens a board, image paths are added (BR). Designed together with M13: the goal is that an agent can load, lay out and annotate images by itself from the documented CLI, without an MCP server (maintainer, 2026-11-05)
-  - [ ] Notify when pasting from an empty or unusable clipboard (BR) — wanted
+  - [ ] Open files from the command line: the first `.moth` / `.bee` / `.pur` argument opens a board, image paths are added (BR). Opening is done (the first board opens, images are added to it once it has loaded, further boards open in tabs); the documented agent-ready CLI remains with M13. Designed together with M13: the goal is that an agent can load, lay out and annotate images by itself from the documented CLI, without an MCP server (maintainer, 2026-11-05)
   - [ ] Debug log viewer in the app (BR) — wanted
 
 Validation notes: [editing and export](docs/M2-EDITING-VALIDATION.md), [import](docs/M2-IMPORT-VALIDATION.md), [load performance](docs/LOAD-PERFORMANCE.md), target layout [DESIGN.md](docs/DESIGN.md).
@@ -168,6 +165,9 @@ Validation notes: [editing and export](docs/M2-EDITING-VALIDATION.md), [import](
 <details>
 <summary>Done</summary>
 
+- [x] Setting "bring selected images to front" (PR) — wanted, as a setting — Settings › Adding › Bring clicked images to the front (off by default); a click on a selection already on top adds no undo step
+- [x] Reopen the last board on start — as a setting (maintainer, 2026-11-05) — Settings › General › Open the last board on start (off by default); skipped when files are given on the command line or a recovery is waiting
+- [x] Notify when pasting from an empty or unusable clipboard (BR) — wanted — a short notice above the bottom toolbar
 - [x] Rework and polish the editing tools before accepting M2: validate actual
   workflows for selection, transforms/cropping, arrangement, pickers and export;
   improve discoverability, control layout and feedback; fix interaction and resize

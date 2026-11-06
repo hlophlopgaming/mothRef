@@ -559,6 +559,21 @@ fn adopt_copies(items: &[&Item], out: &mut Vec<Command>) {
     );
 }
 /// Reuse remove/insert commands so layer changes need no new journal encoding.
+/// Whether the selection already holds the topmost places, so bringing it to the
+/// front would change nothing.
+pub fn is_front(
+    scene: &moth_scene::Scene,
+    selection: &std::collections::HashSet<moth_scene::Uuid>,
+) -> bool {
+    let mut ordered: Vec<_> = scene.items().collect();
+    ordered.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
+    let selected = ordered.iter().filter(|i| selection.contains(&i.id)).count();
+    ordered
+        .iter()
+        .rev()
+        .take(selected)
+        .all(|item| selection.contains(&item.id))
+}
 pub fn reorder(
     scene: &moth_scene::Scene,
     selection: &std::collections::HashSet<moth_scene::Uuid>,
@@ -658,6 +673,30 @@ pub(super) fn scale(items: &[&moth_scene::Item], factor: f32) -> Vec<Command> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_selection_on_top_is_front_and_raising_it_makes_it_so() {
+        let rect = moth_scene::Rect {
+            x: 0.,
+            y: 0.,
+            width: 10.,
+            height: 10.,
+        };
+        let mut scene = moth_scene::Scene::default();
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            let item = moth_scene::Item::text("", rect, scene.top());
+            ids.push(item.id);
+            scene.apply(Command::Insert(item)).unwrap();
+        }
+        let top = std::collections::HashSet::from([ids[2]]);
+        assert!(is_front(&scene, &top));
+        let bottom = std::collections::HashSet::from([ids[0]]);
+        assert!(!is_front(&scene, &bottom));
+        for command in reorder(&scene, &bottom, true, true) {
+            scene.apply(command).unwrap();
+        }
+        assert!(is_front(&scene, &bottom));
+    }
     use super::*;
     use moth_scene::Scene;
 

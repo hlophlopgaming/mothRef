@@ -539,6 +539,10 @@ pub enum Text {
     UndoLimit,
     /// Autosave interval setting and its choices.
     Autosave,
+    /// Setting: open the most recent board instead of the library on start.
+    ReopenLast,
+    /// Setting: a click brings the selection to the front.
+    RaiseOnSelect,
     AutosaveOff,
     Autosave15s,
     Autosave30s,
