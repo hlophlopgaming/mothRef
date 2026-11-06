@@ -11,4 +11,7 @@ libfuzzer_sys::fuzz_target!(|bytes: &[u8]| {
         y: u32::from(bytes.get(bytes.len().saturating_sub(2)).copied().unwrap_or(0)) % 4,
     };
     let _ = moth_io::tiles::decode(bytes, tile, &cancel);
+    // Optional reduction on import (Settings › Adding): a small limit makes every
+    // input larger than 16 px go through the row-band averaging and the encoders.
+    let _ = moth_io::reduce::reduce(bytes, 16);
 });
