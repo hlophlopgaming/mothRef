@@ -150,7 +150,7 @@ actions! {
     SamplingSmooth, SamplingSmooth, "", None;
     SamplingNearest, SamplingNearest, "", None;
     SamplingAutomatic, SamplingAutomatic, "", None;
-    OpenOriginal, OpenOriginal, "", Some(moth_ui::icons::Icon::ImagePlus);
+    OpenOriginal, OpenOriginal, "", Some(moth_ui::icons::Icon::OpenExternal);
     CopyImage, CopyImage, "", None;
     ClearDiskCache, ClearDiskCache, "", Some(moth_ui::icons::Icon::Close);
     ShellIntegration, InstallShellIntegration, "", None;

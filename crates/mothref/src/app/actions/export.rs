@@ -66,10 +66,10 @@ impl App {
                 let path = std::path::PathBuf::from(&self.tools.export.path);
                 let target = match action {
                     OpenOriginal => {
-                        self.tools.viewer_open = true;
                         let [item] = items.as_slice() else {
                             return None;
                         };
+                        self.tools.viewer = Some(super::super::tools::ViewerNotice::new());
                         Target::Viewer(item.id)
                     }
                     CopyImage => {

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Images up to 100 megapixels (for example 12,000 × 8,334) are added at full resolution and keep every pixel when zoomed in, instead of being refused above 32 megapixels. Originals up to 256 MiB are accepted (was 64 MiB), WebP up to 100 megapixels (was 2), and large WebP and progressive JPEG decodes share one memory budget so several at once cannot exhaust RAM.
+- Open original in viewer no longer opens an empty window on the board: a short notice near the bottom toolbar says it is opening, then that the image opened or why it could not. On Linux, when `xdg-open` is missing, `gio open` and `kde-open` are tried before showing an error. The menu item has its own “open externally” icon.
+
 - Keep summary buttons clickable when dragging the session window by its background.
 
 - Restore saved drawing-session plans and the last session setup after restarting the app.

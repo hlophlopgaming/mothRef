@@ -345,6 +345,7 @@ ToggleDrag = Toggle selection (click or rectangle)
 
 OpenOriginal = Open original in viewer
 ViewerOpened = Image opened in system viewer
+OpeningOriginal = Opening the original…
 ImageSampling = Image smoothing
 SamplingDefault = Use canvas setting
 SamplingSmooth = Smooth

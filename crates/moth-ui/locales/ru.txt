@@ -345,6 +345,7 @@ ToggleDrag = Переключить выделение (клик или рамк
 
 OpenOriginal = Открыть оригинал в просмотрщике
 ViewerOpened = Изображение открыто в системном просмотрщике
+OpeningOriginal = Открываю оригинал…
 ImageSampling = Сглаживание изображений
 SamplingDefault = Как в настройках холста
 SamplingSmooth = Плавное

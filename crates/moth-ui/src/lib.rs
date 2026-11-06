@@ -757,6 +757,8 @@ pub enum Text {
 
     /// Confirmation after the system viewer accepts an image.
     ViewerOpened,
+    /// Shown while the system viewer starts for "Open original".
+    OpeningOriginal,
     /// Localized SampleColor control.
     SampleColor,
     /// Localized ExportSide control.

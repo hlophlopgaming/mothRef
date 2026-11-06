@@ -113,6 +113,8 @@ pub enum Icon {
     Grip,
     /// Click-through control.
     Pointer,
+    /// Open in another application (the system image viewer).
+    OpenExternal,
 }
 /// Paints into a reserved rectangle so icons cannot change text layout.
 pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
@@ -296,6 +298,12 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
             line(&[(12., 16.), (12., 12.), (16., 12.)]);
         }
         Icon::Check => line(&[(3., 9.5), (7.5, 14.), (15., 4.5)]),
+        Icon::OpenExternal => {
+            // A frame open at its top-right corner, with an arrow leaving through it.
+            line(&[(8., 3.), (3., 3.), (3., 15.), (15., 15.), (15., 10.)]);
+            line(&[(8.5, 9.5), (15.5, 2.5)]);
+            line(&[(10.5, 2.5), (15.5, 2.5), (15.5, 7.5)]);
+        }
         Icon::Layers => {
             line(&[(2., 6.), (9., 2.5), (16., 6.), (9., 9.5), (2., 6.)]);
             line(&[(2., 9.5), (9., 13.), (16., 9.5)]);
