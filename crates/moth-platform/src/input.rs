@@ -105,6 +105,26 @@ pub struct Adapter {
     native: Option<windows::Native>,
 }
 impl Adapter {
+    /// Uses the tablet press serial for Wayland window moves and resizing; other backends use winit.
+    pub fn drag_window(
+        &self,
+        window: &winit::window::Window,
+        edge: Option<winit::window::ResizeDirection>,
+    ) -> Result<(), winit::error::ExternalError> {
+        #[cfg(target_os = "linux")]
+        if self
+            .native
+            .as_ref()
+            .is_some_and(|native| native.drag_window(window, edge))
+        {
+            return Ok(());
+        }
+        match edge {
+            Some(edge) => window.drag_resize_window(edge),
+            None => window.drag_window(),
+        }
+    }
+
     /// Native window gestures can consume the release instead of returning it to the app.
     pub fn release_mouse(&mut self) {
         self.button = None;

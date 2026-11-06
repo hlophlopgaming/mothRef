@@ -841,12 +841,7 @@ impl App {
                     moth_ui::set_locale(language);
                 }
                 workspace::Event::Preferences(values) => {
-                    self.window_preferences = values
-                        .iter()
-                        .filter(|(k, _)| k.starts_with("board_window_"))
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect();
-                    moth_platform::settings::trim_board_windows(&mut self.window_preferences);
+                    self.window_preferences = window_mode::preferences(&values);
                     self.restore_appearance();
                     let monitor = self
                         .shell

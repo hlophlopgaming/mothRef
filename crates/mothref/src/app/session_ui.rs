@@ -304,10 +304,14 @@ pub(super) fn show(ui: &mut egui::Ui, slot: &mut Option<State>, board: &Board<'_
             Run::new(Setup::default(), Vec::new(), String::new(), now),
         );
         state.screen = Screen::Summary(finished);
-        events.push(Event::Leave);
+        events.push(Event::Window {
+            mini: false,
+            aspect: 1.,
+        });
     }
     if let Screen::Summary(run) = &mut state.screen {
         match summary_screen(ui, run, board, &mut state.draws, &mut state.clip, settled) {
+            Some(SummaryChoice::Drag) => events.push(Event::Drag),
             Some(SummaryChoice::Close) => close = true,
             Some(SummaryChoice::Select) => {
                 let ids: Vec<_> = run
@@ -324,6 +328,7 @@ pub(super) fn show(ui: &mut egui::Ui, slot: &mut Option<State>, board: &Board<'_
                 close = true;
             }
             Some(SummaryChoice::New) => {
+                events.push(Event::Leave);
                 state.screen = Screen::Setup(run.setup.clone());
             }
             Some(SummaryChoice::Replay(kind)) => {
@@ -1086,6 +1091,7 @@ fn running_screen(
 }
 
 enum SummaryChoice {
+    Drag,
     Close,
     Select,
     Show(Uuid),
@@ -1105,15 +1111,30 @@ fn summary_screen(
     let (shown, spent, skipped) = run.summary();
     let starred = run.slides.iter().filter(|s| s.shown && s.star).count();
     let area = ui.ctx().content_rect().shrink(tokens.space_xl as f32);
+    let background = ui.interact(
+        ui.ctx().content_rect(),
+        ui.id().with("session_summary_window_drag"),
+        // Wait for movement so a press on a child button keeps its click.
+        egui::Sense::click_and_drag(),
+    );
+    if background.drag_started() {
+        choice = Some(SummaryChoice::Drag);
+    }
     // No frame fills: thumbnails are drawn by the renderer below this UI.
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(area));
     let ui = &mut child;
     // Only the free text sits on the dark stage; buttons keep the theme's colors.
-    ui.label(
-        egui::RichText::new(text(Text::SessionDone))
-            .heading()
-            .color(tokens.on_theater),
+    let title = ui.add(
+        egui::Label::new(
+            egui::RichText::new(text(Text::SessionDone))
+                .heading()
+                .color(tokens.on_theater),
+        )
+        .sense(egui::Sense::drag()),
     );
+    if title.drag_started() {
+        choice = Some(SummaryChoice::Drag);
+    }
     let stages: Vec<Stage> = {
         let mut stages: Vec<Stage> = Vec::new();
         for slide in run.slides.iter().filter(|s| s.shown) {
@@ -1317,4 +1338,175 @@ fn summary_screen(
         });
     *clip = Some(scroll.inner_rect);
     choice
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+
+    #[test]
+    fn dragging_summary_background_requests_window_move() {
+        let ctx = egui::Context::default();
+        let scene = Scene::default();
+        let selection = HashSet::new();
+        let board = Board {
+            scene: &scene,
+            selection: &selection,
+            group: None,
+            plans: &[],
+        };
+        let mut run = Run::new(Setup::default(), Vec::new(), String::new(), Instant::now());
+        let mut draws = Vec::new();
+        let mut clip = None;
+        let start = egui::pos2(5., 300.);
+        let frames = [
+            vec![],
+            vec![
+                egui::Event::PointerMoved(start),
+                egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::default(),
+                },
+            ],
+            vec![egui::Event::PointerMoved(start + egui::vec2(50., 0.))],
+        ];
+        let mut dragged = false;
+        for events in frames {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800., 600.),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    dragged |= matches!(
+                        summary_screen(ui, &mut run, &board, &mut draws, &mut clip, true),
+                        Some(SummaryChoice::Drag)
+                    );
+                },
+            );
+            output.textures_delta.clear();
+        }
+        assert!(
+            dragged,
+            "the summary background must hand dragging to the window manager"
+        );
+    }
+    #[test]
+    fn finished_sessions_open_summary_fullscreen_including_mini_mode() {
+        for mini in [false, true] {
+            let ctx = egui::Context::default();
+            let scene = Scene::default();
+            let selection = HashSet::new();
+            let board = Board {
+                scene: &scene,
+                selection: &selection,
+                group: None,
+                plans: &[],
+            };
+            let setup = Setup {
+                mini,
+                ..Setup::default()
+            };
+            let mut run = Run::new(setup, Vec::new(), String::new(), Instant::now());
+            run.finish(Instant::now());
+            let mut state = State::new(Setup::default());
+            state.screen = Screen::Running(run);
+            let mut slot = Some(state);
+            let mut events = Vec::new();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                events.extend(show(ui, &mut slot, &board));
+            });
+            output.textures_delta.clear();
+            assert!(matches!(slot.as_ref().unwrap().screen, Screen::Summary(_)));
+            assert!(
+                events
+                    .iter()
+                    .any(|event| matches!(event, Event::Window { mini: false, .. }))
+            );
+            assert!(!events.iter().any(|event| matches!(event, Event::Leave)));
+        }
+    }
+    #[test]
+    fn summary_buttons_keep_clicks_with_draggable_background() {
+        for label in [Text::NewSession, Text::CloseSummary] {
+            let ctx = egui::Context::default();
+            let scene = Scene::default();
+            let selection = HashSet::new();
+            let board = Board {
+                scene: &scene,
+                selection: &selection,
+                group: None,
+                plans: &[],
+            };
+            let mut state = State::new(Setup::default());
+            state.screen = Screen::Summary(Run::new(
+                Setup::default(),
+                Vec::new(),
+                String::new(),
+                Instant::now(),
+            ));
+            let mut slot = Some(state);
+            let mut frame = |events| {
+                let mut actions = Vec::new();
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1000., 700.),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        actions.extend(show(ui, &mut slot, &board));
+                    },
+                );
+                output.textures_delta.clear();
+                assert!(
+                    !actions.iter().any(|event| matches!(event, Event::Drag)),
+                    "button presses must not start a window move"
+                );
+                output
+            };
+            let _ = frame(Vec::new());
+            let output = frame(Vec::new());
+            let position = output
+                .shapes
+                .iter()
+                .find_map(|shape| {
+                    if let egui::epaint::Shape::Text(shape) = &shape.shape {
+                        (shape.galley.text() == text(label))
+                            .then(|| shape.pos + shape.galley.size() / 2.)
+                    } else {
+                        None
+                    }
+                })
+                .expect("summary button is rendered");
+            for pressed in [true, false] {
+                let _ = frame(vec![
+                    egui::Event::PointerMoved(position),
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::default(),
+                    },
+                ]);
+            }
+            match label {
+                Text::NewSession => assert!(matches!(
+                    slot.as_ref().map(|s| &s.screen),
+                    Some(Screen::Setup(_))
+                )),
+                Text::CloseSummary => assert!(slot.is_none()),
+                _ => unreachable!(),
+            }
+        }
+    }
 }

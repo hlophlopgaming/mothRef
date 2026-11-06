@@ -283,6 +283,40 @@ fn drop_session(mime: &'static str) -> (Vec<Event>, usize) {
     drop(_shutdown);
     // The transfer worker wakes a reader even when the compositor is idle.
     queue.blocking_dispatch(&mut state).unwrap();
+    if mime == "tablet" {
+        // Window moves must use the tablet's seat and tip-down serial, never a mouse serial.
+        let seat = state.seats[0].1.clone();
+        let pen = tool::ZwpTabletToolV2::inert(conn.backend().downgrade());
+        state.tools.insert(
+            pen.clone(),
+            Tool {
+                seat: Some(seat.clone()),
+                focused: true,
+                ..Tool::default()
+            },
+        );
+        for (event, expected) in [
+            (tool::Event::Down { serial: 42 }, Some(42)),
+            (tool::Event::Up, None),
+            (tool::Event::Down { serial: 43 }, Some(43)),
+            (tool::Event::ProximityOut, None),
+        ] {
+            <State as Dispatch<tool::ZwpTabletToolV2, ()>>::event(
+                &mut state,
+                &pen,
+                event,
+                &(),
+                &conn,
+                &qh,
+            );
+            let press = state.pen_press.lock().unwrap();
+            assert_eq!(press.as_ref().map(|(_, serial)| *serial), expected);
+            if let Some((actual, _)) = press.as_ref() {
+                assert_eq!(actual, &seat);
+            }
+        }
+        state.tools.remove(&pen);
+    }
     state.cleanup(&conn);
     drop(state);
     conn.flush().unwrap();

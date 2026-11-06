@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Keep summary buttons clickable when dragging the session window by its background.
+
+- Restore saved drawing-session plans and the last session setup after restarting the app.
+
+- Support moving and resizing the drawing session mini window with a stylus on Wayland, and dragging the session summary by its background or heading. Session summaries open full screen even after a mini session; closing them restores the original window.
+
 - Fix drawing sessions requesting image detail with the board camera and cancelling their own image loads; use the session viewport and camera to preserve reference quality.
 
 ## 0.1.0-alpha.20 — 2026-11-05

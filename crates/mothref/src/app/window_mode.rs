@@ -342,3 +342,46 @@ impl App {
         }
     }
 }
+
+/// Restore window and drawing-session preferences from the shared settings store.
+pub(super) fn preferences(
+    values: &std::collections::BTreeMap<String, String>,
+) -> std::collections::BTreeMap<String, String> {
+    let mut remembered = values
+        .iter()
+        .filter(|(key, _)| {
+            key.starts_with("board_window_")
+                || matches!(key.as_str(), "session_plans" | "session_setup")
+        })
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    moth_platform::settings::trim_board_windows(&mut remembered);
+    remembered
+}
+
+#[cfg(test)]
+mod session_preferences_tests {
+    use super::*;
+
+    #[test]
+    fn reopening_settings_keeps_saved_plans_and_session_setup() {
+        let root = std::env::temp_dir().join(format!("moth-session-plans-{}", Uuid::now_v7()));
+        let setup = session::Setup::default().encode();
+        let saved = std::collections::BTreeMap::from([
+            ("session_plans".into(), "Разминка=10x30,5x120".into()),
+            ("session_setup".into(), setup.clone()),
+            ("board_window_test".into(), "1|appearance".into()),
+            ("theme".into(), "dark".into()),
+        ]);
+        moth_platform::settings::save_all(&root, &saved).unwrap();
+        let restored = preferences(&moth_platform::settings::load(&root).unwrap());
+        assert_eq!(restored.get("session_plans"), saved.get("session_plans"));
+        assert_eq!(restored.get("session_setup"), Some(&setup));
+        assert_eq!(
+            restored.get("board_window_test"),
+            saved.get("board_window_test")
+        );
+        assert!(!restored.contains_key("theme"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

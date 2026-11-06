@@ -99,10 +99,7 @@ impl super::App {
         if edge.is_none() && self.window_position_locked() {
             return;
         }
-        let result = match edge {
-            Some(edge) => window.drag_resize_window(edge),
-            None => window.drag_window(),
-        };
+        let result = self.input.adapter.drag_window(&window, edge);
         match result {
             Ok(()) => {
                 self.cancel_drag();

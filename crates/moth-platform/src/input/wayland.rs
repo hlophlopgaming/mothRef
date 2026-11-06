@@ -8,7 +8,7 @@ use std::{
     os::{fd::AsFd, unix::net::UnixStream},
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
@@ -36,6 +36,7 @@ pub struct Native {
     pub events: Receiver<Event>,
     stop: Arc<AtomicBool>,
     _shutdown: Sender<()>,
+    pen_press: Arc<Mutex<Option<(wl_seat::WlSeat, u32)>>>,
 }
 impl Native {
     pub fn new(
@@ -54,7 +55,9 @@ impl Native {
         let (send, events) = bounded(256);
         let stop = Arc::new(AtomicBool::new(false));
         let (shutdown, shutting_down) = bounded(0);
+        let pen_press = Arc::new(Mutex::new(None));
         let native = Self {
+            pen_press: pen_press.clone(),
             events,
             stop: stop.clone(),
             _shutdown: shutdown,
@@ -85,6 +88,7 @@ impl Native {
                         return;
                     }
                 };
+                state.pen_press = pen_press;
                 while !stop.load(Ordering::Acquire) {
                     if let Err(error) = queue.blocking_dispatch(&mut state) {
                         state.emit(Event::Error(error.to_string()));
@@ -102,7 +106,59 @@ impl Native {
             })?;
         Ok(Some(native))
     }
+    pub fn drag_window(
+        &self,
+        window: &Window,
+        edge: Option<winit::window::ResizeDirection>,
+    ) -> bool {
+        use wayland_protocols::xdg::shell::client::xdg_toplevel::XdgToplevel;
+        use winit::platform::wayland::WindowExtWayland;
+        let press = self.pen_press.lock().ok().and_then(|press| press.clone());
+        let Some((seat, serial)) = press else {
+            return false;
+        };
+        let Some(toplevel) = window.xdg_toplevel() else {
+            return false;
+        };
+        let Some(backend) = seat.backend().upgrade() else {
+            return false;
+        };
+        let conn = Connection::from_backend(backend);
+        // SAFETY: winit owns this live toplevel on the seat's shared display; the proxy is borrowed only here.
+        let id = unsafe {
+            wayland_backend::client::ObjectId::from_ptr(
+                XdgToplevel::interface(),
+                toplevel.as_ptr().cast(),
+            )
+        };
+        let Ok(id) = id else { return false };
+        let Ok(toplevel) = XdgToplevel::from_id(&conn, id) else {
+            return false;
+        };
+        match edge {
+            Some(edge) => toplevel.resize(&seat, serial, resize_edge(edge)),
+            None => toplevel._move(&seat, serial),
+        }
+        true
+    }
 }
+fn resize_edge(
+    edge: winit::window::ResizeDirection,
+) -> wayland_protocols::xdg::shell::client::xdg_toplevel::ResizeEdge {
+    use wayland_protocols::xdg::shell::client::xdg_toplevel::ResizeEdge;
+    use winit::window::ResizeDirection::*;
+    match edge {
+        North => ResizeEdge::Top,
+        South => ResizeEdge::Bottom,
+        East => ResizeEdge::Right,
+        West => ResizeEdge::Left,
+        NorthEast => ResizeEdge::TopRight,
+        NorthWest => ResizeEdge::TopLeft,
+        SouthEast => ResizeEdge::BottomRight,
+        SouthWest => ResizeEdge::BottomLeft,
+    }
+}
+
 impl Drop for Native {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
@@ -111,6 +167,7 @@ impl Drop for Native {
 
 #[derive(Default)]
 struct Tool {
+    seat: Option<wl_seat::WlSeat>,
     position: [f32; 2],
     pressure: f32,
     pressure_capable: bool,
@@ -199,6 +256,7 @@ struct Offer {
     copy: bool,
 }
 struct State {
+    pen_press: Arc<Mutex<Option<(wl_seat::WlSeat, u32)>>>,
     surface: usize,
     send: Sender<Event>,
     wake: Arc<dyn Fn() + Send + Sync>,
@@ -269,6 +327,7 @@ impl State {
                 }
             })?;
         Ok(Self {
+            pen_press: Arc::new(Mutex::new(None)),
             surface,
             send,
             wake,
@@ -527,7 +586,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
 impl Dispatch<seat::ZwpTabletSeatV2, ()> for State {
     fn event(
         s: &mut Self,
-        _: &seat::ZwpTabletSeatV2,
+        tablet_seat: &seat::ZwpTabletSeatV2,
         event: seat::Event,
         _: &(),
         _: &Connection,
@@ -536,7 +595,17 @@ impl Dispatch<seat::ZwpTabletSeatV2, ()> for State {
         match event {
             seat::Event::ToolAdded { id } => {
                 if s.tools.len() < LIMIT {
-                    s.tools.insert(id, Tool::default());
+                    s.tools.insert(
+                        id,
+                        Tool {
+                            seat: s
+                                .seats
+                                .iter()
+                                .find(|(_, _, tablet, _)| tablet.as_ref() == Some(tablet_seat))
+                                .map(|(_, seat, _, _)| seat.clone()),
+                            ..Tool::default()
+                        },
+                    );
                 } else {
                     id.destroy();
                 }
@@ -597,11 +666,17 @@ impl Dispatch<tool::ZwpTabletToolV2, ()> for State {
                     t.phase(Phase::Move);
                 }
             }
-            tool::Event::Down { .. } if t.focused => {
+            tool::Event::Down { serial } if t.focused => {
+                if let Ok(mut press) = s.pen_press.lock() {
+                    *press = t.seat.clone().map(|seat| (seat, serial));
+                }
                 t.down = true;
                 t.press(1);
             }
             tool::Event::Up if t.focused => {
+                if let Ok(mut press) = s.pen_press.lock() {
+                    *press = None;
+                }
                 t.down = false;
                 t.release(1);
             }
@@ -619,6 +694,9 @@ impl Dispatch<tool::ZwpTabletToolV2, ()> for State {
                 }
             }
             tool::Event::ProximityOut => {
+                if let Ok(mut press) = s.pen_press.lock() {
+                    *press = None;
+                }
                 if t.focused && (t.down || t.press.is_some()) {
                     t.cancel();
                 } else if t.focused {
@@ -826,6 +904,24 @@ delegate_noop!(State: ignore wl_callback::WlCallback);
 mod tests {
     use super::*;
     use std::io::Write;
+    #[test]
+    fn stylus_resize_maps_every_window_edge() {
+        use wayland_protocols::xdg::shell::client::xdg_toplevel::ResizeEdge;
+        use winit::window::ResizeDirection::*;
+        for (direction, expected) in [
+            (North, ResizeEdge::Top),
+            (South, ResizeEdge::Bottom),
+            (East, ResizeEdge::Right),
+            (West, ResizeEdge::Left),
+            (NorthEast, ResizeEdge::TopRight),
+            (NorthWest, ResizeEdge::TopLeft),
+            (SouthEast, ResizeEdge::BottomRight),
+            (SouthWest, ResizeEdge::BottomLeft),
+        ] {
+            assert_eq!(resize_edge(direction), expected);
+        }
+    }
+
     #[test]
     fn native_uri_list_preserves_local_paths_and_rejects_remote_or_malformed_data() {
         fn decode(bytes: &[u8]) -> io::Result<Vec<PathBuf>> {
