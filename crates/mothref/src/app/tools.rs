@@ -18,8 +18,25 @@ pub(super) struct Tools {
     pub arrange: ArrangeOptions,
     pub export: ExportForm,
     pub pickers: Pickers,
-    /// Open original: which external viewer to use.
-    pub viewer_open: bool,
+    /// Open original: the short notice shown while the system viewer starts.
+    pub viewer: Option<ViewerNotice>,
+}
+/// "Open original" hands the image to the system viewer; the board only shows a short
+/// notice near the bottom toolbar, never a window of its own.
+#[derive(Clone, Copy)]
+pub(super) struct ViewerNotice {
+    /// When the action ran; a request that never answers stops showing after a while.
+    pub started: std::time::Instant,
+    /// When the viewer answered (opened or failed); the notice fades after it.
+    pub answered: Option<std::time::Instant>,
+}
+impl ViewerNotice {
+    pub fn new() -> Self {
+        Self {
+            started: std::time::Instant::now(),
+            answered: None,
+        }
+    }
 }
 #[derive(Default)]
 pub(super) struct ItemEditor {
@@ -135,14 +152,11 @@ impl Tools {
         enabled: &[bool],
         registry: &Registry,
     ) -> Vec<Intent> {
-        if !self.edit.open
-            && !self.arrange.open
-            && !self.export.open
-            && !self.pickers.open
-            && !self.viewer_open
-        {
+        if !self.edit.open && !self.arrange.open && !self.export.open && !self.pickers.open {
+            viewer_notice(ui.ctx(), &mut self.viewer, board, settings.reduced_motion);
             return Vec::new();
         }
+        viewer_notice(ui.ctx(), &mut self.viewer, board, settings.reduced_motion);
         let mut intents = Vec::new();
         let items: Vec<_> = board
             .selection
@@ -324,13 +338,6 @@ impl Tools {
                 }
             });
         self.arrange.open = open;
-        let mut open = self.viewer_open;
-        egui::Window::new(text(Text::OpenOriginal))
-            .open(&mut open)
-            .show(ui.ctx(), |ui| {
-                export_feedback(ui, board);
-            });
-        self.viewer_open = open;
         let mut open = self.export.open;
         egui::Window::new(text(Text::Export))
             .open(&mut open)
@@ -386,6 +393,99 @@ impl Tools {
         }
         intents
     }
+}
+/// Shows "Opening original…" until the viewer answers, then the result for a moment.
+fn viewer_notice(
+    ctx: &egui::Context,
+    slot: &mut Option<ViewerNotice>,
+    board: &Document,
+    reduced_motion: bool,
+) {
+    const SHOWN: f32 = 2.4;
+    const FADE: f32 = 0.35;
+    const PATIENCE: f32 = 30.;
+    let Some(notice) = slot else {
+        return;
+    };
+    let answer = board
+        .notices
+        .export_message
+        .as_ref()
+        .filter(|_| !board.file.exporting);
+    if answer.is_some() && notice.answered.is_none() {
+        notice.answered = Some(std::time::Instant::now());
+    }
+    let alpha = match notice.answered {
+        Some(at) => {
+            let age = at.elapsed().as_secs_f32();
+            if age < SHOWN {
+                ctx.request_repaint_after(std::time::Duration::from_secs_f32(SHOWN - age));
+                1.
+            } else {
+                ctx.request_repaint();
+                ((SHOWN + FADE - age) / FADE).clamp(0., 1.)
+            }
+        }
+        None if notice.started.elapsed().as_secs_f32() > PATIENCE => 0.,
+        None => 1.,
+    };
+    if alpha == 0. {
+        *slot = None;
+        return;
+    }
+    let tokens = moth_ui::tokens(ctx);
+    let gap = tokens.space_m as f32;
+    let viewport = ctx.content_rect();
+    // The import notice keeps its last rect after it closes; count it only while shown.
+    let added = board.notices.added.is_some();
+    let bottom = ctx.memory(|memory| {
+        ["bottom_toolbar", "selection_badge", "added_feedback"]
+            .into_iter()
+            .filter(|id| added || *id != "added_feedback")
+            .filter_map(|id| memory.area_rect(egui::Id::new(id)))
+            .map(|rect| rect.top())
+            .fold(viewport.bottom(), f32::min)
+    });
+    egui::Area::new(egui::Id::new("viewer_feedback"))
+        .order(egui::Order::Foreground)
+        .interactable(false)
+        .constrain_to(viewport)
+        .pivot(egui::Align2::CENTER_BOTTOM)
+        .fixed_pos(egui::pos2(viewport.center().x, bottom - gap))
+        .show(ctx, |ui| {
+            ui.set_opacity(if reduced_motion { alpha.ceil() } else { alpha });
+            ui.set_max_width((viewport.width() - gap * 2.).max(1.));
+            egui::Frame::popup(ui.style())
+                .corner_radius(tokens.radius_l)
+                .inner_margin(egui::Margin::symmetric(
+                    tokens.space_m as i8,
+                    tokens.space_xs as i8,
+                ))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| match answer {
+                        None => {
+                            ui.spinner();
+                            ui.label(text(Text::OpeningOriginal));
+                        }
+                        Some(message) => {
+                            let (icon, _) = ui.allocate_exact_size(
+                                egui::Vec2::splat(ui.text_style_height(&egui::TextStyle::Body)),
+                                egui::Sense::hover(),
+                            );
+                            // Success gets a check; an error is plain text in the warning tone.
+                            let opened =
+                                matches!(message, moth_ui::Message::Text(Text::ViewerOpened));
+                            let (glyph, color) = if opened {
+                                (moth_ui::icons::Icon::Check, tokens.accent_text)
+                            } else {
+                                (moth_ui::icons::Icon::Close, tokens.danger)
+                            };
+                            moth_ui::icons::paint(ui, icon, glyph, color);
+                            ui.label(message.render(moth_ui::locale()));
+                        }
+                    });
+                });
+        });
 }
 fn export_feedback(ui: &mut egui::Ui, board: &Document) {
     if board.file.exporting {

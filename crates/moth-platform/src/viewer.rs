@@ -2,13 +2,42 @@
 //! OS associations launch only validated images prepared by the storage worker.
 use std::{io, path::Path};
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 pub(super) fn open(path: &Path) -> io::Result<()> {
-    #[cfg(target_os = "macos")]
-    let program = "open";
-    #[cfg(not(target_os = "macos"))]
-    let program = "xdg-open";
-    launch(std::process::Command::new(program).arg(path))
+    launch(std::process::Command::new("open").arg(path))
+}
+
+/// Desktop launchers in the order they are tried. `xdg-open` is the standard one, but
+/// minimal and some immutable systems ship only GLib's `gio` or KDE's `kde-open`.
+#[cfg(all(unix, not(target_os = "macos")))]
+const LAUNCHERS: &[&[&str]] = &[
+    &["xdg-open"],
+    &["gio", "open"],
+    &["kde-open5"],
+    &["kde-open"],
+];
+
+#[cfg(all(unix, not(target_os = "macos")))]
+pub(super) fn open(path: &Path) -> io::Result<()> {
+    open_with(LAUNCHERS, path)
+}
+
+/// Tries each launcher until one exists; only a missing program moves to the next.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_with(launchers: &[&[&str]], path: &Path) -> io::Result<()> {
+    for launcher in launchers {
+        let Some((program, args)) = launcher.split_first() else {
+            continue;
+        };
+        match launch(std::process::Command::new(program).args(args).arg(path)) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            result => return result,
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "No system image viewer found; install xdg-utils or set a default image viewer",
+    ))
 }
 
 // A launcher may wait for its viewer to close; it must never hold the storage queue.
@@ -97,5 +126,19 @@ mod tests {
             .unwrap_err();
             assert_eq!(error.kind(), io::ErrorKind::NotFound);
         }
+    }
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn missing_launchers_fall_through_to_a_readable_error() {
+        let error = open_with(
+            &[
+                &["/mothref-no-such-launcher"],
+                &["/mothref-no-such-launcher-2", "open"],
+            ],
+            Path::new("/tmp/image.png"),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert!(error.to_string().contains("No system image viewer found"));
     }
 }
