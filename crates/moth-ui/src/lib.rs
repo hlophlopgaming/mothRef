@@ -1553,14 +1553,18 @@ mod tests {
             Text::Imported,
             Text::ImportSkipped,
         ];
+        // Each language is read through `translated`, never by switching the global
+        // locale: tests run in parallel, and others compare against English labels.
         for &key in &keys {
             for language in Locale::ALL {
-                set_locale(language);
-                assert!(!text(key).is_empty(), "{language:?}: {key:?}");
-                assert_eq!(locale(), language);
+                assert!(
+                    !translated(language, key).is_empty(),
+                    "{language:?}: {key:?}"
+                );
             }
         }
         set_locale(Locale::EN);
+        assert_eq!(locale(), Locale::EN);
         assert_eq!(Locale::from_code("ru"), Some(Locale::RU));
         assert_eq!(Locale::from_code("EN"), Some(Locale::EN));
         assert_eq!(Locale::from_code("de"), None);
