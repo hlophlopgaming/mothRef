@@ -980,8 +980,10 @@ impl Workspace {
                 .get_or_insert_with(Instant::now);
             if let Some(added) = &mut self.board.notices.added {
                 if added.needs_fit {
-                    let ids = added.ids.iter().copied().collect();
-                    self.board.view.fit_selection(&self.board.scene, &ids);
+                    if added.ids.len() > 1 {
+                        let ids = added.ids.iter().copied().collect();
+                        self.board.view.fit_selection(&self.board.scene, &ids);
+                    }
                     added.needs_fit = false;
                 }
             } else if self.board.intake.batching && self.board.notices.arrange_prompt.is_none() {

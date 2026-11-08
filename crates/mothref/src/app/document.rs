@@ -1253,6 +1253,110 @@ mod tests {
     }
 
     #[test]
+    fn single_paste_preserves_camera_after_automatic_arrangement() {
+        for existing in [false, true] {
+            let root =
+                std::env::temp_dir().join(format!("mothref-paste-camera-{}", Uuid::now_v7()));
+            let board = Document::with_storage(
+                Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+                Arc::new(|| {}),
+                false,
+            )
+            .unwrap();
+            let mut workspace = workspace::Workspace::new(board, Arc::new(|| {}));
+            let drain = |workspace: &mut workspace::Workspace| {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                loop {
+                    workspace.pump(workspace::Pump {
+                        format: moth_io::ImageFormat::Rgba8,
+                        cursor: None,
+                        fallback: [300., 200.],
+                        upload: &mut |_| {},
+                        events: Vec::new(),
+                    });
+                    if workspace.board.idle() {
+                        break;
+                    }
+                    assert!(Instant::now() < deadline);
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            };
+            if existing {
+                let item = Item::text(
+                    "existing",
+                    Rect {
+                        x: 0.,
+                        y: 0.,
+                        width: 100.,
+                        height: 50.,
+                    },
+                    None,
+                );
+                workspace.persist(moth_platform::boards::Request::Apply(
+                    Command::Insert(item),
+                    None,
+                ));
+                drain(&mut workspace);
+            }
+            workspace.board.view.viewport =
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200., 800.));
+            workspace.board.view.camera = Camera {
+                origin: [-123., 45.],
+                zoom: 0.75,
+            };
+            let before = workspace.board.view.camera;
+            let (handle, image) = workspace
+                .board
+                .storage
+                .stage_preview(1, 1, &[12, 34, 56, 255])
+                .unwrap();
+            workspace
+                .board
+                .intake
+                .pending
+                .insert(handle, Pending::Paste);
+            workspace.complete(
+                moth_io::Completion {
+                    request: moth_io::Request {
+                        tile: None,
+                        handle,
+                        side: 256,
+                        format: moth_io::ImageFormat::Rgba8,
+                        blob: None,
+                    },
+                    result: Ok(image),
+                    failure_hash: None,
+                },
+                [300., 200.],
+                true,
+                &mut workspace::Pump {
+                    format: moth_io::ImageFormat::Rgba8,
+                    cursor: None,
+                    fallback: [300., 200.],
+                    upload: &mut |_| {},
+                    events: Vec::new(),
+                },
+            );
+            drain(&mut workspace);
+            let ids = workspace.board.notices.arrange_prompt.take().unwrap();
+            assert_eq!(ids.len(), 1);
+            workspace.board.notices.added = Some(Added {
+                ids,
+                mode: arrange::Arrange::Horizontal,
+                needs_fit: true,
+            });
+            drain(&mut workspace);
+            assert_eq!(workspace.board.scene.len(), usize::from(existing) + 1);
+            assert_eq!(workspace.board.view.camera.zoom, before.zoom);
+            assert_eq!(workspace.board.view.camera.origin, before.origin);
+            assert!(!workspace.board.view.needs_fit);
+            assert!(!workspace.board.notices.added.as_ref().unwrap().needs_fit);
+            workspace.board.boards.finish().unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
     fn batch_edits_and_layout_preserve_camera() {
         let root = std::env::temp_dir().join(format!("mothref-batch-{}", Uuid::now_v7()));
         let board = Document::with_storage(

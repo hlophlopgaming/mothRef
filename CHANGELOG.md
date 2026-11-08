@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Adding a single image keeps the current zoom and pan: the automatic arrangement no longer focuses a one-image paste or drop.
+
 ## 0.1.0-alpha.22 — 2026-11-08
 
 - Backup copies are now off by default, separately from autosave. Enable them for all boards in Settings › General or override a board through its library card's ⋯ › Keep backup copies. Missing boards with a saved copy show “Backup available” and “Open backup”; the latest copy opens as an unsaved board for Save As, leaving the copy and original untouched. Existing copies remain accessible when creation is disabled.
