@@ -44,6 +44,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
+pub use viewer::reveal;
 
 /// Native failures cross worker boundaries as values instead of panics.
 #[derive(Debug, thiserror::Error)]

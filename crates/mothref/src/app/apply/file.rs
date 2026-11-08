@@ -11,6 +11,13 @@ impl App {
     ) -> bool {
         match intent {
             Intent::Library(request) => {
+                // An open board is never trashed under the editor; close it first.
+                if let moth_platform::library::Request::Trash(path) = &request
+                    && self.workspace.is_open(path)
+                {
+                    self.workspace.board.notices.message = moth_ui::Text::BoardIsOpen.into();
+                    return false;
+                }
                 if self
                     .library_screen
                     .worker

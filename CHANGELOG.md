@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Library: each board card shows its item count, file size and when the file was last changed ("2 h ago"), and a "Not saved" chip when a recovery journal from an earlier session holds changes. Boards can be sorted by last opened, last edited, name, item count or file size. The sidebar shows how many boards each entry, stack and tag holds.
+- Library: a card's "⋯" button and right-click menu offer Open, Pin / Unpin, Edit tags, Show in folder (selects the file in Explorer, Finder or the Linux file manager, or opens its folder), Remove from list (the file stays) and Move to trash…, which asks first and moves the file to the system trash, where it can be restored; a board open in a tab has to be closed first.
 - Export › Originals to a folder… takes the selection into account: with images selected only those are written (a selected group brings the images inside it), each as its own file; with nothing selected, every image on the board. Exported originals, in the folder and in a ZIP, are named after the images (`fox.jpg`) instead of their content hash; the extension follows the real format, names that repeat get " (2)", and characters no file system accepts become `_`.
 
 ## 0.1.0-alpha.21 — 2026-11-06

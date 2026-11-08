@@ -948,7 +948,12 @@ impl App {
         }
         while let Ok(result) = self.library_screen.worker.results.try_recv() {
             match result {
-                Ok(entry) if self.workspace.library => {
+                Ok(moth_platform::library::Update::Removed(path)) => {
+                    self.workspace.forget_recent(&path);
+                    self.library_screen.cards.retain(|card| card.path != path);
+                    self.library_screen.catalog.dismiss_editor();
+                }
+                Ok(moth_platform::library::Update::Entry(entry)) if self.workspace.library => {
                     let path = entry.path;
                     let index = self
                         .library_screen
@@ -986,12 +991,15 @@ impl App {
                             )
                         })
                         .collect();
+                    let unsaved = self.workspace.unsaved_boards().any(|p| p == path);
                     let card = moth_ui::library::Card {
                         path,
                         title,
                         stack,
                         count: entry.count,
                         bytes: entry.bytes,
+                        modified: entry.modified,
+                        unsaved,
                         pinned: entry.pinned,
                         tags: entry.tags,
                         error: entry.error,

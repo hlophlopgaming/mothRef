@@ -12,6 +12,9 @@ pub struct Recovery {
     pub title: Option<String>,
     /// Last journal write, used to distinguish several recovery candidates.
     pub modified: SystemTime,
+    /// The board file the journal belongs to, if it was ever saved; the library marks
+    /// that board as having unsaved changes.
+    pub destination: Option<PathBuf>,
 }
 
 pub(super) fn validate(storage: &DesktopStorage, journal: &Path) -> io::Result<PathBuf> {
@@ -74,7 +77,8 @@ pub(super) fn discover(storage: &DesktopStorage) -> io::Result<Vec<Recovery>> {
         let Ok(_guard) = lock(&journal) else {
             continue;
         };
-        let title = destination(&journal).ok().flatten().and_then(|path| {
+        let destination = destination(&journal).ok().flatten();
+        let title = destination.as_ref().and_then(|path| {
             path.file_stem()
                 .map(|name| name.to_string_lossy().into_owned())
         });
@@ -82,6 +86,7 @@ pub(super) fn discover(storage: &DesktopStorage) -> io::Result<Vec<Recovery>> {
             modified: std::fs::metadata(&journal)?.modified()?,
             journal,
             title,
+            destination,
         });
     }
     entries.sort_by_key(|entry| std::cmp::Reverse(entry.modified));

@@ -374,9 +374,9 @@ A first slice shipped early ([decision 0004](docs/decisions/0004-reference-works
 - [ ] Stacks are real folders on disk (Procreate-style: drop a board on a board to create a stack); "smart collections" are saved tag filters
 - [ ] File manager thumbnails for `.moth` and `.bee` (BeeRef #152): Windows `IThumbnailProvider`, freedesktop thumbnailer, macOS Quick Look extension
 - [ ] Board preview image rendered off the UI thread after a checkpoint and stored as a rebuildable chunk (format version bump); used by the start screen, file-manager thumbnails and the note-app sidecar (M12)
-- [ ] Library sidebar (All boards, Pinned, Stacks and Smart collections exist): All boards, Recent, Pinned, Stacks, Smart collections. No in-app trash: deleting a board moves it straight to the OS trash (maintainer, 2026-10-30); counts next to each entry; an icon per entry (pin for Pinned); stack colors picked from a palette and repeated as a dot on the board cards
-- [ ] Library view options: sort by last opened, last edited, name, item count or size; grid / list view; tag filter chips above the grid — last opened / name sort and grid / list exist
-- [ ] Board cards show item count, last edited time, file size, pinned state and an "unsaved" badge when a recovery journal is pending; the library header shows totals
+- [ ] Library sidebar (All boards, Pinned, Stacks and Smart collections exist): All boards, Recent, Pinned, Stacks, Smart collections. No in-app trash: deleting a board moves it straight to the OS trash (maintainer, 2026-10-30); counts next to each entry; an icon per entry (pin for Pinned); stack colors picked from a palette and repeated as a dot on the board cards — counts, icons and Move to trash exist (card menu, with Show in folder and Remove from list); Recent and stack colors open
+- [x] Library view options: sort by last opened, last edited, name, item count or size; grid / list view; tag filter chips above the grid
+- [x] Board cards show item count, last edited time, file size, pinned state and an "unsaved" badge when a recovery journal is pending; the library header shows totals
 - [ ] Library health: boards with missing linked files (with relink), duplicate images across boards by content hash, largest boards
 - [ ] All Milanote-checklist items tagged M5 (templates, search inside boards)
 

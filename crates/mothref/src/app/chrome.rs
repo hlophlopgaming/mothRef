@@ -119,6 +119,21 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
                 !card.pinned,
             )));
         }
+        if let Some(index) = intent.reveal {
+            intents.push(Intent::Library(moth_platform::library::Request::Reveal(
+                ctx.cards[index].path.clone(),
+            )));
+        }
+        if let Some(index) = intent.forget {
+            intents.push(Intent::Library(moth_platform::library::Request::Forget(
+                ctx.cards[index].path.clone(),
+            )));
+        }
+        if let Some(index) = intent.trash {
+            intents.push(Intent::Library(moth_platform::library::Request::Trash(
+                ctx.cards[index].path.clone(),
+            )));
+        }
     }
     intents.extend(super::intent::intents_from_actions(actions));
     intents

@@ -111,6 +111,8 @@ pub enum Icon {
     Restore,
     /// Drag handle that moves the window.
     Grip,
+    /// More actions: three dots in a row.
+    More,
     /// Click-through control.
     Pointer,
     /// Open in another application (the system image viewer).
@@ -518,6 +520,11 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
                 for y in [5., 9., 13.] {
                     ui.painter().circle_filled(p(x, y), 1.2 * scale, color);
                 }
+            }
+        }
+        Icon::More => {
+            for x in [4., 9., 14.] {
+                ui.painter().circle_filled(p(x, 9.), 1.5 * scale, color);
             }
         }
     }

@@ -40,6 +40,22 @@ impl Workspace {
     pub(super) fn recent_paths(&self) -> &[std::path::PathBuf] {
         &self.recent_paths
     }
+    /// Whether a board file is open in this window, as the current board or a tab.
+    pub(super) fn is_open(&self, path: &std::path::Path) -> bool {
+        std::iter::once(&self.board)
+            .chain(&self.tabs)
+            .any(|document| std::path::Path::new(&document.file.path) == path)
+    }
+    /// A board left the library list: it must not come back with the next refresh.
+    pub(super) fn forget_recent(&mut self, path: &std::path::Path) {
+        self.recent_paths.retain(|p| p != path);
+    }
+    /// Boards whose recovery journal from an earlier session still holds changes.
+    pub(super) fn unsaved_boards(&self) -> impl Iterator<Item = &std::path::Path> {
+        self.recovery_paths
+            .iter()
+            .filter_map(|entry| entry.destination.as_deref())
+    }
     pub(super) fn recovery_paths(&self) -> &[moth_platform::boards::Recovery] {
         &self.recovery_paths
     }

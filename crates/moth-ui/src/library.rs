@@ -16,6 +16,10 @@ pub struct Card {
     pub count: usize,
     /// File size.
     pub bytes: u64,
+    /// Last change of the board file.
+    pub modified: Option<std::time::SystemTime>,
+    /// A recovery journal from an earlier session holds changes not saved to the file.
+    pub unsaved: bool,
     /// Catalog pin.
     pub pinned: bool,
     /// Durable catalog annotations.
@@ -36,12 +40,58 @@ pub struct Library {
     pub search: String,
     /// Accessible list view alternative.
     pub list: bool,
-    /// User-selected alphabetical order; default preserves recent-file order.
-    pub alphabetical: bool,
+    /// Card order; the default keeps the recent-file order.
+    pub order: Order,
     /// Active tag collection.
     pub tag: Option<String>,
     editing: Option<usize>,
     edit_tags: String,
+    trashing: Option<usize>,
+}
+/// How the cards are ordered.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Order {
+    /// Most recently opened first, as the recent-file list has them.
+    #[default]
+    LastOpened,
+    /// Most recently changed file first.
+    LastEdited,
+    /// Alphabetical, ignoring case.
+    Name,
+    /// Most items first.
+    Items,
+    /// Largest file first.
+    Size,
+}
+impl Order {
+    const ALL: [Self; 5] = [
+        Self::LastOpened,
+        Self::LastEdited,
+        Self::Name,
+        Self::Items,
+        Self::Size,
+    ];
+    fn label(self) -> &'static str {
+        text(match self {
+            Self::LastOpened => Text::LastOpened,
+            Self::LastEdited => Text::LastEdited,
+            Self::Name => Text::Name,
+            Self::Items => Text::OrderItems,
+            Self::Size => Text::OrderSize,
+        })
+    }
+    /// Sorts card indices; ties keep the recent-file order.
+    fn sort(self, cards: &[Card], indices: &mut [usize]) {
+        match self {
+            Self::LastOpened => {}
+            Self::LastEdited => {
+                indices.sort_by_key(|&i| std::cmp::Reverse(cards[i].modified));
+            }
+            Self::Name => indices.sort_by_cached_key(|&i| cards[i].title.to_lowercase()),
+            Self::Items => indices.sort_by_key(|&i| std::cmp::Reverse(cards[i].count)),
+            Self::Size => indices.sort_by_key(|&i| std::cmp::Reverse(cards[i].bytes)),
+        }
+    }
 }
 /// Catalog intent leaves file operations to the platform worker.
 #[derive(Default)]
@@ -56,12 +106,54 @@ pub struct Intent {
     pub browse: bool,
     /// Persist bounded tags on the indexing worker.
     pub tags: Option<(usize, String)>,
+    /// Show the board file in the system file manager.
+    pub reveal: Option<usize>,
+    /// Take the board off the list; the file stays.
+    pub forget: Option<usize>,
+    /// Move the board file to the system trash (already confirmed).
+    pub trash: Option<usize>,
 }
 impl Library {
     /// Closing the panel must not reattach an old draft to a different catalog entry.
     pub fn dismiss_editor(&mut self) {
         self.editing = None;
         self.edit_tags.clear();
+        self.trashing = None;
+    }
+    /// The actions of one card, shared by its right-click menu and its "⋯" button.
+    fn card_menu(&mut self, ui: &mut egui::Ui, card: &Card, index: usize, intent: &mut Intent) {
+        if ui.button(text(Text::Open)).clicked() {
+            intent.open = Some(index);
+        }
+        if ui
+            .button(text(if card.pinned {
+                Text::UnpinBoard
+            } else {
+                Text::PinBoard
+            }))
+            .clicked()
+        {
+            intent.pin = Some(index);
+        }
+        if ui.button(text(Text::EditTags)).clicked() {
+            self.editing = Some(index);
+            self.edit_tags = card.tags.join(", ");
+        }
+        if ui.button(text(Text::ShowInFolder)).clicked() {
+            intent.reveal = Some(index);
+        }
+        ui.separator();
+        if ui.button(text(Text::RemoveFromList)).clicked() {
+            intent.forget = Some(index);
+        }
+        if ui
+            .button(
+                egui::RichText::new(text(Text::MoveToTrash)).color(crate::tokens(ui.ctx()).danger),
+            )
+            .clicked()
+        {
+            self.trashing = Some(index);
+        }
     }
     /// Displays real recent boards, with responsive grid and touch-friendly navigation.
     pub fn show(&mut self, ui: &mut egui::Ui, cards: &[Card]) -> Intent {
@@ -80,9 +172,10 @@ impl Library {
                 .show(ui, |ui| {
                     self.search(ui);
                     ui.add_space(crate::tokens(ui.ctx()).space_m as f32);
-                    for (icon, label, pinned) in [
-                        (Icon::Grid, Text::AllBoards, false),
-                        (Icon::Pin, Text::Pinned, true),
+                    let pinned_count = cards.iter().filter(|c| c.pinned).count();
+                    for (icon, label, pinned, count) in [
+                        (Icon::Grid, Text::AllBoards, false, cards.len()),
+                        (Icon::Pin, Text::Pinned, true, pinned_count),
                     ] {
                         ui.horizontal(|ui| {
                             icons::paint(
@@ -105,6 +198,7 @@ impl Library {
                                 self.stack = None;
                                 self.tag = None;
                             }
+                            side_count(ui, count);
                         });
                     }
                     ui.add_space(crate::tokens(ui.ctx()).space_section as f32);
@@ -137,6 +231,7 @@ impl Library {
                                 self.stack = Some(stack.into());
                                 self.pinned = false;
                             }
+                            side_count(ui, cards.iter().filter(|c| c.stack == stack).count());
                         });
                     }
                     ui.add_space(crate::tokens(ui.ctx()).space_xl as f32);
@@ -147,14 +242,20 @@ impl Library {
                             .color(crate::tokens(ui.ctx()).text_muted),
                     );
                     for tag in tags.iter().take(12) {
-                        if ui
-                            .selectable_label(self.tag.as_ref() == Some(*tag), format!("#{tag}"))
-                            .clicked()
-                        {
-                            self.tag = Some((*tag).clone());
-                            self.stack = None;
-                            self.pinned = false;
-                        }
+                        ui.horizontal(|ui| {
+                            if ui
+                                .selectable_label(
+                                    self.tag.as_ref() == Some(*tag),
+                                    format!("#{tag}"),
+                                )
+                                .clicked()
+                            {
+                                self.tag = Some((*tag).clone());
+                                self.stack = None;
+                                self.pinned = false;
+                            }
+                            side_count(ui, cards.iter().filter(|c| c.tags.contains(tag)).count());
+                        });
                     }
                     ui.add_space(crate::tokens(ui.ctx()).space_l as f32);
                 });
@@ -198,30 +299,23 @@ impl Library {
                             self.list = false;
                         }
                         egui::ComboBox::from_id_salt("library_order")
-                            .selected_text(if self.alphabetical {
-                                text(Text::Name)
-                            } else {
-                                text(Text::LastOpened)
-                            })
+                            .selected_text(self.order.label())
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(
-                                    &mut self.alphabetical,
-                                    false,
-                                    text(Text::LastOpened),
-                                );
-                                ui.selectable_value(&mut self.alphabetical, true, text(Text::Name));
+                                for order in Order::ALL {
+                                    ui.selectable_value(&mut self.order, order, order.label());
+                                }
                             });
                     });
                 });
                 ui.label(
                     egui::RichText::new(format!(
-                        "{}  ·  {:.1} MB",
+                        "{}  ·  {}",
                         crate::counted(
                             crate::locale(),
                             cards.len(),
                             [Text::BoardOne, Text::BoardFew, Text::BoardMany]
                         ),
-                        cards.iter().map(|c| c.bytes).sum::<u64>() as f64 / 1_000_000.
+                        size(cards.iter().map(|c| c.bytes).sum::<u64>())
                     ))
                     .small()
                     .color(crate::tokens(ui.ctx()).text_muted),
@@ -277,9 +371,7 @@ impl Library {
                     })
                     .map(|(i, _)| i)
                     .collect();
-                if self.alphabetical {
-                    indices.sort_by(|&a, &b| cards[a].title.cmp(&cards[b].title));
-                }
+                self.order.sort(cards, &mut indices);
                 if indices.is_empty() {
                     ui.add_space(crate::tokens(ui.ctx()).space_empty as f32);
                     ui.vertical_centered(|ui| {
@@ -394,12 +486,20 @@ impl Library {
                                                 egui::StrokeKind::Inside,
                                             );
                                         }
+                                        if c.unsaved {
+                                            unsaved_badge(ui, rect);
+                                        }
                                         if response.clicked() {
                                             intent.open = Some(index);
                                         }
-                                        if let Some(error) = &c.error {
-                                            response.on_hover_text(error);
-                                        }
+                                        let response = if let Some(error) = &c.error {
+                                            response.on_hover_text(error)
+                                        } else {
+                                            response
+                                        };
+                                        response.context_menu(|ui| {
+                                            self.card_menu(ui, c, index, &mut intent);
+                                        });
                                         ui.horizontal(|ui| {
                                             if ui
                                                 .add(
@@ -423,19 +523,23 @@ impl Library {
                                             {
                                                 intent.pin = Some(index);
                                             }
+                                            let more = icons::button(
+                                                ui,
+                                                Icon::More,
+                                                text(Text::More),
+                                                false,
+                                            );
+                                            egui::Popup::menu(&more).show(|ui| {
+                                                self.card_menu(ui, c, index, &mut intent);
+                                            });
                                         });
-                                        ui.label(
-                                            egui::RichText::new(format!(
-                                                "{}  ·  {}",
-                                                crate::counted(
-                                                    crate::locale(),
-                                                    c.count,
-                                                    [Text::ItemOne, Text::ItemFew, Text::ItemMany]
-                                                ),
-                                                c.stack
-                                            ))
-                                            .small()
-                                            .color(crate::tokens(ui.ctx()).text_muted),
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(card_details(c, self.list))
+                                                    .small()
+                                                    .color(crate::tokens(ui.ctx()).text_muted),
+                                            )
+                                            .truncate(),
                                         );
                                         ui.horizontal_wrapped(|ui| {
                                             if ui.small_button(text(Text::Tags)).clicked() {
@@ -480,6 +584,49 @@ impl Library {
                 });
             });
         }
+        if let Some(index) = self.trashing.filter(|&i| i < cards.len()) {
+            let tokens = crate::tokens(ui.ctx());
+            egui::Modal::new(egui::Id::new("catalog_trash"))
+                .frame(
+                    egui::Frame::popup(&ui.ctx().global_style())
+                        .corner_radius(tokens.radius_l)
+                        .inner_margin(egui::Margin::same(tokens.space_xl as i8)),
+                )
+                .show(ui.ctx(), |ui| {
+                    ui.set_width(
+                        (tokens.space_xl as f32 * 15.)
+                            .min(ui.ctx().content_rect().width() - tokens.space_xl as f32 * 4.)
+                            .max(1.),
+                    );
+                    icons::dialog_title(
+                        ui,
+                        &text(Text::TrashQuestion).replace("{name}", &cards[index].title),
+                    );
+                    ui.label(egui::RichText::new(text(Text::TrashBody)).color(tokens.text_muted));
+                    ui.add_space(tokens.space_l as f32);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // The danger fill is checked for contrast against the surface color.
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new(text(Text::TrashConfirm))
+                                        .color(tokens.surface),
+                                )
+                                .fill(tokens.danger),
+                            )
+                            .clicked()
+                        {
+                            intent.trash = Some(index);
+                            self.trashing = None;
+                        }
+                        if ui.button(text(Text::Cancel)).clicked() {
+                            self.trashing = None;
+                        }
+                    });
+                });
+        } else {
+            self.trashing = None;
+        }
         intent
     }
     fn search(&mut self, ui: &mut egui::Ui) {
@@ -510,9 +657,101 @@ impl Library {
     }
 }
 
+/// The muted count at the right end of a sidebar row.
+fn side_count(ui: &mut egui::Ui, count: usize) {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.label(
+            egui::RichText::new(count.to_string())
+                .small()
+                .color(crate::tokens(ui.ctx()).text_muted),
+        );
+    });
+}
+/// A file size the way file managers show it: "740 KB", "4.2 MB".
+fn size(bytes: u64) -> String {
+    if bytes < 1_000_000 {
+        format!("{} KB", bytes.div_ceil(1000))
+    } else {
+        format!("{:.1} MB", bytes as f64 / 1_000_000.)
+    }
+}
+/// "11 items · 4.2 MB · 2 h ago", plus the stack in the list view where there is room for it.
+fn card_details(card: &Card, list: bool) -> String {
+    let mut parts = vec![crate::counted(
+        crate::locale(),
+        card.count,
+        [Text::ItemOne, Text::ItemFew, Text::ItemMany],
+    )];
+    parts.push(size(card.bytes));
+    if let Some(modified) = card.modified {
+        parts.push(crate::ago(modified));
+    }
+    if list && !card.stack.is_empty() {
+        parts.push(card.stack.clone());
+    }
+    parts.join("  ·  ")
+}
+/// A "Not saved" chip in the preview's corner for a board with a pending recovery journal.
+fn unsaved_badge(ui: &mut egui::Ui, preview: egui::Rect) {
+    let tokens = crate::tokens(ui.ctx());
+    let font = egui::TextStyle::Small.resolve(ui.style());
+    let galley =
+        ui.painter()
+            .layout_no_wrap(text(Text::UnsavedChip).to_owned(), font, tokens.danger);
+    let rect = egui::Rect::from_min_size(
+        preview.min + egui::vec2(8., 8.),
+        galley.size() + egui::vec2(12., 6.),
+    );
+    ui.painter()
+        .rect_filled(rect, tokens.radius_m as f32, tokens.surface_raised);
+    ui.painter()
+        .galley(rect.min + egui::vec2(6., 3.), galley, tokens.danger);
+    ui.interact(
+        rect,
+        ui.id()
+            .with(("unsaved", preview.min.x as i32, preview.min.y as i32)),
+        egui::Sense::hover(),
+    )
+    .on_hover_text(text(Text::UnsavedHint));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn orders_sort_by_their_own_field_and_keep_recent_order_on_ties() {
+        let now = std::time::SystemTime::now();
+        let card = |title: &str, count, bytes, age: u64| Card {
+            path: format!("{title}.moth").into(),
+            title: title.into(),
+            stack: String::new(),
+            count,
+            bytes,
+            modified: Some(now - std::time::Duration::from_secs(age)),
+            unsaved: false,
+            pinned: false,
+            tags: vec![],
+            error: None,
+            previews: vec![],
+        };
+        let cards = [
+            card("beta", 3, 10, 50),
+            card("Alpha", 9, 5, 10),
+            card("gamma", 3, 99, 900),
+        ];
+        let sorted = |order: Order| {
+            let mut indices = vec![0, 1, 2];
+            order.sort(&cards, &mut indices);
+            indices
+        };
+        assert_eq!(sorted(Order::LastOpened), [0, 1, 2]);
+        assert_eq!(sorted(Order::LastEdited), [1, 0, 2]);
+        assert_eq!(sorted(Order::Name), [1, 0, 2]);
+        assert_eq!(sorted(Order::Items), [1, 0, 2]);
+        assert_eq!(sorted(Order::Size), [2, 0, 1]);
+        assert_eq!(size(740_000), "740 KB");
+        assert_eq!(size(4_200_000), "4.2 MB");
+    }
     #[test]
     fn card_labels_flow_below_previews() {
         let ctx = egui::Context::default();
@@ -524,6 +763,8 @@ mod tests {
                 stack: "Characters".into(),
                 count: 11,
                 bytes: 100,
+                modified: None,
+                unsaved: false,
                 pinned: false,
                 tags: vec![],
                 error: None,

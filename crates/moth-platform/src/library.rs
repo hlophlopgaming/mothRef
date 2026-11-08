@@ -23,6 +23,8 @@ pub struct Entry {
     pub count: usize,
     /// Disk usage can be displayed without stat calls on the UI thread.
     pub bytes: u64,
+    /// Last write of the board file, for "edited 2 h ago" and sorting.
+    pub modified: Option<std::time::SystemTime>,
     /// A failed board remains visible with an explanation.
     pub error: Option<String>,
     /// Rebuildable previews never replace the originals.
@@ -33,7 +35,14 @@ pub struct Worker {
     /// Refresh requests contain at most twenty native paths.
     pub requests: crossbeam_channel::Sender<Request>,
     /// Entries arrive progressively, with backpressure on pixel ownership.
-    pub results: crossbeam_channel::Receiver<Result<Entry, String>>,
+    pub results: crossbeam_channel::Receiver<Result<Update, String>>,
+}
+/// What the worker reports back to the library screen.
+pub enum Update {
+    /// A board's card, new or refreshed.
+    Entry(Entry),
+    /// The board left the list (removed from it, or moved to the trash).
+    Removed(PathBuf),
 }
 /// Catalog operations stay off the main thread.
 pub enum Request {
@@ -43,6 +52,12 @@ pub enum Request {
     Pin(PathBuf, bool),
     /// Atomically replace a board's bounded tag list.
     Tags(PathBuf, String),
+    /// Show the board file selected in the system file manager.
+    Reveal(PathBuf),
+    /// Take the board off the recent list and the pins; the file stays where it is.
+    Forget(PathBuf),
+    /// Move the board file to the system trash, then forget it. Never a permanent delete.
+    Trash(PathBuf),
 }
 fn pins(storage: &super::DesktopStorage) -> std::io::Result<Vec<PathBuf>> {
     let path = storage.base_directory()?.join("pins.txt");
@@ -105,6 +120,25 @@ fn pin(storage: &super::DesktopStorage, path: PathBuf, enabled: bool) -> std::io
             .as_bytes(),
     )
 }
+/// Removes a board from the recent list and the pins. Its tags are kept, so a board
+/// that is opened again comes back with them.
+fn forget(storage: &super::DesktopStorage, path: &std::path::Path) -> std::io::Result<()> {
+    pin(storage, path.to_owned(), false)?;
+    let catalog = storage.base_directory()?.join("recent.txt");
+    let mut text = String::new();
+    match File::open(&catalog) {
+        Ok(file) => {
+            file.take(64 * 1024).read_to_string(&mut text)?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    }
+    let kept: Vec<_> = text
+        .lines()
+        .filter(|line| std::path::Path::new(line) != path)
+        .collect();
+    write_catalog(storage, "recent.txt", kept.join("\n").as_bytes())
+}
 fn parse_tags(text: &str) -> std::io::Result<Vec<String>> {
     if text.len() > 2048 {
         return Err(std::io::Error::other("Tags exceed the metadata budget"));
@@ -157,12 +191,15 @@ fn inspect(path: PathBuf) -> Entry {
         tags: Vec::new(),
         count: 0,
         bytes: 0,
+        modified: None,
         error: None,
         previews: Vec::new(),
     };
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let mut file = File::open(&entry.path)?;
-        entry.bytes = file.metadata()?.len();
+        let metadata = file.metadata()?;
+        entry.bytes = metadata.len();
+        entry.modified = metadata.modified().ok();
         let board = board::read(&mut file)?;
         entry.count = board.scene.len();
         let mut hashes = Vec::new();
@@ -229,6 +266,34 @@ impl Worker {
                             }
                             vec![path]
                         }
+                        Request::Reveal(path) => {
+                            if let Err(error) = super::reveal(&path) {
+                                if tx.send(Err(error.to_string())).is_err() {
+                                    return;
+                                }
+                                wake();
+                            }
+                            continue;
+                        }
+                        Request::Forget(path) => {
+                            let update = forget(&storage, &path).map(|()| Update::Removed(path));
+                            if tx.send(update.map_err(|e| e.to_string())).is_err() {
+                                return;
+                            }
+                            wake();
+                            continue;
+                        }
+                        Request::Trash(path) => {
+                            let update = trash::delete(&path)
+                                .map_err(std::io::Error::other)
+                                .and_then(|()| forget(&storage, &path))
+                                .map(|()| Update::Removed(path));
+                            if tx.send(update.map_err(|e| e.to_string())).is_err() {
+                                return;
+                            }
+                            wake();
+                            continue;
+                        }
                         Request::Pin(path, enabled) => {
                             if let Err(error) = pin(&storage, path.clone(), enabled) {
                                 if tx.send(Err(error.to_string())).is_err() {
@@ -268,7 +333,7 @@ impl Worker {
                                 wake();
                             }
                         }
-                        if tx.send(Ok(entry)).is_err() {
+                        if tx.send(Ok(Update::Entry(entry))).is_err() {
                             return;
                         }
                         wake();
@@ -297,6 +362,17 @@ mod tests {
         assert_eq!(tags(&storage, &path).unwrap(), normalized);
         pin(&storage, path.clone(), false).unwrap();
         assert!(pins(&storage).unwrap().is_empty());
+        // Removing a board from the list touches the recent list and pins, not its tags.
+        let other = PathBuf::from("other.moth");
+        std::fs::write(root.join("recent.txt"), "example.moth\nother.moth").unwrap();
+        pin(&storage, path.clone(), true).unwrap();
+        forget(&storage, &path).unwrap();
+        assert!(pins(&storage).unwrap().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(root.join("recent.txt")).unwrap(),
+            other.to_str().unwrap()
+        );
+        assert_eq!(tags(&storage, &path).unwrap(), normalized);
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]

@@ -249,6 +249,32 @@ pub enum Text {
     ClosePanel,
     /// The system color picker could not be opened.
     NoSystemPicker,
+    /// Library order: by the board file's last change.
+    LastEdited,
+    /// Library order: by number of items.
+    OrderItems,
+    /// Library order: by file size.
+    OrderSize,
+    /// Library card menu.
+    PinBoard,
+    /// Library card menu.
+    UnpinBoard,
+    /// Library card menu: reveal the file in the file manager.
+    ShowInFolder,
+    /// Library card menu: forget the board, keep the file.
+    RemoveFromList,
+    /// Library card menu.
+    MoveToTrash,
+    /// Trash confirmation title.
+    TrashQuestion,
+    /// Trash confirmation text.
+    TrashBody,
+    /// Trash confirmation button.
+    TrashConfirm,
+    /// Trash refused for an open board.
+    BoardIsOpen,
+    /// Library badge tooltip.
+    UnsavedHint,
     /// Screen color picker text.
     ColorCopied,
     /// Screen color picker text.
@@ -1056,7 +1082,7 @@ pub enum Text {
 }
 mod localization;
 pub use localization::{
-    Locale, Message, counted, item_counts, locale, set_locale, text, translated,
+    Locale, Message, ago, counted, item_counts, locale, set_locale, text, translated,
 };
 
 /// House theme tokens and application.
