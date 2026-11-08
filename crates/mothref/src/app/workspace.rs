@@ -3,6 +3,10 @@
 use super::*;
 use document::MAX_TABS;
 
+/// Files queued for adding at once. The queue holds only small handles (the files
+/// are read later by the bounded decode workers), so a drop of thousands of images
+/// fits; past this the rest are refused with a notice.
+const MAX_WAITING: usize = 100_000;
 pub(super) enum TabChange {
     None,
     Switched,
@@ -375,6 +379,7 @@ impl Workspace {
             // Reduction reads the file, so it runs on the clipboard worker; the file
             // comes back as a reduced copy or, when it already fits, unchanged.
             self.board.intake.reducing.push_back(path);
+            self.board.intake.queued += 1;
             self.send_reductions();
             return TabChange::None;
         }
@@ -449,7 +454,7 @@ impl Workspace {
             self.board.notices.message = moth_ui::Text::BoardFull.into();
             return TabChange::None;
         }
-        if self.board.intake.waiting.len() >= 1024 {
+        if self.board.intake.waiting.len() >= MAX_WAITING {
             self.board.notices.message = moth_ui::Text::ImportBusy.into();
             return TabChange::None;
         }
@@ -458,7 +463,10 @@ impl Workspace {
             None => self.board.storage().register(path),
         };
         match source {
-            Ok(h) => self.board.intake.waiting.push(h),
+            Ok(h) => {
+                self.board.intake.waiting.push(h);
+                self.board.intake.queued += 1;
+            }
             Err(e) => self.board.notices.message = e.to_string().into(),
         }
         self.queue_decodes(format);
@@ -898,6 +906,7 @@ impl Workspace {
         }
         self.queue_decodes(pump.format);
         if self.board.idle() {
+            self.board.intake.queued = 0;
             if let Some(added) = &mut self.board.notices.added {
                 if added.needs_fit {
                     let ids = added.ids.iter().copied().collect();

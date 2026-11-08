@@ -599,3 +599,4 @@ FileMissing = File not found
 FileMissingHint = The board file was moved, renamed or deleted. Click the card to find it.
 FindFile = Find…
 FindFileTitle = Where is “{name}” now?
+AddingImages = Adding images: {done} of {total}

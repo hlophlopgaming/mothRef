@@ -229,10 +229,12 @@ impl Tools {
         if !self.edit.open && !self.arrange.open && !self.export.open && !self.pickers.open {
             viewer_notice(ui.ctx(), &mut self.viewer, board, settings.reduced_motion);
             flash_notice(ui.ctx(), board, settings.reduced_motion);
+            import_notice(ui.ctx(), board, settings.reduced_motion);
             return Vec::new();
         }
         viewer_notice(ui.ctx(), &mut self.viewer, board, settings.reduced_motion);
         flash_notice(ui.ctx(), board, settings.reduced_motion);
+        import_notice(ui.ctx(), board, settings.reduced_motion);
         let mut intents = Vec::new();
         let items: Vec<_> = board
             .selection
@@ -900,10 +902,35 @@ const NOTICE_FADE: f32 = 0.35;
 /// What a bottom notice says: work under way, or how it ended.
 enum NoticeContent<'a> {
     Busy(Text),
+    /// A spinner with a text that changes as work goes on.
+    Progress(String),
     Done {
         message: &'a moth_ui::Message,
         ok: bool,
     },
+}
+/// "Adding images: 240 of 1365" while several files are being added.
+fn import_notice(ctx: &egui::Context, board: &Document, reduced_motion: bool) {
+    let Some((done, total)) = board.import_progress() else {
+        return;
+    };
+    bottom_notice(
+        ctx,
+        "import_progress",
+        &[
+            "bottom_toolbar",
+            "selection_badge",
+            "added_feedback",
+            "viewer_feedback",
+        ],
+        1.,
+        reduced_motion,
+        NoticeContent::Progress(
+            text(Text::AddingImages)
+                .replace("{done}", &done.to_string())
+                .replace("{total}", &total.to_string()),
+        ),
+    );
 }
 /// A short-lived message about something that did not happen (for now: a paste with
 /// nothing usable on the clipboard), so it is seen instead of hiding in the status line.
@@ -930,6 +957,7 @@ fn flash_notice(ctx: &egui::Context, board: &Document, reduced_motion: bool) {
             "selection_badge",
             "added_feedback",
             "viewer_feedback",
+            "import_progress",
         ],
         alpha,
         reduced_motion,
@@ -969,6 +997,10 @@ fn bottom_notice(
                         NoticeContent::Busy(label) => {
                             ui.spinner();
                             ui.label(text(label));
+                        }
+                        NoticeContent::Progress(label) => {
+                            ui.spinner();
+                            ui.label(label);
                         }
                         NoticeContent::Done { message, ok } => {
                             let (icon, _) = ui.allocate_exact_size(

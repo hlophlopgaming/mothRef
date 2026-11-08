@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Up to 100,000 images can be added in one go (dropped, pasted from a folder or chosen in Open file); before, only the first 1,024 were added and the rest were refused with "Import queue is full". While several images are being added, a notice at the bottom counts them: "Adding images: 240 of 1365".
 - Library folders: create folders in the library sidebar (＋ next to Folders), drag board cards onto them or use a card's ⋯ › Folders, and give each folder a color, shown as a dot on its boards. Folders only group boards: the files stay where they are on disk, a board can be in several folders, and deleting a folder keeps its boards. The folders that came from where files lived on disk are gone.
 - The library now remembers every board you opened, not just the last twenty: All boards shows them all, Recent shows the recent list. A board whose file was moved or deleted is marked "File not found"; click it to find the file, and its pin, tags and folders follow. Pins and tags carry over on first start.
 - Library: each board card shows its item count, file size and when the file was last changed ("2 h ago"), and a "Not saved" chip when a recovery journal from an earlier session holds changes. Boards can be sorted by last opened, last edited, name, item count or file size. The sidebar shows how many boards each entry, stack and tag holds.

@@ -599,3 +599,4 @@ FileMissing = Файл не найден
 FileMissingHint = Файл доски перемещён, переименован или удалён. Нажмите на карточку, чтобы найти его.
 FindFile = Найти…
 FindFileTitle = Где теперь «{name}»?
+AddingImages = Добавление изображений: {done} из {total}

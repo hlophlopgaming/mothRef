@@ -249,6 +249,8 @@ pub enum Text {
     ClosePanel,
     /// The system color picker could not be opened.
     NoSystemPicker,
+    /// Progress while several images are being added.
+    AddingImages,
     /// Library view: the recent list.
     Recent,
     /// Library sidebar heading.

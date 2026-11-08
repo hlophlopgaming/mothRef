@@ -146,6 +146,8 @@ pub(super) struct Intake {
     pub(super) batching: bool,
     /// Item ids inserted in the current import/paste burst, cleared when it drains.
     pub(super) burst: Vec<Uuid>,
+    /// Files added since the board was last idle, for "Adding images: N of M".
+    pub(super) queued: usize,
 }
 /// Messages and prompts waiting for the user.
 #[derive(Default)]
@@ -658,6 +660,16 @@ impl Document {
         } else {
             self.view.fit(&self.scene);
         }
+    }
+    /// Files added and still to come in the current burst, while more than one file is
+    /// being added.
+    pub(super) fn import_progress(&self) -> Option<(usize, usize)> {
+        let total = self.intake.queued;
+        let remaining = self.intake.waiting.len()
+            + self.intake.reducing.len()
+            + self.intake.pasting
+            + self.intake.pending.len();
+        (total > 1 && remaining > 0).then(|| (total.saturating_sub(remaining), total))
     }
     pub(super) fn idle(&self) -> bool {
         self.intake.pasting == 0
