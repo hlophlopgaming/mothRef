@@ -50,6 +50,14 @@ impl Workspace {
     pub(super) fn forget_recent(&mut self, path: &std::path::Path) {
         self.recent_paths.retain(|p| p != path);
     }
+    /// A board file was found at a new place: the recent list follows it.
+    pub(super) fn move_recent(&mut self, from: &std::path::Path, to: &std::path::Path) {
+        for path in &mut self.recent_paths {
+            if path == from {
+                *path = to.to_owned();
+            }
+        }
+    }
     /// Boards whose recovery journal from an earlier session still holds changes.
     pub(super) fn unsaved_boards(&self) -> impl Iterator<Item = &std::path::Path> {
         self.recovery_paths

@@ -507,6 +507,45 @@ impl App {
         }
     }
 
+    /// The library's "Find…": asks where a moved board file is now, with the system
+    /// open dialog on its own thread; the answer relinks the library record.
+    fn find_board(&mut self, old: std::path::PathBuf) {
+        if self.library_screen.relink.is_some() {
+            return;
+        }
+        let Some(window) = self.shell.window.clone() else {
+            return;
+        };
+        let name = old
+            .file_stem()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mut dialog = rfd::FileDialog::new()
+            .set_title(moth_ui::text(moth_ui::Text::FindFileTitle).replace("{name}", &name))
+            .add_filter(moth_ui::text(moth_ui::Text::Path), &["moth"])
+            .set_parent(window.as_ref());
+        if let Some(folder) = old.parent() {
+            dialog = dialog.set_directory(folder);
+        }
+        let (send, receive) = crossbeam_channel::bounded(1);
+        let wake = self.shell.wake();
+        match std::thread::Builder::new()
+            .name("find-board".into())
+            .spawn(move || {
+                let path =
+                    std::panic::catch_unwind(move || dialog.pick_file()).unwrap_or_else(|_| {
+                        tracing::error!("native file picker panicked");
+                        None
+                    });
+                let _ = send.send(path);
+                wake();
+                drop(window);
+            }) {
+            Ok(_) => self.library_screen.relink = Some((old, receive)),
+            Err(error) => self.workspace.board.notices.message = error.to_string().into(),
+        }
+    }
+
     /// Asks where to save a board that has no file yet, with the system "Save as"
     /// dialog on its own thread like the open picker. `modal.dialog` marks it open,
     /// so the board stays blocked until it answers.
@@ -946,12 +985,70 @@ impl App {
         {
             self.workspace.refresh_library = false;
         }
+        if let Some((old, answer)) = &self.library_screen.relink
+            && let Ok(picked) = answer.try_recv()
+        {
+            if let Some(new) = picked {
+                let request = moth_platform::library::Request::Relink(old.clone(), new.clone());
+                if self
+                    .library_screen
+                    .worker
+                    .requests
+                    .try_send(request)
+                    .is_ok()
+                {
+                    self.library_screen.relinking = Some((old.clone(), new));
+                } else {
+                    self.workspace.board.notices.message = moth_ui::Text::StorageBusy.into();
+                }
+            }
+            self.library_screen.relink = None;
+        }
         while let Ok(result) = self.library_screen.worker.results.try_recv() {
             match result {
                 Ok(moth_platform::library::Update::Removed(path)) => {
-                    self.workspace.forget_recent(&path);
+                    match self.library_screen.relinking.take() {
+                        Some((old, new)) if old == path => self.workspace.move_recent(&old, &new),
+                        other => {
+                            self.library_screen.relinking = other;
+                            self.workspace.forget_recent(&path);
+                        }
+                    }
                     self.library_screen.cards.retain(|card| card.path != path);
                     self.library_screen.catalog.dismiss_editor();
+                }
+                Ok(moth_platform::library::Update::Folders(folders)) => {
+                    self.library_screen.folders = folders
+                        .into_iter()
+                        .map(|f| moth_ui::library::Folder {
+                            id: f.id.as_u128(),
+                            name: f.name,
+                            color: f.color,
+                        })
+                        .collect();
+                    // A deleted folder leaves no dots on the cards.
+                    let ids: Vec<u128> = self.library_screen.folders.iter().map(|f| f.id).collect();
+                    for card in &mut self.library_screen.cards {
+                        card.folders.retain(|id| ids.contains(id));
+                    }
+                    if let moth_ui::library::View::Folder(id) = self.library_screen.catalog.view
+                        && !ids.contains(&id)
+                    {
+                        self.library_screen.catalog.view = moth_ui::library::View::All;
+                    }
+                }
+                Ok(moth_platform::library::Update::Meta(path, meta)) => {
+                    if let Some(card) = self
+                        .library_screen
+                        .cards
+                        .iter_mut()
+                        .find(|c| c.path == path)
+                    {
+                        card.pinned = meta.pinned;
+                        card.tags = meta.tags;
+                        card.folders = meta.folders.iter().map(|id| id.as_u128()).collect();
+                        card.opened = meta.opened;
+                    }
                 }
                 Ok(moth_platform::library::Update::Entry(entry)) if self.workspace.library => {
                     let path = entry.path;
@@ -970,12 +1067,6 @@ impl App {
                         .and_then(|n| n.to_str())
                         .unwrap_or(moth_ui::text(moth_ui::Text::Untitled))
                         .to_owned();
-                    let stack = path
-                        .parent()
-                        .and_then(|p| p.file_name())
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("")
-                        .to_owned();
                     let previews = entry
                         .previews
                         .into_iter()
@@ -992,16 +1083,24 @@ impl App {
                         })
                         .collect();
                     let unsaved = self.workspace.unsaved_boards().any(|p| p == path);
+                    let recent = self
+                        .workspace
+                        .recent_paths()
+                        .iter()
+                        .position(|p| p == &path);
                     let card = moth_ui::library::Card {
                         path,
                         title,
-                        stack,
+                        folders: entry.meta.folders.iter().map(|id| id.as_u128()).collect(),
+                        recent,
+                        opened: entry.meta.opened,
+                        missing: entry.missing,
                         count: entry.count,
                         bytes: entry.bytes,
                         modified: entry.modified,
                         unsaved,
-                        pinned: entry.pinned,
-                        tags: entry.tags,
+                        pinned: entry.meta.pinned,
+                        tags: entry.meta.tags,
                         error: entry.error,
                         previews,
                     };
@@ -1081,6 +1180,7 @@ impl App {
             | Intent::Export(..)
             | Intent::DismissArrangePrompt) => self.apply_board(intent, event_loop),
             intent @ (Intent::Library(..)
+            | Intent::RelinkBoard(..)
             | Intent::Home
             | Intent::New
             | Intent::Open
@@ -2186,6 +2286,7 @@ impl App {
                         target_pin: self.window.target_pin,
                         catalog: &mut self.library_screen.catalog,
                         cards: &self.library_screen.cards,
+                        folders: &self.library_screen.folders,
                         window,
                         window_bar: &mut self.window.window_bar,
                         windows: &window_titles,

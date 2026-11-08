@@ -28,6 +28,7 @@ impl App {
                     self.workspace.board.notices.message = moth_ui::Text::StorageBusy.into();
                 }
             }
+            Intent::RelinkBoard(path) => self.find_board(path),
             Intent::Home => {
                 self.workspace.library = true;
                 self.workspace.refresh_library = true;

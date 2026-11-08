@@ -249,6 +249,42 @@ pub enum Text {
     ClosePanel,
     /// The system color picker could not be opened.
     NoSystemPicker,
+    /// Library view: the recent list.
+    Recent,
+    /// Library sidebar heading.
+    Folders,
+    /// Library: create an app folder.
+    NewFolder,
+    /// Library sidebar when there are no folders.
+    FoldersHint,
+    /// Folder menu.
+    RenameFolder,
+    /// Folder rename dialog title.
+    RenameFolderTitle,
+    /// Folder rename dialog button.
+    RenameButton,
+    /// New folder dialog button.
+    CreateFolder,
+    /// Folder name field hint.
+    FolderNameHint,
+    /// Folder menu.
+    DeleteFolder,
+    /// Folder menu tooltip.
+    DeleteFolderHint,
+    /// Card menu submenu.
+    AddToFolder,
+    /// Card menu in a folder.
+    RemoveFromFolder,
+    /// Empty folder view.
+    FolderEmpty,
+    /// Card badge.
+    FileMissing,
+    /// Card badge tooltip.
+    FileMissingHint,
+    /// Card menu for a missing board.
+    FindFile,
+    /// File dialog title.
+    FindFileTitle,
     /// Library order: by the board file's last change.
     LastEdited,
     /// Library order: by number of items.
@@ -1661,7 +1697,7 @@ mod tests {
         let ctx = Context::default();
         theme(&ctx, &Tokens::LIGHT);
         let mut output = ctx.run_ui(Default::default(), |ui| {
-            library::Library::default().show(ui, &[]);
+            library::Library::default().show(ui, &[], &[]);
         });
         let count = output.shapes.iter().filter(|shape| matches!(&shape.shape, egui::Shape::Text(text_shape) if text_shape.galley.text() == text(Text::OpenFile))).count();
         assert_eq!(count, 1);
@@ -1761,7 +1797,7 @@ mod tests {
                     |ui| {
                         toolbar(ui, status(library), &tabs, |_| {});
                         if library {
-                            library::Library::default().show(ui, &[]);
+                            library::Library::default().show(ui, &[], &[]);
                         } else {
                             egui::CentralPanel::default().show(ui, |ui| {
                                 assert!(

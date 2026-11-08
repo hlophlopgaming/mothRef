@@ -713,6 +713,27 @@ pub fn tile(ui: &mut Ui, icon: Icon, label: &str) -> Response {
 pub fn dialog_title(ui: &mut Ui, title: &str) {
     ui.label(egui::RichText::new(title).size(17.).strong());
 }
+/// A submenu entry with the house chevron instead of egui's arrow glyph, which the
+/// bundled font does not have.
+pub fn submenu(ui: &mut Ui, label: &str, add_contents: impl FnOnce(&mut Ui)) -> Response {
+    const ICON: f32 = 16.;
+    let button = egui::Button::new(label).right_text(egui::Atom::custom(
+        ui.next_auto_id().with("submenu_arrow"),
+        Vec2::splat(ICON),
+    ));
+    let (response, _) =
+        egui::containers::menu::SubMenuButton::from_button(button).ui(ui, add_contents);
+    let size = ICON - 4.;
+    let rect = Rect::from_center_size(
+        egui::pos2(
+            response.rect.right() - ui.spacing().button_padding.x - size / 2.,
+            response.rect.center().y,
+        ),
+        Vec2::splat(size),
+    );
+    paint(ui, rect, Icon::ChevronRight, ui.visuals().text_color());
+    response
+}
 /// A round color sample to click; a ring marks the chosen one.
 pub fn swatch(ui: &mut Ui, [r, g, b]: [u8; 3], chosen: bool) -> Response {
     let tokens = crate::tokens(ui.ctx());

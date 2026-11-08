@@ -368,13 +368,13 @@ Open:
 
 A first slice shipped early ([decision 0004](docs/decisions/0004-reference-workspace.md)); items below say what already exists.
 
-- [ ] Board index (`redb`) with file watcher (`notify`)
+- [ ] Board index (`redb`) with file watcher (`notify`): metadata and previews cached between refreshes for the 1,000-board target; the library file ([decision 0022](docs/decisions/0022-library-folders.md)) already holds every known board
   - [x] Bounded recent/pinned catalog with background previews, search, folder filters and persistent tags/pins (requested reference UI slice)
-- [ ] Start screen: card grid with board previews; stacks shown as a fan of previews or as a folder with icon and color; tags; search; pinning — grid, previews, tags, search and pins exist; stack fans, icons and colors open
-- [ ] Stacks are real folders on disk (Procreate-style: drop a board on a board to create a stack); "smart collections" are saved tag filters
+- [ ] Start screen: card grid with board previews; folders with a color; tags; search; pinning — grid, previews, tags, search, pins and folder colors exist; a fan of previews per folder open
+- [x] Folders made in the app group boards by path; the files stay where they are; one level; a board can be in several; boards whose file moved are marked and can be found again ([decision 0022](docs/decisions/0022-library-folders.md), replacing "stacks are real folders on disk"); "smart collections" are saved tag filters
 - [ ] File manager thumbnails for `.moth` and `.bee` (BeeRef #152): Windows `IThumbnailProvider`, freedesktop thumbnailer, macOS Quick Look extension
 - [ ] Board preview image rendered off the UI thread after a checkpoint and stored as a rebuildable chunk (format version bump); used by the start screen, file-manager thumbnails and the note-app sidecar (M12)
-- [ ] Library sidebar (All boards, Pinned, Stacks and Smart collections exist): All boards, Recent, Pinned, Stacks, Smart collections. No in-app trash: deleting a board moves it straight to the OS trash (maintainer, 2026-10-30); counts next to each entry; an icon per entry (pin for Pinned); stack colors picked from a palette and repeated as a dot on the board cards — counts, icons and Move to trash exist (card menu, with Show in folder and Remove from list); Recent and stack colors open
+- [ ] Library sidebar (All boards, Pinned, Stacks and Smart collections exist): All boards, Recent, Pinned, Stacks, Smart collections. No in-app trash: deleting a board moves it straight to the OS trash (maintainer, 2026-10-30); counts next to each entry; an icon per entry (pin for Pinned); folder colors picked from a palette and repeated as a dot on the board cards — all exist except a dedicated Smart collections editor
 - [x] Library view options: sort by last opened, last edited, name, item count or size; grid / list view; tag filter chips above the grid
 - [x] Board cards show item count, last edited time, file size, pinned state and an "unsaved" badge when a recovery journal is pending; the library header shows totals
 - [ ] Library health: boards with missing linked files (with relink), duplicate images across boards by content hash, largest boards

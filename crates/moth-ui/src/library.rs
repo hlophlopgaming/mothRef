@@ -10,8 +10,14 @@ pub struct Card {
     pub path: std::path::PathBuf,
     /// File stem for navigation.
     pub title: String,
-    /// Parent folder supplies an actual stack name.
-    pub stack: String,
+    /// App folders holding the board (`Folder::id`); the file never moves on disk.
+    pub folders: Vec<u128>,
+    /// Position in the recent list, if the board is on it.
+    pub recent: Option<usize>,
+    /// When the board was last seen opening, in seconds since the Unix epoch.
+    pub opened: u64,
+    /// The file is not at its path any more; the card offers to find it.
+    pub missing: bool,
     /// Scene item count.
     pub count: usize,
     /// File size.
@@ -29,13 +35,48 @@ pub struct Card {
     /// At most four thumbnails per card, freed when the catalog closes.
     pub previews: Vec<egui::TextureHandle>,
 }
+/// An app folder as the sidebar shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Folder {
+    /// Stable identity.
+    pub id: u128,
+    /// Name in the sidebar.
+    pub name: String,
+    /// Index into the theme's group colors.
+    pub color: u8,
+}
+/// Which boards the library shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum View {
+    /// Every board the library knows.
+    #[default]
+    All,
+    /// The recent list.
+    Recent,
+    /// Pinned boards.
+    Pinned,
+    /// One app folder.
+    Folder(u128),
+}
+/// A change to the app folders, carried out by the library worker.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FolderChange {
+    /// Make a folder with this name.
+    Create(String),
+    /// Rename a folder.
+    Rename(u128, String),
+    /// Change a folder's color.
+    Recolor(u128, u8),
+    /// Delete a folder; its boards stay.
+    Delete(u128),
+}
+/// The drag payload of a board card, dropped onto a sidebar folder.
+struct CardDrag(usize);
 /// Search and view preferences stay bounded independently of the number of boards.
 #[derive(Default)]
 pub struct Library {
-    /// All or pinned collection.
-    pub pinned: bool,
-    /// Folder filter.
-    pub stack: Option<String>,
+    /// Which boards are shown.
+    pub view: View,
     /// Bounded search query.
     pub search: String,
     /// Accessible list view alternative.
@@ -47,6 +88,8 @@ pub struct Library {
     editing: Option<usize>,
     edit_tags: String,
     trashing: Option<usize>,
+    /// The folder name being typed: for a new folder (`None`) or a rename.
+    naming: Option<(Option<u128>, String)>,
 }
 /// How the cards are ordered.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -83,7 +126,7 @@ impl Order {
     /// Sorts card indices; ties keep the recent-file order.
     fn sort(self, cards: &[Card], indices: &mut [usize]) {
         match self {
-            Self::LastOpened => {}
+            Self::LastOpened => indices.sort_by_key(|&i| std::cmp::Reverse(cards[i].opened)),
             Self::LastEdited => {
                 indices.sort_by_key(|&i| std::cmp::Reverse(cards[i].modified));
             }
@@ -112,6 +155,12 @@ pub struct Intent {
     pub forget: Option<usize>,
     /// Move the board file to the system trash (already confirmed).
     pub trash: Option<usize>,
+    /// Create, rename, recolor or delete an app folder.
+    pub folder: Option<FolderChange>,
+    /// Put a board into a folder (`true`) or take it out (`false`).
+    pub file: Option<(usize, u128, bool)>,
+    /// Ask where a missing board file is now.
+    pub relink: Option<usize>,
 }
 impl Library {
     /// Closing the panel must not reattach an old draft to a different catalog entry.
@@ -119,10 +168,22 @@ impl Library {
         self.editing = None;
         self.edit_tags.clear();
         self.trashing = None;
+        self.naming = None;
     }
     /// The actions of one card, shared by its right-click menu and its "⋯" button.
-    fn card_menu(&mut self, ui: &mut egui::Ui, card: &Card, index: usize, intent: &mut Intent) {
-        if ui.button(text(Text::Open)).clicked() {
+    fn card_menu(
+        &mut self,
+        ui: &mut egui::Ui,
+        card: &Card,
+        index: usize,
+        folders: &[Folder],
+        intent: &mut Intent,
+    ) {
+        if card.missing {
+            if ui.button(text(Text::FindFile)).clicked() {
+                intent.relink = Some(index);
+            }
+        } else if ui.button(text(Text::Open)).clicked() {
             intent.open = Some(index);
         }
         if ui
@@ -139,24 +200,211 @@ impl Library {
             self.editing = Some(index);
             self.edit_tags = card.tags.join(", ");
         }
-        if ui.button(text(Text::ShowInFolder)).clicked() {
+        icons::submenu(ui, text(Text::AddToFolder), |ui| {
+            for folder in folders {
+                let mut inside = card.folders.contains(&folder.id);
+                if ui.checkbox(&mut inside, &folder.name).changed() {
+                    intent.file = Some((index, folder.id, inside));
+                }
+            }
+            if !folders.is_empty() {
+                ui.separator();
+            }
+            if ui.button(text(Text::NewFolder)).clicked() {
+                self.naming = Some((None, String::new()));
+            }
+        });
+        if !card.missing && ui.button(text(Text::ShowInFolder)).clicked() {
             intent.reveal = Some(index);
         }
         ui.separator();
+        if let View::Folder(folder) = self.view
+            && ui.button(text(Text::RemoveFromFolder)).clicked()
+        {
+            intent.file = Some((index, folder, false));
+        }
         if ui.button(text(Text::RemoveFromList)).clicked() {
             intent.forget = Some(index);
         }
-        if ui
-            .button(
-                egui::RichText::new(text(Text::MoveToTrash)).color(crate::tokens(ui.ctx()).danger),
-            )
-            .clicked()
+        if !card.missing
+            && ui
+                .button(
+                    egui::RichText::new(text(Text::MoveToTrash))
+                        .color(crate::tokens(ui.ctx()).danger),
+                )
+                .clicked()
         {
             self.trashing = Some(index);
         }
     }
+    /// One sidebar row: icon or color dot, label, count; returns the label's response.
+    fn side_row(
+        ui: &mut egui::Ui,
+        mark: Result<Icon, egui::Color32>,
+        label: &str,
+        selected: bool,
+        count: usize,
+    ) -> egui::Response {
+        ui.horizontal(|ui| {
+            let tokens = crate::tokens(ui.ctx());
+            let area = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(20., 30.));
+            match mark {
+                Ok(icon) => icons::paint(ui, area, icon, tokens.text_muted),
+                Err(color) => {
+                    ui.painter().circle_filled(area.center(), 5., color);
+                }
+            }
+            ui.add_space(tokens.space_xl as f32);
+            let response = ui.add(egui::Button::selectable(selected, label).truncate());
+            side_count(ui, count);
+            response
+        })
+        .inner
+    }
+    fn sidebar(
+        &mut self,
+        ui: &mut egui::Ui,
+        cards: &[Card],
+        folders: &[Folder],
+        tags: &[&String],
+        intent: &mut Intent,
+    ) {
+        let tokens = crate::tokens(ui.ctx());
+        self.search(ui);
+        ui.add_space(tokens.space_m as f32);
+        for (icon, label, view, count) in [
+            (Icon::Grid, Text::AllBoards, View::All, cards.len()),
+            (
+                Icon::Clock,
+                Text::Recent,
+                View::Recent,
+                cards.iter().filter(|c| c.recent.is_some()).count(),
+            ),
+            (
+                Icon::Pin,
+                Text::Pinned,
+                View::Pinned,
+                cards.iter().filter(|c| c.pinned).count(),
+            ),
+        ] {
+            if Self::side_row(
+                ui,
+                Ok(icon),
+                text(label),
+                self.view == view && self.tag.is_none(),
+                count,
+            )
+            .clicked()
+            {
+                self.view = view;
+                self.tag = None;
+            }
+        }
+        ui.add_space(tokens.space_section as f32);
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(text(Text::Folders).to_uppercase())
+                    .small()
+                    .strong()
+                    .color(tokens.text_muted),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if icons::button(ui, Icon::Plus, text(Text::NewFolder), false).clicked() {
+                    self.naming = Some((None, String::new()));
+                }
+            });
+        });
+        if folders.is_empty() {
+            ui.label(
+                egui::RichText::new(text(Text::FoldersHint))
+                    .small()
+                    .color(tokens.text_muted),
+            );
+        }
+        for folder in folders {
+            let color = tokens.groups[folder.color as usize % tokens.groups.len()];
+            let response = Self::side_row(
+                ui,
+                Err(color),
+                &folder.name,
+                self.view == View::Folder(folder.id) && self.tag.is_none(),
+                cards
+                    .iter()
+                    .filter(|c| c.folders.contains(&folder.id))
+                    .count(),
+            );
+            // A dragged card lights the folder up and lands in it on release.
+            let row = response
+                .rect
+                .expand2(egui::vec2(tokens.space_xl as f32 * 2., 2.));
+            if response.dnd_hover_payload::<CardDrag>().is_some() {
+                ui.painter().rect_stroke(
+                    row,
+                    tokens.radius_m as f32,
+                    egui::Stroke::new(1.5, tokens.accent),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            if let Some(card) = response.dnd_release_payload::<CardDrag>() {
+                intent.file = Some((card.0, folder.id, true));
+            }
+            if response.clicked() {
+                self.view = View::Folder(folder.id);
+                self.tag = None;
+            }
+            response.context_menu(|ui| {
+                if ui.button(text(Text::RenameFolder)).clicked() {
+                    self.naming = Some((Some(folder.id), folder.name.clone()));
+                }
+                ui.horizontal(|ui| {
+                    for (index, color) in tokens.groups.iter().enumerate() {
+                        if icons::swatch(
+                            ui,
+                            [color.r(), color.g(), color.b()],
+                            index == folder.color as usize,
+                        )
+                        .clicked()
+                        {
+                            intent.folder = Some(FolderChange::Recolor(folder.id, index as u8));
+                        }
+                    }
+                });
+                ui.separator();
+                if ui
+                    .button(egui::RichText::new(text(Text::DeleteFolder)).color(tokens.danger))
+                    .on_hover_text(text(Text::DeleteFolderHint))
+                    .clicked()
+                {
+                    intent.folder = Some(FolderChange::Delete(folder.id));
+                    if self.view == View::Folder(folder.id) {
+                        self.view = View::All;
+                    }
+                }
+            });
+        }
+        ui.add_space(tokens.space_xl as f32);
+        ui.label(
+            egui::RichText::new(text(Text::SmartCollections).to_uppercase())
+                .small()
+                .strong()
+                .color(tokens.text_muted),
+        );
+        for tag in tags.iter().take(12) {
+            ui.horizontal(|ui| {
+                if ui
+                    .selectable_label(self.tag.as_ref() == Some(*tag), format!("#{tag}"))
+                    .clicked()
+                {
+                    self.tag = Some((*tag).clone());
+                    self.view = View::All;
+                }
+                side_count(ui, cards.iter().filter(|c| c.tags.contains(tag)).count());
+            });
+        }
+        ui.add_space(tokens.space_l as f32);
+    }
     /// Displays real recent boards, with responsive grid and touch-friendly navigation.
-    pub fn show(&mut self, ui: &mut egui::Ui, cards: &[Card]) -> Intent {
+    pub fn show(&mut self, ui: &mut egui::Ui, cards: &[Card], folders: &[Folder]) -> Intent {
         let mut intent = Intent::default();
         let mut tags: Vec<_> = cards.iter().flat_map(|c| c.tags.iter()).collect();
         tags.sort();
@@ -170,94 +418,9 @@ impl Library {
                         .inner_margin(crate::tokens(ui.ctx()).space_l as i8),
                 )
                 .show(ui, |ui| {
-                    self.search(ui);
-                    ui.add_space(crate::tokens(ui.ctx()).space_m as f32);
-                    let pinned_count = cards.iter().filter(|c| c.pinned).count();
-                    for (icon, label, pinned, count) in [
-                        (Icon::Grid, Text::AllBoards, false, cards.len()),
-                        (Icon::Pin, Text::Pinned, true, pinned_count),
-                    ] {
-                        ui.horizontal(|ui| {
-                            icons::paint(
-                                ui,
-                                egui::Rect::from_min_size(ui.cursor().min, egui::vec2(20., 30.)),
-                                icon,
-                                crate::tokens(ui.ctx()).text_muted,
-                            );
-                            ui.add_space(crate::tokens(ui.ctx()).space_xl as f32);
-                            if ui
-                                .selectable_label(
-                                    self.pinned == pinned
-                                        && self.stack.is_none()
-                                        && self.tag.is_none(),
-                                    text(label),
-                                )
-                                .clicked()
-                            {
-                                self.pinned = pinned;
-                                self.stack = None;
-                                self.tag = None;
-                            }
-                            side_count(ui, count);
-                        });
-                    }
-                    ui.add_space(crate::tokens(ui.ctx()).space_section as f32);
-                    ui.label(
-                        egui::RichText::new(text(Text::Stacks).to_uppercase())
-                            .small()
-                            .strong()
-                            .color(crate::tokens(ui.ctx()).text_muted),
-                    );
-                    let mut stacks: Vec<&str> = cards
-                        .iter()
-                        .map(|c| c.stack.as_str())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                    stacks.sort_unstable();
-                    stacks.dedup();
-                    for stack in stacks {
-                        ui.horizontal(|ui| {
-                            icons::paint(
-                                ui,
-                                egui::Rect::from_min_size(ui.cursor().min, egui::vec2(20., 30.)),
-                                Icon::Folder,
-                                crate::tokens(ui.ctx()).accent_text,
-                            );
-                            ui.add_space(crate::tokens(ui.ctx()).space_xl as f32);
-                            if ui
-                                .selectable_label(self.stack.as_deref() == Some(stack), stack)
-                                .clicked()
-                            {
-                                self.stack = Some(stack.into());
-                                self.pinned = false;
-                            }
-                            side_count(ui, cards.iter().filter(|c| c.stack == stack).count());
-                        });
-                    }
-                    ui.add_space(crate::tokens(ui.ctx()).space_xl as f32);
-                    ui.label(
-                        egui::RichText::new(text(Text::SmartCollections).to_uppercase())
-                            .small()
-                            .strong()
-                            .color(crate::tokens(ui.ctx()).text_muted),
-                    );
-                    for tag in tags.iter().take(12) {
-                        ui.horizontal(|ui| {
-                            if ui
-                                .selectable_label(
-                                    self.tag.as_ref() == Some(*tag),
-                                    format!("#{tag}"),
-                                )
-                                .clicked()
-                            {
-                                self.tag = Some((*tag).clone());
-                                self.stack = None;
-                                self.pinned = false;
-                            }
-                            side_count(ui, cards.iter().filter(|c| c.tags.contains(tag)).count());
-                        });
-                    }
-                    ui.add_space(crate::tokens(ui.ctx()).space_l as f32);
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        self.sidebar(ui, cards, folders, &tags, &mut intent);
+                    });
                 });
         }
         egui::CentralPanel::default()
@@ -271,14 +434,41 @@ impl Library {
                     }),
             )
             .show(ui, |ui| {
+                let needle = self.search.to_lowercase();
+                let mut indices: Vec<usize> = cards
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| {
+                        let in_view = match self.view {
+                            View::All => true,
+                            View::Recent => c.recent.is_some(),
+                            View::Pinned => c.pinned,
+                            View::Folder(id) => c.folders.contains(&id),
+                        };
+                        in_view
+                            && self.tag.as_ref().is_none_or(|tag| c.tags.contains(tag))
+                            && (c.title.to_lowercase().contains(&needle)
+                                || c.tags.iter().any(|tag| tag.contains(&needle)))
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+                if self.view == View::Recent && self.order == Order::LastOpened {
+                    indices.sort_by_key(|&i| cards[i].recent);
+                } else {
+                    self.order.sort(cards, &mut indices);
+                }
                 ui.horizontal_wrapped(|ui| {
-                    ui.heading(self.stack.as_deref().or(self.tag.as_deref()).unwrap_or(
-                        if self.pinned {
-                            text(Text::Pinned)
-                        } else {
-                            text(Text::AllBoards)
-                        },
-                    ));
+                    ui.heading(
+                        self.tag.as_deref().unwrap_or(match self.view {
+                            View::All => text(Text::AllBoards),
+                            View::Recent => text(Text::Recent),
+                            View::Pinned => text(Text::Pinned),
+                            View::Folder(id) => folders
+                                .iter()
+                                .find(|f| f.id == id)
+                                .map_or(text(Text::AllBoards), |f| f.name.as_str()),
+                        }),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         intent.browse = ui.button(text(Text::OpenFile)).clicked();
                         intent.new = ui
@@ -312,10 +502,10 @@ impl Library {
                         "{}  ·  {}",
                         crate::counted(
                             crate::locale(),
-                            cards.len(),
+                            indices.len(),
                             [Text::BoardOne, Text::BoardFew, Text::BoardMany]
                         ),
-                        size(cards.iter().map(|c| c.bytes).sum::<u64>())
+                        size(indices.iter().map(|&i| cards[i].bytes).sum::<u64>())
                     ))
                     .small()
                     .color(crate::tokens(ui.ctx()).text_muted),
@@ -323,20 +513,17 @@ impl Library {
                 ui.add_space(crate::tokens(ui.ctx()).space_l as f32);
                 if ui.available_width() <= 700. {
                     self.search(ui);
-                    ui.horizontal(|ui| {
-                        if ui
-                            .selectable_label(!self.pinned, text(Text::AllBoards))
-                            .clicked()
-                        {
-                            self.pinned = false;
-                            self.stack = None;
-                        }
-                        if ui
-                            .selectable_label(self.pinned, text(Text::Pinned))
-                            .clicked()
-                        {
-                            self.pinned = true;
-                            self.stack = None;
+                    ui.horizontal_wrapped(|ui| {
+                        let mut views = vec![
+                            (View::All, text(Text::AllBoards).to_owned()),
+                            (View::Recent, text(Text::Recent).to_owned()),
+                            (View::Pinned, text(Text::Pinned).to_owned()),
+                        ];
+                        views.extend(folders.iter().map(|f| (View::Folder(f.id), f.name.clone())));
+                        for (view, label) in views {
+                            if ui.selectable_label(self.view == view, label).clicked() {
+                                self.view = view;
+                            }
                         }
                     });
                 }
@@ -357,26 +544,13 @@ impl Library {
                     }
                 });
                 ui.add_space(crate::tokens(ui.ctx()).space_m as f32);
-                let needle = self.search.to_lowercase();
-                let mut indices: Vec<usize> = cards
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, c)| {
-                        (!self.pinned || c.pinned)
-                            && self.tag.as_ref().is_none_or(|tag| c.tags.contains(tag))
-                            && self.stack.as_ref().is_none_or(|s| s == &c.stack)
-                            && (c.title.to_lowercase().contains(&needle)
-                                || c.stack.to_lowercase().contains(&needle)
-                                || c.tags.iter().any(|tag| tag.contains(&needle)))
-                    })
-                    .map(|(i, _)| i)
-                    .collect();
-                self.order.sort(cards, &mut indices);
                 if indices.is_empty() {
                     ui.add_space(crate::tokens(ui.ctx()).space_empty as f32);
                     ui.vertical_centered(|ui| {
                         ui.label(text(if cards.is_empty() {
                             Text::LibraryEmpty
+                        } else if matches!(self.view, View::Folder(_)) && self.search.is_empty() {
+                            Text::FolderEmpty
                         } else {
                             Text::NoMatches
                         }));
@@ -403,8 +577,9 @@ impl Library {
                                         let preview_height = if self.list { 50. } else { 170. };
                                         let (rect, response) = ui.allocate_exact_size(
                                             egui::vec2(width, preview_height),
-                                            egui::Sense::click(),
+                                            egui::Sense::click_and_drag(),
                                         );
+                                        response.dnd_set_drag_payload(CardDrag(index));
                                         let lift = ui.ctx().animate_bool_with_time(
                                             response.id.with("lift"),
                                             response.hovered(),
@@ -486,19 +661,33 @@ impl Library {
                                                 egui::StrokeKind::Inside,
                                             );
                                         }
-                                        if c.unsaved {
-                                            unsaved_badge(ui, rect);
+                                        if c.missing {
+                                            badge(
+                                                ui,
+                                                rect,
+                                                Text::FileMissing,
+                                                Text::FileMissingHint,
+                                            );
+                                        } else if c.unsaved {
+                                            badge(ui, rect, Text::UnsavedChip, Text::UnsavedHint);
                                         }
+                                        folder_dots(ui, rect, c, folders);
                                         if response.clicked() {
-                                            intent.open = Some(index);
+                                            if c.missing {
+                                                intent.relink = Some(index);
+                                            } else {
+                                                intent.open = Some(index);
+                                            }
                                         }
-                                        let response = if let Some(error) = &c.error {
+                                        let response = if c.missing {
+                                            response.on_hover_text(c.path.display().to_string())
+                                        } else if let Some(error) = &c.error {
                                             response.on_hover_text(error)
                                         } else {
                                             response
                                         };
                                         response.context_menu(|ui| {
-                                            self.card_menu(ui, c, index, &mut intent);
+                                            self.card_menu(ui, c, index, folders, &mut intent);
                                         });
                                         ui.horizontal(|ui| {
                                             if ui
@@ -511,7 +700,11 @@ impl Library {
                                                 )
                                                 .clicked()
                                             {
-                                                intent.open = Some(index);
+                                                if c.missing {
+                                                    intent.relink = Some(index);
+                                                } else {
+                                                    intent.open = Some(index);
+                                                }
                                             }
                                             if icons::button(
                                                 ui,
@@ -530,7 +723,7 @@ impl Library {
                                                 false,
                                             );
                                             egui::Popup::menu(&more).show(|ui| {
-                                                self.card_menu(ui, c, index, &mut intent);
+                                                self.card_menu(ui, c, index, folders, &mut intent);
                                             });
                                         });
                                         ui.add(
@@ -563,26 +756,75 @@ impl Library {
                 });
             });
         if let Some(index) = self.editing.filter(|&i| i < cards.len()) {
-            egui::Modal::new(egui::Id::new("catalog_tags")).show(ui.ctx(), |ui| {
-                ui.set_width(ui.ctx().content_rect().width().min(400.) - 40.);
-                ui.heading(text(Text::EditTags));
-                ui.label(&cards[index].title);
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.edit_tags)
-                        .char_limit(264)
-                        .hint_text(text(Text::TagsHint))
-                        .desired_width(f32::INFINITY),
-                );
-                ui.horizontal(|ui| {
-                    if ui.button(text(Text::Cancel)).clicked() {
-                        self.editing = None;
-                    }
-                    if ui.button(text(Text::Apply)).clicked() {
-                        intent.tags = Some((index, self.edit_tags.clone()));
-                        self.editing = None;
-                    }
+            let tokens = crate::tokens(ui.ctx());
+            egui::Modal::new(egui::Id::new("catalog_tags"))
+                .frame(
+                    egui::Frame::popup(&ui.ctx().global_style())
+                        .corner_radius(tokens.radius_l)
+                        .inner_margin(egui::Margin::same(tokens.space_xl as i8)),
+                )
+                .show(ui.ctx(), |ui| {
+                    ui.set_width(
+                        (tokens.space_xl as f32 * 15.)
+                            .min(ui.ctx().content_rect().width() - tokens.space_xl as f32 * 4.)
+                            .max(1.),
+                    );
+                    icons::dialog_title(ui, text(Text::EditTags));
+                    ui.label(egui::RichText::new(&cards[index].title).color(tokens.text_muted));
+                    ui.add_space(tokens.space_s as f32);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.edit_tags)
+                            .char_limit(264)
+                            .hint_text(text(Text::TagsHint))
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.add_space(tokens.space_l as f32);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new(text(Text::Apply)).color(tokens.on_accent),
+                                )
+                                .fill(tokens.accent),
+                            )
+                            .clicked()
+                        {
+                            intent.tags = Some((index, self.edit_tags.clone()));
+                            self.editing = None;
+                        }
+                        if ui.button(text(Text::Cancel)).clicked() {
+                            self.editing = None;
+                        }
+                    });
                 });
-            });
+        }
+        self.naming_dialog(ui.ctx(), &mut intent);
+        if let Some(CardDrag(index)) = egui::DragAndDrop::payload::<CardDrag>(ui.ctx()).as_deref()
+            && let (Some(card), Some(pointer)) = (cards.get(*index), ui.ctx().pointer_latest_pos())
+        {
+            // The dragged card's title follows the pointer to the folder it is dropped on.
+            let tokens = crate::tokens(ui.ctx());
+            let painter = ui.ctx().layer_painter(egui::LayerId::new(
+                egui::Order::Tooltip,
+                egui::Id::new("library_drag"),
+            ));
+            let galley = painter.layout_no_wrap(
+                card.title.clone(),
+                egui::TextStyle::Body.resolve(ui.style()),
+                tokens.text,
+            );
+            let rect = egui::Rect::from_min_size(
+                pointer + egui::vec2(14., 10.),
+                galley.size() + egui::vec2(16., 8.),
+            );
+            painter.rect_filled(rect, tokens.radius_m as f32, tokens.surface_raised);
+            painter.rect_stroke(
+                rect,
+                tokens.radius_m as f32,
+                egui::Stroke::new(1., tokens.border),
+                egui::StrokeKind::Inside,
+            );
+            painter.galley(rect.min + egui::vec2(8., 4.), galley, tokens.text);
         }
         if let Some(index) = self.trashing.filter(|&i| i < cards.len()) {
             let tokens = crate::tokens(ui.ctx());
@@ -628,6 +870,78 @@ impl Library {
             self.trashing = None;
         }
         intent
+    }
+    /// "New folder" and "Rename folder": a name field with Cancel and Create / Rename.
+    fn naming_dialog(&mut self, ctx: &egui::Context, intent: &mut Intent) {
+        let Some((folder, name)) = &mut self.naming else {
+            return;
+        };
+        let tokens = crate::tokens(ctx);
+        let mut close = false;
+        egui::Modal::new(egui::Id::new("library_folder_name"))
+            .frame(
+                egui::Frame::popup(&ctx.global_style())
+                    .corner_radius(tokens.radius_l)
+                    .inner_margin(egui::Margin::same(tokens.space_xl as i8)),
+            )
+            .show(ctx, |ui| {
+                ui.set_width(
+                    (tokens.space_xl as f32 * 13.)
+                        .min(ctx.content_rect().width() - tokens.space_xl as f32 * 4.)
+                        .max(1.),
+                );
+                icons::dialog_title(
+                    ui,
+                    text(if folder.is_some() {
+                        Text::RenameFolderTitle
+                    } else {
+                        Text::NewFolder
+                    }),
+                );
+                ui.add_space(tokens.space_s as f32);
+                let field = ui.add(
+                    egui::TextEdit::singleline(name)
+                        .char_limit(64)
+                        .hint_text(text(Text::FolderNameHint))
+                        .desired_width(f32::INFINITY),
+                );
+                if !field.has_focus() && !field.lost_focus() {
+                    field.request_focus();
+                }
+                let submitted = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                ui.add_space(tokens.space_l as f32);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let ready = !name.trim().is_empty();
+                    let confirm = ui.add_enabled(
+                        ready,
+                        egui::Button::new(
+                            egui::RichText::new(text(if folder.is_some() {
+                                Text::RenameButton
+                            } else {
+                                Text::CreateFolder
+                            }))
+                            .color(tokens.on_accent),
+                        )
+                        .fill(tokens.accent),
+                    );
+                    if ready && (confirm.clicked() || submitted) {
+                        intent.folder = Some(match folder {
+                            Some(id) => FolderChange::Rename(*id, name.trim().to_owned()),
+                            None => FolderChange::Create(name.trim().to_owned()),
+                        });
+                        close = true;
+                    }
+                    if ui.button(text(Text::Cancel)).clicked() {
+                        close = true;
+                    }
+                });
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    close = true;
+                }
+            });
+        if close {
+            self.naming = None;
+        }
     }
     fn search(&mut self, ui: &mut egui::Ui) {
         // A rounded field with a search icon, not a bare strip.
@@ -675,8 +989,11 @@ fn size(bytes: u64) -> String {
         format!("{:.1} MB", bytes as f64 / 1_000_000.)
     }
 }
-/// "11 items · 4.2 MB · 2 h ago", plus the stack in the list view where there is room for it.
+/// "11 items · 4.2 MB · 2 h ago", plus the file's folder on disk in the list view.
 fn card_details(card: &Card, list: bool) -> String {
+    if card.missing {
+        return card.path.display().to_string();
+    }
     let mut parts = vec![crate::counted(
         crate::locale(),
         card.count,
@@ -686,18 +1003,19 @@ fn card_details(card: &Card, list: bool) -> String {
     if let Some(modified) = card.modified {
         parts.push(crate::ago(modified));
     }
-    if list && !card.stack.is_empty() {
-        parts.push(card.stack.clone());
+    if list && let Some(parent) = card.path.parent() {
+        parts.push(parent.display().to_string());
     }
     parts.join("  ·  ")
 }
-/// A "Not saved" chip in the preview's corner for a board with a pending recovery journal.
-fn unsaved_badge(ui: &mut egui::Ui, preview: egui::Rect) {
+/// A chip in the preview's corner: "Not saved" for a pending recovery journal, or
+/// "File not found" for a board that moved; its hint explains it.
+fn badge(ui: &mut egui::Ui, preview: egui::Rect, label: Text, hint: Text) {
     let tokens = crate::tokens(ui.ctx());
     let font = egui::TextStyle::Small.resolve(ui.style());
-    let galley =
-        ui.painter()
-            .layout_no_wrap(text(Text::UnsavedChip).to_owned(), font, tokens.danger);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text(label).to_owned(), font, tokens.danger);
     let rect = egui::Rect::from_min_size(
         preview.min + egui::vec2(8., 8.),
         galley.size() + egui::vec2(12., 6.),
@@ -709,10 +1027,25 @@ fn unsaved_badge(ui: &mut egui::Ui, preview: egui::Rect) {
     ui.interact(
         rect,
         ui.id()
-            .with(("unsaved", preview.min.x as i32, preview.min.y as i32)),
+            .with(("badge", preview.min.x as i32, preview.min.y as i32)),
         egui::Sense::hover(),
     )
-    .on_hover_text(text(Text::UnsavedHint));
+    .on_hover_text(text(hint));
+}
+/// One dot per app folder holding the board, in the folder's color, at the preview's
+/// top-right corner.
+fn folder_dots(ui: &egui::Ui, preview: egui::Rect, card: &Card, folders: &[Folder]) {
+    let tokens = crate::tokens(ui.ctx());
+    let colors = folders
+        .iter()
+        .filter(|f| card.folders.contains(&f.id))
+        .map(|f| tokens.groups[f.color as usize % tokens.groups.len()]);
+    for (i, color) in colors.take(6).enumerate() {
+        let center = egui::pos2(preview.right() - 14. - i as f32 * 14., preview.top() + 14.);
+        ui.painter().circle_filled(center, 5., color);
+        ui.painter()
+            .circle_stroke(center, 5., egui::Stroke::new(1.5, tokens.canvas));
+    }
 }
 
 #[cfg(test)]
@@ -724,7 +1057,10 @@ mod tests {
         let card = |title: &str, count, bytes, age: u64| Card {
             path: format!("{title}.moth").into(),
             title: title.into(),
-            stack: String::new(),
+            folders: vec![],
+            recent: None,
+            opened: 1000 - age,
+            missing: false,
             count,
             bytes,
             modified: Some(now - std::time::Duration::from_secs(age)),
@@ -744,7 +1080,7 @@ mod tests {
             order.sort(&cards, &mut indices);
             indices
         };
-        assert_eq!(sorted(Order::LastOpened), [0, 1, 2]);
+        assert_eq!(sorted(Order::LastOpened), [1, 0, 2]);
         assert_eq!(sorted(Order::LastEdited), [1, 0, 2]);
         assert_eq!(sorted(Order::Name), [1, 0, 2]);
         assert_eq!(sorted(Order::Items), [1, 0, 2]);
@@ -760,7 +1096,10 @@ mod tests {
             .map(|i| Card {
                 path: format!("board-{i}.moth").into(),
                 title: format!("Reference {i}"),
-                stack: "Characters".into(),
+                folders: vec![],
+                recent: Some(i),
+                opened: 0,
+                missing: false,
                 count: 11,
                 bytes: 100,
                 modified: None,
@@ -780,7 +1119,7 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                Library::default().show(ui, &cards);
+                Library::default().show(ui, &cards, &[]);
             },
         );
         output.textures_delta.clear();

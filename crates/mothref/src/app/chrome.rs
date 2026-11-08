@@ -19,6 +19,7 @@ pub(super) struct Chrome<'a> {
     pub zoom_increment: f32,
     pub catalog: &'a mut moth_ui::library::Library,
     pub cards: &'a [moth_ui::library::Card],
+    pub folders: &'a [moth_ui::library::Folder],
     pub window: &'a Window,
     /// The View bar was asked for explicitly (touch, context menu); it stays
     /// until a press lands outside it.
@@ -99,7 +100,7 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
     if ctx.library {
         let previous_opacity = ui.opacity();
         ui.multiply_opacity(opacity);
-        let intent = ctx.catalog.show(ui, ctx.cards);
+        let intent = ctx.catalog.show(ui, ctx.cards, ctx.folders);
         ui.set_opacity(previous_opacity);
         actions.new |= intent.new;
         actions.open |= intent.browse;
@@ -133,6 +134,30 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
             intents.push(Intent::Library(moth_platform::library::Request::Trash(
                 ctx.cards[index].path.clone(),
             )));
+        }
+        if let Some(index) = intent.relink {
+            intents.push(Intent::RelinkBoard(ctx.cards[index].path.clone()));
+        }
+        if let Some((index, folder, inside)) = intent.file {
+            intents.push(Intent::Library(moth_platform::library::Request::File {
+                path: ctx.cards[index].path.clone(),
+                folder: moth_scene::Uuid::from_u128(folder),
+                inside,
+            }));
+        }
+        if let Some(change) = intent.folder {
+            use moth_platform::library::Request;
+            use moth_ui::library::FolderChange;
+            intents.push(Intent::Library(match change {
+                FolderChange::Create(name) => Request::CreateFolder(name),
+                FolderChange::Rename(id, name) => {
+                    Request::RenameFolder(moth_scene::Uuid::from_u128(id), name)
+                }
+                FolderChange::Recolor(id, color) => {
+                    Request::RecolorFolder(moth_scene::Uuid::from_u128(id), color)
+                }
+                FolderChange::Delete(id) => Request::DeleteFolder(moth_scene::Uuid::from_u128(id)),
+            }));
         }
     }
     intents.extend(super::intent::intents_from_actions(actions));

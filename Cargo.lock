@@ -1914,6 +1914,7 @@ dependencies = [
  "rustix 1.1.5",
  "rustls-native-certs",
  "scraper",
+ "serde_json",
  "sysinfo",
  "thiserror 2.0.21",
  "tracing",

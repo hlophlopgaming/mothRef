@@ -12,6 +12,7 @@ arboard.workspace = true
 thiserror.workspace = true
 crossbeam-channel.workspace = true
 tracing.workspace = true
+serde_json.workspace = true
 moth-io.workspace = true
 uuid.workspace = true
 blake3.workspace = true
