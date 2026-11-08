@@ -208,7 +208,16 @@ impl Modal {
                 intents.push(Intent::Action(Action::KeepOpen));
             }
         }
-        if let Some(ids) = board.notices.arrange_prompt.clone() {
+        let settled = board.settled();
+        if let Err(wait) = settled
+            && board.notices.arrange_prompt.is_some()
+        {
+            // Images are still arriving: the prompt (and auto-arrange) waits for all of them.
+            ui.ctx().request_repaint_after(wait);
+        }
+        if let Some(ids) = board.notices.arrange_prompt.clone()
+            && settled.is_ok()
+        {
             if settings.auto_arrange || ids.len() <= settings.threshold {
                 intents.push(Intent::Arrange(
                     super::tools::layout(settings.default_arrange).1,

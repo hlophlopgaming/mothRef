@@ -148,6 +148,20 @@ pub(super) struct Intake {
     pub(super) burst: Vec<Uuid>,
     /// Files added since the board was last idle, for "Adding images: N of M".
     pub(super) queued: usize,
+    /// When the intake last went quiet. Drag and drop delivers files over several
+    /// frames, so the queue can empty for a moment mid-drop; the arrange prompt waits
+    /// for a short quiet spell instead of taking a partial burst.
+    pub(super) idle_since: Option<Instant>,
+}
+impl Intake {
+    /// Records an inserted image of the current burst. While the arrange prompt is
+    /// open, images that arrive late join it, so the layout covers the whole drop.
+    pub(super) fn add_to_burst(&mut self, id: Uuid, notices: &mut Notices) {
+        match &mut notices.arrange_prompt {
+            Some(ids) => ids.push(id),
+            None => self.burst.push(id),
+        }
+    }
 }
 /// Messages and prompts waiting for the user.
 #[derive(Default)]
@@ -671,6 +685,15 @@ impl Document {
             + self.intake.pending.len();
         (total > 1 && remaining > 0).then(|| (total.saturating_sub(remaining), total))
     }
+    /// Whether the intake has been quiet long enough for the arrange prompt; the
+    /// remaining wait otherwise, so the caller can ask for a frame then.
+    pub(super) fn settled(&self) -> Result<(), std::time::Duration> {
+        const QUIET: std::time::Duration = std::time::Duration::from_millis(300);
+        match self.intake.idle_since {
+            Some(since) if self.idle() => QUIET.checked_sub(since.elapsed()).map_or(Ok(()), Err),
+            _ => Err(QUIET),
+        }
+    }
     pub(super) fn idle(&self) -> bool {
         self.intake.pasting == 0
             && self.intake.in_flight == 0
@@ -917,6 +940,37 @@ mod tests {
         assert_eq!(view.camera.zoom, camera.zoom);
     }
     use super::*;
+    #[test]
+    fn the_arrange_prompt_waits_for_the_whole_drop() {
+        let root = std::env::temp_dir().join(format!("mothref-drop-burst-{}", Uuid::now_v7()));
+        let mut board = Document::with_storage(
+            Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+            Arc::new(|| {}),
+            false,
+        )
+        .unwrap();
+        // A gap mid-drop: the first part became the prompt, more images keep coming.
+        let early: Vec<Uuid> = (0..400).map(|_| Uuid::now_v7()).collect();
+        board.notices.arrange_prompt = Some(early.clone());
+        for _ in 0..614 {
+            board
+                .intake
+                .add_to_burst(Uuid::now_v7(), &mut board.notices);
+        }
+        assert_eq!(board.notices.arrange_prompt.as_ref().unwrap().len(), 1014);
+        assert!(board.intake.burst.is_empty());
+        // The prompt shows only after the intake has been quiet for a moment.
+        board.intake.idle_since = None;
+        assert!(board.settled().is_err());
+        board.intake.idle_since = Some(Instant::now());
+        assert!(board.settled().is_err());
+        board.intake.idle_since = Some(Instant::now() - Duration::from_secs(1));
+        assert!(board.settled().is_ok());
+        board.intake.waiting.push(Handle(1));
+        assert!(board.settled().is_err(), "files still waiting");
+        drop(board);
+        let _ = std::fs::remove_dir_all(root);
+    }
     #[test]
     fn import_layout_choices_share_one_undo_and_fit_only_after_acknowledgment() {
         let root = std::env::temp_dir().join(format!("mothref-import-feedback-{}", Uuid::now_v7()));

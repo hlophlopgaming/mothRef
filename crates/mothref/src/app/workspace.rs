@@ -545,7 +545,9 @@ impl Workspace {
                         item.name = self.board.storage().source_name(done.request.handle);
                     }
                     item.parent = super::groups::landing(&self.board.scene, point);
-                    self.board.intake.burst.push(item.id);
+                    self.board
+                        .intake
+                        .add_to_burst(item.id, &mut self.board.notices);
                     self.persist(moth_platform::boards::Request::Apply(
                         Command::Insert(item),
                         Some(done.request.handle),
@@ -573,7 +575,9 @@ impl Workspace {
                         item.name = self.board.storage().source_name(done.request.handle);
                     }
                     item.parent = super::groups::landing(&self.board.scene, point);
-                    self.board.intake.burst.push(item.id);
+                    self.board
+                        .intake
+                        .add_to_burst(item.id, &mut self.board.notices);
                     self.persist(moth_platform::boards::Request::Apply(
                         Command::Insert(item),
                         Some(done.request.handle),
@@ -905,8 +909,15 @@ impl Workspace {
             }
         }
         self.queue_decodes(pump.format);
+        if !self.board.idle() {
+            self.board.intake.idle_since = None;
+        }
         if self.board.idle() {
             self.board.intake.queued = 0;
+            self.board
+                .intake
+                .idle_since
+                .get_or_insert_with(Instant::now);
             if let Some(added) = &mut self.board.notices.added {
                 if added.needs_fit {
                     let ids = added.ids.iter().copied().collect();
