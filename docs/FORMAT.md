@@ -1,16 +1,16 @@
-# MothRef format, schema 6
+# MothRef format, schema 7
 
 All integers and IEEE-754 f32 coordinates are little-endian. Core readers accept
 seekable byte streams; native filesystem paths are never serialized. Schema 1 is the
 first persistent format; there is no schema 0 board to migrate. Schema 2 adds item
 content transforms; schema 3 adds text notes; schema 4 adds appearance and source
 filenames; schema 5 adds image sampling and fixed-width note metrics; schema 6 adds
-nested groups. The reader keeps the schema 1, 2, 3, 4 and 5 record layouts, so every older board and journal still opens: a schema 1 insert
+nested groups; schema 7 adds the board preview record. The reader keeps the schema 1, 2, 3, 4, 5 and 6 record layouts, so every older board and journal still opens: a schema 1 insert
 carries no transform and migrates to the identity transform. Future schemas must
 retain both readers and provide explicit migrations.
 
-The 16-byte header is `MOTH`, u32 schema version `6`, then eight zero bytes.
-Readers accept versions 1 through 6 and reject every other version. Every record
+The 16-byte header is `MOTH`, u32 schema version `7`, then eight zero bytes.
+Readers accept versions 1 through 7 and reject every other version. Every record
 consists of a payload followed by a 96-byte footer:
 
 | Footer offset | Size | Meaning |
@@ -18,7 +18,7 @@ consists of a payload followed by a 96-byte footer:
 | 0 | 8 | ASCII `MOTHEND1` |
 | 8 | 8 | Absolute payload offset |
 | 16 | 8 | Payload length |
-| 24 | 1 | Kind: 1 original blob, 2 command, 3 checkpoint |
+| 24 | 1 | Kind: 1 original blob, 2 command, 3 checkpoint, 4 board preview (schema 7) |
 | 25 | 7 | Reserved, zero |
 | 32 | 32 | BLAKE3 of payload |
 | 64 | 32 | BLAKE3 of footer bytes 0–63 |
@@ -125,6 +125,26 @@ names a group that does not exist yet; the checkpoint writes a group's current
 frame as its resting rectangle. Older tags migrate with no parent. `corpus/moth/v5.moth`
 is now frozen; `corpus/moth/v6.moth` holds two nested groups, an image and a note.
 Applications that only support schemas 1–5 reject schema 6.
+
+### Migration 6 → 7
+
+Schema 7 adds record kind `4`, the board preview: derived data the library shows
+without reading the board. Its payload is u8 version `1`, u32 item count, u8
+thumbnail count (at most 4), then per thumbnail u16 width and u16 height (1–256
+pixels each), u32 byte length and that many bytes of an encoded image (PNG). The
+whole payload is at most 1 MiB, and anything malformed is rejected as a whole.
+
+The scene never reads a preview: readers verify its footer and checksums like any
+record and skip it. A schema-6 or older file with a kind-4 record is invalid. Every
+desktop save appends a fresh preview as the last record, after compaction, so a
+preview is current only while it is the last committed record; the library reads it
+from the end of the file (`peek_preview`) and falls back to reading the whole board
+when the last record is anything else, a checksum fails or the file is older than
+schema 7. Writing the preview is best effort and never fails a save. Older files need
+no migration of their records: the next save compacts them to schema 7 as before
+and ends with a preview. `corpus/moth/v6.moth` is now frozen; `corpus/moth/v7.moth`
+holds the same items followed by a one-thumbnail preview. Applications that only
+support schemas 1–6 reject schema 7.
 
 A checkpoint contains zero or more u32-length-prefixed Insert commands. The
 entire checkpoint is one record, so replacing the scene is atomic. Commands after

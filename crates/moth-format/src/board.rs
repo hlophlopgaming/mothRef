@@ -9,8 +9,10 @@ use std::{
 
 /// Schema the writer produces. Boards with an older header are compacted to it before
 /// a checkpoint is appended, so a file never mixes record layouts across headers.
-pub const SCHEMA: u8 = 6;
-const HEADER: &[u8; 16] = b"MOTH\x06\0\0\0\0\0\0\0\0\0\0\0";
+pub const SCHEMA: u8 = 7;
+const HEADER: &[u8; 16] = b"MOTH\x07\0\0\0\0\0\0\0\0\0\0\0";
+/// Schema-6 boards predate the board preview record.
+const HEADER_V6: &[u8; 16] = b"MOTH\x06\0\0\0\0\0\0\0\0\0\0\0";
 /// Schema-5 boards predate groups.
 const HEADER_V5: &[u8; 16] = b"MOTH\x05\0\0\0\0\0\0\0\0\0\0\0";
 /// Schema-4 boards predate sampling and fixed-width notes.
@@ -25,6 +27,16 @@ const FOOTER: &[u8; 8] = b"MOTHEND1";
 const FOOTER_SIZE: u64 = 96;
 /// Bounds allocations even for malicious input lengths.
 pub const MAX_RECORD: u64 = 256 * 1024 * 1024;
+/// Record kind of the board preview (schema 7): a rebuildable summary written last by
+/// every save, so the library reads a card from the end of the file.
+pub const PREVIEW: u8 = 4;
+/// Largest preview record.
+pub const MAX_PREVIEW: u64 = 1024 * 1024;
+/// Thumbnails a preview holds at most.
+pub const MAX_THUMBNAILS: usize = 4;
+/// Longest side of a preview thumbnail, in pixels.
+pub const MAX_THUMBNAIL_SIDE: u16 = 256;
+const PREVIEW_VERSION: u8 = 1;
 /// Longest accepted image command payload: the largest fractional index plus its fixed
 /// fields and, from schema 6, the parent id.
 const MAX_COMMAND: u64 = 5219 + 16;
@@ -75,6 +87,128 @@ pub struct Board {
     /// True when bytes after the last committed footer were ignored.
     pub recovered: bool,
 }
+/// What the library shows for a board without reading it: the item count and up to
+/// four small images. It is derived data; a reader may ignore it, and a missing or
+/// stale preview only means the board is read in full.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Preview {
+    /// Items on the board when it was saved.
+    pub items: u32,
+    /// Up to [`MAX_THUMBNAILS`] thumbnails, in the board's order.
+    pub thumbnails: Vec<Thumbnail>,
+}
+/// One encoded preview image; the format crate never decodes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Thumbnail {
+    /// Width in pixels, at most [`MAX_THUMBNAIL_SIDE`].
+    pub width: u16,
+    /// Height in pixels, at most [`MAX_THUMBNAIL_SIDE`].
+    pub height: u16,
+    /// Encoded image bytes (PNG).
+    pub image: Vec<u8>,
+}
+/// Lays a preview out as `u8 version, u32 items, u8 count`, then per thumbnail
+/// `u16 width, u16 height, u32 length` and the encoded bytes.
+pub fn encode_preview(preview: &Preview) -> Result<Vec<u8>, Error> {
+    if preview.thumbnails.len() > MAX_THUMBNAILS {
+        return Err(Error::Budget);
+    }
+    let mut bytes = vec![PREVIEW_VERSION];
+    bytes.extend_from_slice(&preview.items.to_le_bytes());
+    bytes.push(preview.thumbnails.len() as u8);
+    for thumbnail in &preview.thumbnails {
+        if !valid_side(thumbnail.width) || !valid_side(thumbnail.height) {
+            return Err(Error::Invalid);
+        }
+        bytes.extend_from_slice(&thumbnail.width.to_le_bytes());
+        bytes.extend_from_slice(&thumbnail.height.to_le_bytes());
+        bytes.extend_from_slice(&(thumbnail.image.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&thumbnail.image);
+    }
+    if bytes.len() as u64 > MAX_PREVIEW {
+        return Err(Error::Budget);
+    }
+    Ok(bytes)
+}
+fn valid_side(side: u16) -> bool {
+    (1..=MAX_THUMBNAIL_SIDE).contains(&side)
+}
+/// Reads a preview payload; anything malformed is an error, never a partial preview.
+pub fn decode_preview(bytes: &[u8]) -> Result<Preview, Error> {
+    let take = |at: &mut usize, n: usize| -> Result<&[u8], Error> {
+        let slice = bytes.get(*at..at.checked_add(n).ok_or(Error::Invalid)?);
+        *at += n;
+        slice.ok_or(Error::Invalid)
+    };
+    if bytes.len() as u64 > MAX_PREVIEW {
+        return Err(Error::Budget);
+    }
+    let mut at = 0;
+    if take(&mut at, 1)? != [PREVIEW_VERSION] {
+        return Err(Error::Invalid);
+    }
+    let items = u32::from_le_bytes(take(&mut at, 4)?.try_into().map_err(|_| Error::Invalid)?);
+    let count = take(&mut at, 1)?[0] as usize;
+    if count > MAX_THUMBNAILS {
+        return Err(Error::Invalid);
+    }
+    let mut thumbnails = Vec::with_capacity(count);
+    for _ in 0..count {
+        let width = u16::from_le_bytes(take(&mut at, 2)?.try_into().map_err(|_| Error::Invalid)?);
+        let height = u16::from_le_bytes(take(&mut at, 2)?.try_into().map_err(|_| Error::Invalid)?);
+        let length =
+            u32::from_le_bytes(take(&mut at, 4)?.try_into().map_err(|_| Error::Invalid)?) as usize;
+        if !valid_side(width) || !valid_side(height) {
+            return Err(Error::Invalid);
+        }
+        thumbnails.push(Thumbnail {
+            width,
+            height,
+            image: take(&mut at, length)?.to_vec(),
+        });
+    }
+    if at != bytes.len() {
+        return Err(Error::Invalid);
+    }
+    Ok(Preview { items, thumbnails })
+}
+/// The board's preview when it is the last committed record of a schema-7 file, read
+/// from the end without scanning or hashing the originals. `None` when the board has
+/// no preview, changed after it, or the record does not check out: the caller then
+/// reads the board in full.
+pub fn peek_preview(reader: &mut dyn ReadSeek) -> Result<Option<Preview>, Error> {
+    reader.seek(SeekFrom::Start(0))?;
+    let mut header = [0; 16];
+    reader.read_exact(&mut header)?;
+    if &header != HEADER {
+        return Ok(None);
+    }
+    let length = reader.seek(SeekFrom::End(0))?;
+    if length < 16 + FOOTER_SIZE {
+        return Ok(None);
+    }
+    let mut footer = [0; FOOTER_SIZE as usize];
+    reader.seek(SeekFrom::Start(length - FOOTER_SIZE))?;
+    reader.read_exact(&mut footer)?;
+    if &footer[..8] != FOOTER
+        || blake3::hash(&footer[..64]).as_bytes() != &footer[64..]
+        || footer[24] != PREVIEW
+    {
+        return Ok(None);
+    }
+    let start = u64::from_le_bytes(footer[8..16].try_into().map_err(|_| Error::Invalid)?);
+    let size = u64::from_le_bytes(footer[16..24].try_into().map_err(|_| Error::Invalid)?);
+    if start < 16 || size > MAX_PREVIEW || start.checked_add(size) != Some(length - FOOTER_SIZE) {
+        return Ok(None);
+    }
+    let mut payload = vec![0; size as usize];
+    reader.seek(SeekFrom::Start(start))?;
+    reader.read_exact(&mut payload)?;
+    if blake3::hash(&payload).as_bytes() != &footer[32..64] {
+        return Ok(None);
+    }
+    Ok(decode_preview(&payload).ok())
+}
 /// Starts a new stream; callers must use create-new storage, never an existing file.
 pub fn initialize(writer: &mut impl Write) -> Result<(), Error> {
     writer.write_all(HEADER)?;
@@ -88,7 +222,11 @@ pub fn append(
     kind: u8,
     payload: &[u8],
 ) -> Result<u64, Error> {
-    if payload.len() as u64 > MAX_RECORD || offset < HEADER.len() as u64 || !matches!(kind, 1..=3) {
+    if payload.len() as u64 > MAX_RECORD
+        || offset < HEADER.len() as u64
+        || !matches!(kind, 1..=PREVIEW)
+        || (kind == PREVIEW && payload.len() as u64 > MAX_PREVIEW)
+    {
         return Err(Error::Budget);
     }
     let mut footer = [0u8; FOOTER_SIZE as usize];
@@ -504,6 +642,7 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
     let mut header = [0; 16];
     reader.read_exact(&mut header)?;
     if &header != HEADER
+        && &header != HEADER_V6
         && &header != HEADER_V5
         && &header != HEADER_V4
         && &header != HEADER_V3
@@ -611,6 +750,8 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
                     reader.read_exact(&mut bytes)?;
                     board.scene = restore(&bytes, &board.blobs)?;
                 }
+                // Previews are derived data for the library: the scene never reads them.
+                PREVIEW if &header == HEADER => {}
                 _ => return Err(Error::Invalid),
             }
             board.recovered |= start != committed;
@@ -790,13 +931,13 @@ mod tests {
     #[test]
     fn unsupported_schema_is_rejected() {
         let (mut bytes, _) = base();
-        bytes[4] = 7;
+        bytes[4] = SCHEMA + 1;
         assert!(matches!(read(&mut Cursor::new(bytes)), Err(Error::Invalid)));
     }
     #[test]
     fn schema_six_fixture_keeps_nested_groups() {
         let bytes = include_bytes!("../../../corpus/moth/v6.moth");
-        assert_eq!(bytes[4], SCHEMA);
+        assert_eq!(bytes[4], 6);
         let board = read(&mut Cursor::new(bytes.as_slice())).unwrap();
         let outer = board
             .scene
@@ -814,6 +955,85 @@ mod tests {
         for item in board.scene.items() {
             assert_eq!(restored.get(item.id), Some(item));
         }
+    }
+    #[test]
+    fn schema_seven_fixture_ends_with_a_preview_the_reader_skips() {
+        let bytes = include_bytes!("../../../corpus/moth/v7.moth");
+        assert_eq!(bytes[4], SCHEMA);
+        let board = read(&mut Cursor::new(bytes.as_slice())).unwrap();
+        assert!(!board.recovered);
+        let preview = peek_preview(&mut Cursor::new(bytes.as_slice()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(preview.items as usize, board.scene.len());
+        assert_eq!(preview.thumbnails.len(), 1);
+        assert!(preview.thumbnails[0].image.starts_with(b"\x89PNG"));
+        // The older fixture has no preview: the library reads it in full.
+        let v6 = include_bytes!("../../../corpus/moth/v6.moth");
+        assert_eq!(peek_preview(&mut Cursor::new(v6.as_slice())).unwrap(), None);
+    }
+    #[test]
+    fn previews_round_trip_and_reject_what_does_not_fit() {
+        let thumbnail = |side| Thumbnail {
+            width: side,
+            height: 10,
+            image: vec![7; 20],
+        };
+        let preview = Preview {
+            items: 42,
+            thumbnails: vec![thumbnail(12), thumbnail(256)],
+        };
+        let bytes = encode_preview(&preview).unwrap();
+        assert_eq!(decode_preview(&bytes).unwrap(), preview);
+        for cut in 0..bytes.len() {
+            assert!(decode_preview(&bytes[..cut]).is_err(), "cut at {cut}");
+        }
+        let mut longer = bytes.clone();
+        longer.push(0);
+        assert!(decode_preview(&longer).is_err());
+        assert!(
+            encode_preview(&Preview {
+                items: 1,
+                thumbnails: vec![thumbnail(257)],
+            })
+            .is_err()
+        );
+        assert!(
+            encode_preview(&Preview {
+                items: 1,
+                thumbnails: vec![thumbnail(1); 5],
+            })
+            .is_err()
+        );
+    }
+    #[test]
+    fn only_a_last_preview_counts_and_older_headers_reject_one() {
+        let preview = encode_preview(&Preview {
+            items: 0,
+            thumbnails: Vec::new(),
+        })
+        .unwrap();
+        let mut bytes = Vec::new();
+        initialize(&mut bytes).unwrap();
+        let offset = bytes.len() as u64;
+        append(&mut bytes, offset, PREVIEW, &preview).unwrap();
+        assert!(peek_preview(&mut Cursor::new(&bytes)).unwrap().is_some());
+        assert!(read(&mut Cursor::new(&bytes)).unwrap().scene.is_empty());
+        // A checkpoint after the preview makes it stale.
+        let offset = bytes.len() as u64;
+        append(&mut bytes, offset, 3, &snapshot(&Scene::default()).unwrap()).unwrap();
+        assert_eq!(peek_preview(&mut Cursor::new(&bytes)).unwrap(), None);
+        // A torn preview payload is ignored, never trusted.
+        let mut torn = Vec::new();
+        initialize(&mut torn).unwrap();
+        append(&mut torn, 16, PREVIEW, &preview).unwrap();
+        torn[16] ^= 1;
+        assert_eq!(peek_preview(&mut Cursor::new(&torn)).unwrap(), None);
+        // Schema 6 has no preview record.
+        let mut old = bytes.clone();
+        old[4] = 6;
+        old.truncate(16 + preview.len() + FOOTER_SIZE as usize);
+        assert!(read(&mut Cursor::new(&old)).is_err());
     }
     #[test]
     fn schema_five_migrates_to_ungrouped_items() {

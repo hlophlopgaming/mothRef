@@ -9,11 +9,11 @@ use uuid::Uuid;
 /// Name of the library file in the application data directory.
 const FILE: &str = "library.json";
 /// The library file stays small enough to read and rewrite on the worker in a blink.
-const MAX_BYTES: usize = 4 * 1024 * 1024;
+const MAX_BYTES: usize = 64 * 1024 * 1024;
 /// Boards remembered by the library; the oldest-opened go first when it is full.
-pub(super) const MAX_LIBRARY: usize = 5000;
+pub(super) const MAX_LIBRARY: usize = 100_000;
 /// Folders the user can create.
-pub const MAX_FOLDERS: usize = 200;
+pub const MAX_FOLDERS: usize = 1000;
 /// Longest folder name, in characters.
 pub const MAX_FOLDER_NAME: usize = 64;
 /// How many folder colors the theme offers; a folder stores an index into them.
@@ -39,6 +39,19 @@ pub(super) struct Board {
     pub folders: Vec<Uuid>,
     /// Seconds since the Unix epoch when the board was last seen opening.
     pub opened: u64,
+    /// What the file held when the library last looked, so a card shows without
+    /// reading the board again while the file is unchanged.
+    pub summary: Option<Summary>,
+}
+/// A board file as the library last read it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Summary {
+    /// File size in bytes.
+    pub size: u64,
+    /// Last write of the file, in nanoseconds since the Unix epoch.
+    pub modified: u64,
+    /// Items on the board.
+    pub items: u32,
 }
 
 /// The whole library file, kept in memory by the library worker.
@@ -94,6 +107,7 @@ impl Catalog {
                 tags: tags(storage, path).unwrap_or_default(),
                 folders: Vec::new(),
                 opened: start.saturating_sub(rank as u64),
+                summary: None,
             });
         }
         Ok(catalog)
@@ -155,6 +169,18 @@ impl Catalog {
                 tags,
                 folders,
                 opened: board["opened"].as_u64().unwrap_or(0),
+                summary: match (
+                    board["size"].as_u64(),
+                    board["modified"].as_u64(),
+                    board["items"].as_u64().and_then(|n| u32::try_from(n).ok()),
+                ) {
+                    (Some(size), Some(modified), Some(items)) => Some(Summary {
+                        size,
+                        modified,
+                        items,
+                    }),
+                    _ => None,
+                },
             });
         }
         Ok(catalog)
@@ -167,13 +193,21 @@ impl Catalog {
                 "name": f.name,
                 "color": f.color,
             })).collect::<Vec<_>>(),
-            "boards": self.boards.iter().filter_map(|b| Some(json!({
-                "path": b.path.to_str()?,
-                "pinned": b.pinned,
-                "tags": b.tags,
-                "folders": b.folders.iter().map(Uuid::to_string).collect::<Vec<_>>(),
-                "opened": b.opened,
-            }))).collect::<Vec<_>>(),
+            "boards": self.boards.iter().filter_map(|b| {
+                let mut record = json!({
+                    "path": b.path.to_str()?,
+                    "pinned": b.pinned,
+                    "tags": b.tags,
+                    "folders": b.folders.iter().map(Uuid::to_string).collect::<Vec<_>>(),
+                    "opened": b.opened,
+                });
+                if let Some(summary) = b.summary {
+                    record["size"] = summary.size.into();
+                    record["modified"] = summary.modified.into();
+                    record["items"] = summary.items.into();
+                }
+                Some(record)
+            }).collect::<Vec<_>>(),
         })
         .to_string()
     }
@@ -201,6 +235,7 @@ impl Catalog {
                     tags: Vec::new(),
                     folders: Vec::new(),
                     opened: now(),
+                    summary: None,
                 });
                 self.boards.len() - 1
             }
@@ -248,6 +283,7 @@ impl Catalog {
                         tags: Vec::new(),
                         folders: Vec::new(),
                         opened: start.saturating_sub(rank as u64),
+                        summary: None,
                     });
                     changed = true;
                 }
@@ -258,7 +294,9 @@ impl Catalog {
     pub fn create_folder(&mut self, name: &str) -> std::io::Result<Uuid> {
         let name = folder_name(name).ok_or_else(|| std::io::Error::other("Name the folder"))?;
         if self.folders.len() >= MAX_FOLDERS {
-            return Err(std::io::Error::other("The library holds up to 200 folders"));
+            return Err(std::io::Error::other(
+                "The library holds up to 1,000 folders",
+            ));
         }
         let id = Uuid::now_v7();
         // Colors first, the neutral gray (index 0) last.
@@ -342,6 +380,7 @@ impl Catalog {
             target.opened = target.opened.max(previous.opened);
         } else {
             self.boards[old].path = to.to_owned();
+            self.boards[old].summary = None;
         }
         Ok(())
     }
