@@ -150,6 +150,7 @@ Open:
 
 - [ ] New app icon and README logo — **on hold** until the final mark is drawn
 - [ ] Parity leftovers from [FEATURES.md](docs/FEATURES.md) (a few were tagged M0/M1 there but never done, so they are collected here):
+  - [x] Export the selected originals, each as its own file, named after the images (maintainer, 2026-11-08)
   - [ ] Show the color gamut of an image (BR) — waiting for a decision: the maintainer asked what it shows (2026-11-05)
   - [ ] Open image source — the URL or path the image came from (PR). Needs the source stored per image (schema 7; paths are not written to boards today) — on hold with linked files (maintainer, 2026-11-06). Wanted; handle the edge cases explicitly: an image from inside a `.zip` (show the archive and the entry, open the archive's folder), a web URL (open on click only), clipboard pastes and images embedded in `.bee` / `.pur` files (no source: say so), a file that was moved or deleted since (say it is missing, offer the last known path)
   - [ ] Arrange by file path (PR) — needs the stored source, see above

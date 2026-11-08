@@ -32,8 +32,9 @@ pub(super) enum PendingExport {
     },
     /// One image's original file, with the item name offered as the file name.
     Original(Uuid, String),
-    /// Every original into a new folder named in the dialog.
-    Originals,
+    /// Originals of the selection (or the board when empty), each as its own file in a
+    /// new folder named in the dialog.
+    Originals(Vec<Uuid>),
     /// Originals of the selection (or the board when empty) in a ZIP archive.
     Archive(Vec<Uuid>),
 }
@@ -55,7 +56,7 @@ impl PendingExport {
             Self::Original(_, name) => dialog
                 .set_title(text(Text::ExportOriginal))
                 .set_file_name(name.as_str()),
-            Self::Originals => dialog
+            Self::Originals(_) => dialog
                 .set_title(text(Text::ExportOriginals))
                 .set_file_name(format!("{board} {}", text(Text::OriginalsFolder))),
             Self::Archive(_) => dialog
@@ -83,7 +84,10 @@ impl PendingExport {
                 }
             }
             Self::Original(id, _) => Target::Original { path, id },
-            Self::Originals => Target::Originals(path),
+            Self::Originals(ids) => Target::Originals {
+                directory: path,
+                ids,
+            },
             Self::Archive(ids) => {
                 if path.extension().is_none() {
                     path.set_extension("zip");
@@ -1044,9 +1048,13 @@ mod tests {
         };
         assert_eq!(path, std::path::Path::new("/tmp/refs.zip"));
         // A folder name is used as typed: the worker creates it fresh.
-        let Target::Originals(path) = PendingExport::Originals.target("/tmp/refs v2".into()) else {
+        let id = Uuid::from_u128(7);
+        let Target::Originals { directory, ids } =
+            PendingExport::Originals(vec![id]).target("/tmp/refs v2".into())
+        else {
             panic!("originals export");
         };
-        assert_eq!(path, std::path::Path::new("/tmp/refs v2"));
+        assert_eq!(directory, std::path::Path::new("/tmp/refs v2"));
+        assert_eq!(ids, [id]);
     }
 }

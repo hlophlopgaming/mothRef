@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Export › Originals to a folder… takes the selection into account: with images selected only those are written (a selected group brings the images inside it), each as its own file; with nothing selected, every image on the board. Exported originals, in the folder and in a ZIP, are named after the images (`fox.jpg`) instead of their content hash; the extension follows the real format, names that repeat get " (2)", and characters no file system accepts become `_`.
+
 ## 0.1.0-alpha.21 — 2026-11-06
 
 - Zooming into a very large WebP is several times faster and uses a fraction of the memory: WebP has to be decoded as a whole frame, and each batch of tiles on screen used to decode it again, up to four at once (about 1.3 GB for an 81-megapixel image). The frame is now decoded once, shared by the tile batches and the tile bake, and released once the image's tiles are baked.
