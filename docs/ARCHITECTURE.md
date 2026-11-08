@@ -44,7 +44,7 @@ still pending.
 
 | Resource | Bound |
 | --- | --- |
-| App board admission / waiting import backlog | 1,000,000 items / 1,024 handles |
+| App board admission / waiting import backlog | 1,000,000 items / 100,000 handles |
 | Desktop source catalog | 1,000,000 handles |
 | Texture arrays, including every layer and mip | Adaptive: 32–512 MiB discrete GPU, 32–96 MiB shared/software; 0 for no images (decision 0009) |
 | Instance buffer | 10,000 instances, 880,000 bytes, reused between ordered batch submissions |
@@ -60,8 +60,9 @@ still pending.
 | PNG decoder internal allocations | 8 MiB |
 | Clipboard requests / results | 1 / 1 |
 | Clipboard staging directory, per board | 8 GiB and 10,000 entries |
-| Native clipboard file list | 1,024 absolute paths |
+| Native clipboard file list | 100,000 absolute paths |
 | Storage requests / results | 32 / 32 |
+| Released large-move geometry | Up to 1,000,000 UUID/target-rectangle pairs, at most 32 MiB; freed on acknowledgment or rejection |
 | Undo/redo | 256 session commands |
 
 The decode concurrency cap bounds temporary pixels independently of CPU count.
@@ -126,7 +127,7 @@ not promise that every million-item board fits a 64 MiB checkpoint.
 winit 0.30 does not deliver native Wayland drops itself. The input adapter binds
 `wl_data_device_manager` on winit's existing connection, negotiates copy-only
 `text/uri-list` offers for its own surface and receives local paths on a transfer
-worker. Transfers allow at most 1 MiB, 1,024 paths and five seconds; remote URLs
+worker. Transfers allow at most 64 MiB, 100,000 paths and five seconds; remote URLs
 and malformed paths fail without importing a partial list. Offers survive
 `leave` until a successful read finishes the protocol operation. Both native
 workers sleep when idle, queues are bounded (256 events, one waiting transfer),
@@ -134,16 +135,37 @@ and seats/tools/tablets/offers are capped at 64 each. The display handle outlive
 all guest proxies and workers; suspension retains the adapter rather than
 rebinding native devices. Clipboard interoperability and pen/touch behavior still
 need qualification on other desktops.
+Wayland brackets the path events with `DropStarted` and `DropFinished`; the
+arrange prompt waits for the end marker and all decode/journal acknowledgments,
+without a quiet timer. Clipboard file lists, file-picker results and command-line
+lists also mark their completion. winit drops without an end marker retain the
+300 ms quiet fallback.
 The Wayland decoration backend omits its title font to avoid an unmaintained font
 parser; the application title is shown in the toolbar.
 
 ## M1 persistence
 
-The storage worker has 32 request and 32 result slots. Scene mutations are
-validated, journaled and synced before the UI receives their command. Originals
-are copied into private recovery storage before acknowledgment, so external source
+The storage worker has 32 request and 32 result slots. Import completion drains
+reserve three request slots (EndBatch, BeginBatch, Apply) before taking a decoded
+or clipboard result. When storage is busy, those results stay in their bounded
+channels; an accepted image is never discarded just because `try_send` is full.
+Scene mutations are validated, journaled and synced before the UI receives their
+command. Originals and commands within `ApplyBatch` share one sync at the last command; the batch
+completion is sent only after that sync. This avoids one disk flush per moved
+selection member without weakening durable acknowledgments. Originals are copied
+into private recovery storage before acknowledgment, so external source
 changes cannot destroy an acknowledged image. Scene metadata is duplicated in the
 worker to validate commands and provide checkpoints without blocking frames.
+
+Saving appends distinct live originals and syncs them with the new checkpoint;
+the optional library preview has its own final sync. Compaction compares file size
+against live original bytes including newly copied blobs and the current snapshot,
+so a fresh large board is not immediately rewritten. Optional explicit-save backups and
+checksum verification remain in place. `Completion::Saving` is informational and
+does not decrement the outstanding request count; progress is sent with `try_send`
+through the bounded result queue. The active manual save shows its stage and
+original-image count above the bottom toolbar. Success or failure clears progress;
+timed autosaves retain their quiet presentation.
 
 The journal is the durable original store. Originals use opaque handles to bounded,
 read-only ranges in the session journal, with independent cursors for decoding,
@@ -169,7 +191,14 @@ entries (at most 8 MiB allocated); larger, torn, gapped or corrupt streams retai
 the scanner path. Payload and footer checksums remain mandatory (decision 0012).
 
 Each explicit save appends missing original blobs and one atomic checkpoint.
-Three immutable backups per destination survive session discard. Compaction uses
+Backup copies default off; General Settings enables them globally and each
+library card can inherit, enable or disable them. The storage worker resolves
+this preference for deliberate saves; timed autosaves never create copies.
+Up to three immutable backups per destination survive session discard and remain
+recoverable after disabling creation. Missing library cards discover copies on
+the library worker. Their registered OpenBackup action opens the latest into a
+new private journal, unnamed and dirty; saving uses Save As, never the backup's
+path. Compaction uses
 a sibling temporary object and atomic replacement. Recovery, recent-file discovery
 and source extraction run on the worker. The path field, recent/recovery buttons,
 Save/Open and undo/redo controls provide pointer paths for all new operations.

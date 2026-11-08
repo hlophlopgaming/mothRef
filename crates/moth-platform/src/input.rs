@@ -75,6 +75,10 @@ pub enum Input {
 pub enum NativeEvent {
     /// Preserves tablet identity without putting recognition in the gesture layer.
     Pointer(Pointer),
+    /// The full native file list is known; its paths follow through the bounded queue.
+    DropStarted,
+    /// Every path of this drop has reached the application.
+    DropFinished,
     /// Hands a local path to the existing background import worker.
     Drop(std::path::PathBuf),
     /// Keeps archive reads on the existing background import workers.

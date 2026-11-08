@@ -104,6 +104,15 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
         ui.set_opacity(previous_opacity);
         actions.new |= intent.new;
         actions.open |= intent.browse;
+        if intent.open_backup {
+            intents.push(Intent::Action(super::bindings::Action::OpenBackup));
+        }
+        if let Some((index, enabled)) = intent.backups {
+            intents.push(Intent::Library(moth_platform::library::Request::Backups(
+                ctx.cards[index].path.clone(),
+                enabled,
+            )));
+        }
         if let Some(index) = intent.open {
             intents.push(Intent::OpenPath(ctx.cards[index].path.clone()));
         }

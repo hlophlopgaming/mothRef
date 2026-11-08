@@ -37,7 +37,7 @@ Every milestone and every pull request is judged against these, in this order:
 
 ## Where we are
 
-Latest release: **0.1.0-alpha.21** (2026-11-06). Pre-alpha builds for Windows, macOS and Linux are attached to every tagged release on GitHub Releases.
+Latest release: **0.1.0-alpha.22** (2026-11-08). Pre-alpha builds for Windows, macOS and Linux are attached to every tagged release on GitHub Releases.
 
 | Milestone | State | What is left |
 | --- | --- | --- |
@@ -122,7 +122,7 @@ Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](d
 - [x] Tagged GitHub Actions builds attach Windows `.zip`, macOS `.tar.gz` (Intel and Apple Silicon), and Linux `.tar.gz` binaries to GitHub Releases from 0.1
 
 - [x] `.moth` format: chunks, footer, append-only checkpoints, background compaction
-- [x] Write-ahead journal, autosave, rotating backups
+- [x] Write-ahead journal, autosave, rotating backups (optional, off by default; global/per-board controls and recovery from missing library cards)
 - [x] Recovery dialog on startup, save prompt on exit
 - [x] Undo/redo for every command (bounded to 256 commands per session)
 - [x] Panic hook, crash report, decoder isolation (`catch_unwind`, header size checks)

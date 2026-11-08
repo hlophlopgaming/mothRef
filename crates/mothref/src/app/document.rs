@@ -148,9 +148,10 @@ pub(super) struct Intake {
     pub(super) burst: Vec<Uuid>,
     /// Files added since the board was last idle, for "Adding images: N of M".
     pub(super) queued: usize,
-    /// When the intake last went quiet. Drag and drop delivers files over several
-    /// frames, so the queue can empty for a moment mid-drop; the arrange prompt waits
-    /// for a short quiet spell instead of taking a partial burst.
+    /// A complete file list needs no quiet timer after its workers finish.
+    pub(super) files_received: bool,
+    /// Quiet fallback for backends without a file-list end marker: their queue can
+    /// empty between paths of one drop.
     pub(super) idle_since: Option<Instant>,
 }
 impl Intake {
@@ -185,6 +186,7 @@ pub(super) struct FileState {
     pub(super) path: String,
     pub(super) conversion: Option<(std::path::PathBuf, usize)>,
     pub(super) restoring: Option<std::path::PathBuf>,
+    pub(super) backup_origin: Option<std::path::PathBuf>,
     pub(super) dirty: bool,
     pub(super) close_after_save: bool,
     pub(super) exporting: bool,
@@ -192,6 +194,8 @@ pub(super) struct FileState {
     pub(super) dirty_since: Option<Instant>,
     /// The save under way is a timed one: it finishes without a message.
     pub(super) autosaving: bool,
+    /// Transient worker progress, also set while the save waits in the queue.
+    pub(super) saving: Option<moth_platform::boards::SaveProgress>,
     pub(super) discarding: bool,
     pub(super) discarded: bool,
 }
@@ -689,6 +693,9 @@ impl Document {
     /// remaining wait otherwise, so the caller can ask for a frame then.
     pub(super) fn settled(&self) -> Result<(), std::time::Duration> {
         const QUIET: std::time::Duration = std::time::Duration::from_millis(300);
+        if self.idle() && self.intake.files_received {
+            return Ok(());
+        }
         match self.intake.idle_since {
             Some(since) if self.idle() => QUIET.checked_sub(since.elapsed()).map_or(Ok(()), Err),
             _ => Err(QUIET),
@@ -708,6 +715,7 @@ impl Document {
                 .conversion
                 .as_ref()
                 .map(|(path, _)| path.as_path())
+                .or(self.file.backup_origin.as_deref())
                 .unwrap_or(std::path::Path::new(&self.file.path))
         } else {
             std::path::Path::new(&self.file.path)
@@ -719,7 +727,7 @@ impl Document {
     }
     /// Enqueue a journaled save; the caller resolves the path first.
     pub(super) fn save(&mut self) {
-        if self.intake.loading {
+        if self.intake.loading || self.file.saving.is_some() {
             self.notices.message = moth_ui::Text::StorageBusy.into();
             return;
         }
@@ -729,7 +737,10 @@ impl Document {
             .try_send(moth_platform::boards::Request::Save(
                 std::path::PathBuf::from(&self.file.path),
             )) {
-            Ok(()) => self.intake.in_flight += 1,
+            Ok(()) => {
+                self.intake.in_flight += 1;
+                self.file.saving = Some(moth_platform::boards::SaveProgress::Preparing);
+            }
             Err(_) => self.notices.message = moth_ui::Text::StorageBusy.into(),
         }
     }
@@ -765,6 +776,7 @@ impl Document {
             Ok(()) => {
                 self.intake.in_flight += 1;
                 self.file.autosaving = true;
+                self.file.saving = Some(moth_platform::boards::SaveProgress::Preparing);
                 self.file.dirty_since = None;
                 None
             }
@@ -968,8 +980,148 @@ mod tests {
         assert!(board.settled().is_ok());
         board.intake.waiting.push(Handle(1));
         assert!(board.settled().is_err(), "files still waiting");
+        board.intake.files_received = true;
+        assert!(
+            board.settled().is_err(),
+            "a complete list still waits for decoding"
+        );
+        board.intake.waiting.clear();
+        board.intake.idle_since = None;
+        assert!(
+            board.settled().is_ok(),
+            "a complete list needs no quiet timer"
+        );
         drop(board);
         let _ = std::fs::remove_dir_all(root);
+    }
+    #[test]
+    fn large_file_list_keeps_every_image_under_storage_backpressure() {
+        let root = std::env::temp_dir().join(format!("mothref-import-pressure-{}", Uuid::now_v7()));
+        let (entered, stalled) = crossbeam_channel::bounded(1);
+        let (resume, waiting) = crossbeam_channel::bounded(1);
+        let first = std::sync::atomic::AtomicBool::new(true);
+        let board = Document::with_storage(
+            Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+            Arc::new(move || {
+                if std::thread::current().name() == Some("storage")
+                    && first.swap(false, std::sync::atomic::Ordering::SeqCst)
+                {
+                    entered.send(()).unwrap();
+                    waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+                }
+            }),
+            false,
+        )
+        .unwrap();
+        let mut workspace = workspace::Workspace::new(board, Arc::new(|| {}));
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/images/rows.png");
+        workspace.receiving_drop = true;
+        for _ in 0..1316 {
+            workspace.import(path.clone(), moth_io::ImageFormat::Rgba8);
+        }
+        workspace.receiving_drop = false;
+        workspace.board.intake.files_received = true;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        // Hold the real storage worker after its first acknowledgment, simulating a
+        // slow disk while the bounded decoder queue continues producing images.
+        loop {
+            workspace.pump(workspace::Pump {
+                format: moth_io::ImageFormat::Rgba8,
+                cursor: None,
+                fallback: [0.; 2],
+                upload: &mut |_| {},
+                events: Vec::new(),
+            });
+            if stalled.try_recv().is_ok() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "storage worker did not start");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        for _ in 0..128 {
+            workspace.pump(workspace::Pump {
+                format: moth_io::ImageFormat::Rgba8,
+                cursor: None,
+                fallback: [0.; 2],
+                upload: &mut |_| {},
+                events: Vec::new(),
+            });
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let requests = &workspace.board.boards().requests;
+        assert!(requests.len() + 3 > requests.capacity().unwrap());
+        resume.send(()).unwrap();
+        loop {
+            workspace.pump(workspace::Pump {
+                format: moth_io::ImageFormat::Rgba8,
+                cursor: None,
+                fallback: [0.; 2],
+                upload: &mut |_| {},
+                events: Vec::new(),
+            });
+            if workspace.board.idle() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "import did not drain");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let count = workspace.board.scene.len();
+        let prompt = workspace
+            .board
+            .notices
+            .arrange_prompt
+            .as_ref()
+            .map_or(0, Vec::len);
+        workspace.board.boards.finish().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(count, 1316, "every accepted file must reach the scene");
+        assert_eq!(
+            prompt, 1316,
+            "every inserted image must reach the arrange prompt"
+        );
+    }
+    #[test]
+    fn native_drop_waits_for_its_end_even_when_workers_are_idle() {
+        let root = std::env::temp_dir().join(format!("mothref-drop-end-{}", Uuid::now_v7()));
+        let board = Document::with_storage(
+            Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+            Arc::new(|| {}),
+            false,
+        )
+        .unwrap();
+        let mut workspace = workspace::Workspace::new(board, Arc::new(|| {}));
+        workspace.receiving_drop = true;
+        workspace.board.intake.batching = true;
+        let ids: Vec<_> = (0..1014).map(|_| Uuid::now_v7()).collect();
+        for part in ids.chunks(400) {
+            workspace.board.intake.burst.extend_from_slice(part);
+            workspace.board.intake.idle_since = Some(Instant::now() - Duration::from_secs(1));
+            workspace.pump(workspace::Pump {
+                format: moth_io::ImageFormat::Rgba8,
+                cursor: None,
+                fallback: [0.; 2],
+                upload: &mut |_| {},
+                events: Vec::new(),
+            });
+            assert!(workspace.board.idle());
+            assert!(workspace.board.notices.arrange_prompt.is_none());
+        }
+        workspace.receiving_drop = false;
+        workspace.board.intake.files_received = true;
+        workspace.pump(workspace::Pump {
+            format: moth_io::ImageFormat::Rgba8,
+            cursor: None,
+            fallback: [0.; 2],
+            upload: &mut |_| {},
+            events: Vec::new(),
+        });
+        assert_eq!(workspace.board.notices.arrange_prompt.as_ref(), Some(&ids));
+        assert!(workspace.board.settled().is_ok());
+        workspace.board.boards.finish().unwrap();
+        if root.exists() {
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
     #[test]
     fn import_layout_choices_share_one_undo_and_fit_only_after_acknowledgment() {
@@ -1427,6 +1579,54 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    fn backup_open_is_unnamed_dirty_and_keeps_the_copy_unchanged() {
+        let root = std::env::temp_dir().join(format!("mothref-backup-open-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&root).unwrap();
+        let backup = root.join("backup.moth");
+        let original = root.join("lost-board.moth");
+        let bytes = include_bytes!("../../../../corpus/moth/v7.moth");
+        std::fs::write(&backup, bytes).unwrap();
+        let board = Document::with_storage(
+            Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+            Arc::new(|| {}),
+            false,
+        )
+        .unwrap();
+        let mut workspace = workspace::Workspace::new(board, Arc::new(|| {}));
+        assert!(matches!(
+            workspace.open_backup(original.clone(), backup.clone()),
+            workspace::TabChange::Switched
+        ));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !workspace.board.idle() {
+            workspace.pump(workspace::Pump {
+                format: moth_io::ImageFormat::Rgba8,
+                cursor: None,
+                fallback: [0.; 2],
+                upload: &mut |_| {},
+                events: Vec::new(),
+            });
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(workspace.board.scene.len(), 6);
+        assert!(workspace.board.file.path.is_empty());
+        assert!(workspace.board.file.dirty);
+        assert_eq!(workspace.board.title(), "lost-board");
+        assert_eq!(workspace.board.file.backup_origin.as_ref(), Some(&original));
+        assert!(
+            workspace
+                .board
+                .autosave(Duration::from_secs(1), Instant::now())
+                .is_none()
+        );
+        assert!(workspace.board.file.saving.is_none());
+        assert!(!original.exists());
+        assert_eq!(std::fs::read(&backup).unwrap(), bytes);
+        workspace.board.boards.finish().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn foreign_conversion_offers_native_save_and_requires_close_confirmation() {
         for fixture in ["bee/tiny.bee", "pur/v2.1-redbar.pur"] {
             let root = std::env::temp_dir().join(format!("mothref-conversion-{}", Uuid::now_v7()));
@@ -1513,6 +1713,117 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    fn save_progress_is_visible_pending_and_cleared_on_success_or_failure() {
+        use moth_platform::boards::SaveProgress;
+        let root = std::env::temp_dir().join(format!("mothref-save-progress-{}", Uuid::now_v7()));
+        let (entered, stalled) = crossbeam_channel::bounded(1);
+        let (resume, waiting) = crossbeam_channel::bounded(1);
+        let first = std::sync::atomic::AtomicBool::new(true);
+        let mut board = Document::with_storage(
+            Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+            Arc::new(move || {
+                if std::thread::current().name() == Some("storage")
+                    && first.swap(false, std::sync::atomic::Ordering::SeqCst)
+                {
+                    entered.send(()).unwrap();
+                    waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+                }
+            }),
+            false,
+        )
+        .unwrap();
+        board.file.path = root.join("saved.moth").to_string_lossy().into_owned();
+        board.file.dirty = true;
+        board.save();
+        assert_eq!(board.file.saving, Some(SaveProgress::Preparing));
+        stalled.recv_timeout(Duration::from_secs(10)).unwrap();
+        let mut workspace = workspace::Workspace::new(board, Arc::new(|| {}));
+        fn pump(workspace: &mut workspace::Workspace) {
+            workspace.pump(workspace::Pump {
+                format: moth_io::ImageFormat::Rgba8,
+                cursor: None,
+                fallback: [0.; 2],
+                upload: &mut |_| {},
+                events: Vec::new(),
+            });
+        }
+        pump(&mut workspace);
+        assert_eq!(
+            workspace.board.intake.in_flight, 1,
+            "progress is not a save acknowledgment"
+        );
+        assert!(workspace.board.file.dirty);
+        workspace.board.file.saving = Some(SaveProgress::Images {
+            done: 32,
+            total: 1000,
+        });
+        let expected = moth_ui::text(moth_ui::Text::SaveImages)
+            .replace("{done}", "32")
+            .replace("{total}", "1000");
+        let ctx = egui::Context::default();
+        moth_ui::theme(&ctx, &moth_ui::Tokens::LIGHT);
+        let mut tools = tools::Tools::default();
+        let mut settings = settings::Settings::default();
+        let mut tool = super::gesture::Tool::Select;
+        let registry = super::bindings::Registry::default();
+        let mut visible = false;
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800., 600.),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    tools.show(
+                        ui,
+                        &workspace.board,
+                        &mut settings,
+                        &mut tool,
+                        &[],
+                        &registry,
+                    );
+                },
+            );
+            visible |= output.shapes.iter().any(|shape| {
+                matches!(&shape.shape,
+                egui::Shape::Text(text) if text.galley.text() == expected)
+            });
+            output.textures_delta.clear();
+        }
+        assert!(
+            visible,
+            "the save counter must be painted above the bottom toolbar"
+        );
+        resume.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !workspace.board.idle() {
+            pump(&mut workspace);
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(workspace.board.file.saving, None);
+        assert!(!workspace.board.file.dirty);
+        assert!(workspace.board.notices.flash.as_ref().unwrap().1);
+        let blocked = root.join("directory.moth");
+        std::fs::create_dir_all(&blocked).unwrap();
+        workspace.board.file.path = blocked.to_string_lossy().into_owned();
+        workspace.board.file.dirty = true;
+        workspace.board.save();
+        while !workspace.board.idle() {
+            pump(&mut workspace);
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(workspace.board.file.saving, None);
+        assert!(workspace.board.file.dirty);
+        assert!(!workspace.board.notices.flash.as_ref().unwrap().1);
+        workspace.board.boards.finish().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn save_and_close_never_discards_before_the_save_completes() {
         let root = std::env::temp_dir().join(format!("mothref-close-{}", Uuid::now_v7()));
         let save_path = root.join("board.moth");
@@ -1588,5 +1899,97 @@ mod image_request_tests {
         assert_eq!(clip, board);
         assert_eq!(actual.zoom, camera.zoom);
         assert_eq!(actual.origin, camera.origin);
+    }
+}
+
+#[cfg(test)]
+mod latency {
+    use crate::app::{Document, bindings::Registry, settings::Settings, workspace::Pump};
+    use crate::app::{Intent, modal::Modal, workspace::Workspace};
+    use std::{
+        fmt::Write as _,
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    #[ignore = "manual import latency measurement; run on an idle machine"]
+    fn measure_import_latency() {
+        let mut report =
+            String::from("count,run,first_upload_ms,all_items_ms,arrange_ms,post_import_wait_ms\n");
+        for count in [1, 10, 100] {
+            for run in 0..5 {
+                let root = std::env::temp_dir()
+                    .join(format!("mothref-latency-{}", moth_scene::Uuid::now_v7()));
+                let board = Document::with_storage(
+                    Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+                    Arc::new(|| {}),
+                    false,
+                )
+                .unwrap();
+                let mut workspace = Workspace::new(board, Arc::new(|| {}));
+                workspace.library = false;
+                let context = egui::Context::default();
+                moth_ui::theme(&context, &moth_ui::Tokens::LIGHT);
+                let settings = Settings {
+                    auto_arrange: true,
+                    ..Settings::default()
+                };
+                let registry = Registry::default();
+                let mut modal = Modal::default();
+                let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../images/foxes/fox-in-snow.jpg");
+                let start = Instant::now();
+                for _ in 0..count {
+                    workspace.import(path.clone(), moth_io::ImageFormat::Rgba8);
+                }
+                workspace.board.intake.files_received = true;
+                let mut first = None;
+                let mut all = None;
+                let arranged = loop {
+                    workspace.pump(Pump {
+                        format: moth_io::ImageFormat::Rgba8,
+                        cursor: None,
+                        fallback: [0.; 2],
+                        upload: &mut |_| {
+                            first.get_or_insert(start.elapsed());
+                        },
+                        events: Vec::new(),
+                    });
+                    if workspace.board.scene.len() == count && workspace.board.idle() {
+                        all.get_or_insert(start.elapsed());
+                    }
+                    let mut ready = false;
+                    let mut output = context.run_ui(Default::default(), |ui| {
+                        ready = modal.show(ui, &workspace, &settings, &[], &registry)
+                            .iter().any(|intent| matches!(intent, Intent::Arrange(_, ids) if ids.len() == count));
+                    });
+                    output.textures_delta.clear();
+                    if ready {
+                        break start.elapsed();
+                    }
+                    assert!(
+                        start.elapsed() < Duration::from_secs(20),
+                        "import did not finish: {} of {count}, {}",
+                        workspace.board.scene.len(),
+                        workspace.board.notices.message.render(moth_ui::locale())
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
+                };
+                let all = all.unwrap();
+                writeln!(
+                    report,
+                    "{count},{run},{:.3},{:.3},{:.3},{:.3}",
+                    first.unwrap().as_secs_f64() * 1000.,
+                    all.as_secs_f64() * 1000.,
+                    arranged.as_secs_f64() * 1000.,
+                    (arranged - all).as_secs_f64() * 1000.
+                )
+                .unwrap();
+                workspace.board.boards.finish().unwrap();
+                std::fs::remove_dir_all(root).unwrap();
+            }
+        }
+        std::fs::write("/tmp/mothref-import-latency.csv", report).unwrap();
     }
 }

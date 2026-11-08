@@ -567,7 +567,9 @@ impl App {
             .file
             .conversion
             .as_ref()
-            .and_then(|(source, _)| source.parent())
+            .map(|(source, _)| source)
+            .or(board.file.backup_origin.as_ref())
+            .and_then(|source| source.parent())
         {
             dialog = dialog.set_directory(folder);
         }
@@ -640,6 +642,7 @@ impl App {
                 self.import(path);
             }
         }
+        self.workspace.board.intake.files_received = true;
     }
 
     /// Creates an empty note at `world` and opens the inline editor for it.
@@ -971,6 +974,7 @@ impl App {
                     self.import(path);
                 }
             }
+            self.workspace.board.intake.files_received = true;
         }
         if self.workspace.library
             && self.workspace.refresh_library
@@ -1006,6 +1010,23 @@ impl App {
         }
         while let Ok(result) = self.library_screen.worker.results.try_recv() {
             match result {
+                Ok(moth_platform::library::Update::Backup { original, path }) => {
+                    if let Some(path) = path {
+                        let change = self.workspace.open_backup(original, path);
+                        self.tab_change(change);
+                    } else {
+                        if let Some(card) = self
+                            .library_screen
+                            .cards
+                            .iter_mut()
+                            .find(|c| c.path == original)
+                        {
+                            card.backup_available = false;
+                        }
+                        self.workspace.board.notices.message =
+                            moth_ui::Text::BackupUnavailable.into();
+                    }
+                }
                 Ok(moth_platform::library::Update::Removed(path)) => {
                     match self.library_screen.relinking.take() {
                         Some((old, new)) if old == path => self.workspace.move_recent(&old, &new),
@@ -1045,6 +1066,7 @@ impl App {
                         .find(|c| c.path == path)
                     {
                         card.pinned = meta.pinned;
+                        card.backups = meta.backups;
                         card.tags = meta.tags;
                         card.folders = meta.folders.iter().map(|id| id.as_u128()).collect();
                         card.opened = meta.opened;
@@ -1156,6 +1178,8 @@ impl App {
             folders: entry.meta.folders.iter().map(|id| id.as_u128()).collect(),
             opened: entry.meta.opened,
             missing: entry.missing,
+            backup_available: entry.backup_available,
+            backups: entry.meta.backups,
             known: entry.count.is_some(),
             loading,
             count: entry.count.unwrap_or(0),
@@ -1317,6 +1341,12 @@ impl App {
                         );
                     }
                     self.pointer(Input::Pointer(p));
+                    self.redraw();
+                }
+                NativeEvent::DropStarted => self.workspace.receiving_drop = true,
+                NativeEvent::DropFinished => {
+                    self.workspace.receiving_drop = false;
+                    self.workspace.board.intake.files_received = true;
                     self.redraw();
                 }
                 NativeEvent::Drop(path) => self.import(path),
@@ -2538,10 +2568,11 @@ impl App {
         } else {
             Vec::new()
         };
-        previews.extend(
-            self.motion
-                .returning(self.motion.now(), self.settings.reduced_motion),
-        );
+        previews.extend(self.motion.returning(
+            &self.workspace.board.scene,
+            self.motion.now(),
+            self.settings.reduced_motion,
+        ));
         if let Some(resizing) = self.gesture.resize().or(self.settling.resize.as_ref()) {
             previews.extend(resizing.previews());
         }

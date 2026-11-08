@@ -378,6 +378,7 @@ impl Soak {
             use moth_platform::boards::Completion;
             match self.worker.results.recv_timeout(Duration::from_secs(30))? {
                 Completion::Loading { .. }
+                | Completion::Saving(_)
                 | Completion::Recovery(_)
                 | Completion::RecoveryDiscarded(_)
                 | Completion::Recent(_)
@@ -476,10 +477,13 @@ pub fn roundtrip_pur(path: &Path) -> anyhow::Result<()> {
         };
         let destination = directory.join("converted.moth");
         worker.requests.send(Request::Save(destination.clone()))?;
-        match worker.results.recv_timeout(Duration::from_secs(300))? {
-            Completion::Saved => {}
-            Completion::Failed(error) => anyhow::bail!(error),
-            _ => anyhow::bail!("unexpected save completion"),
+        loop {
+            match worker.results.recv_timeout(Duration::from_secs(300))? {
+                Completion::Saving(_) => continue,
+                Completion::Saved => break,
+                Completion::Failed(error) => anyhow::bail!(error),
+                _ => anyhow::bail!("unexpected save completion"),
+            }
         }
         let after = board::read(&mut File::open(destination)?)?;
         anyhow::ensure!(

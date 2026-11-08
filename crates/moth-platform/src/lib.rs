@@ -46,6 +46,9 @@ use std::{
 };
 pub use viewer::reveal;
 
+/// Keeps native file lists within the app's waiting import budget.
+pub const MAX_IMPORT_FILES: usize = 100_000;
+
 /// Native failures cross worker boundaries as values instead of panics.
 #[derive(Debug, thiserror::Error)]
 pub enum PlatformError {
@@ -651,9 +654,12 @@ pub enum ClipboardCompletion {
     Discarded(io::Result<()>),
 }
 fn file_payload(paths: Vec<PathBuf>) -> Result<ClipboardCompletion, PlatformError> {
-    if paths.is_empty() || paths.len() > 1024 || paths.iter().any(|path| !path.is_absolute()) {
+    if paths.is_empty()
+        || paths.len() > MAX_IMPORT_FILES
+        || paths.iter().any(|path| !path.is_absolute())
+    {
         return Err(PlatformError::Budget(
-            "Clipboard file list must contain 1–1024 absolute paths",
+            "Clipboard file list must contain 1–100000 absolute paths",
         ));
     }
     Ok(ClipboardCompletion::Files(paths))
@@ -902,7 +908,9 @@ mod tests {
         assert!(file_payload(Vec::new()).is_err());
         assert!(file_payload(vec![PathBuf::from("relative.png")]).is_err());
         assert!(file_payload(vec![first.clone(); 1024]).is_ok());
-        assert!(file_payload(vec![first; 1025]).is_err());
+        assert!(file_payload(vec![first.clone(); 1025]).is_ok());
+        assert!(file_payload(vec![first.clone(); MAX_IMPORT_FILES]).is_ok());
+        assert!(file_payload(vec![first; MAX_IMPORT_FILES + 1]).is_err());
     }
     #[test]
     fn worker_acknowledges_discard_after_cleanup() {

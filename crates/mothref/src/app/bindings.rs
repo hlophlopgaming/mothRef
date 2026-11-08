@@ -22,6 +22,7 @@ actions! {
     Shortcuts, CheatSheet, "Slash", None;
     BindingSettings, Shortcuts, "", None;
     New, NewBoard, "Cmd+N", Some(moth_ui::icons::Icon::Plus);
+    OpenBackup, OpenBackup, "", None;
     Open, Open, "", Some(moth_ui::icons::Icon::Folder);
     Images, InsertImages, "", Some(moth_ui::icons::Icon::ImagePlus);
     Save, Save, "Cmd+S", Some(moth_ui::icons::Icon::Save);

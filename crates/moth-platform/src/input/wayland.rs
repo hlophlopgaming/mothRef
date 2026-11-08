@@ -31,6 +31,7 @@ use winit::{
 
 const LIMIT: usize = 64;
 const URI_LIST: &str = "text/uri-list";
+const MAX_URI_BYTES: usize = 64 * 1024 * 1024;
 
 pub struct Native {
     pub events: Receiver<Event>,
@@ -310,12 +311,18 @@ impl State {
                             if offer.version() >= 3 {
                                 offer.finish();
                             }
+                            if output.send(Event::DropStarted).is_err() {
+                                break;
+                            }
+                            notify();
                             for path in paths {
                                 if output.send(path).is_err() {
                                     break;
                                 }
                                 notify();
                             }
+                            let _ = output.send(Event::DropFinished);
+                            notify();
                         }
                         Err(error) => {
                             let _ = output.send(Event::Error(error.to_string()));
@@ -440,8 +447,8 @@ fn read_uris(mut stream: UnixStream) -> io::Result<Vec<Event>> {
         if n == 0 {
             break;
         }
-        if bytes.len() + n > 1024 * 1024 {
-            return Err(io::Error::other("Wayland URI list exceeds 1 MiB"));
+        if bytes.len() + n > MAX_URI_BYTES {
+            return Err(io::Error::other("Wayland URI list exceeds 64 MiB"));
         }
         bytes.extend_from_slice(&block[..n]);
         if Instant::now() >= deadline {
@@ -459,8 +466,8 @@ fn read_uris(mut stream: UnixStream) -> io::Result<Vec<Event>> {
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
     {
         let url = url::Url::parse(line).map_err(io::Error::other)?;
-        if paths.len() == 1024 {
-            return Err(io::Error::other("Wayland drop exceeds 1024 files"));
+        if paths.len() == crate::MAX_IMPORT_FILES {
+            return Err(io::Error::other("Wayland drop exceeds 100000 files"));
         }
         if !matches!(url.scheme(), "file" | "zip")
             || url.query().is_some()
@@ -976,12 +983,39 @@ mod tests {
         }
     }
     #[test]
+    fn uri_list_accepts_large_batches_and_enforces_import_budget() {
+        for count in [
+            1024,
+            1025,
+            crate::MAX_IMPORT_FILES,
+            crate::MAX_IMPORT_FILES + 1,
+        ] {
+            let (read, mut write) = UnixStream::pair().unwrap();
+            let writer = std::thread::spawn(move || {
+                let _ = write.write_all("file:///tmp/a.png\r\n".repeat(count).as_bytes());
+            });
+            let result = read_uris(read);
+            writer.join().unwrap();
+            if count <= crate::MAX_IMPORT_FILES {
+                let events = result.unwrap();
+                assert_eq!(events.len(), count);
+                assert!(events.iter().all(|event|
+                    matches!(event, Event::Drop(path) if path == &PathBuf::from("/tmp/a.png"))));
+            } else {
+                assert!(result.unwrap_err().to_string().contains("100000 files"));
+            }
+        }
+    }
+    #[test]
     fn uri_transfer_has_a_hard_byte_limit_and_empty_transfer_has_no_paths() {
         let (read, mut write) = UnixStream::pair().unwrap();
         let writer = std::thread::spawn(move || {
-            let _ = write.write_all(&vec![b'a'; 1024 * 1024 + 1]);
+            let _ = io::copy(
+                &mut io::repeat(b'a').take(MAX_URI_BYTES as u64 + 1),
+                &mut write,
+            );
         });
-        assert!(read_uris(read).unwrap_err().to_string().contains("1 MiB"));
+        assert!(read_uris(read).unwrap_err().to_string().contains("64 MiB"));
         writer.join().unwrap();
         let (read, write) = UnixStream::pair().unwrap();
         read.shutdown(std::net::Shutdown::Read).unwrap();

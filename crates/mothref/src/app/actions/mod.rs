@@ -40,7 +40,9 @@ pub(super) fn area(action: Action) -> Area {
         | DismissRecovery | RestoreRecovery | CancelArrange | AddedHorizontal | AddedVertical
         | AddedGrid | AddedOptimal | UndoAdded | DismissAdded => Area::Prompt,
         Palette | Shortcuts | BindingSettings | Settings | New | Open | Images | Save | Library
-        | CloseTab | NextTab | CloseWindow | ClearDiskCache | ShellIntegration => Area::Application,
+        | CloseTab | NextTab | CloseWindow | ClearDiskCache | ShellIntegration | OpenBackup => {
+            Area::Application
+        }
         WindowBar | Overlay | Pin | ClickThrough | OverlaySelection | Bottom | LockWindow
         | ResizeSelection | ResizeAll | OpacityUp | OpacityDown | MoveWindow | Fullscreen
         | Minimize | Maximize => Area::Window,
@@ -92,8 +94,9 @@ pub(super) fn gate(action: Action) -> Gate {
         Layers | DrawingSession | ClickThrough => Gate::NoSession,
         Palette | BindingSettings | Shortcuts | Settings | CloseWindow | New | Open | Images
         | Library | CloseTab | NextTab | Overlay | Minimize | Maximize | Fullscreen | WindowBar
-        | ShellIntegration | ClearDiskCache | MoveWindow | LockWindow | OverlaySelection
-        | ResizeSelection | ResizeAll | OpacityUp | OpacityDown | Pin | Bottom => Gate::NotEditing,
+        | OpenBackup | ShellIntegration | ClearDiskCache | MoveWindow | LockWindow
+        | OverlaySelection | ResizeSelection | ResizeAll | OpacityUp | OpacityDown | Pin
+        | Bottom => Gate::NotEditing,
         PanLeft | PanRight | PanUp | PanDown | Fit | Focus | Previous | Next | ZoomIn | ZoomOut
         | ZoomReset | ResetCamera | Select | ToggleView | Deselect | SelectAll | Lock
         | Grayscale | Save | ExportScene | ExportSelection | ExportOriginal | ExportOriginals

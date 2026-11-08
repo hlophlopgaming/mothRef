@@ -3,6 +3,8 @@
 use super::*;
 use moth_ui::motion::{Ease, Motion, Spring, Tween};
 const MAX_ITEMS: usize = 300;
+// Scene admission is one million items; target geometry stays below 32 MiB.
+const MAX_PENDING_RECTS: usize = 1_000_000;
 pub(super) const DEFAULT_DRAG_OPACITY: f32 = 0.65;
 const SWAY_GAIN: f32 = 0.012 * std::f32::consts::PI / 180.;
 const SWAY_MAX: f32 = 6. * std::f32::consts::PI / 180.;
@@ -26,6 +28,7 @@ pub(super) struct DragMotion {
     frame_now: Instant,
     release_lift: f32,
     returning: Option<(Vec<Item>, [f32; 2], Tween)>,
+    pending_rects: Vec<(Uuid, Rect)>,
     awaiting: bool,
 }
 impl Default for DragMotion {
@@ -48,6 +51,7 @@ impl Default for DragMotion {
             frame_now: Instant::now(),
             release_lift: 0.,
             returning: None,
+            pending_rects: Vec::new(),
             awaiting: false,
         }
     }
@@ -67,6 +71,7 @@ impl DragMotion {
         self.samples.clear();
         self.last_sample = None;
         self.returning = None;
+        self.pending_rects = Vec::new();
         self.awaiting = false;
     }
     pub fn sample(&mut self, x: f32, now: Instant) {
@@ -182,6 +187,7 @@ impl DragMotion {
     }
     pub fn cancel(&mut self, items: Vec<Item>, delta: [f32; 2], reduced: bool) {
         let reduced = reduced || !self.animated;
+        self.pending_rects = Vec::new();
         self.awaiting = false;
         self.spring.target = 0.;
         self.release_lift = 1.
@@ -209,6 +215,7 @@ impl DragMotion {
     }
     pub fn release(&mut self, commands: &[Command], scene: &Scene, delta: [f32; 2], reduced: bool) {
         let reduced = reduced || !self.animated;
+        self.pending_rects = Vec::new();
         self.spring.target = 0.;
         self.release_lift = 1.
             - (1.
@@ -220,6 +227,18 @@ impl DragMotion {
                     .min(1.))
             .powi(3);
         if commands.len() > MAX_ITEMS {
+            self.pending_rects = commands
+                .iter()
+                .filter_map(|command| match command {
+                    Command::SetRect { id, rect } => Some((*id, *rect)),
+                    _ => None,
+                })
+                .take(MAX_PENDING_RECTS)
+                .collect();
+            self.returning = None;
+            self.awaiting = false;
+            self.spring.value = 0.;
+            self.spring.velocity = 0.;
             return;
         }
         let items = commands
@@ -257,6 +276,17 @@ impl DragMotion {
     }
     /// Hand off only after the journal acknowledgement reaches the scene.
     pub fn sync(&mut self, scene: &Scene, transitions: &mut item_motion::Items, idle: bool) {
+        if !self.pending_rects.is_empty()
+            && (idle
+                || self
+                    .pending_rects
+                    .iter()
+                    .all(|(id, rect)| scene.get(*id).is_some_and(|item| item.rect == *rect)))
+        {
+            for (id, _) in std::mem::take(&mut self.pending_rects) {
+                transitions.remove(id);
+            }
+        }
         if self.awaiting
             && let Some((items, _, _)) = &self.returning
         {
@@ -292,7 +322,18 @@ impl DragMotion {
     pub fn now(&self) -> Instant {
         self.frame_now
     }
-    pub fn returning(&self, now: Instant, reduced: bool) -> Vec<Item> {
+    pub fn returning(&self, scene: &Scene, now: Instant, reduced: bool) -> Vec<Item> {
+        if !self.pending_rects.is_empty() {
+            return self
+                .pending_rects
+                .iter()
+                .filter_map(|(id, rect)| {
+                    let mut item = scene.get(*id).filter(|item| copyable(item))?.clone();
+                    item.rect = *rect;
+                    Some(item)
+                })
+                .collect();
+        }
         let Some((items, delta, tween)) = &self.returning else {
             return Vec::new();
         };
@@ -319,6 +360,99 @@ impl DragMotion {
 mod tests {
     use super::*;
     #[test]
+    fn large_group_release_never_returns_its_frame_to_the_old_position() {
+        for reduced in [false, true] {
+            for count in [2, 299, 300, 1316] {
+                let mut scene = Scene::default();
+                let group = Item::group(
+                    moth_scene::Group::default(),
+                    Rect {
+                        x: 0.,
+                        y: 0.,
+                        width: 10.,
+                        height: 10.,
+                    },
+                    Default::default(),
+                );
+                let id = group.id;
+                scene.apply(Command::Insert(group)).unwrap();
+                for n in 0..count {
+                    let mut item = Item::image(
+                        BlobId::from_bytes([1; 32]),
+                        Rect {
+                            x: (n % 40) as f32 * 20.,
+                            y: (n / 40) as f32 * 20.,
+                            width: 10.,
+                            height: 10.,
+                        },
+                        scene.top(),
+                    );
+                    item.parent = Some(id);
+                    scene.apply(Command::Insert(item)).unwrap();
+                }
+                let old = scene.get(id).unwrap().clone();
+                let commands = arrange::translate(
+                    &scene.items().collect::<Vec<_>>(),
+                    [100., 50.],
+                    false,
+                    scene.top(),
+                );
+                let mut motion = DragMotion::default();
+                motion.start([0., 0.], 1000.);
+                motion.release(&commands, &scene, [100., 50.], reduced);
+                let now = Instant::now() + Duration::from_secs(1);
+                motion.sync(&scene, &mut item_motion::Items::default(), false);
+                motion.step(now, reduced, false);
+                let returning = motion.returning(&scene, now, reduced);
+                assert_eq!(returning.len(), scene.len());
+                for item in &returning {
+                    let original = scene.get(item.id).unwrap();
+                    assert_eq!(item.rect.x, original.rect.x + 100.);
+                    assert_eq!(item.rect.y, original.rect.y + 50.);
+                }
+                assert!(
+                    motion.pending_rects.capacity() * std::mem::size_of::<(Uuid, Rect)>()
+                        <= 32 * 1024 * 1024
+                );
+                let shown = returning
+                    .into_iter()
+                    .find(|item| item.id == id)
+                    .unwrap_or_else(|| scene.get(id).unwrap().clone());
+                assert_eq!(
+                    shown.rect,
+                    Rect {
+                        x: old.rect.x + 100.,
+                        y: old.rect.y + 50.,
+                        ..old.rect
+                    },
+                    "the released group frame must stay at the drop position while storage is pending"
+                );
+                assert_eq!(scene.get(id), Some(&old));
+                assert!(
+                    !motion.frames.active(),
+                    "waiting for storage must not animate"
+                );
+                let mut rejected = DragMotion::default();
+                rejected.release(&commands, &scene, [100., 50.], reduced);
+                rejected.sync(&scene, &mut item_motion::Items::default(), true);
+                assert!(rejected.returning(&scene, now, reduced).is_empty());
+                assert_eq!(rejected.pending_rects.capacity(), 0);
+                for command in commands {
+                    scene.apply(command).unwrap();
+                }
+                let mut transitions = item_motion::Items::default();
+                // Setting a nonempty group's resting frame first records its old derived frame.
+                transitions.record(Some(old.clone()), Some(old), now);
+                motion.sync(&scene, &mut transitions, true);
+                motion.step(now, reduced, false);
+                assert!(transitions.get(id, now).is_none());
+                assert!(motion.returning(&scene, now, reduced).is_empty());
+                assert_eq!(scene.get(id).unwrap().rect, shown.rect);
+                assert_eq!(motion.pending_rects.capacity(), 0);
+            }
+        }
+    }
+    #[test]
     fn confirmed_drag_tail_cannot_outlive_a_new_scene_position() {
         let mut scene = Scene::default();
         let source = Item::text(
@@ -343,7 +477,7 @@ mod tests {
         let now = Instant::now();
         motion.step(now, false, false);
         assert!(
-            motion.returning(now, false).is_empty(),
+            motion.returning(&scene, now, false).is_empty(),
             "a tail at the old rect is a non-interactive phantom after the scene moves again"
         );
     }
@@ -384,7 +518,7 @@ mod tests {
             assert!(!motion.frames.active());
             let commands = arrange::translate(&[&source], [100., 50.], false, scene.top());
             motion.release(&commands, &scene, [100., 50.], reduced);
-            let released = motion.returning(Instant::now(), reduced);
+            let released = motion.returning(&scene, Instant::now(), reduced);
             assert_eq!(released[0].transform.opacity, source.transform.opacity);
             assert_eq!(released[0].transform.rotation, source.transform.rotation);
         }
@@ -411,7 +545,7 @@ mod tests {
             let now = Instant::now() + Duration::from_secs(1);
             motion.step(now, reduced, false);
             let rendered = motion
-                .returning(now, reduced)
+                .returning(&scene, now, reduced)
                 .into_iter()
                 .find(|item| item.id == source.id)
                 .unwrap_or_else(|| scene.get(source.id).unwrap().clone());
@@ -434,7 +568,7 @@ mod tests {
                 "the acknowledged drag must not animate from its old position again"
             );
             motion.step(now, reduced, false);
-            assert!(motion.returning(now, reduced).is_empty());
+            assert!(motion.returning(&scene, now, reduced).is_empty());
             assert_eq!(scene.get(source.id).unwrap().rect, rendered.rect);
         }
     }
@@ -456,7 +590,7 @@ mod tests {
         let mut motion = DragMotion::default();
         motion.release(&commands, &scene, [100., 50.], false);
         motion.sync(&scene, &mut item_motion::Items::default(), true);
-        assert!(motion.returning(Instant::now(), false).is_empty());
+        assert!(motion.returning(&scene, Instant::now(), false).is_empty());
         assert_eq!(scene.get(source.id).unwrap().rect, source.rect);
     }
     #[test]

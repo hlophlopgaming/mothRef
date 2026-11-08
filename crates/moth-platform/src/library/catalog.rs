@@ -35,6 +35,7 @@ pub struct Folder {
 pub(super) struct Board {
     pub path: PathBuf,
     pub pinned: bool,
+    pub backups: Option<bool>,
     pub tags: Vec<String>,
     pub folders: Vec<Uuid>,
     /// Seconds since the Unix epoch when the board was last seen opening.
@@ -104,6 +105,7 @@ impl Catalog {
             catalog.boards.push(Board {
                 path: path.clone(),
                 pinned: pinned.contains(path),
+                backups: None,
                 tags: tags(storage, path).unwrap_or_default(),
                 folders: Vec::new(),
                 opened: start.saturating_sub(rank as u64),
@@ -166,6 +168,7 @@ impl Catalog {
             catalog.boards.push(Board {
                 path,
                 pinned: board["pinned"].as_bool().unwrap_or(false),
+                backups: board["backups"].as_bool(),
                 tags,
                 folders,
                 opened: board["opened"].as_u64().unwrap_or(0),
@@ -197,6 +200,7 @@ impl Catalog {
                 let mut record = json!({
                     "path": b.path.to_str()?,
                     "pinned": b.pinned,
+                    "backups": b.backups,
                     "tags": b.tags,
                     "folders": b.folders.iter().map(Uuid::to_string).collect::<Vec<_>>(),
                     "opened": b.opened,
@@ -232,6 +236,7 @@ impl Catalog {
                 self.boards.push(Board {
                     path: path.to_owned(),
                     pinned: false,
+                    backups: None,
                     tags: Vec::new(),
                     folders: Vec::new(),
                     opened: now(),
@@ -280,6 +285,7 @@ impl Catalog {
                     self.boards.push(Board {
                         path: path.clone(),
                         pinned: false,
+                        backups: None,
                         tags: Vec::new(),
                         folders: Vec::new(),
                         opened: start.saturating_sub(rank as u64),
@@ -367,6 +373,7 @@ impl Catalog {
             };
             let target = &mut self.boards[index];
             target.pinned |= previous.pinned;
+            target.backups = target.backups.or(previous.backups);
             for tag in previous.tags {
                 if !target.tags.contains(&tag) && target.tags.len() < 8 {
                     target.tags.push(tag);
@@ -402,11 +409,51 @@ pub(super) fn folder_name(name: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_owned())
 }
 
+/// Read only the override on the storage worker; do not rebuild the catalog on every save.
+pub(super) fn backup_override(
+    storage: &super::super::DesktopStorage,
+    path: &Path,
+) -> std::io::Result<Option<bool>> {
+    let file = match File::open(storage.base_directory()?.join(FILE)) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let mut bytes = Vec::new();
+    file.take(MAX_BYTES as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_BYTES {
+        return Err(std::io::Error::other("Library metadata exceeds its budget"));
+    }
+    let value: Value = serde_json::from_slice(&bytes)?;
+    Ok(value["boards"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|b| b["path"].as_str().is_some_and(|p| Path::new(p) == path))
+        .and_then(|b| b["backups"].as_bool()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     fn path(name: &str) -> PathBuf {
         PathBuf::from(format!("/boards/{name}.moth"))
+    }
+    #[test]
+    fn backup_overrides_roundtrip_and_survive_relinking() {
+        let mut catalog = Catalog::parse(r#"{"boards":[{"path":"/boards/old.moth"}]}"#).unwrap();
+        assert_eq!(catalog.boards[0].backups, None);
+        for value in [Some(true), Some(false), None] {
+            catalog.boards[0].backups = value;
+            assert_eq!(
+                Catalog::parse(&catalog.to_json()).unwrap().boards[0].backups,
+                value
+            );
+        }
+        catalog.boards[0].backups = Some(true);
+        catalog.board(&path("new")).unwrap();
+        catalog.relink(&path("old"), &path("new")).unwrap();
+        assert_eq!(catalog.boards[0].backups, Some(true));
     }
     #[test]
     fn folders_group_paths_and_survive_a_round_trip() {

@@ -34,9 +34,12 @@ pub fn run(path: &Path, output: Option<&Path>, mode: moth_io::CacheMode) -> anyh
     Ok(())
 }
 fn receive(worker: &Worker) -> anyhow::Result<Completion> {
-    match worker.results.recv_timeout(Duration::from_secs(300))? {
-        Completion::Failed(error) => anyhow::bail!(error),
-        completion => Ok(completion),
+    loop {
+        match worker.results.recv_timeout(Duration::from_secs(300))? {
+            Completion::Saving(_) => continue,
+            Completion::Failed(error) => anyhow::bail!(error),
+            completion => return Ok(completion),
+        }
     }
 }
 fn measure(

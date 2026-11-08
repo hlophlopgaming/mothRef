@@ -6,7 +6,7 @@ use document::MAX_TABS;
 /// Files queued for adding at once. The queue holds only small handles (the files
 /// are read later by the bounded decode workers), so a drop of thousands of images
 /// fits; past this the rest are refused with a notice.
-const MAX_WAITING: usize = 100_000;
+const MAX_WAITING: usize = moth_platform::MAX_IMPORT_FILES;
 pub(super) enum TabChange {
     None,
     Switched,
@@ -38,6 +38,8 @@ pub(super) struct Workspace {
     pub(super) reduce_side: u32,
     pub(super) confirm_close: bool,
     pub(super) closing_window: bool,
+    /// Native Wayland drops span several drains of the bounded input queue.
+    pub(super) receiving_drop: bool,
     wake: Arc<dyn Fn() + Send + Sync>,
 }
 impl Workspace {
@@ -103,6 +105,7 @@ impl Workspace {
             refresh_library: false,
             confirm_close: false,
             closing_window: false,
+            receiving_drop: false,
             wake,
         }
     }
@@ -183,7 +186,11 @@ impl Workspace {
         if self.confirm_close {
             return TabChange::None;
         }
-        if self.board.scene.is_empty() && self.board.file.path.is_empty() && self.board.idle() {
+        if self.board.scene.is_empty()
+            && self.board.file.path.is_empty()
+            && !self.board.file.dirty
+            && self.board.idle()
+        {
             return self.activate(0);
         }
         if self.tabs.len() + 1 >= MAX_TABS {
@@ -245,7 +252,11 @@ impl Workspace {
         }
         let loading = matches!(
             &request,
-            Request::Open(_) | Request::Restore(_) | Request::ImportBee(_) | Request::ImportPur(_)
+            Request::Open(_)
+                | Request::OpenBackup(_)
+                | Request::Restore(_)
+                | Request::ImportBee(_)
+                | Request::ImportPur(_)
         );
         if self.board.locked
             && matches!(
@@ -333,6 +344,32 @@ impl Workspace {
             self.board.notices.message = moth_ui::Text::OpenEmpty.into();
         }
     }
+    pub(super) fn open_backup(
+        &mut self,
+        original: std::path::PathBuf,
+        backup: std::path::PathBuf,
+    ) -> TabChange {
+        if self.confirm_close {
+            return TabChange::None;
+        }
+        if !self.board.scene.is_empty()
+            || !self.board.file.path.is_empty()
+            || self.board.file.dirty
+            || !self.board.idle()
+        {
+            let count = self.tabs.len();
+            self.new_board();
+            if self.tabs.len() == count {
+                return TabChange::None;
+            }
+        }
+        self.library = false;
+        self.board.file.conversion = None;
+        self.board.notices.conversion_prompt = false;
+        self.board.file.backup_origin = Some(original);
+        self.persist(moth_platform::boards::Request::OpenBackup(backup));
+        TabChange::Switched
+    }
     pub(super) fn import_foreign(&mut self, path: std::path::PathBuf) -> TabChange {
         if self.confirm_close {
             return TabChange::None;
@@ -365,6 +402,7 @@ impl Workspace {
         path: std::path::PathBuf,
         format: moth_io::ImageFormat,
     ) -> TabChange {
+        self.board.intake.files_received = false;
         let image = !path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
             ["moth", "bee", "pur"]
                 .iter()
@@ -412,6 +450,7 @@ impl Workspace {
         member: String,
         format: moth_io::ImageFormat,
     ) -> TabChange {
+        self.board.intake.files_received = false;
         self.import_source(path, Some(member), format)
     }
     fn import_source(
@@ -594,6 +633,7 @@ impl Workspace {
         while let Ok(done) = self.board.boards().results.try_recv() {
             use moth_platform::boards::Completion;
             match done {
+                Completion::Saving(progress) => self.board.file.saving = Some(progress),
                 Completion::Loading {
                     commands,
                     sources,
@@ -710,12 +750,15 @@ impl Workspace {
                             }
 
                             self.board.file.dirty = recovered;
-                            self.board.notices.message = (if recovered {
-                                moth_ui::Text::Recovered
-                            } else {
-                                moth_ui::Text::Opened
-                            })
-                            .into();
+                            self.board.notices.message =
+                                (if self.board.file.backup_origin.is_some() {
+                                    moth_ui::Text::BackupOpened
+                                } else if recovered {
+                                    moth_ui::Text::Recovered
+                                } else {
+                                    moth_ui::Text::Opened
+                                })
+                                .into();
                             if !progressed {
                                 self.board.fit();
                             }
@@ -767,6 +810,8 @@ impl Workspace {
                                 Some(self.board.notices.message.clone());
                         }
                         Completion::Saved => {
+                            self.board.file.backup_origin = None;
+                            self.board.file.saving = None;
                             if active {
                                 pump.events.push(Event::Saved);
                             }
@@ -780,12 +825,19 @@ impl Workspace {
                             self.refresh_library = true;
                             if !timed {
                                 self.board.notices.message = moth_ui::Text::Saved.into();
+                                self.board.notices.flash =
+                                    Some((moth_ui::Text::Saved.into(), true, Instant::now()));
                             }
                             if self.board.file.close_after_save {
                                 self.discard();
                             }
                         }
                         Completion::Failed(e) => {
+                            if self.board.file.saving.take().is_some() {
+                                self.board.notices.flash =
+                                    Some((e.clone().into(), false, Instant::now()));
+                            }
+                            self.board.file.autosaving = false;
                             if self.board.file.exporting {
                                 self.board.file.exporting = false;
                                 self.board.notices.export_message = Some(e.clone().into());
@@ -806,10 +858,16 @@ impl Workspace {
                 }
             }
         }
-        while let Ok(done) = self.board.decode().results.try_recv() {
+        while self.can_complete_import() {
+            let Ok(done) = self.board.decode().results.try_recv() else {
+                break;
+            };
             self.complete(done, point, active, pump);
         }
-        while let Ok(result) = self.board.clipboard().results.try_recv() {
+        while self.can_complete_import() {
+            let Ok(result) = self.board.clipboard().results.try_recv() else {
+                break;
+            };
             match result {
                 moth_platform::ClipboardCompletion::Discarded(result) => match result {
                     Ok(()) => self.board.file.discarded = true,
@@ -845,6 +903,7 @@ impl Workspace {
                     } else {
                         self.board.notices.message = moth_ui::Text::BoardFull.into();
                     }
+                    self.board.intake.files_received = true;
                 }
                 moth_platform::ClipboardCompletion::Reduced(Ok((handle, image))) => {
                     self.board.intake.pasting = self.board.intake.pasting.saturating_sub(1);
@@ -888,6 +947,7 @@ impl Workspace {
                             pump.events.push(Event::TabChanged);
                         }
                     }
+                    self.board.intake.files_received = true;
                 }
                 moth_platform::ClipboardCompletion::Pasted(Err(
                     moth_platform::PlatformError::EmptyClipboard,
@@ -909,10 +969,10 @@ impl Workspace {
             }
         }
         self.queue_decodes(pump.format);
-        if !self.board.idle() {
+        if !self.board.idle() || self.receiving_drop {
             self.board.intake.idle_since = None;
         }
-        if self.board.idle() {
+        if self.board.idle() && !self.receiving_drop {
             self.board.intake.queued = 0;
             self.board
                 .intake
@@ -933,6 +993,13 @@ impl Workspace {
                 }
             }
         }
+    }
+    fn can_complete_import(&self) -> bool {
+        let requests = &self.board.boards().requests;
+        // A completion can end the previous undo batch, begin a new one and insert.
+        requests
+            .capacity()
+            .is_some_and(|capacity| requests.len() + 3 <= capacity)
     }
     /// Runs the autosave timer of every open board, the background tabs too, and
     /// returns the earliest moment one of them needs another look.

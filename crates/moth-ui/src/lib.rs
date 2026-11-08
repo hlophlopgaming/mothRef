@@ -251,6 +251,36 @@ pub enum Text {
     NoSystemPicker,
     /// Progress while several images are being added.
     AddingImages,
+    /// Save progress while waiting for storage and checking the destination.
+    SavePreparing,
+    /// Save progress while preserving the previous version.
+    SaveBackup,
+    /// Optional previous-version copies, independent of autosave.
+    BackupCopies,
+    /// Follow the global backup preference.
+    BackupDefault,
+    /// Enable backup copies for a board.
+    BackupOn,
+    /// Disable backup copies for a board.
+    BackupOff,
+    /// A previous version exists for a missing board.
+    BackupAvailable,
+    /// Open a copy for recovery without overwriting its source.
+    OpenBackup,
+    /// Recovery copy is open and needs saving.
+    BackupOpened,
+    /// The copy was removed since the card was checked.
+    BackupUnavailable,
+    /// Save progress while copying new original images.
+    SaveImages,
+    /// Save progress while writing the board layout.
+    SaveLayout,
+    /// Save progress while reclaiming obsolete file data.
+    SaveCompacting,
+    /// Save progress while making the library thumbnail.
+    SavePreview,
+    /// Save progress while recording the completed save.
+    SaveFinishing,
     /// Library view: the recent list.
     Recent,
     /// Library sidebar heading.

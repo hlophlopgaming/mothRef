@@ -23,6 +23,8 @@ const MAX_PINS: usize = 20;
 pub struct Meta {
     /// Pinned state is stored in the library, never inside a board.
     pub pinned: bool,
+    /// Override the global backup preference; `None` follows Settings.
+    pub backups: Option<bool>,
     /// Local annotations do not alter the board format.
     pub tags: Vec<String>,
     /// App folders holding the board; the file itself stays where it is.
@@ -44,6 +46,8 @@ pub struct Entry {
     pub modified: Option<std::time::SystemTime>,
     /// The file is not at its path any more (moved, renamed or deleted).
     pub missing: bool,
+    /// A saved previous version can be opened even when the original is missing.
+    pub backup_available: bool,
     /// A failed board remains visible with an explanation.
     pub error: Option<String>,
 }
@@ -68,6 +72,11 @@ pub enum Update {
     Folders(Vec<Folder>),
     /// The board left the library (removed from it, moved to the trash or relinked).
     Removed(PathBuf),
+    /// Open an immutable backup as an unnamed board.
+    Backup {
+        original: PathBuf,
+        path: Option<PathBuf>,
+    },
 }
 /// Library operations stay off the main thread.
 pub enum Request {
@@ -77,6 +86,10 @@ pub enum Request {
     Previews(Vec<PathBuf>),
     /// Pin or unpin a board.
     Pin(PathBuf, bool),
+    /// Override backup creation for this board.
+    Backups(PathBuf, Option<bool>),
+    /// Locate the latest backup on the worker.
+    OpenBackup(PathBuf),
     /// Replace a board's bounded tag list.
     Tags(PathBuf, String),
     /// Show the board file selected in the system file manager.
@@ -317,7 +330,7 @@ fn previews(path: &std::path::Path) -> Vec<moth_io::Mip> {
     })
 }
 /// A card from what the library file remembers.
-fn entry(board: &catalog::Board, read: Option<&Lookup>) -> Entry {
+fn entry(storage: &super::DesktopStorage, board: &catalog::Board, read: Option<&Lookup>) -> Entry {
     let summary = match read {
         Some(Lookup::Found(summary)) => Some(*summary),
         _ => board.summary,
@@ -326,6 +339,7 @@ fn entry(board: &catalog::Board, read: Option<&Lookup>) -> Entry {
         path: board.path.clone(),
         meta: Meta {
             pinned: board.pinned,
+            backups: board.backups,
             tags: board.tags.clone(),
             folders: board.folders.clone(),
             opened: board.opened,
@@ -335,6 +349,11 @@ fn entry(board: &catalog::Board, read: Option<&Lookup>) -> Entry {
         modified: summary
             .map(|s| std::time::UNIX_EPOCH + std::time::Duration::from_nanos(s.modified)),
         missing: matches!(read, Some(Lookup::Missing)),
+        backup_available: matches!(read, Some(Lookup::Missing))
+            && super::boards::latest_backup(storage, &board.path)
+                .ok()
+                .flatten()
+                .is_some(),
         error: match read {
             Some(Lookup::Failed(error)) => Some(error.clone()),
             Some(Lookup::Missing) => Some("File not found".into()),
@@ -384,6 +403,7 @@ impl Worker {
                             let board = &catalog.boards[i];
                             Meta {
                                 pinned: board.pinned,
+                                backups: board.backups,
                                 tags: board.tags.clone(),
                                 folders: board.folders.clone(),
                                 opened: board.opened,
@@ -438,6 +458,7 @@ impl Worker {
                                     dirty = true;
                                 }
                                 if !send(Ok(Update::Entry(entry(
+                                    &storage,
                                     &catalog.boards[index],
                                     Some(&read),
                                 )))) {
@@ -462,7 +483,7 @@ impl Worker {
                             order.sort_by_key(|&i| std::cmp::Reverse(catalog.boards[i].opened));
                             let cards = order
                                 .iter()
-                                .map(|&i| entry(&catalog.boards[i], None))
+                                .map(|&i| entry(&storage, &catalog.boards[i], None))
                                 .collect();
                             checks = order
                                 .iter()
@@ -485,6 +506,17 @@ impl Worker {
                         Request::Reveal(path) => super::reveal(&path)
                             .map(|()| Vec::new())
                             .map_err(|e| e.to_string()),
+                        Request::OpenBackup(original) => {
+                            super::boards::latest_backup(&storage, &original)
+                                .map(|path| vec![Update::Backup { original, path }])
+                                .map_err(|e| e.to_string())
+                        }
+                        Request::Backups(path, enabled) => catalog
+                            .board(&path)
+                            .map(|board| board.backups = enabled)
+                            .map_err(|e| e.to_string())
+                            .and_then(|()| save(&catalog))
+                            .map(|()| vec![Update::Meta(path.clone(), meta(&catalog, &path))]),
                         Request::Pin(path, pinned) => catalog
                             .board(&path)
                             .map(|board| board.pinned = pinned)
@@ -558,7 +590,11 @@ impl Worker {
                                         .ok_or_else(|| "The board left the library".to_owned())?;
                                     Ok(vec![
                                         Update::Removed(from),
-                                        Update::Entry(entry(&catalog.boards[index], None)),
+                                        Update::Entry(entry(
+                                            &storage,
+                                            &catalog.boards[index],
+                                            None,
+                                        )),
                                     ])
                                 }),
                             Lookup::Missing => Err("File not found".into()),
@@ -584,10 +620,64 @@ impl Worker {
         Ok(Self { requests, results })
     }
 }
+
+pub(crate) fn backups_enabled(
+    storage: &super::DesktopStorage,
+    path: &std::path::Path,
+) -> std::io::Result<bool> {
+    if let Some(enabled) = catalog::backup_override(storage, path)? {
+        return Ok(enabled);
+    }
+    Ok(super::settings::load(&storage.base_directory()?)?
+        .get("backup_copies")
+        .is_some_and(|v| v == "true"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::Path;
+    #[test]
+    fn backup_overrides_inherit_and_missing_cards_offer_existing_copies() {
+        let root =
+            std::env::temp_dir().join(format!("mothref-backup-library-{}", uuid::Uuid::now_v7()));
+        let storage = super::super::DesktopStorage::in_directory(root.clone());
+        let path = root.join("missing.moth");
+        assert!(!backups_enabled(&storage, &path).unwrap());
+        super::super::settings::save(&root, "backup_copies", "true").unwrap();
+        assert!(backups_enabled(&storage, &path).unwrap());
+        let mut catalog = Catalog::load(&storage).unwrap();
+        catalog.board(&path).unwrap().backups = Some(false);
+        catalog.save(&storage).unwrap();
+        assert!(!backups_enabled(&storage, &path).unwrap());
+        catalog.board(&path).unwrap().backups = Some(true);
+        catalog.save(&storage).unwrap();
+        super::super::settings::save(&root, "backup_copies", "false").unwrap();
+        assert!(backups_enabled(&storage, &path).unwrap());
+        catalog.board(&path).unwrap().backups = None;
+        catalog.save(&storage).unwrap();
+        assert!(!backups_enabled(&storage, &path).unwrap());
+        let board = catalog.board(&path).unwrap();
+        assert!(!entry(&storage, board, Some(&Lookup::Missing)).backup_available);
+        let directory = root.join("backups").join(
+            blake3::hash(path.as_os_str().as_encoded_bytes())
+                .to_hex()
+                .as_str(),
+        );
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join(format!("{}.moth", uuid::Uuid::now_v7())),
+            include_bytes!("../../../corpus/moth/v7.moth"),
+        )
+        .unwrap();
+        let card = entry(&storage, board, Some(&Lookup::Missing));
+        assert!(
+            card.missing && card.backup_available,
+            "old copies remain accessible when creation is disabled"
+        );
+        assert!(!entry(&storage, board, None).backup_available);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn the_first_library_file_keeps_recent_boards_pins_and_tags() {
         let root = std::env::temp_dir().join(format!("mothref-catalog-{}", uuid::Uuid::now_v7()));

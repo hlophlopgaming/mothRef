@@ -216,6 +216,7 @@ impl Modal {
             ui.ctx().request_repaint_after(wait);
         }
         if let Some(ids) = board.notices.arrange_prompt.clone()
+            && !workspace.receiving_drop
             && settled.is_ok()
         {
             if settings.auto_arrange || ids.len() <= settings.threshold {

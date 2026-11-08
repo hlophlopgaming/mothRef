@@ -81,7 +81,7 @@ fn hover(ui: &mut egui::Ui, c: &Canvas<'_>, view: &View) -> (Option<Uuid>, f32, 
     let settings = &*c.settings;
     let drag = c.drag;
     let moving = c.moving;
-    let resizing = c.resizing;
+    let resizing = c.resizing.and_then(super::resize::Resize::corner);
     let (pointer, tool) = (c.pointer, *c.tool);
     let hover = pointer
         .filter(|p| view.viewport.contains(egui::pos2(p[0], p[1])))
@@ -129,8 +129,8 @@ fn hover(ui: &mut egui::Ui, c: &Canvas<'_>, view: &View) -> (Option<Uuid>, f32, 
             corner: grab.corner,
         });
     if over_canvas || drag.is_some() {
-        ui.ctx().set_cursor_icon(if let Some(resize) = resizing {
-            resize_cursor(resize.corner())
+        ui.ctx().set_cursor_icon(if let Some(corner) = resizing {
+            resize_cursor(corner)
         } else if let Some(hot) = hot {
             resize_cursor(hot.corner)
         } else if tool.picks() {
@@ -265,7 +265,7 @@ fn items(
         .camera
         .world([view.viewport.min.x, view.viewport.min.y]);
     let mut returning: std::collections::HashMap<_, _> = motion
-        .returning(motion.now(), settings.reduced_motion)
+        .returning(&board.scene, motion.now(), settings.reduced_motion)
         .into_iter()
         .map(|item| (item.id, item))
         .collect();
@@ -1113,7 +1113,7 @@ mod tests {
             let now = std::time::Instant::now() + std::time::Duration::from_secs(1);
             motion.step(now, reduced, false);
             let returning = motion
-                .returning(now, reduced)
+                .returning(&scene, now, reduced)
                 .into_iter()
                 .map(|item| (item.id, item))
                 .collect();

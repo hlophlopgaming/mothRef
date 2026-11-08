@@ -230,11 +230,13 @@ impl Tools {
             viewer_notice(ui.ctx(), &mut self.viewer, board, settings.reduced_motion);
             flash_notice(ui.ctx(), board, settings.reduced_motion);
             import_notice(ui.ctx(), board, settings.reduced_motion);
+            save_notice(ui.ctx(), board, settings.reduced_motion);
             return Vec::new();
         }
         viewer_notice(ui.ctx(), &mut self.viewer, board, settings.reduced_motion);
         flash_notice(ui.ctx(), board, settings.reduced_motion);
         import_notice(ui.ctx(), board, settings.reduced_motion);
+        save_notice(ui.ctx(), board, settings.reduced_motion);
         let mut intents = Vec::new();
         let items: Vec<_> = board
             .selection
@@ -930,6 +932,39 @@ fn import_notice(ctx: &egui::Context, board: &Document, reduced_motion: bool) {
                 .replace("{done}", &done.to_string())
                 .replace("{total}", &total.to_string()),
         ),
+    );
+}
+/// Save stages share the same non-interactive bottom notice as import progress.
+fn save_notice(ctx: &egui::Context, board: &Document, reduced_motion: bool) {
+    use moth_platform::boards::SaveProgress;
+    let Some(progress) = board.file.saving.filter(|_| !board.file.autosaving) else {
+        return;
+    };
+    let label = match progress {
+        SaveProgress::Preparing => text(Text::SavePreparing).to_owned(),
+        SaveProgress::Backup => text(Text::SaveBackup).to_owned(),
+        SaveProgress::Images { done, total } => text(Text::SaveImages)
+            .replace("{done}", &done.to_string())
+            .replace("{total}", &total.to_string()),
+        SaveProgress::Layout => text(Text::SaveLayout).to_owned(),
+        SaveProgress::Compacting => text(Text::SaveCompacting).to_owned(),
+        SaveProgress::Preview => text(Text::SavePreview).to_owned(),
+        SaveProgress::Finishing => text(Text::SaveFinishing).to_owned(),
+    };
+    bottom_notice(
+        ctx,
+        "save_progress",
+        &[
+            "bottom_toolbar",
+            "selection_badge",
+            "added_feedback",
+            "viewer_feedback",
+            "import_progress",
+            "flash_feedback",
+        ],
+        1.,
+        reduced_motion,
+        NoticeContent::Progress(label),
     );
 }
 /// A short-lived message about something that did not happen (for now: a paste with

@@ -149,9 +149,19 @@ support schemas 1–6 reject schema 7.
 A checkpoint contains zero or more u32-length-prefixed Insert commands. The
 entire checkpoint is one record, so replacing the scene is atomic. Commands after
 the last checkpoint replay through the same scene command API. Journal and board
-streams share this encoding. The desktop worker syncs an original before its
-insertion command, then syncs the command before acknowledging it to the UI.
+streams share this encoding. The desktop worker appends an original before its
+insertion command and syncs both before acknowledging the command to the UI.
+For a command batch it appends the records in order and syncs once with the last
+command, before acknowledging the entire batch. The encoding is unchanged; a
+crash can recover a valid prefix of an unacknowledged batch, while every member of
+an acknowledged batch is durable.
 Acknowledged mutations therefore need no deferred shutdown flush.
+
+Saving a board also appends missing live originals without syncing each record
+separately. The checkpoint sync covers those originals before the save is
+acknowledged; an interrupted save retains the last valid checkpoint, and the
+working journal remains the independent recovery source. No encoding changes are
+required for this batching.
 
 Limits: 256 MiB per record; 64 MiB per checkpoint; 5,235 bytes per image command
 (including a 1,024-byte name, a parent and a 4,096-byte fractional index);
@@ -160,9 +170,15 @@ in the reader. The current UI still limits boards to 10,000 items. The desktop
 journal/file budget is 8 GiB; exhaustion rejects new work instead of evicting
 originals. Undo/redo retains at most 256 commands.
 
-Explicit saves append missing blobs and one checkpoint. Before updating a
-nonempty board, the desktop worker syncs an immutable backup in app-owned storage
-and keeps the latest three per destination. Compaction writes only live originals
+Explicit saves append missing blobs and one checkpoint. When backup copies are
+enabled, before updating a nonempty board the desktop worker syncs an immutable
+backup in app-owned storage and keeps the latest three per destination. Creation
+is off by default, independently of timed autosave; a nullable `backups` field in
+`library.json` overrides the global `backup_copies` setting. Older library records
+inherit the global setting. Existing copies remain available after disabling
+creation. A missing library card can open the latest copy as an unnamed, dirty
+board with its own journal; Save As chooses its destination. Neither source is
+modified by opening a copy. These preferences do not change the `.moth` encoding. Compaction writes only live originals
 and a checkpoint to an exclusive temporary object beside the destination, syncs
 it, then atomically replaces the destination (`ReplaceFileW` on Windows, rename
 and directory sync on Unix). Failed compaction cannot destroy the previous board.

@@ -6,6 +6,7 @@ Moved from `ROADMAP.md` on 2026-10-26. Add new lines at the top of the table.
 
 | Date | Decision |
 | --- | --- |
+| 2026-11-08 | Maintainer requests optional backup copies: off by default, independent of autosave; global General setting with per-board library overrides. Missing library cards offer the latest existing copy as an unsaved board; opening never overwrites the original or backup. Existing copies are retained when creation is disabled |
 | 2026-11-08 | [Library folders](0022-library-folders.md): `library.json` remembers every board path with pins, tags and app folders; folders group paths and never move files; stacks from folders on disk are gone |
 | 2026-10-30 | Drawing sessions play their cues without an audio library: WAV bytes synthesized in memory, played by `pw-play`/`paplay`/`aplay` on Linux, `PlaySoundW` on Windows and `NSSound` on macOS; no ALSA build dependency. The mini session window is the main window resized and pinned, not a second window |
 | 2026-10-30 | [Groups](0021-groups.md): a group is an item with a derived frame; members point to it by parent id; `.moth` schema 6 |

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.22 — 2026-11-08
+
+- Backup copies are now off by default, separately from autosave. Enable them for all boards in Settings › General or override a board through its library card's ⋯ › Keep backup copies. Missing boards with a saved copy show “Backup available” and “Open backup”; the latest copy opens as an unsaved board for Save As, leaving the copy and original untouched. Existing copies remain accessible when creation is disabled.
+- Saving large boards syncs new originals with the checkpoint instead of flushing each image separately, copies only live originals and avoids redundant compaction of newly saved data and layouts.
+- Manual saves show their current stage and image count above the bottom toolbar, followed by a visible success or error notice.
+- Large groups and selections keep their dropped position while the journal catches up; their frame no longer flashes back at the old position after release or replays the move after acknowledgment.
+- Moving a large selection or group no longer syncs the journal separately for every member: the whole command batch is synced once before acknowledgment, greatly reducing the pause after release.
+- Large image imports no longer lose files when the journal queue fills: decoded and clipboard images stay in their bounded result queues until the journal can accept them.
+- Adding images from Wayland drag and drop, the clipboard, Open files or the command line no longer waits an extra 300 ms before arranging them. Wayland signals the start and end of each file list, so a pause between paths cannot arrange an incomplete drop.
+- The canvas resize cursor resets on pointer release instead of staying active while the resized image or group waits for its journal write.
+- Fixed the remaining 1,024-file limits in Wayland drag and drop and clipboard file lists: both now accept up to 100,000 files, matching the import queue. Wayland URI transfers allow up to 64 MiB for large file lists.
 - The library opens at once with any number of boards: what each card shows (item count, size, last change) is kept in the library file and only re-read when the board file changed, and previews load for the cards on screen. 1,000 boards appear in well under a second. The library now remembers up to 100,000 boards and 1,000 folders.
 - Boards are saved as schema 7: every save ends with a small preview (item count and four thumbnails), so the library reads a card from the end of the file instead of the whole board. Older boards still open and get their preview on the next save; versions of MothRef before this one cannot open schema-7 boards.
 - Up to 100,000 images can be added in one go (dropped, pasted from a folder or chosen in Open file); before, only the first 1,024 were added and the rest were refused with "Import queue is full". While several images are being added, a notice at the bottom counts them: "Adding images: 240 of 1365". The "Arrange the added images?" prompt now waits until every dropped image has arrived: it used to open at the first pause in a large drag and drop and arrange only the images that had loaded by then (for example 400 of 1,014), leaving the rest where they landed.

@@ -13,6 +13,9 @@ impl App {
             ClearDiskCache => {
                 !self.diagnostics.disk_cache_busy && !self.diagnostics.clear_disk_cache
             }
+            OpenBackup => {
+                self.workspace.library && self.library_screen.catalog.backup_target.is_some()
+            }
             Save => self.workspace.board.idle(),
             _ => true,
         }
@@ -57,6 +60,9 @@ impl App {
                 return None;
             }
             New => Intent::New,
+            OpenBackup => Intent::Library(moth_platform::library::Request::OpenBackup(
+                self.library_screen.catalog.backup_target.take()?,
+            )),
             Open => Intent::Open,
             Images => Intent::Images,
             Save => Intent::Save,

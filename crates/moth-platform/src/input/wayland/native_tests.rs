@@ -361,10 +361,13 @@ fn native_wayland_tablet_keeps_kind_pressure_logical_coordinates_and_cancellatio
 #[test]
 fn native_wayland_drop_negotiates_copy_reads_fd_and_finishes_after_leave() {
     let (events, status) = drop_session(URI_LIST);
+    assert!(matches!(events.first(), Some(Event::DropStarted)));
+    assert!(matches!(events.last(), Some(Event::DropFinished)));
     let paths: Vec<_> = events
         .into_iter()
-        .map(|e| match e {
-            Event::Drop(path) => path,
+        .filter_map(|e| match e {
+            Event::DropStarted | Event::DropFinished => None,
+            Event::Drop(path) => Some(path),
             other => panic!("{other:?}"),
         })
         .collect();

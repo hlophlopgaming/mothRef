@@ -35,6 +35,8 @@ pub enum Request {
     Autosave(PathBuf),
     /// Load into an empty board and establish a new recovery journal.
     Open(PathBuf),
+    /// Copy a backup into a new private journal without retaining its save path.
+    OpenBackup(PathBuf),
     /// Restore a validated private journal, retaining its original save destination.
     Restore(PathBuf),
     /// Remove only an explicitly rejected journal in the application recovery folder.
@@ -57,8 +59,10 @@ pub enum Request {
     /// Export from the worker scene without blocking a frame or changing the board.
     Export(super::export::Target),
 }
-/// Worker completions are delivered only after durable writes.
+/// Durable results and informational progress share one bounded worker queue.
 pub enum Completion {
+    /// Informational save progress; does not finish the outstanding save request.
+    Saving(SaveProgress),
     /// Durable loading progress; does not finish the outstanding open/import request.
     Loading {
         /// Commands whose originals and journal records have reached stable storage.
@@ -96,6 +100,29 @@ pub enum Completion {
     Saved,
     /// Keeps unacknowledged edits hidden; earlier durable loading progress remains available.
     Failed(String),
+}
+/// User-facing save stages keep disk work off the event-loop thread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SaveProgress {
+    /// Waiting for earlier work and checking the destination.
+    Preparing,
+    /// Preserving the previous saved version.
+    Backup,
+    /// Copying distinct originals not already present in the destination.
+    Images {
+        /// Originals copied in this save.
+        done: usize,
+        /// Originals this save must copy.
+        total: usize,
+    },
+    /// Writing and syncing the scene checkpoint and preceding originals.
+    Layout,
+    /// Rebuilding a file with excessive obsolete data through atomic replacement.
+    Compacting,
+    /// Preparing the library thumbnail.
+    Preview,
+    /// Recording the saved board in the library and recovery metadata.
+    Finishing,
 }
 /// Storage work is bounded in both directions and never blocks a frame.
 pub struct Worker {
@@ -139,6 +166,12 @@ struct LoadBatch {
     bounds: Option<Rect>,
 }
 struct State {
+    #[cfg(test)]
+    commits: usize,
+    #[cfg(test)]
+    save_syncs: usize,
+    #[cfg(test)]
+    save_compactions: usize,
     progress: Option<Progress>,
     destination: Option<Destination>,
     storage: Arc<DesktopStorage>,
@@ -219,6 +252,13 @@ fn record(file: &mut File, kind: u8, bytes: &[u8]) -> io::Result<()> {
     file.sync_all()
 }
 impl State {
+    fn saving(&self, value: SaveProgress) {
+        if let Some(progress) = &self.progress
+            && progress.results.try_send(Completion::Saving(value)).is_ok()
+        {
+            (progress.wake)();
+        }
+    }
     fn publish_loading(&mut self, batch: &mut LoadBatch, force: bool) -> io::Result<()> {
         if batch.commands.is_empty()
             || (!force
@@ -300,6 +340,10 @@ impl State {
     }
     fn commit(&mut self, kind: u8, bytes: &[u8]) -> io::Result<()> {
         let result = self.journal().and_then(|file| record(file, kind, bytes));
+        #[cfg(test)]
+        if result.is_ok() {
+            self.commits += 1;
+        }
         if result.is_err() {
             self.poisoned = true;
         }
@@ -440,6 +484,8 @@ impl State {
         }
     }
     fn save(&mut self, path: PathBuf, backup: bool) -> io::Result<Completion> {
+        let _span = tracing::info_span!("save_board", items = self.scene.len(), backup).entered();
+        self.saving(SaveProgress::Preparing);
         if !path
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("moth"))
@@ -456,6 +502,11 @@ impl State {
         let mut header = [0u8; 16];
         file.read_exact(&mut header)?;
         if header[4] < board::SCHEMA {
+            self.saving(SaveProgress::Compacting);
+            #[cfg(test)]
+            {
+                self.save_compactions += 1;
+            }
             drop(file);
             let handle = self.storage.register(path.clone())?;
             let result = board::compact(self.storage.as_ref(), handle).map_err(error);
@@ -464,14 +515,12 @@ impl State {
             file = OpenOptions::new().read(true).append(true).open(&path)?;
         }
         file.seek(SeekFrom::Start(0))?;
+        self.saving(SaveProgress::Preparing);
         let previous = board::read(&mut file).map_err(error)?;
         // Backups are immutable, uniquely named recovery files; keep the latest three.
         if backup && !previous.scene.is_empty() {
-            let directory = self.storage.base_directory()?.join("backups").join(
-                blake3::hash(path.as_os_str().as_encoded_bytes())
-                    .to_hex()
-                    .as_str(),
-            );
+            self.saving(SaveProgress::Backup);
+            let directory = backup_directory(&self.storage, &path)?;
             std::fs::create_dir_all(&directory)?;
             let backup = directory.join(format!("{}.moth", uuid::Uuid::now_v7()));
             let mut output = private_file(&backup)?;
@@ -488,20 +537,52 @@ impl State {
                 std::fs::remove_file(entry.path())?;
             }
         }
-        for (hash, handle) in &self.sources {
+        let live: HashSet<_> = self.scene.items().filter_map(Item::blob).collect();
+        let mut live_bytes: u64 = live
+            .iter()
+            .filter_map(|hash| previous.blobs.get(hash))
+            .map(|blob| blob.length)
+            .sum();
+        let total = live
+            .iter()
+            .filter(|hash| !previous.blobs.contains_key(hash))
+            .count();
+        let mut done = 0;
+        if total > 0 {
+            self.saving(SaveProgress::Images { done, total });
+        }
+        for hash in &live {
             if !previous.blobs.contains_key(hash) {
-                let bytes = self.original(*hash, *handle)?;
-                record(&mut file, 1, &bytes)?;
+                let handle = self
+                    .sources
+                    .get(hash)
+                    .copied()
+                    .ok_or_else(|| error("Original unavailable"))?;
+                let bytes = self.original(*hash, handle)?;
+                // The checkpoint sync covers these originals before acknowledging the save.
+                append_record(&mut file, 1, &bytes)?;
+                live_bytes += bytes.len() as u64;
+                done += 1;
+                if done % 32 == 0 || done == total {
+                    self.saving(SaveProgress::Images { done, total });
+                }
             }
         }
-        record(&mut file, 3, &board::snapshot(&self.scene).map_err(error)?)?;
-        let live_bytes: u64 = self
-            .scene
-            .items()
-            .filter_map(|i| i.blob())
-            .map(|blob| previous.blobs.get(&blob).map_or(0, |b| b.length))
-            .sum();
+        self.saving(SaveProgress::Layout);
+        let snapshot = board::snapshot(&self.scene).map_err(error)?;
+        live_bytes += snapshot.len() as u64;
+        record(&mut file, 3, &snapshot)?;
+        drop(snapshot);
+        #[cfg(test)]
+        {
+            self.save_syncs += 1;
+        }
         if file.metadata()?.len() > (live_bytes.saturating_mul(2)).max(1024 * 1024) {
+            self.saving(SaveProgress::Compacting);
+            #[cfg(test)]
+            {
+                self.save_compactions += 1;
+            }
             drop(file);
             let handle = self.storage.register(path.clone())?;
             let result = board::compact(self.storage.as_ref(), handle).map_err(error);
@@ -510,13 +591,20 @@ impl State {
         }
         // The preview goes last, after any compaction, so the library finds it at the end
         // of the file. It is derived data: failing to make it never fails the save.
+        self.saving(SaveProgress::Preview);
         let preview = self.preview().and_then(|bytes| {
             let mut file = OpenOptions::new().read(true).append(true).open(&path)?;
-            record(&mut file, board::PREVIEW, &bytes)
+            let result = record(&mut file, board::PREVIEW, &bytes);
+            #[cfg(test)]
+            if result.is_ok() {
+                self.save_syncs += 1;
+            }
+            result
         });
         if let Err(e) = preview {
             tracing::warn!(%e, "board preview not written");
         }
+        self.saving(SaveProgress::Finishing);
         if let Err(e) = recent(&self.storage.base_directory()?, Some(path)) {
             tracing::warn!(%e, "recent file catalog unavailable");
         }
@@ -812,8 +900,10 @@ impl State {
                 let mut inverses = Vec::with_capacity(batch.len());
                 let mut commands = Vec::with_capacity(batch.len());
                 let mut sources = Vec::new();
-                for (command, source) in batch {
-                    let (inverse, done) = self.apply(command, source)?;
+                let last = batch.len().saturating_sub(1);
+                for (index, (command, source)) in batch.into_iter().enumerate() {
+                    // One sync covers every preceding record before the batch is acknowledged.
+                    let (inverse, done) = self.apply_command(command, source, index == last)?;
                     inverses.push(inverse);
                     if let Completion::Applied(command, source) = done {
                         commands.push(command);
@@ -878,9 +968,16 @@ impl State {
                 .map_err(|_| error("Export decoder panicked"))??;
                 Ok(Some(Completion::Exported(result)))
             }
-            Request::Save(path) => Ok(Some(self.save(path, true)?)),
+            Request::Save(path) => {
+                let backup = super::library::backups_enabled(&self.storage, &path).unwrap_or_else(|error| {
+                    tracing::warn!(%error, "backup preference unreadable; saving without a new backup");
+                    false
+                });
+                Ok(Some(self.save(path, backup)?))
+            }
             Request::Autosave(path) => Ok(Some(self.save(path, false)?)),
             Request::Open(path) => Ok(Some(self.open(path)?)),
+            Request::OpenBackup(path) => Ok(Some(self.open_from(path, None, true)?)),
             Request::Restore(path) => {
                 let directory = recovery::validate(&self.storage, &path)?;
                 if directory == self.storage.recovery_directory()? {
@@ -1101,6 +1198,12 @@ impl Worker {
                     wake();
                 }
                 let mut state = State {
+                    #[cfg(test)]
+                    commits: 0,
+                    #[cfg(test)]
+                    save_syncs: 0,
+                    #[cfg(test)]
+                    save_compactions: 0,
                     progress: Some(Progress {
                         results: tx.clone(),
                         wake: wake.clone(),
@@ -1159,6 +1262,37 @@ impl Worker {
             .join()
             .map_err(|_| error("storage worker panicked"))
     }
+}
+
+fn backup_directory(storage: &DesktopStorage, path: &std::path::Path) -> io::Result<PathBuf> {
+    Ok(storage.base_directory()?.join("backups").join(
+        blake3::hash(path.as_os_str().as_encoded_bytes())
+            .to_hex()
+            .as_str(),
+    ))
+}
+
+pub(crate) fn latest_backup(
+    storage: &DesktopStorage,
+    path: &std::path::Path,
+) -> io::Result<Option<PathBuf>> {
+    let entries = match std::fs::read_dir(backup_directory(storage, path)?) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let mut latest = None;
+    for entry in entries.take(1024) {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_file()
+            && path.extension().is_some_and(|e| e == "moth")
+            && latest.as_ref().is_none_or(|old: &PathBuf| path > *old)
+        {
+            latest = Some(path);
+        }
+    }
+    Ok(latest)
 }
 
 #[cfg(test)]
@@ -1309,8 +1443,69 @@ mod tests {
         second.open(path.clone()).unwrap();
         second.save(path.clone(), true).unwrap();
     }
+    #[test]
+    fn optional_backups_rotate_and_open_as_independent_unsaved_boards() {
+        let mut writer = state();
+        let root = writer.storage.base_directory().unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("source.moth");
+        std::fs::write(&source, include_bytes!("../../../corpus/moth/v7.moth")).unwrap();
+        writer.request(Request::Open(source)).unwrap();
+        let path = root.join("saved.moth");
+        writer.request(Request::Save(path.clone())).unwrap();
+        writer.request(Request::Save(path.clone())).unwrap();
+        assert!(
+            latest_backup(&writer.storage, &path).unwrap().is_none(),
+            "default is off"
+        );
+        super::super::settings::save(&root, "backup_copies", "true").unwrap();
+        for _ in 0..5 {
+            writer.request(Request::Save(path.clone())).unwrap();
+        }
+        assert_eq!(
+            std::fs::read_dir(backup_directory(&writer.storage, &path).unwrap())
+                .unwrap()
+                .count(),
+            3
+        );
+        let backup = latest_backup(&writer.storage, &path).unwrap().unwrap();
+        let bytes = std::fs::read(&backup).unwrap();
+        let saved = std::fs::read(&path).unwrap();
+        let mut recovered = state();
+        let recovered_root = recovered.storage.base_directory().unwrap();
+        assert!(matches!(
+            recovered
+                .request(Request::OpenBackup(backup.clone()))
+                .unwrap(),
+            Some(Completion::Opened(_, _, true, None))
+        ));
+        assert!(recovered.destination.is_none());
+        assert_eq!(recovered.scene.len(), writer.scene.len());
+        for item in writer.scene.items() {
+            assert_eq!(recovered.scene.get(item.id), Some(item));
+        }
+        assert_eq!(recovered.sources.len(), writer.sources.len());
+        for handle in recovered.sources.values() {
+            let mut file = recovered.storage.open(*handle).unwrap();
+            let mut original = Vec::new();
+            file.read_to_end(&mut original).unwrap();
+            assert!(!original.is_empty());
+        }
+        recovered
+            .request(Request::Save(root.join("restored.moth")))
+            .unwrap();
+        assert_eq!(std::fs::read(&backup).unwrap(), bytes);
+        assert_eq!(std::fs::read(&path).unwrap(), saved);
+        drop(writer);
+        drop(recovered);
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(recovered_root).unwrap();
+    }
     fn state() -> State {
         State {
+            commits: 0,
+            save_syncs: 0,
+            save_compactions: 0,
             progress: None,
             destination: None,
             storage: Arc::new(DesktopStorage::in_directory(
@@ -1430,6 +1625,7 @@ mod tests {
         assert_eq!(backups(), 0);
         let saved = board::read(&mut File::open(&path).unwrap()).unwrap();
         assert_eq!(saved.scene.get(note.id).unwrap().rect, moved);
+        super::super::settings::save(&directory, "backup_copies", "true").unwrap();
         state.request(Request::Save(path.clone())).unwrap();
         assert_eq!(backups(), 1);
         state.journal = None;
@@ -1469,6 +1665,12 @@ mod tests {
     #[test]
     fn journal_undo_redo_save_open_and_compact() {
         let mut state = state();
+        super::super::settings::save(
+            &state.storage.base_directory().unwrap(),
+            "backup_copies",
+            "true",
+        )
+        .unwrap();
         let handle = state.storage.stage_rgba(1, 1, &[1, 2, 3, 255]).unwrap();
         let mut bytes = Vec::new();
         state
@@ -2097,6 +2299,605 @@ mod tests {
         state.storage.discard().unwrap();
         std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
     }
+    #[test]
+    fn batch_syncs_once_before_acknowledgment() {
+        let mut state = state();
+        let commands: Vec<_> = (0..3)
+            .map(|n| {
+                (
+                    Command::Insert(Item::text(
+                        "note",
+                        Rect {
+                            x: n as f32 * 20.,
+                            y: 0.,
+                            width: 10.,
+                            height: 10.,
+                        },
+                        None,
+                    )),
+                    None,
+                )
+            })
+            .collect();
+        assert!(
+            matches!(state.request(Request::ApplyBatch(commands)).unwrap(),
+            Some(Completion::AppliedBatch(commands, _)) if commands.len() == 3)
+        );
+        let commits = state.commits;
+        let path = state
+            .storage
+            .recovery_directory()
+            .unwrap()
+            .join("board.moth");
+        assert_eq!(
+            board::read(&mut File::open(path).unwrap())
+                .unwrap()
+                .scene
+                .len(),
+            3
+        );
+        state.journal = None;
+        state.journal_guard = None;
+        state.storage.discard().unwrap();
+        std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
+        assert_eq!(
+            commits, 1,
+            "one durable batch acknowledgment needs one sync"
+        );
+    }
+
+    #[test]
+    fn move_batch_crash_writer() {
+        let Some(root) = std::env::var_os("MOTHREF_MOVE_CRASH_ROOT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let mut state = state();
+        state.storage = Arc::new(DesktopStorage::in_directory(root.clone()));
+        let items: Vec<_> = (0..40)
+            .map(|n| {
+                Item::text(
+                    "note",
+                    Rect {
+                        x: 0.,
+                        y: n as f32 * 20.,
+                        width: 10.,
+                        height: 10.,
+                    },
+                    None,
+                )
+            })
+            .collect();
+        state
+            .request(Request::ApplyBatch(
+                items
+                    .iter()
+                    .cloned()
+                    .map(|item| (Command::Insert(item), None))
+                    .collect(),
+            ))
+            .unwrap();
+        let mut acks = File::create(root.join("acks")).unwrap();
+        for revision in 1..=10000 {
+            state
+                .request(Request::ApplyBatch(
+                    items
+                        .iter()
+                        .map(|item| {
+                            (
+                                Command::SetRect {
+                                    id: item.id,
+                                    rect: Rect {
+                                        x: revision as f32,
+                                        ..item.rect
+                                    },
+                                },
+                                None,
+                            )
+                        })
+                        .collect(),
+                ))
+                .unwrap();
+            writeln!(acks, "{revision}").unwrap();
+            acks.flush().unwrap();
+            std::thread::sleep(std::time::Duration::from_micros(100));
+        }
+    }
+
+    #[test]
+    fn move_batches_survive_50_process_kills() {
+        for iteration in 0..50 {
+            let root =
+                std::env::temp_dir().join(format!("mothref-move-kill-{}", uuid::Uuid::now_v7()));
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "boards::tests::move_batch_crash_writer",
+                    "--nocapture",
+                ])
+                .env("MOTHREF_MOVE_CRASH_ROOT", &root)
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let acknowledged = |root: &std::path::Path| {
+                std::fs::read_to_string(root.join("acks"))
+                    .unwrap_or_default()
+                    .lines()
+                    .filter_map(|line| line.parse::<u32>().ok())
+                    .max()
+                    .unwrap_or(0)
+            };
+            while acknowledged(&root) == 0 && std::time::Instant::now() < deadline {
+                if child.try_wait().unwrap().is_some() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            std::thread::sleep(std::time::Duration::from_micros((iteration * 7919) % 1500));
+            let _ = child.kill();
+            child.wait().unwrap();
+            let ack = acknowledged(&root);
+            assert!(
+                ack > 0,
+                "writer must acknowledge a move before being killed"
+            );
+            let journal = std::fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .find(|entry| entry.path().join("board.moth").is_file())
+                .unwrap()
+                .path()
+                .join("board.moth");
+            let loaded = board::read(&mut File::open(journal).unwrap()).unwrap();
+            assert_eq!(loaded.scene.len(), 40);
+            assert!(
+                loaded.scene.items().all(|item| item.rect.x >= ack as f32),
+                "iteration {iteration}: an acknowledged member move was lost"
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn first_large_save_syncs_together_without_redundant_compaction() {
+        let mut state = state();
+        let root = state.storage.base_directory().unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("input.png");
+        for n in 0..4u32 {
+            let mut bytes = include_bytes!("../../../corpus/images/rows.png").to_vec();
+            bytes.extend_from_slice(&n.to_le_bytes());
+            bytes.resize(512 * 1024, 0);
+            std::fs::write(&source, &bytes).unwrap();
+            let handle = state.storage.register(source.clone()).unwrap();
+            let item = Item::image(
+                blake3::hash(&bytes),
+                Rect {
+                    x: n as f32 * 10.,
+                    y: 0.,
+                    width: 9.,
+                    height: 9.,
+                },
+                state.scene.top(),
+            );
+            state
+                .apply_command(Command::Insert(item), Some(handle), false)
+                .unwrap();
+        }
+        let path = root.join("saved.moth");
+        let (send, receive) = crossbeam_channel::bounded(32);
+        state.progress = Some(Progress {
+            results: send,
+            wake: Arc::new(|| {}),
+        });
+        state.save(path.clone(), true).unwrap();
+        let loaded = board::read(&mut File::open(path).unwrap()).unwrap();
+        assert_eq!(loaded.scene.len(), 4);
+        assert_eq!(loaded.blobs.len(), 4);
+        let syncs = state.save_syncs;
+        let compactions = state.save_compactions;
+        let stages: Vec<_> = receive
+            .try_iter()
+            .filter_map(|done| match done {
+                Completion::Saving(stage) => Some(stage),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stages.first(), Some(&SaveProgress::Preparing));
+        assert!(stages.contains(&SaveProgress::Images { done: 4, total: 4 }));
+        assert_eq!(stages.last(), Some(&SaveProgress::Finishing));
+        let removed = state
+            .scene
+            .items()
+            .take(3)
+            .map(|item| (Command::Remove(item.id), None))
+            .collect();
+        state.request(Request::ApplyBatch(removed)).unwrap();
+        let subset = root.join("subset.moth");
+        state.save(subset.clone(), true).unwrap();
+        let subset = board::read(&mut File::open(subset).unwrap()).unwrap();
+        assert_eq!(subset.scene.len(), 1);
+        assert_eq!(
+            subset.blobs.len(),
+            1,
+            "a new save copies only originals still in the scene"
+        );
+        assert_eq!(state.save_compactions, 0);
+        state.journal = None;
+        state.journal_guard = None;
+        state.storage.discard().unwrap();
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(
+            compactions, 0,
+            "newly saved live originals must not trigger compaction"
+        );
+        assert_eq!(
+            syncs, 2,
+            "checkpoint and preview syncs cover all new originals"
+        );
+    }
+
+    #[test]
+    fn metadata_only_save_does_not_compact_a_new_snapshot() {
+        let mut state = state();
+        for n in 0..80 {
+            let item = Item::text(
+                "x".repeat(16 * 1024),
+                Rect {
+                    x: n as f32 * 10.,
+                    y: 0.,
+                    width: 9.,
+                    height: 9.,
+                },
+                state.scene.top(),
+            );
+            state
+                .apply_command(Command::Insert(item), None, false)
+                .unwrap();
+        }
+        let root = state.storage.base_directory().unwrap();
+        state.save(root.join("notes.moth"), true).unwrap();
+        assert_eq!(
+            state.save_compactions, 0,
+            "the live snapshot itself belongs in the compaction budget"
+        );
+        state.journal = None;
+        state.journal_guard = None;
+        state.storage.discard().unwrap();
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn save_crash_writer() {
+        let Some(root) = std::env::var_os("MOTHREF_SAVE_CRASH_ROOT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let mut state = state();
+        state.storage = Arc::new(DesktopStorage::in_directory(root.clone()));
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("input.png");
+        let append_image = |state: &mut State, n: u32| {
+            let mut bytes = include_bytes!("../../../corpus/images/rows.png").to_vec();
+            bytes.extend_from_slice(&n.to_le_bytes());
+            bytes.resize(16 * 1024, 0);
+            std::fs::write(&source, &bytes).unwrap();
+            let handle = state.storage.register(source.clone()).unwrap();
+            let item = Item::image(
+                blake3::hash(&bytes),
+                Rect {
+                    x: n as f32,
+                    y: 0.,
+                    width: 1.,
+                    height: 1.,
+                },
+                state.scene.top(),
+            );
+            state
+                .apply_command(Command::Insert(item), Some(handle), false)
+                .unwrap();
+        };
+        for n in 0..40 {
+            append_image(&mut state, n);
+        }
+        state
+            .commit(3, &board::snapshot(&state.scene).unwrap())
+            .unwrap();
+        let mut acks = File::create(root.join("acks")).unwrap();
+        std::fs::write(root.join("ready"), b"journaled").unwrap();
+        for n in 40..10000 {
+            if n > 40 {
+                append_image(&mut state, n);
+                state
+                    .commit(3, &board::snapshot(&state.scene).unwrap())
+                    .unwrap();
+            }
+            state.save(root.join("saved.moth"), true).unwrap();
+            writeln!(acks, "{}", state.scene.len()).unwrap();
+            acks.flush().unwrap();
+            std::thread::sleep(std::time::Duration::from_micros(100));
+        }
+    }
+
+    #[test]
+    fn saves_survive_50_process_kills() {
+        for iteration in 0..50 {
+            let root =
+                std::env::temp_dir().join(format!("mothref-save-kill-{}", uuid::Uuid::now_v7()));
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "boards::tests::save_crash_writer", "--nocapture"])
+                .env("MOTHREF_SAVE_CRASH_ROOT", &root)
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let acknowledged = || {
+                std::fs::read_to_string(root.join("acks"))
+                    .unwrap_or_default()
+                    .lines()
+                    .filter_map(|line| line.parse::<usize>().ok())
+                    .max()
+                    .unwrap_or(0)
+            };
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let ready = if iteration % 2 == 0 {
+                    root.join("ready").exists()
+                } else {
+                    acknowledged() > 0
+                };
+                if ready
+                    || std::time::Instant::now() >= deadline
+                    || child.try_wait().unwrap().is_some()
+                {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            std::thread::sleep(std::time::Duration::from_micros((iteration * 7919) % 1500));
+            let _ = child.kill();
+            child.wait().unwrap();
+            assert!(
+                root.join("ready").exists(),
+                "writer must journal the original board before the kill"
+            );
+            let journal = std::fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .find(|entry| entry.path().join("board.moth").is_file())
+                .unwrap()
+                .path()
+                .join("board.moth");
+            let recovered = board::read(&mut File::open(journal).unwrap()).unwrap();
+            assert!(recovered.scene.len() >= 40);
+            assert!(recovered.scene.items().all(|item| {
+                item.blob()
+                    .is_some_and(|blob| recovered.blobs.contains_key(&blob))
+            }));
+            let ack = acknowledged();
+            if iteration % 2 == 1 {
+                assert!(ack > 0, "writer must acknowledge an initial save");
+            }
+            if ack > 0 {
+                let saved = board::read(&mut File::open(root.join("saved.moth")).unwrap()).unwrap();
+                assert!(
+                    saved.scene.len() >= ack,
+                    "iteration {iteration}: an acknowledged save was lost"
+                );
+                for item in saved.scene.items() {
+                    assert_eq!(recovered.scene.get(item.id), Some(item));
+                    assert!(
+                        item.blob()
+                            .is_some_and(|blob| saved.blobs.contains_key(&blob))
+                    );
+                }
+            }
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    #[ignore = "manual real-disk save latency measurement"]
+    fn measure_large_board_saves() {
+        use std::fmt::Write as _;
+        let mut report = String::from("run,phase,save_ms,bytes\n");
+        let mut stages = String::from("run,phase,stage,ms\n");
+        for run in 0..6 {
+            let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target")
+                .join(format!("mothref-save-bench-{}", uuid::Uuid::now_v7()));
+            let mut state = state();
+            state.storage = Arc::new(DesktopStorage::in_directory(root.clone()));
+            std::fs::create_dir_all(&root).unwrap();
+            let source = std::env::temp_dir()
+                .join(format!("mothref-save-input-{}.png", uuid::Uuid::now_v7()));
+            for n in 0..1000u32 {
+                let mut bytes = include_bytes!("../../../corpus/images/rows.png").to_vec();
+                bytes.extend_from_slice(&n.to_le_bytes());
+                bytes.resize(64 * 1024, 0);
+                std::fs::write(&source, &bytes).unwrap();
+                let handle = state.storage.register(source.clone()).unwrap();
+                let item = Item::image(
+                    blake3::hash(&bytes),
+                    Rect {
+                        x: n as f32 * 10.,
+                        y: 0.,
+                        width: 9.,
+                        height: 9.,
+                    },
+                    state.scene.top(),
+                );
+                state
+                    .apply_command(Command::Insert(item), Some(handle), false)
+                    .unwrap();
+            }
+            state
+                .commit(3, &board::snapshot(&state.scene).unwrap())
+                .unwrap();
+            std::fs::remove_file(&source).unwrap();
+            let path = root.join("saved.moth");
+            for phase in ["first", "repeat"] {
+                let marks = Arc::new(Mutex::new(Vec::new()));
+                let recorded = marks.clone();
+                let (send, receive) = crossbeam_channel::bounded(32);
+                state.progress = Some(Progress {
+                    results: send,
+                    wake: Arc::new(move || {
+                        for done in receive.try_iter() {
+                            if let Completion::Saving(stage) = done {
+                                recorded
+                                    .lock()
+                                    .unwrap()
+                                    .push((stage, std::time::Instant::now()));
+                            }
+                        }
+                    }),
+                });
+                let start = std::time::Instant::now();
+                assert!(matches!(
+                    state.save(path.clone(), true).unwrap(),
+                    Completion::Saved
+                ));
+                let elapsed = start.elapsed();
+                let mut marks = marks.lock().unwrap();
+                marks.push((SaveProgress::Finishing, start + elapsed));
+                for pair in marks.windows(2) {
+                    let stage = match pair[0].0 {
+                        SaveProgress::Images { .. } => "Images".to_owned(),
+                        stage => format!("{stage:?}"),
+                    };
+                    writeln!(
+                        stages,
+                        "{run},{phase},{stage},{:.3}",
+                        pair[1].1.duration_since(pair[0].1).as_secs_f64() * 1000.
+                    )
+                    .unwrap();
+                }
+                let saved = board::read(&mut File::open(&path).unwrap()).unwrap();
+                assert_eq!(saved.scene.len(), 1000);
+                assert_eq!(saved.blobs.len(), 1000);
+                writeln!(
+                    report,
+                    "{run},{phase},{:.3},{}",
+                    elapsed.as_secs_f64() * 1000.,
+                    std::fs::metadata(&path).unwrap().len()
+                )
+                .unwrap();
+            }
+            state.journal = None;
+            state.journal_guard = None;
+            state.storage.discard().unwrap();
+            drop(state);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+        std::fs::write("/tmp/mothref-save-latency.csv", report).unwrap();
+        std::fs::write("/tmp/mothref-save-stages.csv", stages).unwrap();
+    }
+
+    #[test]
+    #[ignore = "manual real-disk move latency measurement"]
+    fn measure_bulk_moves() {
+        use std::fmt::Write as _;
+        let mut report = String::from("count,grouped,run,move_ms,commits\n");
+        for grouped in [false, true] {
+            for count in [1, 100, 1316] {
+                let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../target")
+                    .join(format!("mothref-move-bench-{}", uuid::Uuid::now_v7()));
+                let mut state = state();
+                state.storage = Arc::new(DesktopStorage::in_directory(root.clone()));
+                let handle = state.storage.stage_rgba(1, 1, &[10, 20, 30, 255]).unwrap();
+                let mut bytes = Vec::new();
+                state
+                    .storage
+                    .open(handle)
+                    .unwrap()
+                    .read_to_end(&mut bytes)
+                    .unwrap();
+                let hash = blake3::hash(&bytes);
+                let mut ids = Vec::new();
+                let parent = grouped.then(|| {
+                    let group = Item::group(
+                        moth_scene::Group::default(),
+                        Rect {
+                            x: 0.,
+                            y: 0.,
+                            width: 10.,
+                            height: 10.,
+                        },
+                        Default::default(),
+                    );
+                    let id = group.id;
+                    state
+                        .apply_command(Command::Insert(group), None, false)
+                        .unwrap();
+                    ids.push(id);
+                    id
+                });
+                for n in 0..count {
+                    let mut item = Item::image(
+                        hash,
+                        Rect {
+                            x: (n % 40) as f32 * 20.,
+                            y: (n / 40) as f32 * 20.,
+                            width: 10.,
+                            height: 10.,
+                        },
+                        state.scene.top(),
+                    );
+                    item.parent = parent;
+                    ids.push(item.id);
+                    state
+                        .apply_command(Command::Insert(item), Some(handle), false)
+                        .unwrap();
+                }
+                state
+                    .commit(3, &board::snapshot(&state.scene).unwrap())
+                    .unwrap();
+                for run in 0..5 {
+                    let commands = ids
+                        .iter()
+                        .map(|id| {
+                            let item = state.scene.get(*id).unwrap();
+                            (
+                                Command::SetRect {
+                                    id: *id,
+                                    rect: Rect {
+                                        x: item.rect.x + 1.,
+                                        y: item.rect.y + 1.,
+                                        ..item.rect
+                                    },
+                                },
+                                None,
+                            )
+                        })
+                        .collect();
+                    let commits = state.commits;
+                    let start = std::time::Instant::now();
+                    let completion = state.request(Request::ApplyBatch(commands)).unwrap();
+                    let elapsed = start.elapsed();
+                    assert!(
+                        matches!(completion, Some(Completion::AppliedBatch(commands, _)) if commands.len() == ids.len())
+                    );
+                    writeln!(
+                        report,
+                        "{count},{grouped},{run},{:.3},{}",
+                        elapsed.as_secs_f64() * 1000.,
+                        state.commits - commits
+                    )
+                    .unwrap();
+                }
+                state.journal = None;
+                state.journal_guard = None;
+                state.storage.discard().unwrap();
+                std::fs::remove_dir_all(root).unwrap();
+            }
+        }
+        std::fs::write("/tmp/mothref-move-latency.csv", report).unwrap();
+    }
+
     #[test]
     fn arrangement_batch_stays_inside_the_import_undo_group() {
         let mut state = state();

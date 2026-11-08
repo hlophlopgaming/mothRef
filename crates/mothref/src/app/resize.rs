@@ -118,9 +118,9 @@ impl Resize {
             released: false,
         })
     }
-    /// Which corner is being dragged, for the cursor.
-    pub fn corner(&self) -> usize {
-        self.corner_index
+    /// Released previews stay visible while journaling, but no longer own the cursor.
+    pub fn corner(&self) -> Option<usize> {
+        (!self.released).then_some(self.corner_index)
     }
     pub fn update(&mut self, point: [f32; 2]) {
         let diagonal = [
@@ -262,6 +262,21 @@ mod tests {
         );
         item.transform.rotation = rotation;
         item
+    }
+    #[test]
+    fn released_resize_keeps_preview_without_holding_the_cursor() {
+        let item = item(10., 120., 0.);
+        let mut resize = Resize::start(vec![item], Camera::default(), [130., 100.], 12.).unwrap();
+        resize.update([250., 180.]);
+        let previews = resize.previews();
+        assert_eq!(resize.corner(), Some(3));
+        resize.released = true;
+        assert_eq!(resize.corner(), None);
+        assert_eq!(resize.previews(), previews);
+        assert!(
+            matches!(resize.commands().as_slice(), [Command::SetRect { id, rect }]
+            if *id == previews[0].id && *rect == previews[0].rect)
+        );
     }
     #[test]
     fn rotated_corner_keeps_opposite_corner_fixed() {

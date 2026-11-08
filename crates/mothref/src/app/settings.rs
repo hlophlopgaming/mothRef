@@ -155,6 +155,7 @@ schema! {
             .get("scale_with_window")
             .and_then(|v| v.parse().ok())
             .unwrap_or(false);
+    backup_copies: bool = false, "backup_copies", General, BackupCopies, Kind::Toggle, |s| s.backup_copies.to_string(), |values: &BTreeMap<String,String>| values.get("backup_copies").and_then(|v| v.parse().ok()).unwrap_or(false);
     autosave: u8 = 3, "autosave", General, Autosave, Kind::Choice(&[Text::AutosaveOff, Text::Autosave15s, Text::Autosave30s, Text::Autosave1m, Text::Autosave2m, Text::Autosave3m, Text::Autosave5m]), |s| s.autosave.to_string(), |values: &BTreeMap<String,String>| values.get("autosave").and_then(|v| v.parse().ok()).filter(|v| *v < 7).unwrap_or(3);
     reopen_last: bool = false, "reopen_last_board", General, ReopenLast, Kind::Toggle, |s| s.reopen_last.to_string(), |values: &BTreeMap<String,String>| values
             .get("reopen_last_board")
@@ -1083,6 +1084,9 @@ mod tests {
     #[test]
     fn schema_roundtrips_and_rejects_invalid_values() {
         let mut settings = Settings::default();
+        assert!(!settings.backup_copies);
+        settings.load(&BTreeMap::from([("backup_copies".into(), "true".into())]));
+        assert!(settings.backup_copies);
         let original = settings.preferences();
         assert!(
             original.len() + super::super::bindings::ACTIONS.len()

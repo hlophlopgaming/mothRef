@@ -18,6 +18,10 @@ pub struct Card {
     pub opened: u64,
     /// The file is not at its path any more; the card offers to find it.
     pub missing: bool,
+    /// Whether a previous version can be recovered.
+    pub backup_available: bool,
+    /// Board override; absent follows Settings.
+    pub backups: Option<bool>,
     /// The library has read the file at least once, so its count and size are real.
     pub known: bool,
     /// Previews were asked for and have not arrived yet.
@@ -89,6 +93,8 @@ pub struct Library {
     pub order: Order,
     /// Active tag collection.
     pub tag: Option<String>,
+    /// Context for the registered open-backup action.
+    pub backup_target: Option<std::path::PathBuf>,
     editing: Option<usize>,
     edit_tags: String,
     trashing: Option<usize>,
@@ -147,6 +153,10 @@ pub struct Intent {
     pub open: Option<usize>,
     /// Persist a pin change.
     pub pin: Option<usize>,
+    /// Persist a board backup override.
+    pub backups: Option<(usize, Option<bool>)>,
+    /// Dispatch the registered action for `Library::backup_target`.
+    pub open_backup: bool,
     /// Create an empty board.
     pub new: bool,
     /// Browse for an existing board.
@@ -171,6 +181,7 @@ pub struct Intent {
 impl Library {
     /// Closing the panel must not reattach an old draft to a different catalog entry.
     pub fn dismiss_editor(&mut self) {
+        self.backup_target = None;
         self.editing = None;
         self.edit_tags.clear();
         self.trashing = None;
@@ -185,6 +196,24 @@ impl Library {
         folders: &[Folder],
         intent: &mut Intent,
     ) {
+        if card.missing && card.backup_available && ui.button(text(Text::OpenBackup)).clicked() {
+            self.backup_target = Some(card.path.clone());
+            intent.open_backup = true;
+        }
+        icons::submenu(ui, text(Text::BackupCopies), |ui| {
+            for (value, label) in [
+                (None, Text::BackupDefault),
+                (Some(true), Text::BackupOn),
+                (Some(false), Text::BackupOff),
+            ] {
+                if ui
+                    .selectable_label(card.backups == value, text(label))
+                    .clicked()
+                {
+                    intent.backups = Some((index, value));
+                }
+            }
+        });
         if card.missing {
             if ui.button(text(Text::FindFile)).clicked() {
                 intent.relink = Some(index);
@@ -689,7 +718,11 @@ impl Library {
                                             badge(
                                                 ui,
                                                 rect,
-                                                Text::FileMissing,
+                                                if c.backup_available {
+                                                    Text::BackupAvailable
+                                                } else {
+                                                    Text::FileMissing
+                                                },
                                                 Text::FileMissingHint,
                                             );
                                         } else if c.unsaved {
@@ -759,11 +792,26 @@ impl Library {
                                             .truncate(),
                                         );
                                         ui.horizontal_wrapped(|ui| {
-                                            if ui.small_button(text(Text::Tags)).clicked() {
+                                            if c.missing && c.backup_available {
+                                                if ui
+                                                    .small_button(text(Text::OpenBackup))
+                                                    .on_hover_text(text(Text::BackupAvailable))
+                                                    .clicked()
+                                                {
+                                                    self.backup_target = Some(c.path.clone());
+                                                    intent.open_backup = true;
+                                                }
+                                            } else if ui.small_button(text(Text::Tags)).clicked() {
                                                 self.editing = Some(index);
                                                 self.edit_tags = c.tags.join(", ");
                                             }
-                                            for tag in c.tags.iter().take(2) {
+                                            for tag in c.tags.iter().take(
+                                                if c.missing && c.backup_available {
+                                                    0
+                                                } else {
+                                                    2
+                                                },
+                                            ) {
                                                 ui.label(
                                                     egui::RichText::new(format!("#{tag}"))
                                                         .size(10.)
@@ -814,9 +862,11 @@ impl Library {
                             .clicked()
                         {
                             intent.tags = Some((index, self.edit_tags.clone()));
+                            self.backup_target = None;
                             self.editing = None;
                         }
                         if ui.button(text(Text::Cancel)).clicked() {
+                            self.backup_target = None;
                             self.editing = None;
                         }
                     });
@@ -1088,6 +1138,8 @@ mod tests {
             recent: None,
             opened: 1000 - age,
             missing: false,
+            backup_available: false,
+            backups: None,
             known: true,
             loading: false,
             count,
@@ -1121,7 +1173,7 @@ mod tests {
     fn card_labels_flow_below_previews() {
         let ctx = egui::Context::default();
         theme(&ctx, &Tokens::DARK);
-        let cards: Vec<_> = (0..8)
+        let mut cards: Vec<_> = (0..8)
             .map(|i| Card {
                 path: format!("board-{i}.moth").into(),
                 title: format!("Reference {i}"),
@@ -1129,6 +1181,8 @@ mod tests {
                 recent: Some(i),
                 opened: 0,
                 missing: false,
+                backup_available: false,
+                backups: None,
                 known: true,
                 loading: false,
                 count: 11,
@@ -1141,6 +1195,8 @@ mod tests {
                 previews: vec![],
             })
             .collect();
+        cards[0].missing = true;
+        cards[0].backup_available = true;
         let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
@@ -1154,6 +1210,10 @@ mod tests {
             },
         );
         output.textures_delta.clear();
+        for label in [Text::OpenBackup, Text::BackupAvailable] {
+            assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::epaint::Shape::Text(t) if t.galley.text() == text(label))), "missing card must expose recovery");
+        }
+
         let labels: Vec<_> = output
             .shapes
             .iter()
