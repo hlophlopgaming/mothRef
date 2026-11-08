@@ -32,8 +32,9 @@ pub(super) enum PendingExport {
     },
     /// One image's original file, with the item name offered as the file name.
     Original(Uuid, String),
-    /// Every original into a new folder named in the dialog.
-    Originals,
+    /// Originals of the selection (or the board when empty), each as its own file in a
+    /// new folder named in the dialog.
+    Originals(Vec<Uuid>),
     /// Originals of the selection (or the board when empty) in a ZIP archive.
     Archive(Vec<Uuid>),
 }
@@ -55,7 +56,7 @@ impl PendingExport {
             Self::Original(_, name) => dialog
                 .set_title(text(Text::ExportOriginal))
                 .set_file_name(name.as_str()),
-            Self::Originals => dialog
+            Self::Originals(_) => dialog
                 .set_title(text(Text::ExportOriginals))
                 .set_file_name(format!("{board} {}", text(Text::OriginalsFolder))),
             Self::Archive(_) => dialog
@@ -83,7 +84,10 @@ impl PendingExport {
                 }
             }
             Self::Original(id, _) => Target::Original { path, id },
-            Self::Originals => Target::Originals(path),
+            Self::Originals(ids) => Target::Originals {
+                directory: path,
+                ids,
+            },
             Self::Archive(ids) => {
                 if path.extension().is_none() {
                     path.set_extension("zip");
@@ -225,10 +229,12 @@ impl Tools {
         if !self.edit.open && !self.arrange.open && !self.export.open && !self.pickers.open {
             viewer_notice(ui.ctx(), &mut self.viewer, board, settings.reduced_motion);
             flash_notice(ui.ctx(), board, settings.reduced_motion);
+            import_notice(ui.ctx(), board, settings.reduced_motion);
             return Vec::new();
         }
         viewer_notice(ui.ctx(), &mut self.viewer, board, settings.reduced_motion);
         flash_notice(ui.ctx(), board, settings.reduced_motion);
+        import_notice(ui.ctx(), board, settings.reduced_motion);
         let mut intents = Vec::new();
         let items: Vec<_> = board
             .selection
@@ -896,10 +902,35 @@ const NOTICE_FADE: f32 = 0.35;
 /// What a bottom notice says: work under way, or how it ended.
 enum NoticeContent<'a> {
     Busy(Text),
+    /// A spinner with a text that changes as work goes on.
+    Progress(String),
     Done {
         message: &'a moth_ui::Message,
         ok: bool,
     },
+}
+/// "Adding images: 240 of 1365" while several files are being added.
+fn import_notice(ctx: &egui::Context, board: &Document, reduced_motion: bool) {
+    let Some((done, total)) = board.import_progress() else {
+        return;
+    };
+    bottom_notice(
+        ctx,
+        "import_progress",
+        &[
+            "bottom_toolbar",
+            "selection_badge",
+            "added_feedback",
+            "viewer_feedback",
+        ],
+        1.,
+        reduced_motion,
+        NoticeContent::Progress(
+            text(Text::AddingImages)
+                .replace("{done}", &done.to_string())
+                .replace("{total}", &total.to_string()),
+        ),
+    );
 }
 /// A short-lived message about something that did not happen (for now: a paste with
 /// nothing usable on the clipboard), so it is seen instead of hiding in the status line.
@@ -926,6 +957,7 @@ fn flash_notice(ctx: &egui::Context, board: &Document, reduced_motion: bool) {
             "selection_badge",
             "added_feedback",
             "viewer_feedback",
+            "import_progress",
         ],
         alpha,
         reduced_motion,
@@ -965,6 +997,10 @@ fn bottom_notice(
                         NoticeContent::Busy(label) => {
                             ui.spinner();
                             ui.label(text(label));
+                        }
+                        NoticeContent::Progress(label) => {
+                            ui.spinner();
+                            ui.label(label);
                         }
                         NoticeContent::Done { message, ok } => {
                             let (icon, _) = ui.allocate_exact_size(
@@ -1044,9 +1080,13 @@ mod tests {
         };
         assert_eq!(path, std::path::Path::new("/tmp/refs.zip"));
         // A folder name is used as typed: the worker creates it fresh.
-        let Target::Originals(path) = PendingExport::Originals.target("/tmp/refs v2".into()) else {
+        let id = Uuid::from_u128(7);
+        let Target::Originals { directory, ids } =
+            PendingExport::Originals(vec![id]).target("/tmp/refs v2".into())
+        else {
             panic!("originals export");
         };
-        assert_eq!(path, std::path::Path::new("/tmp/refs v2"));
+        assert_eq!(directory, std::path::Path::new("/tmp/refs v2"));
+        assert_eq!(ids, [id]);
     }
 }

@@ -50,19 +50,7 @@ impl Modal {
                                 .max_height(ui.ctx().content_rect().height() / 3.)
                                 .show(ui, |ui| {
                                     for (index, entry) in recovery_paths.iter().enumerate() {
-                                        let age =
-                                            entry.modified.elapsed().unwrap_or_default().as_secs();
-                                        let (key, count) = if age < 60 {
-                                            (moth_ui::Text::ChangedNow, 0)
-                                        } else if age < 3600 {
-                                            (moth_ui::Text::ChangedMinutes, age / 60)
-                                        } else if age < 86400 {
-                                            (moth_ui::Text::ChangedHours, age / 3600)
-                                        } else {
-                                            (moth_ui::Text::ChangedDays, age / 86400)
-                                        };
-                                        let changed = moth_ui::Message::Count(key, count as usize)
-                                            .render(moth_ui::locale());
+                                        let changed = moth_ui::ago(entry.modified);
                                         let title = entry
                                             .title
                                             .as_deref()
@@ -220,7 +208,16 @@ impl Modal {
                 intents.push(Intent::Action(Action::KeepOpen));
             }
         }
-        if let Some(ids) = board.notices.arrange_prompt.clone() {
+        let settled = board.settled();
+        if let Err(wait) = settled
+            && board.notices.arrange_prompt.is_some()
+        {
+            // Images are still arriving: the prompt (and auto-arrange) waits for all of them.
+            ui.ctx().request_repaint_after(wait);
+        }
+        if let Some(ids) = board.notices.arrange_prompt.clone()
+            && settled.is_ok()
+        {
             if settings.auto_arrange || ids.len() <= settings.threshold {
                 intents.push(Intent::Arrange(
                     super::tools::layout(settings.default_arrange).1,

@@ -3,6 +3,10 @@
 use super::*;
 use document::MAX_TABS;
 
+/// Files queued for adding at once. The queue holds only small handles (the files
+/// are read later by the bounded decode workers), so a drop of thousands of images
+/// fits; past this the rest are refused with a notice.
+const MAX_WAITING: usize = 100_000;
 pub(super) enum TabChange {
     None,
     Switched,
@@ -39,6 +43,30 @@ pub(super) struct Workspace {
 impl Workspace {
     pub(super) fn recent_paths(&self) -> &[std::path::PathBuf] {
         &self.recent_paths
+    }
+    /// Whether a board file is open in this window, as the current board or a tab.
+    pub(super) fn is_open(&self, path: &std::path::Path) -> bool {
+        std::iter::once(&self.board)
+            .chain(&self.tabs)
+            .any(|document| std::path::Path::new(&document.file.path) == path)
+    }
+    /// A board left the library list: it must not come back with the next refresh.
+    pub(super) fn forget_recent(&mut self, path: &std::path::Path) {
+        self.recent_paths.retain(|p| p != path);
+    }
+    /// A board file was found at a new place: the recent list follows it.
+    pub(super) fn move_recent(&mut self, from: &std::path::Path, to: &std::path::Path) {
+        for path in &mut self.recent_paths {
+            if path == from {
+                *path = to.to_owned();
+            }
+        }
+    }
+    /// Boards whose recovery journal from an earlier session still holds changes.
+    pub(super) fn unsaved_boards(&self) -> impl Iterator<Item = &std::path::Path> {
+        self.recovery_paths
+            .iter()
+            .filter_map(|entry| entry.destination.as_deref())
     }
     pub(super) fn recovery_paths(&self) -> &[moth_platform::boards::Recovery] {
         &self.recovery_paths
@@ -351,6 +379,7 @@ impl Workspace {
             // Reduction reads the file, so it runs on the clipboard worker; the file
             // comes back as a reduced copy or, when it already fits, unchanged.
             self.board.intake.reducing.push_back(path);
+            self.board.intake.queued += 1;
             self.send_reductions();
             return TabChange::None;
         }
@@ -425,7 +454,7 @@ impl Workspace {
             self.board.notices.message = moth_ui::Text::BoardFull.into();
             return TabChange::None;
         }
-        if self.board.intake.waiting.len() >= 1024 {
+        if self.board.intake.waiting.len() >= MAX_WAITING {
             self.board.notices.message = moth_ui::Text::ImportBusy.into();
             return TabChange::None;
         }
@@ -434,7 +463,10 @@ impl Workspace {
             None => self.board.storage().register(path),
         };
         match source {
-            Ok(h) => self.board.intake.waiting.push(h),
+            Ok(h) => {
+                self.board.intake.waiting.push(h);
+                self.board.intake.queued += 1;
+            }
             Err(e) => self.board.notices.message = e.to_string().into(),
         }
         self.queue_decodes(format);
@@ -513,7 +545,9 @@ impl Workspace {
                         item.name = self.board.storage().source_name(done.request.handle);
                     }
                     item.parent = super::groups::landing(&self.board.scene, point);
-                    self.board.intake.burst.push(item.id);
+                    self.board
+                        .intake
+                        .add_to_burst(item.id, &mut self.board.notices);
                     self.persist(moth_platform::boards::Request::Apply(
                         Command::Insert(item),
                         Some(done.request.handle),
@@ -541,7 +575,9 @@ impl Workspace {
                         item.name = self.board.storage().source_name(done.request.handle);
                     }
                     item.parent = super::groups::landing(&self.board.scene, point);
-                    self.board.intake.burst.push(item.id);
+                    self.board
+                        .intake
+                        .add_to_burst(item.id, &mut self.board.notices);
                     self.persist(moth_platform::boards::Request::Apply(
                         Command::Insert(item),
                         Some(done.request.handle),
@@ -873,7 +909,15 @@ impl Workspace {
             }
         }
         self.queue_decodes(pump.format);
+        if !self.board.idle() {
+            self.board.intake.idle_since = None;
+        }
         if self.board.idle() {
+            self.board.intake.queued = 0;
+            self.board
+                .intake
+                .idle_since
+                .get_or_insert_with(Instant::now);
             if let Some(added) = &mut self.board.notices.added {
                 if added.needs_fit {
                     let ids = added.ids.iter().copied().collect();

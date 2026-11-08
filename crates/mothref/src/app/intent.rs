@@ -23,6 +23,8 @@ pub(super) enum Intent {
     NoteFocused,
     /// Send an explicit catalog action to the library worker.
     Library(moth_platform::library::Request),
+    /// Ask where a missing board file is now (the library's "Find…").
+    RelinkBoard(std::path::PathBuf),
 
     /// Clipboard import.
     Paste,

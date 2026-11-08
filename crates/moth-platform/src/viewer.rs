@@ -61,6 +61,8 @@ fn launch(command: &mut std::process::Command) -> io::Result<()> {
         ));
     }
     let permit = Permit;
+    let program = command.get_program().to_owned();
+    let target = std::path::PathBuf::from(command.get_args().last().unwrap_or_default());
     let mut child = command.spawn()?;
     let (sender, receiver) = mpsc::sync_channel(1);
     std::thread::Builder::new()
@@ -71,13 +73,15 @@ fn launch(command: &mut std::process::Command) -> io::Result<()> {
                 if status.success() {
                     Ok(())
                 } else {
-                    Err(io::Error::other(
-                        "System image viewer could not open the image",
-                    ))
+                    Err(io::Error::other(format!(
+                        "{} could not open {}",
+                        program.to_string_lossy(),
+                        target.display()
+                    )))
                 }
             });
             if let Err(error) = &result {
-                tracing::warn!(%error, "system image viewer failed");
+                tracing::warn!(%error, "system launcher failed");
             }
             let _ = sender.send(result);
         })?;
@@ -114,9 +118,79 @@ pub(super) fn open(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Shows a file selected in the system file manager (Explorer, Finder, or the Linux
+/// file manager through `org.freedesktop.FileManager1`). Where no file manager can
+/// select a file, its folder is opened instead.
+pub fn reveal(path: &Path) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        launch(std::process::Command::new("open").arg("-R").arg(path))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // Explorer parses `/select,` itself, so the path is passed quoted and unsplit.
+        // It reports exit code 1 even when it worked, so it is not waited for.
+        std::process::Command::new("explorer")
+            .raw_arg(format!("/select,\"{}\"", path.display()))
+            .spawn()
+            .map(drop)
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        #[cfg(target_os = "linux")]
+        match show_items(path) {
+            Ok(()) => return Ok(()),
+            Err(error) => tracing::debug!(%error, "file manager cannot select the file"),
+        }
+        open(path.parent().unwrap_or(path))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn show_items(path: &Path) -> io::Result<()> {
+    let connection = dbus::blocking::Connection::new_session().map_err(io::Error::other)?;
+    let proxy = connection.with_proxy(
+        "org.freedesktop.FileManager1",
+        "/org/freedesktop/FileManager1",
+        std::time::Duration::from_secs(5),
+    );
+    proxy
+        .method_call::<(), _, _, _>(
+            "org.freedesktop.FileManager1",
+            "ShowItems",
+            (vec![file_uri(path)], ""),
+        )
+        .map_err(io::Error::other)
+}
+
+/// A `file://` URI with every byte outside the unreserved set percent-encoded, so
+/// spaces, `#` and non-UTF-8 names survive the trip to the file manager.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn file_uri(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let mut uri = String::from("file://");
+    for &byte in path.as_os_str().as_bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
+            uri.push(byte as char);
+        } else {
+            uri.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    uri
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn file_uris_escape_spaces_and_unicode() {
+        assert_eq!(
+            file_uri(Path::new("/home/a/My boards/лиса#1.moth")),
+            "file:///home/a/My%20boards/%D0%BB%D0%B8%D1%81%D0%B0%231.moth"
+        );
+    }
     #[test]
     fn a_failed_spawn_returns_the_error_and_releases_the_launch_budget() {
         for _ in 0..8 {

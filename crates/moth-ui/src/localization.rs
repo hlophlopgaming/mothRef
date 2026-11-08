@@ -124,6 +124,21 @@ pub fn translated(language: Locale, key: Text) -> &'static str {
     CATALOGS[language.0].strings[index(key)]
 }
 /// `count` with the noun in the right plural form for the catalog ("1 board", "5 досок").
+/// How long ago a file or journal was written: "just now", "5 min ago", "3 h ago",
+/// "2 d ago". A time in the future (a clock that moved back) reads as "just now".
+pub fn ago(time: std::time::SystemTime) -> String {
+    let age = time.elapsed().unwrap_or_default().as_secs();
+    let (key, count) = if age < 60 {
+        (Text::ChangedNow, 0)
+    } else if age < 3600 {
+        (Text::ChangedMinutes, age / 60)
+    } else if age < 86400 {
+        (Text::ChangedHours, age / 3600)
+    } else {
+        (Text::ChangedDays, age / 86400)
+    };
+    Message::Count(key, count as usize).render(locale())
+}
 pub fn counted(language: Locale, count: usize, forms: [Text; 3]) -> String {
     let form = if language == Locale::RU {
         if count % 10 == 1 && count % 100 != 11 {

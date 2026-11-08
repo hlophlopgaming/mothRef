@@ -150,6 +150,7 @@ Open:
 
 - [ ] New app icon and README logo — **on hold** until the final mark is drawn
 - [ ] Parity leftovers from [FEATURES.md](docs/FEATURES.md) (a few were tagged M0/M1 there but never done, so they are collected here):
+  - [x] Export the selected originals, each as its own file, named after the images (maintainer, 2026-11-08)
   - [ ] Show the color gamut of an image (BR) — waiting for a decision: the maintainer asked what it shows (2026-11-05)
   - [ ] Open image source — the URL or path the image came from (PR). Needs the source stored per image (schema 7; paths are not written to boards today) — on hold with linked files (maintainer, 2026-11-06). Wanted; handle the edge cases explicitly: an image from inside a `.zip` (show the archive and the entry, open the archive's folder), a web URL (open on click only), clipboard pastes and images embedded in `.bee` / `.pur` files (no source: say so), a file that was moved or deleted since (say it is missing, offer the last known path)
   - [ ] Arrange by file path (PR) — needs the stored source, see above
@@ -367,15 +368,15 @@ Open:
 
 A first slice shipped early ([decision 0004](docs/decisions/0004-reference-workspace.md)); items below say what already exists.
 
-- [ ] Board index (`redb`) with file watcher (`notify`)
+- [ ] Board index (`redb`) with file watcher (`notify`): metadata and previews cached between refreshes for the 1,000-board target; the library file ([decision 0022](docs/decisions/0022-library-folders.md)) already holds every known board
   - [x] Bounded recent/pinned catalog with background previews, search, folder filters and persistent tags/pins (requested reference UI slice)
-- [ ] Start screen: card grid with board previews; stacks shown as a fan of previews or as a folder with icon and color; tags; search; pinning — grid, previews, tags, search and pins exist; stack fans, icons and colors open
-- [ ] Stacks are real folders on disk (Procreate-style: drop a board on a board to create a stack); "smart collections" are saved tag filters
+- [ ] Start screen: card grid with board previews; folders with a color; tags; search; pinning — grid, previews, tags, search, pins and folder colors exist; a fan of previews per folder open
+- [x] Folders made in the app group boards by path; the files stay where they are; one level; a board can be in several; boards whose file moved are marked and can be found again ([decision 0022](docs/decisions/0022-library-folders.md), replacing "stacks are real folders on disk"); "smart collections" are saved tag filters
 - [ ] File manager thumbnails for `.moth` and `.bee` (BeeRef #152): Windows `IThumbnailProvider`, freedesktop thumbnailer, macOS Quick Look extension
 - [ ] Board preview image rendered off the UI thread after a checkpoint and stored as a rebuildable chunk (format version bump); used by the start screen, file-manager thumbnails and the note-app sidecar (M12)
-- [ ] Library sidebar (All boards, Pinned, Stacks and Smart collections exist): All boards, Recent, Pinned, Stacks, Smart collections. No in-app trash: deleting a board moves it straight to the OS trash (maintainer, 2026-10-30); counts next to each entry; an icon per entry (pin for Pinned); stack colors picked from a palette and repeated as a dot on the board cards
-- [ ] Library view options: sort by last opened, last edited, name, item count or size; grid / list view; tag filter chips above the grid — last opened / name sort and grid / list exist
-- [ ] Board cards show item count, last edited time, file size, pinned state and an "unsaved" badge when a recovery journal is pending; the library header shows totals
+- [ ] Library sidebar (All boards, Pinned, Stacks and Smart collections exist): All boards, Recent, Pinned, Stacks, Smart collections. No in-app trash: deleting a board moves it straight to the OS trash (maintainer, 2026-10-30); counts next to each entry; an icon per entry (pin for Pinned); folder colors picked from a palette and repeated as a dot on the board cards — all exist except a dedicated Smart collections editor
+- [x] Library view options: sort by last opened, last edited, name, item count or size; grid / list view; tag filter chips above the grid
+- [x] Board cards show item count, last edited time, file size, pinned state and an "unsaved" badge when a recovery journal is pending; the library header shows totals
 - [ ] Library health: boards with missing linked files (with relink), duplicate images across boards by content hash, largest boards
 - [ ] All Milanote-checklist items tagged M5 (templates, search inside boards)
 

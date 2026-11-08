@@ -111,6 +111,8 @@ pub enum Icon {
     Restore,
     /// Drag handle that moves the window.
     Grip,
+    /// More actions: three dots in a row.
+    More,
     /// Click-through control.
     Pointer,
     /// Open in another application (the system image viewer).
@@ -520,6 +522,11 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
                 }
             }
         }
+        Icon::More => {
+            for x in [4., 9., 14.] {
+                ui.painter().circle_filled(p(x, 9.), 1.5 * scale, color);
+            }
+        }
     }
 }
 /// Icon buttons retain native egui focus, tooltips and accessibility labels.
@@ -705,6 +712,27 @@ pub fn tile(ui: &mut Ui, icon: Icon, label: &str) -> Response {
 /// Dialog titles: one step above body text, not the page heading.
 pub fn dialog_title(ui: &mut Ui, title: &str) {
     ui.label(egui::RichText::new(title).size(17.).strong());
+}
+/// A submenu entry with the house chevron instead of egui's arrow glyph, which the
+/// bundled font does not have.
+pub fn submenu(ui: &mut Ui, label: &str, add_contents: impl FnOnce(&mut Ui)) -> Response {
+    const ICON: f32 = 16.;
+    let button = egui::Button::new(label).right_text(egui::Atom::custom(
+        ui.next_auto_id().with("submenu_arrow"),
+        Vec2::splat(ICON),
+    ));
+    let (response, _) =
+        egui::containers::menu::SubMenuButton::from_button(button).ui(ui, add_contents);
+    let size = ICON - 4.;
+    let rect = Rect::from_center_size(
+        egui::pos2(
+            response.rect.right() - ui.spacing().button_padding.x - size / 2.,
+            response.rect.center().y,
+        ),
+        Vec2::splat(size),
+    );
+    paint(ui, rect, Icon::ChevronRight, ui.visuals().text_color());
+    response
 }
 /// A round color sample to click; a ring marks the chosen one.
 pub fn swatch(ui: &mut Ui, [r, g, b]: [u8; 3], chosen: bool) -> Response {

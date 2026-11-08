@@ -92,7 +92,10 @@ impl App {
                         };
                         PendingExport::Original(item.id, item.name.clone())
                     }
-                    ExportOriginals => PendingExport::Originals,
+                    // Groups count here: a selected group brings the images inside it.
+                    ExportOriginals => PendingExport::Originals(
+                        self.workspace.board.selection.iter().copied().collect(),
+                    ),
                     ExportZip => PendingExport::Archive(items.iter().map(|i| i.id).collect()),
                     _ => PendingExport::Scene {
                         selection: action == ExportSelection,

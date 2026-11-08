@@ -58,13 +58,18 @@ pub enum Target {
     Viewer(Uuid),
     /// Copy an image as RGBA through the native clipboard backend.
     Clipboard(Uuid),
-    /// Write deduplicated original images into a new subdirectory.
-    Originals(PathBuf),
+    /// Original images, each as its own file, in a new directory.
+    Originals {
+        /// Directory created exclusively; nothing in an existing one is replaced.
+        directory: PathBuf,
+        /// Selected identities (a group brings its images), or empty for the board.
+        ids: Vec<Uuid>,
+    },
     /// A streaming ZIP of original images; empty identities means all images.
     Archive {
         /// Destination created exclusively.
         path: PathBuf,
-        /// Stable selected identities, or empty for the board.
+        /// Selected identities (a group brings its images), or empty for the board.
         ids: Vec<Uuid>,
     },
     /// Original-pixel coordinates and metadata at a world point.
@@ -267,6 +272,71 @@ fn copy_original(
     }
     output.sync_all()
 }
+/// The images to export: the chosen items (a group brings every image inside it), or
+/// the whole board when none are chosen. One entry per original, in stacking order, so
+/// copies of the same image are written once.
+fn originals<'a>(scene: &'a Scene, ids: &[Uuid]) -> Vec<(&'a Item, BlobId)> {
+    let chosen: std::collections::HashSet<Uuid> = ids
+        .iter()
+        .flat_map(|id| std::iter::once(*id).chain(scene.descendants(*id)))
+        .collect();
+    let mut items: Vec<_> = scene
+        .items()
+        .filter(|item| ids.is_empty() || chosen.contains(&item.id))
+        .filter_map(|item| item.blob().map(|hash| (item, hash)))
+        .collect();
+    items.sort_unstable_by(|a, b| a.0.z.cmp(&b.0.z).then(a.0.id.cmp(&b.0.id)));
+    let mut seen = std::collections::HashSet::new();
+    items.retain(|(_, hash)| seen.insert(*hash));
+    items
+}
+/// A file name for an exported original: the image's own name with the extension of
+/// its actual encoding. Characters no file system accepts become `_`; a name already
+/// used in this export (compared without case, as on Windows and macOS) gets
+/// " (2)", " (3)"…; an image without a usable name falls back to its content hash.
+fn file_name(
+    name: &str,
+    hash: BlobId,
+    extension: &str,
+    taken: &mut std::collections::HashSet<String>,
+) -> String {
+    let name = name.rsplit(['/', '\\']).next().unwrap_or_default();
+    let stem = match name.rsplit_once('.') {
+        Some((stem, _)) if !stem.trim().is_empty() => stem,
+        _ => name,
+    };
+    let mut stem: String = stem
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .take(120)
+        .collect();
+    stem = stem.trim().trim_end_matches('.').trim().to_owned();
+    let reserved = |s: &str| {
+        let upper = s.to_ascii_uppercase();
+        matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || ((upper.starts_with("COM") || upper.starts_with("LPT"))
+                && upper.len() == 4
+                && upper.as_bytes()[3].is_ascii_digit())
+    };
+    if stem.is_empty() || stem.starts_with('.') {
+        stem = hash.to_hex()[..16].to_owned();
+    } else if reserved(&stem) {
+        stem.push('_');
+    }
+    let mut candidate = format!("{stem}.{extension}");
+    let mut number = 2;
+    while !taken.insert(candidate.to_lowercase()) {
+        candidate = format!("{stem} ({number}).{extension}");
+        number += 1;
+    }
+    candidate
+}
 fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut file = std::fs::OpenOptions::new()
         .write(true)
@@ -375,17 +445,8 @@ pub(super) fn run(
                 .create_new(true)
                 .open(path)?;
             let mut zip = zip::ZipWriter::new(file);
-            let mut seen = std::collections::HashSet::new();
-            for item in scene
-                .items()
-                .filter(|i| ids.is_empty() || ids.contains(&i.id))
-            {
-                let Some(hash) = item.blob() else {
-                    continue;
-                };
-                if !seen.insert(hash) {
-                    continue;
-                }
+            let mut taken = std::collections::HashSet::new();
+            for (item, hash) in originals(scene, &ids) {
                 let handle = sources
                     .get(&hash)
                     .ok_or_else(|| error("Image source unavailable"))?;
@@ -399,7 +460,7 @@ pub(super) fn run(
                 let count = source.read(&mut header)?;
                 source.seek(SeekFrom::Start(0))?;
                 zip.start_file(
-                    format!("{hash}.{}", extension(&header[..count])),
+                    file_name(&item.name, hash, extension(&header[..count]), &mut taken),
                     zip::write::SimpleFileOptions::default()
                         .compression_method(zip::CompressionMethod::Stored),
                 )
@@ -431,27 +492,18 @@ pub(super) fn run(
         Target::Original { path, id } => {
             copy_original(storage, sources, item(scene, id)?, &path)?;
         }
-        Target::Originals(directory) => {
+        Target::Originals { directory, ids } => {
             // A fresh directory makes collisions and partial exports visible without replacing files.
             std::fs::create_dir(&directory)?;
-            let mut seen = std::collections::HashSet::new();
-            for item in scene.items() {
-                if let Some(hash) = item.blob()
-                    && seen.insert(hash)
-                {
-                    let handle = sources
-                        .get(&hash)
-                        .ok_or_else(|| error("Image source unavailable"))?;
-                    let mut header = [0u8; 16];
-                    let count = storage.open(*handle)?.read(&mut header)?;
-                    let extension = extension(&header[..count]);
-                    copy_original(
-                        storage,
-                        sources,
-                        item,
-                        &directory.join(format!("{hash}.{extension}")),
-                    )?;
-                }
+            let mut taken = std::collections::HashSet::new();
+            for (item, hash) in originals(scene, &ids) {
+                let handle = sources
+                    .get(&hash)
+                    .ok_or_else(|| error("Image source unavailable"))?;
+                let mut header = [0u8; 16];
+                let count = storage.open(*handle)?.read(&mut header)?;
+                let name = file_name(&item.name, hash, extension(&header[..count]), &mut taken);
+                copy_original(storage, sources, item, &directory.join(name))?;
             }
         }
         Target::Clipboard(id) | Target::Sample { id, .. } => {
@@ -811,6 +863,28 @@ fn svg(
 mod tests {
     use super::*;
     #[test]
+    fn exported_file_names_are_readable_and_unique() {
+        let hash = blake3::hash(b"image");
+        let mut taken = std::collections::HashSet::new();
+        let mut name = |n: &str, ext: &str| file_name(n, hash, ext, &mut taken);
+        assert_eq!(name("fox.jpg", "jpg"), "fox.jpg");
+        // Same name again, in another case, or with a different stored extension.
+        assert_eq!(name("Fox.JPG", "jpg"), "Fox (2).jpg");
+        assert_eq!(name("fox.jpeg", "jpg"), "fox (3).jpg");
+        // The extension follows the real encoding, not the name.
+        assert_eq!(name("fox.jpg", "png"), "fox.png");
+        assert_eq!(name("a:b*c?.png", "png"), "a_b_c_.png");
+        assert_eq!(name("dir/sub\\photo.webp", "webp"), "photo.webp");
+        assert_eq!(name("CON.png", "png"), "CON_.png");
+        assert_eq!(name("trailing. .gif", "gif"), "trailing.gif");
+        let fallback = name("", "png");
+        assert_eq!(fallback, format!("{}.png", &hash.to_hex()[..16]));
+        assert_eq!(
+            name(".hidden", "png"),
+            format!("{} (2).png", &hash.to_hex()[..16])
+        );
+    }
+    #[test]
     fn viewer_copy_preserves_original_replaces_edited_copy_and_bounds_slot() {
         let root = std::env::temp_dir().join(format!("moth-viewer-{}", Uuid::now_v7()));
         let storage = DesktopStorage::in_directory(root.clone());
@@ -1166,11 +1240,33 @@ mod tests {
             &storage,
             &scene,
             &sources,
-            Target::Originals(directory.clone()),
+            Target::Originals {
+                directory: directory.clone(),
+                ids: vec![],
+            },
             &mut clipboard,
         )
         .unwrap();
         assert_eq!(std::fs::read_dir(directory).unwrap().count(), 1);
+        // A chosen image alone: its own name, the extension of its real encoding.
+        let picked = root.join("picked");
+        run(
+            &storage,
+            &scene,
+            &sources,
+            Target::Originals {
+                directory: picked.clone(),
+                ids: vec![id],
+            },
+            &mut clipboard,
+        )
+        .unwrap();
+        let names: Vec<_> = std::fs::read_dir(&picked)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(names.len(), 1);
+        assert!(names[0].ends_with(".png"), "{names:?}");
         let mut notes = Scene::default();
         notes
             .apply(moth_scene::Command::Insert(Item::text(

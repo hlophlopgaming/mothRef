@@ -249,6 +249,70 @@ pub enum Text {
     ClosePanel,
     /// The system color picker could not be opened.
     NoSystemPicker,
+    /// Progress while several images are being added.
+    AddingImages,
+    /// Library view: the recent list.
+    Recent,
+    /// Library sidebar heading.
+    Folders,
+    /// Library: create an app folder.
+    NewFolder,
+    /// Library sidebar when there are no folders.
+    FoldersHint,
+    /// Folder menu.
+    RenameFolder,
+    /// Folder rename dialog title.
+    RenameFolderTitle,
+    /// Folder rename dialog button.
+    RenameButton,
+    /// New folder dialog button.
+    CreateFolder,
+    /// Folder name field hint.
+    FolderNameHint,
+    /// Folder menu.
+    DeleteFolder,
+    /// Folder menu tooltip.
+    DeleteFolderHint,
+    /// Card menu submenu.
+    AddToFolder,
+    /// Card menu in a folder.
+    RemoveFromFolder,
+    /// Empty folder view.
+    FolderEmpty,
+    /// Card badge.
+    FileMissing,
+    /// Card badge tooltip.
+    FileMissingHint,
+    /// Card menu for a missing board.
+    FindFile,
+    /// File dialog title.
+    FindFileTitle,
+    /// Library order: by the board file's last change.
+    LastEdited,
+    /// Library order: by number of items.
+    OrderItems,
+    /// Library order: by file size.
+    OrderSize,
+    /// Library card menu.
+    PinBoard,
+    /// Library card menu.
+    UnpinBoard,
+    /// Library card menu: reveal the file in the file manager.
+    ShowInFolder,
+    /// Library card menu: forget the board, keep the file.
+    RemoveFromList,
+    /// Library card menu.
+    MoveToTrash,
+    /// Trash confirmation title.
+    TrashQuestion,
+    /// Trash confirmation text.
+    TrashBody,
+    /// Trash confirmation button.
+    TrashConfirm,
+    /// Trash refused for an open board.
+    BoardIsOpen,
+    /// Library badge tooltip.
+    UnsavedHint,
     /// Screen color picker text.
     ColorCopied,
     /// Screen color picker text.
@@ -1056,7 +1120,7 @@ pub enum Text {
 }
 mod localization;
 pub use localization::{
-    Locale, Message, counted, item_counts, locale, set_locale, text, translated,
+    Locale, Message, ago, counted, item_counts, locale, set_locale, text, translated,
 };
 
 /// House theme tokens and application.
@@ -1489,14 +1553,18 @@ mod tests {
             Text::Imported,
             Text::ImportSkipped,
         ];
+        // Each language is read through `translated`, never by switching the global
+        // locale: tests run in parallel, and others compare against English labels.
         for &key in &keys {
             for language in Locale::ALL {
-                set_locale(language);
-                assert!(!text(key).is_empty(), "{language:?}: {key:?}");
-                assert_eq!(locale(), language);
+                assert!(
+                    !translated(language, key).is_empty(),
+                    "{language:?}: {key:?}"
+                );
             }
         }
         set_locale(Locale::EN);
+        assert_eq!(locale(), Locale::EN);
         assert_eq!(Locale::from_code("ru"), Some(Locale::RU));
         assert_eq!(Locale::from_code("EN"), Some(Locale::EN));
         assert_eq!(Locale::from_code("de"), None);
@@ -1635,7 +1703,7 @@ mod tests {
         let ctx = Context::default();
         theme(&ctx, &Tokens::LIGHT);
         let mut output = ctx.run_ui(Default::default(), |ui| {
-            library::Library::default().show(ui, &[]);
+            library::Library::default().show(ui, &[], &[]);
         });
         let count = output.shapes.iter().filter(|shape| matches!(&shape.shape, egui::Shape::Text(text_shape) if text_shape.galley.text() == text(Text::OpenFile))).count();
         assert_eq!(count, 1);
@@ -1735,7 +1803,7 @@ mod tests {
                     |ui| {
                         toolbar(ui, status(library), &tabs, |_| {});
                         if library {
-                            library::Library::default().show(ui, &[]);
+                            library::Library::default().show(ui, &[], &[]);
                         } else {
                             egui::CentralPanel::default().show(ui, |ui| {
                                 assert!(
