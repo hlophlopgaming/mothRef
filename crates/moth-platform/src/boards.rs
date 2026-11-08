@@ -154,7 +154,13 @@ struct State {
     poisoned: bool,
     clipboard: Option<arboard::Clipboard>,
     undo_limit: usize,
+    /// Encoded preview thumbnails by original, so saving again does not decode again.
+    thumbnails: HashMap<BlobId, board::Thumbnail>,
 }
+/// Thumbnails kept between saves; a board preview uses four.
+const MAX_CACHED_THUMBNAILS: usize = 32;
+/// Longest side of a preview thumbnail; the library card draws them at about this size.
+const THUMBNAIL_SIDE: u32 = 128;
 fn error(e: impl std::fmt::Display) -> io::Error {
     io::Error::other(e.to_string())
 }
@@ -190,6 +196,21 @@ fn append_record(file: &mut File, kind: u8, bytes: &[u8]) -> io::Result<()> {
     }
     board::append(file, offset, kind, bytes).map_err(error)?;
     Ok(())
+}
+/// One preview thumbnail: the image decoded at most [`THUMBNAIL_SIDE`] wide or high.
+fn thumbnail(bytes: &[u8]) -> io::Result<board::Thumbnail> {
+    let decoded = moth_io::decode(bytes, THUMBNAIL_SIDE).map_err(error)?;
+    let mip = decoded
+        .mips
+        .first()
+        .ok_or_else(|| error("No preview pixels"))?;
+    let mut image = Vec::new();
+    moth_io::write_png(&mut image, mip.width, mip.height, &mip.bytes).map_err(error)?;
+    Ok(board::Thumbnail {
+        width: u16::try_from(mip.width).map_err(error)?,
+        height: u16::try_from(mip.height).map_err(error)?,
+        image,
+    })
 }
 fn record(file: &mut File, kind: u8, bytes: &[u8]) -> io::Result<()> {
     let _span = tracing::info_span!("durable_record", kind, bytes = bytes.len()).entered();
@@ -305,6 +326,51 @@ impl State {
                 length: bytes.len() as u64,
             },
         )
+    }
+    /// The board preview record: the item count and the lowest four distinct images as
+    /// small PNGs. An image that cannot be decoded is left out.
+    fn preview(&mut self) -> io::Result<Vec<u8>> {
+        let _span = tracing::info_span!("board_preview").entered();
+        let mut images: Vec<&Item> = self.scene.items().filter(|i| i.blob().is_some()).collect();
+        images.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
+        let mut hashes: Vec<BlobId> = Vec::new();
+        for hash in images.into_iter().filter_map(Item::blob) {
+            if !hashes.contains(&hash) {
+                hashes.push(hash);
+            }
+            if hashes.len() == board::MAX_THUMBNAILS {
+                break;
+            }
+        }
+        let mut thumbnails = Vec::with_capacity(hashes.len());
+        for hash in hashes {
+            if let Some(thumbnail) = self.thumbnails.get(&hash) {
+                thumbnails.push(thumbnail.clone());
+                continue;
+            }
+            let Some(&handle) = self.sources.get(&hash) else {
+                continue;
+            };
+            let thumbnail = self.original(hash, handle).and_then(|bytes| {
+                std::panic::catch_unwind(|| thumbnail(&bytes))
+                    .map_err(|_| error("Preview decoder panicked"))?
+            });
+            match thumbnail {
+                Ok(thumbnail) => {
+                    if self.thumbnails.len() >= MAX_CACHED_THUMBNAILS {
+                        self.thumbnails.clear();
+                    }
+                    self.thumbnails.insert(hash, thumbnail.clone());
+                    thumbnails.push(thumbnail);
+                }
+                Err(e) => tracing::debug!(%e, "image left out of the board preview"),
+            }
+        }
+        board::encode_preview(&board::Preview {
+            items: self.scene.len().min(u32::MAX as usize) as u32,
+            thumbnails,
+        })
+        .map_err(error)
     }
     fn original(&self, hash: BlobId, handle: Handle) -> io::Result<Vec<u8>> {
         let _span = tracing::info_span!("read_original").entered();
@@ -441,6 +507,15 @@ impl State {
             let result = board::compact(self.storage.as_ref(), handle).map_err(error);
             self.storage.forget(handle)?;
             result?;
+        }
+        // The preview goes last, after any compaction, so the library finds it at the end
+        // of the file. It is derived data: failing to make it never fails the save.
+        let preview = self.preview().and_then(|bytes| {
+            let mut file = OpenOptions::new().read(true).append(true).open(&path)?;
+            record(&mut file, board::PREVIEW, &bytes)
+        });
+        if let Err(e) = preview {
+            tracing::warn!(%e, "board preview not written");
         }
         if let Err(e) = recent(&self.storage.base_directory()?, Some(path)) {
             tracing::warn!(%e, "recent file catalog unavailable");
@@ -1043,6 +1118,7 @@ impl Worker {
                     poisoned: false,
                     clipboard: None,
                     undo_limit: 256,
+                    thumbnails: HashMap::new(),
                 };
                 state.undo_limit = state
                     .storage
@@ -1251,6 +1327,7 @@ mod tests {
             poisoned: false,
             clipboard: None,
             undo_limit: 256,
+            thumbnails: HashMap::new(),
         }
     }
     /// The corpus board with every item kind, grouped and loose, survives each path
@@ -1258,7 +1335,7 @@ mod tests {
     /// after the process dies. Item kinds that link items must be added to it.
     #[test]
     fn every_rebuild_path_keeps_every_item_kind() {
-        let bytes = include_bytes!("../../../corpus/moth/v6.moth");
+        let bytes = include_bytes!("../../../corpus/moth/v7.moth");
         let expected = board::read(&mut std::io::Cursor::new(&bytes[..])).unwrap();
         assert!(expected.scene.items().any(|i| i.parent.is_some()));
         assert!(
@@ -1445,6 +1522,16 @@ mod tests {
         );
         state.request(Request::Redo).unwrap();
         state.request(Request::Save(path.clone())).unwrap();
+        // Every save ends with the preview the library reads without opening the board.
+        let preview = board::peek_preview(&mut File::open(&path).unwrap())
+            .unwrap()
+            .expect("a saved board ends with its preview");
+        assert_eq!(preview.items, 1);
+        assert_eq!(preview.thumbnails.len(), 1);
+        assert_eq!(
+            (preview.thumbnails[0].width, preview.thumbnails[0].height),
+            (1, 1)
+        );
         let old_size = std::fs::metadata(&path).unwrap().len();
         let h = state.storage.register(path.clone()).unwrap();
         board::compact(state.storage.as_ref(), h).unwrap();

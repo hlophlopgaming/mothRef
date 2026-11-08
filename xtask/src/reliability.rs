@@ -200,7 +200,7 @@ fn killtest_impl(count: usize, loading: bool) -> anyhow::Result<()> {
 }
 pub fn fixture() -> anyhow::Result<()> {
     std::fs::create_dir_all("corpus/moth")?;
-    // corpus/moth/v1.moth through v5.moth are frozen migration fixtures;
+    // corpus/moth/v1.moth through v6.moth are frozen migration fixtures;
     // regenerating them with the current writer would erase that coverage.
     let mut bytes = Vec::new();
     board::initialize(&mut bytes)?;
@@ -277,7 +277,30 @@ pub fn fixture() -> anyhow::Result<()> {
     scene.apply(Command::Insert(empty))?;
     let offset = bytes.len() as u64;
     board::append(&mut bytes, offset, 3, &board::snapshot(&scene)?)?;
-    std::fs::write("corpus/moth/v6.moth", bytes)?;
+    // Schema 7: a save ends with the board preview the library reads.
+    let decoded = moth_io::decode(original, 128)?;
+    let mip = decoded
+        .mips
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("no preview pixels"))?;
+    let mut image = Vec::new();
+    moth_io::write_png(&mut image, mip.width, mip.height, &mip.bytes)?;
+    let preview = board::Preview {
+        items: scene.len() as u32,
+        thumbnails: vec![board::Thumbnail {
+            width: mip.width as u16,
+            height: mip.height as u16,
+            image,
+        }],
+    };
+    let offset = bytes.len() as u64;
+    board::append(
+        &mut bytes,
+        offset,
+        board::PREVIEW,
+        &board::encode_preview(&preview)?,
+    )?;
+    std::fs::write("corpus/moth/v7.moth", bytes)?;
     Ok(())
 }
 pub fn roundtrip(path: &Path) -> anyhow::Result<()> {
