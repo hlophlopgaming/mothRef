@@ -135,6 +135,9 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
                 ctx.cards[index].path.clone(),
             )));
         }
+        if !intent.visible.is_empty() {
+            intents.push(Intent::LibraryPreviews(intent.visible));
+        }
         if let Some(index) = intent.relink {
             intents.push(Intent::RelinkBoard(ctx.cards[index].path.clone()));
         }

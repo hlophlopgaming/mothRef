@@ -368,12 +368,11 @@ Open:
 
 A first slice shipped early ([decision 0004](docs/decisions/0004-reference-workspace.md)); items below say what already exists.
 
-- [ ] Board index (`redb`) with file watcher (`notify`): metadata and previews cached between refreshes for the 1,000-board target; the library file ([decision 0022](docs/decisions/0022-library-folders.md)) already holds every known board
+- [x] Board index: the library file ([decision 0022](docs/decisions/0022-library-folders.md)) caches each board's size, last change and item count; cards come from it at once, changed files are re-read in the background, previews load for the cards on screen and are bounded. 1,000 boards are on screen about 80 ms after launch on the nested stand (2026-11-08). A file watcher (`notify`) is not needed for now: a refresh compares sizes and times
   - [x] Bounded recent/pinned catalog with background previews, search, folder filters and persistent tags/pins (requested reference UI slice)
 - [ ] Start screen: card grid with board previews; folders with a color; tags; search; pinning — grid, previews, tags, search, pins and folder colors exist; a fan of previews per folder open
 - [x] Folders made in the app group boards by path; the files stay where they are; one level; a board can be in several; boards whose file moved are marked and can be found again ([decision 0022](docs/decisions/0022-library-folders.md), replacing "stacks are real folders on disk"); "smart collections" are saved tag filters
-- [ ] File manager thumbnails for `.moth` and `.bee` (BeeRef #152): Windows `IThumbnailProvider`, freedesktop thumbnailer, macOS Quick Look extension
-- [ ] Board preview image rendered off the UI thread after a checkpoint and stored as a rebuildable chunk (format version bump); used by the start screen, file-manager thumbnails and the note-app sidecar (M12)
+- [x] Board preview stored as a rebuildable record (schema 7, kind 4): item count and four 128 px thumbnails written last by every save on the storage worker; the library reads it from the end of the file. A rendered composite of the whole board remains an option for file-manager thumbnails and the note-app sidecar (M12)
 - [ ] Library sidebar (All boards, Pinned, Stacks and Smart collections exist): All boards, Recent, Pinned, Stacks, Smart collections. No in-app trash: deleting a board moves it straight to the OS trash (maintainer, 2026-10-30); counts next to each entry; an icon per entry (pin for Pinned); folder colors picked from a palette and repeated as a dot on the board cards — all exist except a dedicated Smart collections editor
 - [x] Library view options: sort by last opened, last edited, name, item count or size; grid / list view; tag filter chips above the grid
 - [x] Board cards show item count, last edited time, file size, pinned state and an "unsaved" badge when a recovery journal is pending; the library header shows totals
@@ -542,6 +541,7 @@ PureRef handles images and GIFs only; a PDF (an artbook, a model sheet, a manual
 
 - Link to files on disk instead of embedding them (moved out of M5 on 2026-11-06: the maintainer is not sure it is needed). A board must still open everywhere: if it returns, it needs embedded previews, a "file not found" placeholder with bulk relink, "Embed into the board" and "Save a copy for sharing", and stays off by default, for plain files only (never ZIP members, pastes or URLs).
 - [ ] **2.0 candidate only:** 3D model reference items; scope, formats, interaction and resource budgets remain open. Do not start before 1.0.
+- File manager thumbnails for `.moth` and `.bee` (BeeRef #152): Windows `IThumbnailProvider`, freedesktop thumbnailer, macOS Quick Look extension. Moved out of M5 on 2026-11-08 (not needed for now, maintainer); the schema-7 board preview is what they would show.
 - Android port: portability rules are built in from M0 (see [AGENTS.md](AGENTS.md)); no milestone yet. Mobile items are listed in [FEATURES.md](docs/FEATURES.md#mobile-and-tablet-future-android-port).
 - Checks and ideas moved out of M3 on 2026-10-26: [docs/DEFERRED.md](docs/DEFERRED.md).
 

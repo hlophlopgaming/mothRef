@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Owns library widgets and their bounded preview texture handles.
+/// Cards that keep their preview textures; scrolling further gives the oldest back
+/// (about 16 MiB of 128-pixel previews).
+pub(super) const MAX_PREVIEW_CARDS: usize = 64;
 pub(super) struct LibraryScreen {
     pub worker: moth_platform::library::Worker,
     pub cards: Vec<moth_ui::library::Card>,
@@ -13,6 +16,8 @@ pub(super) struct LibraryScreen {
     )>,
     /// A relink sent to the worker: its answer moves the board in the recent list too.
     pub relinking: Option<(std::path::PathBuf, std::path::PathBuf)>,
+    /// Cards holding preview textures, least recently loaded first.
+    pub preview_order: std::collections::VecDeque<std::path::PathBuf>,
 }
 impl LibraryScreen {
     pub(super) fn new(worker: moth_platform::library::Worker) -> Self {
@@ -23,6 +28,7 @@ impl LibraryScreen {
             folders: Vec::new(),
             relink: None,
             relinking: None,
+            preview_order: Default::default(),
         }
     }
 }

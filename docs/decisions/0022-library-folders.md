@@ -18,7 +18,7 @@ taken from folders on disk go away.
   membership, when it was last seen opening) and the app folders (id, name,
   color index into the theme's group colors). It is read and written only by
   the library worker, through a temporary file and an atomic rename, with a
-  4 MiB budget and at most 5,000 boards and 200 folders.
+  64 MiB budget and at most 100,000 boards and 1,000 folders (raised from 5,000 and 200 on 2026-11-08).
 - The recent list (`recent.txt`, written by the board worker) stays as it is
   and is shown as its own "Recent" entry; each refresh brings its boards into
   the library file.

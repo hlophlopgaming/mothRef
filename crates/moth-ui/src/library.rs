@@ -18,6 +18,10 @@ pub struct Card {
     pub opened: u64,
     /// The file is not at its path any more; the card offers to find it.
     pub missing: bool,
+    /// The library has read the file at least once, so its count and size are real.
+    pub known: bool,
+    /// Previews were asked for and have not arrived yet.
+    pub loading: bool,
     /// Scene item count.
     pub count: usize,
     /// File size.
@@ -161,6 +165,8 @@ pub struct Intent {
     pub file: Option<(usize, u128, bool)>,
     /// Ask where a missing board file is now.
     pub relink: Option<usize>,
+    /// Cards on screen whose previews are not loaded or asked for yet.
+    pub visible: Vec<std::path::PathBuf>,
 }
 impl Library {
     /// Closing the panel must not reattach an old draft to a different catalog entry.
@@ -556,22 +562,40 @@ impl Library {
                         }));
                     });
                 }
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    let columns = if self.list {
-                        1
-                    } else {
-                        ((ui.available_width() + 24.) / 240.).floor().max(1.) as usize
-                    };
+                // Only the rows on screen are laid out, so a library of thousands of
+                // boards costs what the visible cards cost.
+                let scrollbar = ui.spacing().scroll.allocated_width();
+                let room = (ui.available_width() - scrollbar).max(1.);
+                let columns = if self.list {
+                    1
+                } else {
+                    ((room + 24.) / 240.).floor().max(1.) as usize
+                };
+                let card_height = if self.list { 90. } else { 270. };
+                let rows: Vec<&[usize]> = indices.chunks(columns).collect();
+                let pitch = card_height
+                    + crate::tokens(ui.ctx()).space_l as f32
+                    + ui.spacing().item_spacing.y;
+                egui::ScrollArea::vertical().show_rows(ui, pitch, rows.len(), |ui, range| {
                     let width =
                         (ui.available_width() - (columns - 1) as f32 * 24.) / columns as f32;
-                    for row in indices.chunks(columns) {
+                    for row in &rows[range] {
+                        intent.visible.extend(
+                            row.iter()
+                                .filter(|&&i| {
+                                    cards[i].previews.is_empty()
+                                        && !cards[i].loading
+                                        && !cards[i].missing
+                                })
+                                .map(|&i| cards[i].path.clone()),
+                        );
                         ui.horizontal_top(|ui| {
                             ui.spacing_mut().item_spacing.x =
                                 crate::tokens(ui.ctx()).space_xl as f32;
-                            for &index in row {
+                            for &index in row.iter() {
                                 let c = &cards[index];
                                 ui.allocate_ui_with_layout(
-                                    egui::vec2(width, if self.list { 90. } else { 270. }),
+                                    egui::vec2(width, card_height),
                                     egui::Layout::top_down(egui::Align::Min),
                                     |ui| {
                                         let preview_height = if self.list { 50. } else { 170. };
@@ -994,6 +1018,9 @@ fn card_details(card: &Card, list: bool) -> String {
     if card.missing {
         return card.path.display().to_string();
     }
+    if !card.known {
+        return "…".into();
+    }
     let mut parts = vec![crate::counted(
         crate::locale(),
         card.count,
@@ -1061,6 +1088,8 @@ mod tests {
             recent: None,
             opened: 1000 - age,
             missing: false,
+            known: true,
+            loading: false,
             count,
             bytes,
             modified: Some(now - std::time::Duration::from_secs(age)),
@@ -1100,6 +1129,8 @@ mod tests {
                 recent: Some(i),
                 opened: 0,
                 missing: false,
+                known: true,
+                loading: false,
                 count: 11,
                 bytes: 100,
                 modified: None,

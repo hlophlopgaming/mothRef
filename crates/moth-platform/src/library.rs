@@ -13,11 +13,10 @@ mod catalog;
 use catalog::Catalog;
 pub use catalog::{FOLDER_COLORS, Folder, MAX_FOLDER_NAME, MAX_FOLDERS};
 
-/// Cards sent per refresh, most recently opened first.
-pub const MAX_BOARDS: usize = 300;
-/// The newest boards get four previews; the rest one, which bounds preview pixels to
-/// about 30 MiB however large the library grows.
-const FULL_PREVIEWS: usize = 48;
+/// Cards the library can show: every board it remembers.
+pub const MAX_BOARDS: usize = catalog::MAX_LIBRARY;
+/// Boards whose previews one request may ask for; the screen asks for what it shows.
+pub const MAX_PREVIEW_REQUEST: usize = 64;
 const MAX_PINS: usize = 20;
 /// What the library file says about a board.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -37,8 +36,8 @@ pub struct Entry {
     pub path: PathBuf,
     /// What the library file says about it.
     pub meta: Meta,
-    /// Count is read without retaining the scene.
-    pub count: usize,
+    /// Items on the board; `None` until the library has read the file once.
+    pub count: Option<usize>,
     /// Disk usage can be displayed without stat calls on the UI thread.
     pub bytes: u64,
     /// Last write of the board file, for "edited 2 h ago" and sorting.
@@ -47,8 +46,6 @@ pub struct Entry {
     pub missing: bool,
     /// A failed board remains visible with an explanation.
     pub error: Option<String>,
-    /// Rebuildable previews never replace the originals.
-    pub previews: Vec<moth_io::Mip>,
 }
 /// Bounded catalog worker, independent of the active board's storage queue.
 pub struct Worker {
@@ -59,8 +56,12 @@ pub struct Worker {
 }
 /// What the worker reports back to the library screen.
 pub enum Update {
-    /// A board's card, new or refreshed.
+    /// Every card at once, from the library file, without reading any board.
+    Cards(Vec<Entry>),
+    /// A board's card, new or refreshed after its file changed.
     Entry(Entry),
+    /// Up to four small images for a card the screen shows.
+    Previews(PathBuf, Vec<moth_io::Mip>),
     /// A board's pins, tags or folders changed; its previews did not.
     Meta(PathBuf, Meta),
     /// The app folders, after a refresh or any folder change.
@@ -72,6 +73,8 @@ pub enum Update {
 pub enum Request {
     /// Bring in the recent list and send every card again.
     Refresh(Vec<PathBuf>),
+    /// Read the previews of these boards (at most [`MAX_PREVIEW_REQUEST`]).
+    Previews(Vec<PathBuf>),
     /// Pin or unpin a board.
     Pin(PathBuf, bool),
     /// Replace a board's bounded tag list.
@@ -222,42 +225,78 @@ fn pins(storage: &super::DesktopStorage) -> std::io::Result<Vec<PathBuf>> {
     file.take(64 * 1024).read_to_string(&mut text)?;
     Ok(text.lines().take(MAX_PINS).map(PathBuf::from).collect())
 }
-fn inspect(path: PathBuf, previews: usize) -> Entry {
-    let mut entry = Entry {
-        path,
-        meta: Meta::default(),
-        count: 0,
-        bytes: 0,
-        modified: None,
-        missing: false,
-        error: None,
-        previews: Vec::new(),
+/// What reading a board file for its card found.
+enum Lookup {
+    Found(catalog::Summary),
+    Missing,
+    Failed(String),
+}
+fn nanos(time: std::time::SystemTime) -> u64 {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos().min(u64::MAX as u128) as u64)
+}
+/// The file's size and last write, without opening it.
+fn stamp(path: &std::path::Path) -> Result<(u64, u64), Lookup> {
+    match std::fs::metadata(path) {
+        Ok(metadata) => Ok((metadata.len(), metadata.modified().map(nanos).unwrap_or(0))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(Lookup::Missing),
+        Err(e) => Err(Lookup::Failed(e.to_string())),
+    }
+}
+/// Reads the item count: from the preview at the end of a schema-7 file, or by reading
+/// the whole board when there is none (older boards, until their next save).
+fn summarize(path: &std::path::Path) -> Lookup {
+    let (size, modified) = match stamp(path) {
+        Ok(stamp) => stamp,
+        Err(read) => return read,
     };
-    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
-        let mut file = match File::open(&entry.path) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                entry.missing = true;
-                return Err(e.into());
-            }
-            file => file?,
-        };
-        let metadata = file.metadata()?;
-        entry.bytes = metadata.len();
-        entry.modified = metadata.modified().ok();
+    let result = (|| -> Result<u32, Box<dyn std::error::Error>> {
+        let mut file = File::open(path)?;
+        if let Some(preview) = board::peek_preview(&mut file)? {
+            return Ok(preview.items);
+        }
+        Ok(board::read(&mut file)?.scene.len().min(u32::MAX as usize) as u32)
+    })();
+    match result {
+        Ok(items) => Lookup::Found(catalog::Summary {
+            size,
+            modified,
+            items,
+        }),
+        Err(error) => Lookup::Failed(error.to_string()),
+    }
+}
+/// Up to four small images for a card: the preview's thumbnails, or for an older board
+/// the first originals decoded small.
+fn previews(path: &std::path::Path) -> Vec<moth_io::Mip> {
+    let decode = |bytes: &[u8]| {
+        std::panic::catch_unwind(|| moth_io::decode(bytes, 128))
+            .ok()
+            .and_then(Result::ok)
+            .and_then(|mut image| (!image.mips.is_empty()).then(|| image.mips.remove(0)))
+    };
+    let result = (|| -> Result<Vec<moth_io::Mip>, Box<dyn std::error::Error>> {
+        let mut file = File::open(path)?;
+        if let Some(preview) = board::peek_preview(&mut file)? {
+            return Ok(preview
+                .thumbnails
+                .iter()
+                .filter_map(|thumbnail| decode(&thumbnail.image))
+                .collect());
+        }
         let board = board::read(&mut file)?;
-        entry.count = board.scene.len();
+        let mut images: Vec<_> = board.scene.items().filter(|i| i.blob().is_some()).collect();
+        images.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
         let mut hashes = Vec::new();
-        for item in board.scene.items() {
-            let Some(blob) = item.blob() else {
-                continue;
-            };
-            if !hashes.contains(&blob) {
-                hashes.push(blob);
+        for hash in images.into_iter().filter_map(|item| item.blob()) {
+            if !hashes.contains(&hash) {
+                hashes.push(hash);
             }
-            if hashes.len() == previews {
+            if hashes.len() == board::MAX_THUMBNAILS {
                 break;
             }
         }
+        let mut mips = Vec::new();
         for hash in hashes {
             let Some(blob) = board.blobs.get(&hash) else {
                 continue;
@@ -268,16 +307,40 @@ fn inspect(path: PathBuf, previews: usize) -> Entry {
             file.seek(SeekFrom::Start(blob.offset))?;
             let mut bytes = Vec::with_capacity(blob.length as usize);
             (&mut file).take(blob.length).read_to_end(&mut bytes)?;
-            if let Ok(mut image) = moth_io::decode(&bytes, 128) {
-                entry.previews.push(image.mips.remove(0));
-            }
+            mips.extend(decode(&bytes));
         }
-        Ok(())
+        Ok(mips)
     })();
-    if let Err(error) = result {
-        entry.error = Some(error.to_string());
+    result.unwrap_or_else(|error| {
+        tracing::debug!(%error, "board previews unavailable");
+        Vec::new()
+    })
+}
+/// A card from what the library file remembers.
+fn entry(board: &catalog::Board, read: Option<&Lookup>) -> Entry {
+    let summary = match read {
+        Some(Lookup::Found(summary)) => Some(*summary),
+        _ => board.summary,
+    };
+    Entry {
+        path: board.path.clone(),
+        meta: Meta {
+            pinned: board.pinned,
+            tags: board.tags.clone(),
+            folders: board.folders.clone(),
+            opened: board.opened,
+        },
+        count: summary.map(|s| s.items as usize),
+        bytes: summary.map_or(0, |s| s.size),
+        modified: summary
+            .map(|s| std::time::UNIX_EPOCH + std::time::Duration::from_nanos(s.modified)),
+        missing: matches!(read, Some(Lookup::Missing)),
+        error: match read {
+            Some(Lookup::Failed(error)) => Some(error.clone()),
+            Some(Lookup::Missing) => Some("File not found".into()),
+            _ => None,
+        },
     }
-    entry
 }
 impl Worker {
     /// Starts the library worker without delaying durable edits on another worker.
@@ -328,7 +391,62 @@ impl Worker {
                         })
                         .unwrap_or_default()
                 };
-                while let Ok(request) = rx.recv() {
+                // Boards still to look at after a refresh, newest first. Requests from
+                // the screen go before them, so previews are not held up by a long check.
+                let mut checks: std::collections::VecDeque<PathBuf> = Default::default();
+                let mut dirty = false;
+                loop {
+                    let request = if checks.is_empty() {
+                        if dirty {
+                            dirty = false;
+                            if let Err(error) = save(&catalog)
+                                && !send(Err(error))
+                            {
+                                return;
+                            }
+                        }
+                        match rx.recv() {
+                            Ok(request) => request,
+                            Err(_) => return,
+                        }
+                    } else {
+                        match rx.try_recv() {
+                            Ok(request) => request,
+                            Err(crossbeam_channel::TryRecvError::Disconnected) => return,
+                            Err(crossbeam_channel::TryRecvError::Empty) => {
+                                let Some(path) = checks.pop_front() else {
+                                    continue;
+                                };
+                                let Some(index) = catalog.find(&path) else {
+                                    continue;
+                                };
+                                let known = catalog.boards[index].summary;
+                                let read = match stamp(&path) {
+                                    // Unchanged since the library last read it: nothing to do.
+                                    Ok((size, modified))
+                                        if known.is_some_and(|k| {
+                                            k.size == size && k.modified == modified
+                                        }) =>
+                                    {
+                                        continue;
+                                    }
+                                    Ok(_) => summarize(&path),
+                                    Err(read) => read,
+                                };
+                                if let Lookup::Found(summary) = read {
+                                    catalog.boards[index].summary = Some(summary);
+                                    dirty = true;
+                                }
+                                if !send(Ok(Update::Entry(entry(
+                                    &catalog.boards[index],
+                                    Some(&read),
+                                )))) {
+                                    return;
+                                }
+                                continue;
+                            }
+                        }
+                    };
                     let result: Result<Vec<Update>, String> = match request {
                         Request::Refresh(recent) => {
                             if catalog.merge_recent(&recent)
@@ -342,17 +460,28 @@ impl Worker {
                             }
                             let mut order: Vec<usize> = (0..catalog.boards.len()).collect();
                             order.sort_by_key(|&i| std::cmp::Reverse(catalog.boards[i].opened));
-                            for (rank, index) in order.into_iter().take(MAX_BOARDS).enumerate() {
-                                let path = catalog.boards[index].path.clone();
-                                let previews = if rank < FULL_PREVIEWS { 4 } else { 1 };
-                                let mut entry = inspect(path, previews);
-                                entry.meta = meta(&catalog, &entry.path);
-                                if !send(Ok(Update::Entry(entry))) {
-                                    return;
-                                }
+                            let cards = order
+                                .iter()
+                                .map(|&i| entry(&catalog.boards[i], None))
+                                .collect();
+                            checks = order
+                                .iter()
+                                .map(|&i| catalog.boards[i].path.clone())
+                                .collect();
+                            tracing::info!(boards = catalog.boards.len(), "library cards ready");
+                            if !send(Ok(Update::Cards(cards))) {
+                                return;
                             }
                             continue;
                         }
+                        Request::Previews(paths) => Ok(paths
+                            .into_iter()
+                            .take(MAX_PREVIEW_REQUEST)
+                            .map(|path| {
+                                let mips = previews(&path);
+                                Update::Previews(path, mips)
+                            })
+                            .collect()),
                         Request::Reveal(path) => super::reveal(&path)
                             .map(|()| Vec::new())
                             .map_err(|e| e.to_string()),
@@ -412,22 +541,29 @@ impl Worker {
                             .map_err(|e| e.to_string())
                             .and_then(|()| save(&catalog))
                             .map(|()| vec![Update::Meta(path.clone(), meta(&catalog, &path))]),
-                        Request::Relink(from, to) => {
-                            let mut entry = inspect(to.clone(), 4);
-                            if let Some(error) = entry.error.take() {
-                                Err(error)
-                            } else {
-                                catalog
-                                    .relink(&from, &to)
-                                    .and_then(|()| edit_recent(&storage, &from, Some(&to)))
-                                    .map_err(|e| e.to_string())
-                                    .and_then(|()| save(&catalog))
-                                    .map(|()| {
-                                        entry.meta = meta(&catalog, &to);
-                                        vec![Update::Removed(from), Update::Entry(entry)]
-                                    })
-                            }
-                        }
+                        Request::Relink(from, to) => match summarize(&to) {
+                            Lookup::Found(summary) => catalog
+                                .relink(&from, &to)
+                                .and_then(|()| edit_recent(&storage, &from, Some(&to)))
+                                .map_err(|e| e.to_string())
+                                .and_then(|()| {
+                                    if let Some(index) = catalog.find(&to) {
+                                        catalog.boards[index].summary = Some(summary);
+                                    }
+                                    save(&catalog)
+                                })
+                                .and_then(|()| {
+                                    let index = catalog
+                                        .find(&to)
+                                        .ok_or_else(|| "The board left the library".to_owned())?;
+                                    Ok(vec![
+                                        Update::Removed(from),
+                                        Update::Entry(entry(&catalog.boards[index], None)),
+                                    ])
+                                }),
+                            Lookup::Missing => Err("File not found".into()),
+                            Lookup::Failed(error) => Err(error),
+                        },
                     };
                     match result {
                         Ok(updates) => {
@@ -493,12 +629,32 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn missing_board_stays_in_catalog_as_missing() {
+    fn cards_come_from_the_preview_or_the_whole_board_and_missing_files_say_so() {
         let path = std::env::temp_dir().join(format!("missing-{}.moth", uuid::Uuid::now_v7()));
-        let entry = inspect(path.clone(), 4);
-        assert_eq!(entry.path, path);
-        assert!(entry.missing);
-        assert!(entry.error.is_some());
-        assert!(entry.previews.is_empty());
+        assert!(matches!(summarize(&path), Lookup::Missing));
+        assert!(previews(&path).is_empty());
+        // The schema-7 fixture answers from its preview; the schema-6 one is read whole.
+        let root = std::env::temp_dir().join(format!("mothref-cards-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&root).unwrap();
+        for (name, bytes) in [
+            (
+                "v7.moth",
+                include_bytes!("../../../corpus/moth/v7.moth").as_slice(),
+            ),
+            (
+                "v6.moth",
+                include_bytes!("../../../corpus/moth/v6.moth").as_slice(),
+            ),
+        ] {
+            let path = root.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            let Lookup::Found(summary) = summarize(&path) else {
+                panic!("{name} has a card");
+            };
+            assert_eq!(summary.items, 6, "{name}");
+            assert_eq!(summary.size, bytes.len() as u64);
+            assert_eq!(previews(&path).len(), 1, "{name}");
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

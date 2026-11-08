@@ -25,6 +25,8 @@ pub(super) enum Intent {
     Library(moth_platform::library::Request),
     /// Ask where a missing board file is now (the library's "Find…").
     RelinkBoard(std::path::PathBuf),
+    /// Library cards on screen without previews: ask the library worker for them.
+    LibraryPreviews(Vec<std::path::PathBuf>),
 
     /// Clipboard import.
     Paste,
