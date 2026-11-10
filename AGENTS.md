@@ -54,6 +54,8 @@ Checks come in three tiers. During ordinary development, agents run formatting a
 
 **Sandbox only:** Run checks, tests, fuzzers and benchmarks inside the sandbox. Never request escalation or rerun them outside it. If a sandbox restriction prevents completion, report the check as incomplete and leave it to CI or the maintainer.
 
+**Release handoff:** After pushing a release tag, return the tag and workflow links immediately. Do not wait for or poll GitHub builds, CI or publication unless the maintainer explicitly asks.
+
 ### Tier 1: fast loop (every change, must finish in a few minutes)
 
 ```sh
