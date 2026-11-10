@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.24 — 2026-11-10
+
+- Fix macOS CI rejecting the group RGB golden test because Metal has no software adapter. Every desktop still checks RGB pixels; Linux CI additionally forces its installed software adapter. This release includes the alpha.23 changes below, whose publication was blocked by that test.
+
 ## 0.1.0-alpha.23 — 2026-11-10
 
 - Nested group title chips avoid overlap when zoomed out, including the inline rename editor.

@@ -1363,66 +1363,66 @@ mod tests {
         });
     }
     #[test]
-    fn custom_group_rgb_golden_on_hardware_and_fallback() {
+    fn custom_group_rgb_golden() {
         use super::{Camera, ImageFormat, Item, Rect, Registry, readback, target};
-        for software in [false, true] {
-            pollster::block_on(async {
-                let instance =
-                    wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-                let (_, device, queue) = crate::request_device(&instance, None, software)
-                    .await
+        // Metal has no software adapter; Linux CI explicitly checks that path.
+        let software = std::env::var_os("MOTHREF_TEST_SOFTWARE").is_some();
+        pollster::block_on(async {
+            let instance =
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let (_, device, queue) = crate::request_device(&instance, None, software)
+                .await
+                .unwrap();
+            let mut registry =
+                Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm, ImageFormat::Rgba8);
+            registry.backdrops[0].fill[3] = 1.;
+            let texture = target(&device, 64, 64);
+            let view = texture.create_view(&Default::default());
+            for rgb in [[0, 0, 0], [255, 255, 255], [12, 128, 240]] {
+                let group = Item::group(
+                    moth_scene::Group {
+                        title: String::new(),
+                        color: moth_scene::Group::custom_color(rgb),
+                    },
+                    Rect {
+                        x: 8.,
+                        y: 8.,
+                        width: 48.,
+                        height: 48.,
+                    },
+                    Default::default(),
+                );
+                registry
+                    .draw(
+                        &device,
+                        &queue,
+                        crate::Target {
+                            opacity: 1.,
+                            grid: false,
+                            view: &view,
+                            screen: [64., 64.],
+                            clip: None,
+                            clear: wgpu::Color::BLACK,
+                        },
+                        &[&group],
+                        Camera::default(),
+                    )
                     .unwrap();
-                let mut registry =
-                    Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm, ImageFormat::Rgba8);
-                registry.backdrops[0].fill[3] = 1.;
-                let texture = target(&device, 64, 64);
-                let view = texture.create_view(&Default::default());
-                for rgb in [[0, 0, 0], [255, 255, 255], [12, 128, 240]] {
-                    let group = Item::group(
-                        moth_scene::Group {
-                            title: String::new(),
-                            color: moth_scene::Group::custom_color(rgb),
-                        },
-                        Rect {
-                            x: 8.,
-                            y: 8.,
-                            width: 48.,
-                            height: 48.,
-                        },
-                        Default::default(),
-                    );
-                    registry
-                        .draw(
-                            &device,
-                            &queue,
-                            crate::Target {
-                                opacity: 1.,
-                                grid: false,
-                                view: &view,
-                                screen: [64., 64.],
-                                clip: None,
-                                clear: wgpu::Color::BLACK,
-                            },
-                            &[&group],
-                            Camera::default(),
-                        )
-                        .unwrap();
-                    let bytes = readback(&device, &queue, &texture, 256).unwrap();
-                    for y in 24..40 {
-                        for x in 24..40 {
-                            let pixel = &bytes[y * 256 + x * 4..][..4];
-                            assert!(
-                                pixel
-                                    .iter()
-                                    .zip([rgb[0], rgb[1], rgb[2], 255])
-                                    .all(|(a, b)| a.abs_diff(b) <= 2),
-                                "{pixel:?} != {rgb:?}"
-                            );
-                        }
+                let bytes = readback(&device, &queue, &texture, 256).unwrap();
+                for y in 24..40 {
+                    for x in 24..40 {
+                        let pixel = &bytes[y * 256 + x * 4..][..4];
+                        assert!(
+                            pixel
+                                .iter()
+                                .zip([rgb[0], rgb[1], rgb[2], 255])
+                                .all(|(a, b)| a.abs_diff(b) <= 2),
+                            "{pixel:?} != {rgb:?}"
+                        );
                     }
                 }
-            });
-        }
+            }
+        });
     }
     #[test]
     fn headless_golden() {

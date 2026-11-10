@@ -35,6 +35,11 @@ jobs:
       - if: runner.os == 'Linux'
         run: cargo xtask killtest 1000
       - run: cargo xtask bench --quick
+      - name: Check custom group colors on a software adapter
+        if: runner.os == 'Linux'
+        env:
+          MOTHREF_TEST_SOFTWARE: '1'
+        run: cargo test -p moth-render --lib custom_group_rgb_golden
       - name: Check software rendering where a fallback adapter is installed
         if: runner.os == 'Linux'
         run: cargo xtask bench --quick --software
