@@ -253,6 +253,7 @@ impl Workspace {
         let loading = matches!(
             &request,
             Request::Open(_)
+                | Request::OpenSnapshot(_)
                 | Request::OpenBackup(_)
                 | Request::Restore(_)
                 | Request::ImportBee(_)
@@ -288,43 +289,6 @@ impl Workspace {
     pub(super) fn persist_batch(&mut self, commands: Vec<(Command, Option<Handle>)>) {
         self.persist(moth_platform::boards::Request::ApplyBatch(commands));
     }
-    pub(super) fn finish_added(&mut self) -> bool {
-        if self.board.notices.added.is_some() {
-            self.end_batch();
-            if self.board.intake.batching {
-                return false;
-            }
-            self.board.notices.added = None;
-        }
-        true
-    }
-    pub(super) fn begin_batch(&mut self) {
-        if self.board.intake.loading || !self.finish_added() {
-            return;
-        }
-        if !self.board.intake.batching
-            && self
-                .board
-                .boards()
-                .requests
-                .try_send(moth_platform::boards::Request::BeginBatch)
-                .is_ok()
-        {
-            self.board.intake.batching = true;
-        }
-    }
-    pub(super) fn end_batch(&mut self) {
-        if self.board.intake.batching
-            && self
-                .board
-                .boards()
-                .requests
-                .try_send(moth_platform::boards::Request::EndBatch)
-                .is_ok()
-        {
-            self.board.intake.batching = false;
-        }
-    }
     pub(super) fn discard(&mut self) {
         self.board.discard();
     }
@@ -339,7 +303,12 @@ impl Workspace {
             self.board.file.conversion = None;
             self.board.notices.conversion_prompt = false;
             self.board.file.path = path.to_string_lossy().into_owned();
-            self.persist(moth_platform::boards::Request::Open(path));
+            let request = if self.board.decode().cache().mode() == moth_io::CacheMode::Full {
+                moth_platform::boards::Request::OpenSnapshot(path)
+            } else {
+                moth_platform::boards::Request::Open(path)
+            };
+            self.persist(request);
         } else {
             self.board.notices.message = moth_ui::Text::OpenEmpty.into();
         }
@@ -402,7 +371,7 @@ impl Workspace {
         path: std::path::PathBuf,
         format: moth_io::ImageFormat,
     ) -> TabChange {
-        self.board.intake.files_received = false;
+        self.board.intake.burst.receiving_files();
         let image = !path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
             ["moth", "bee", "pur"]
                 .iter()
@@ -417,7 +386,7 @@ impl Workspace {
             // Reduction reads the file, so it runs on the clipboard worker; the file
             // comes back as a reduced copy or, when it already fits, unchanged.
             self.board.intake.reducing.push_back(path);
-            self.board.intake.queued += 1;
+            self.board.intake.burst.queue_file();
             self.send_reductions();
             return TabChange::None;
         }
@@ -450,7 +419,7 @@ impl Workspace {
         member: String,
         format: moth_io::ImageFormat,
     ) -> TabChange {
-        self.board.intake.files_received = false;
+        self.board.intake.burst.receiving_files();
         self.import_source(path, Some(member), format)
     }
     fn import_source(
@@ -459,17 +428,9 @@ impl Workspace {
         member: Option<String>,
         format: moth_io::ImageFormat,
     ) -> TabChange {
-        if self.board.locked || self.board.intake.loading {
+        if !self.prepare_intake() {
             return TabChange::None;
         }
-        if self.board.file.discarding {
-            return TabChange::None;
-        }
-        if !self.finish_added() {
-            return TabChange::None;
-        }
-        // A new drop supersedes a pending arrangement prompt.
-        self.board.notices.arrange_prompt = None;
         if path
             .extension()
             .and_then(|e| e.to_str())
@@ -504,7 +465,7 @@ impl Workspace {
         match source {
             Ok(h) => {
                 self.board.intake.waiting.push(h);
-                self.board.intake.queued += 1;
+                self.board.intake.burst.queue_file();
             }
             Err(e) => self.board.notices.message = e.to_string().into(),
         }
@@ -584,9 +545,7 @@ impl Workspace {
                         item.name = self.board.storage().source_name(done.request.handle);
                     }
                     item.parent = super::groups::landing(&self.board.scene, point);
-                    self.board
-                        .intake
-                        .add_to_burst(item.id, &mut self.board.notices);
+                    self.board.intake.burst.add(item.id);
                     self.persist(moth_platform::boards::Request::Apply(
                         Command::Insert(item),
                         Some(done.request.handle),
@@ -614,9 +573,7 @@ impl Workspace {
                         item.name = self.board.storage().source_name(done.request.handle);
                     }
                     item.parent = super::groups::landing(&self.board.scene, point);
-                    self.board
-                        .intake
-                        .add_to_burst(item.id, &mut self.board.notices);
+                    self.board.intake.burst.add(item.id);
                     self.persist(moth_platform::boards::Request::Apply(
                         Command::Insert(item),
                         Some(done.request.handle),
@@ -903,7 +860,7 @@ impl Workspace {
                     } else {
                         self.board.notices.message = moth_ui::Text::BoardFull.into();
                     }
-                    self.board.intake.files_received = true;
+                    self.board.intake.burst.files_received();
                 }
                 moth_platform::ClipboardCompletion::Reduced(Ok((handle, image))) => {
                     self.board.intake.pasting = self.board.intake.pasting.saturating_sub(1);
@@ -947,7 +904,7 @@ impl Workspace {
                             pump.events.push(Event::TabChanged);
                         }
                     }
-                    self.board.intake.files_received = true;
+                    self.board.intake.burst.files_received();
                 }
                 moth_platform::ClipboardCompletion::Pasted(Err(
                     moth_platform::PlatformError::EmptyClipboard,
@@ -969,39 +926,13 @@ impl Workspace {
             }
         }
         self.queue_decodes(pump.format);
-        if !self.board.idle() || self.receiving_drop {
-            self.board.intake.idle_since = None;
+        self.settle_intake();
+        if self.board.idle()
+            && let Some(ids) = self.board.intake.layout_fit.take()
+            && !ids.is_empty()
+        {
+            self.board.view.fit_selection(&self.board.scene, &ids);
         }
-        if self.board.idle() && !self.receiving_drop {
-            self.board.intake.queued = 0;
-            self.board
-                .intake
-                .idle_since
-                .get_or_insert_with(Instant::now);
-            if let Some(added) = &mut self.board.notices.added {
-                if added.needs_fit {
-                    if added.ids.len() > 1 {
-                        let ids = added.ids.iter().copied().collect();
-                        self.board.view.fit_selection(&self.board.scene, &ids);
-                    }
-                    added.needs_fit = false;
-                }
-            } else if self.board.intake.batching && self.board.notices.arrange_prompt.is_none() {
-                if self.board.intake.burst.is_empty() {
-                    self.end_batch();
-                } else {
-                    self.board.notices.arrange_prompt =
-                        Some(std::mem::take(&mut self.board.intake.burst));
-                }
-            }
-        }
-    }
-    fn can_complete_import(&self) -> bool {
-        let requests = &self.board.boards().requests;
-        // A completion can end the previous undo batch, begin a new one and insert.
-        requests
-            .capacity()
-            .is_some_and(|capacity| requests.len() + 3 <= capacity)
     }
     /// Runs the autosave timer of every open board, the background tabs too, and
     /// returns the earliest moment one of them needs another look.

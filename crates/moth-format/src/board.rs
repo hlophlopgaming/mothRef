@@ -9,8 +9,9 @@ use std::{
 
 /// Schema the writer produces. Boards with an older header are compacted to it before
 /// a checkpoint is appended, so a file never mixes record layouts across headers.
-pub const SCHEMA: u8 = 7;
-const HEADER: &[u8; 16] = b"MOTH\x07\0\0\0\0\0\0\0\0\0\0\0";
+pub const SCHEMA: u8 = 8;
+const HEADER: &[u8; 16] = b"MOTH\x08\0\0\0\0\0\0\0\0\0\0\0";
+const HEADER_V7: &[u8; 16] = b"MOTH\x07\0\0\0\0\0\0\0\0\0\0\0";
 /// Schema-6 boards predate the board preview record.
 const HEADER_V6: &[u8; 16] = b"MOTH\x06\0\0\0\0\0\0\0\0\0\0\0";
 /// Schema-5 boards predate groups.
@@ -180,7 +181,7 @@ pub fn peek_preview(reader: &mut dyn ReadSeek) -> Result<Option<Preview>, Error>
     reader.seek(SeekFrom::Start(0))?;
     let mut header = [0; 16];
     reader.read_exact(&mut header)?;
-    if &header != HEADER {
+    if &header != HEADER && &header != HEADER_V7 {
         return Ok(None);
     }
     let length = reader.seek(SeekFrom::End(0))?;
@@ -270,7 +271,7 @@ pub fn encode(command: &Command) -> Vec<u8> {
                 bytes.extend_from_slice(item.z.as_bytes());
             }
             Content::Group(group) => {
-                bytes.push(16);
+                bytes.push(if group.rgb().is_some() { 19 } else { 16 });
                 bytes.extend_from_slice(item.id.as_bytes());
                 rect_bytes(&mut bytes, item.rect);
                 group_bytes(&mut bytes, group);
@@ -304,7 +305,7 @@ pub fn encode(command: &Command) -> Vec<u8> {
             bytes.extend_from_slice(parent_bytes(*parent).as_bytes());
         }
         Command::SetGroup { id, group } => {
-            bytes.push(18);
+            bytes.push(if group.rgb().is_some() { 20 } else { 18 });
             bytes.extend_from_slice(id.as_bytes());
             group_bytes(&mut bytes, group);
         }
@@ -316,7 +317,11 @@ fn parent_bytes(parent: Option<Uuid>) -> Uuid {
     parent.unwrap_or(Uuid::nil())
 }
 fn group_bytes(bytes: &mut Vec<u8>, group: &Group) {
-    bytes.push(group.color);
+    if group.rgb().is_some() {
+        bytes.extend_from_slice(&group.color.to_le_bytes());
+    } else {
+        bytes.push(group.color as u8);
+    }
     bytes.extend_from_slice(&(group.title.len() as u16).to_le_bytes());
     bytes.extend_from_slice(group.title.as_bytes());
 }
@@ -471,7 +476,19 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
         Ok(((!id.is_nil()).then_some(id), start + 16))
     };
     let group = |start: usize| -> Result<(Group, usize), Error> {
-        let color = *bytes.get(start).ok_or(Error::Invalid)?;
+        let custom = matches!(bytes[0], 19 | 20);
+        let color = if custom {
+            u32::from_le_bytes(
+                bytes
+                    .get(start..start + 4)
+                    .ok_or(Error::Invalid)?
+                    .try_into()
+                    .map_err(|_| Error::Invalid)?,
+            )
+        } else {
+            u32::from(*bytes.get(start).ok_or(Error::Invalid)?)
+        };
+        let start = start + if custom { 3 } else { 0 };
         let len = u16::from_le_bytes(
             bytes
                 .get(start + 1..start + 3)
@@ -479,7 +496,16 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
                 .try_into()
                 .map_err(|_| Error::Invalid)?,
         ) as usize;
-        if len > moth_scene::MAX_GROUP_TITLE || color >= moth_scene::GROUP_COLORS {
+        if len > moth_scene::MAX_GROUP_TITLE
+            || !(Group {
+                title: String::new(),
+                color,
+            })
+            .valid()
+        {
+            return Err(Error::Invalid);
+        }
+        if custom && (color >> 24) != 1 {
             return Err(Error::Invalid);
         }
         let end = start + 3 + len;
@@ -574,8 +600,10 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
                 parent,
             }))
         }
-        16 if bytes.len() > INSERT_GROUP_FIXED + 16
-            && bytes.len() <= INSERT_GROUP_FIXED + moth_scene::MAX_GROUP_TITLE + 16 + MAX_INDEX =>
+        16 | 19
+            if bytes.len() > INSERT_GROUP_FIXED + 16
+                && bytes.len()
+                    <= INSERT_GROUP_FIXED + 3 + moth_scene::MAX_GROUP_TITLE + 16 + MAX_INDEX =>
         {
             let (group, index) = group(33)?;
             let (parent, index) = parent(index)?;
@@ -596,7 +624,7 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             id,
             parent: parent(17)?.0,
         }),
-        18 if bytes.len() >= 20 && bytes.len() <= 20 + moth_scene::MAX_GROUP_TITLE => {
+        18 | 20 if bytes.len() >= 20 && bytes.len() <= 23 + moth_scene::MAX_GROUP_TITLE => {
             let (group, end) = group(17)?;
             if end != bytes.len() {
                 return Err(Error::Invalid);
@@ -642,6 +670,7 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
     let mut header = [0; 16];
     reader.read_exact(&mut header)?;
     if &header != HEADER
+        && &header != HEADER_V7
         && &header != HEADER_V6
         && &header != HEADER_V5
         && &header != HEADER_V4
@@ -751,7 +780,7 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
                     board.scene = restore(&bytes, &board.blobs)?;
                 }
                 // Previews are derived data for the library: the scene never reads them.
-                PREVIEW if &header == HEADER => {}
+                PREVIEW if &header == HEADER || &header == HEADER_V7 => {}
                 _ => return Err(Error::Invalid),
             }
             board.recovered |= start != committed;
@@ -959,7 +988,7 @@ mod tests {
     #[test]
     fn schema_seven_fixture_ends_with_a_preview_the_reader_skips() {
         let bytes = include_bytes!("../../../corpus/moth/v7.moth");
-        assert_eq!(bytes[4], SCHEMA);
+        assert_eq!(bytes[4], 7);
         let board = read(&mut Cursor::new(bytes.as_slice())).unwrap();
         assert!(!board.recovered);
         let preview = peek_preview(&mut Cursor::new(bytes.as_slice()))
@@ -971,6 +1000,25 @@ mod tests {
         // The older fixture has no preview: the library reads it in full.
         let v6 = include_bytes!("../../../corpus/moth/v6.moth");
         assert_eq!(peek_preview(&mut Cursor::new(v6.as_slice())).unwrap(), None);
+    }
+    #[test]
+    fn schema_seven_migrates_to_eight_without_changing_palette_groups() {
+        let old = read(&mut Cursor::new(
+            include_bytes!("../../../corpus/moth/v7.moth").as_slice(),
+        ))
+        .unwrap();
+        let current = read(&mut Cursor::new(
+            include_bytes!("../../../corpus/moth/v8.moth").as_slice(),
+        ))
+        .unwrap();
+        assert!(current.scene.items().any(|item| {
+            item.group_style()
+                .is_some_and(|g| g.rgb() == Some([12, 128, 240]))
+        }));
+        let restored = restore(&snapshot(&old.scene).unwrap(), &old.blobs).unwrap();
+        for item in old.scene.items() {
+            assert_eq!(restored.get(item.id), Some(item));
+        }
     }
     #[test]
     fn previews_round_trip_and_reject_what_does_not_fit() {
@@ -1078,7 +1126,7 @@ mod tests {
                 id: group.id,
                 group: Group {
                     title: "renamed".into(),
-                    color: 5,
+                    color: Group::custom_color([12, 128, 240]),
                 },
             },
         ];
@@ -1113,9 +1161,16 @@ mod tests {
             let torn = read(&mut Cursor::new(&bytes[..cut])).unwrap();
             assert_eq!(torn.scene.get(item.id).unwrap().parent, None);
         }
-        let restored = restore(&snapshot(&board.scene).unwrap(), &board.blobs).unwrap();
+        let checkpoint = snapshot(&board.scene).unwrap();
+        let restored = restore(&checkpoint, &board.blobs).unwrap();
         assert_eq!(restored.get(item.id), Some(&item));
         assert_eq!(restored.get(group.id), board.scene.get(group.id));
+        let checkpoint_start = bytes.len();
+        append(&mut bytes, checkpoint_start as u64, 3, &checkpoint).unwrap();
+        for cut in checkpoint_start..bytes.len() {
+            let partial = read(&mut Cursor::new(&bytes[..cut])).unwrap();
+            assert_eq!(partial.scene.get(group.id), board.scene.get(group.id));
+        }
         // Bad color codes, long titles and truncated records are rejected, never panics.
         let valid = encode(&Command::Insert(group));
         let mut bad = valid.clone();
@@ -1340,7 +1395,7 @@ mod tests {
             prop_assert!(restored.top().is_none());
         }
         #[test]
-        fn group_roundtrip(title in "[a-zA-Z0-9 ]{0,60}", color in 0u8..moth_scene::GROUP_COLORS, nested in any::<bool>()) {
+        fn group_roundtrip(title in "[a-zA-Z0-9 ]{0,60}", color in proptest::prop_oneof![0u32..u32::from(moth_scene::GROUP_COLORS), (0u32..=0xffffff).prop_map(|c| c | 0x1000000)], nested in any::<bool>()) {
             let (mut bytes, mut item) = base();
             let rect = Rect { x: 0., y: 0., width: 1., height: 1. };
             let outer = Item::group(Group { title: title.clone(), color }, rect, fractional_index::FractionalIndex::default());

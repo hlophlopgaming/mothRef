@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.23 — 2026-11-10
+
+- Nested group title chips avoid overlap when zoomed out, including the inline rename editor.
+- New groups receive automatic colors. Group color menus show preset swatches and offer an RGB picker with numeric channels, Apply and Cancel; custom colors survive undo, saving and exports. Boards now save as schema 8; older boards still open, but earlier MothRef versions cannot open newly saved boards.
+- Pack and fit respects the selection, including a single object or group members; without selection it uses the board. The camera fits after the layout is journaled.
+
+- Full-resolution mode opens current-format boards faster on Linux filesystems supporting reflinks: a validated private journal snapshot avoids rewriting every original. Other filesystems, old or damaged boards, and other performance modes keep the existing copy path.
+- Post-import arrangement stays available for retry when the storage queue is full, keeping its insertion undo group and previous layout notification intact.
 - Adding a single image keeps the current zoom and pan: the automatic arrangement no longer focuses a one-image paste or drop.
 
 ## 0.1.0-alpha.22 — 2026-11-08

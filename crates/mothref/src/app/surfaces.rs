@@ -166,6 +166,7 @@ pub(super) const GROUP_COLOR: &[Slot] = &[
     A(GroupSky),
     A(GroupWing),
     A(GroupLilac),
+    A(GroupCustom),
 ];
 const GROUP_BAR: &[Slot] = &[
     A(DrawingSession),
@@ -190,6 +191,10 @@ pub(super) fn button(
     selected: bool,
 ) -> bool {
     let label = text(action.label());
+    let swatch = super::bindings::GROUP_COLORS
+        .iter()
+        .position(|candidate| *candidate == action)
+        .map(|code| moth_ui::tokens(ui.ctx()).group(code as u32));
     let enabled = enabled.get(action as usize).copied().unwrap_or(false);
     if icon_only && let Some(icon) = action.icon() {
         let response = moth_ui::icons::enabled_button(
@@ -224,8 +229,13 @@ pub(super) fn button(
         .min_size(egui::vec2(0., ui.spacing().interact_size.y));
     let result = ui.add_enabled_ui(enabled, |ui| {
         let result = button.atom_ui(ui);
-        if let (Some(icon), Some(rect)) = (action.icon(), result.rect(icon_id)) {
-            moth_ui::icons::paint(ui, rect, icon, ui.visuals().text_color());
+        if let Some(rect) = result.rect(icon_id) {
+            if let Some(color) = swatch {
+                ui.painter()
+                    .circle_filled(rect.center(), rect.height() / 2., color);
+            } else if let Some(icon) = action.icon() {
+                moth_ui::icons::paint(ui, rect, icon, ui.visuals().text_color());
+            }
         }
         result.response
     });
@@ -562,7 +572,7 @@ pub(super) fn selection(
 pub(super) fn added(
     ctx: &egui::Context,
     viewport: egui::Rect,
-    added: &super::document::Added,
+    added: &super::intake::Added,
     enabled: &[bool],
     registry: &Registry,
 ) -> Vec<Intent> {

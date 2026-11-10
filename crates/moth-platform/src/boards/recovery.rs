@@ -61,6 +61,18 @@ pub(super) fn lock(journal: &Path) -> io::Result<File> {
     Ok(file)
 }
 
+pub(super) fn prepare(storage: &DesktopStorage) -> io::Result<(PathBuf, File)> {
+    let directory = storage.recovery_directory()?;
+    std::fs::create_dir_all(&directory)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
+    }
+    let guard = lock(&directory.join("board.moth"))?;
+    Ok((directory, guard))
+}
+
 pub(super) fn discover(storage: &DesktopStorage) -> io::Result<Vec<Recovery>> {
     let root = storage.base_directory()?;
     std::fs::create_dir_all(&root)?;

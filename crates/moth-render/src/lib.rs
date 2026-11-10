@@ -1168,6 +1168,24 @@ impl Registry {
                 .get(group.color as usize)
                 .copied()
                 .unwrap_or(self.panel);
+            if let Some(rgb) = group.rgb() {
+                let [r, g, b] = rgb.map(|c| {
+                    let c = f32::from(c) / 255.;
+                    if c <= 0.04045 {
+                        c / 12.92
+                    } else {
+                        ((c + 0.055) / 1.055).powf(2.4)
+                    }
+                });
+                style.fill[..3].copy_from_slice(&[r, g, b]);
+                style.border[..3].copy_from_slice(&[r, g, b]);
+                // Match theme backdrop opacity, including light-theme adjustments.
+                style.fill[3] = self.backdrops.first().map_or(style.fill[3], |b| b.fill[3]);
+                style.border[3] = self
+                    .backdrops
+                    .first()
+                    .map_or(style.border[3], |b| b.border[3]);
+            }
             // Real groups keep the identity transform; app overlays (the minimap) fade
             // their panel through the item's opacity.
             style.fill[3] *= item.transform.opacity;

@@ -797,7 +797,10 @@ fn svg(
         let (Some(style), r) = (item.group_style(), item.rect) else {
             continue;
         };
-        let swatch = GROUP_SWATCHES[style.color as usize % GROUP_SWATCHES.len()];
+        let swatch = style.rgb().map_or_else(
+            || GROUP_SWATCHES[style.color as usize % GROUP_SWATCHES.len()].to_owned(),
+            |[r, g, b]| format!("#{r:02x}{g:02x}{b:02x}"),
+        );
         svg.push_str(&format!(
             r##"<rect x="{}" y="{}" width="{}" height="{}" rx="14" fill="{swatch}" fill-opacity="0.1" stroke="{swatch}" stroke-opacity="0.4"/>"##,
             r.x, r.y, r.width, r.height

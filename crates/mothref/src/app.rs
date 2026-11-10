@@ -55,6 +55,7 @@ mod floating;
 mod gesture;
 mod groups;
 mod input;
+mod intake;
 mod intent;
 mod item_motion;
 mod library;
@@ -410,7 +411,7 @@ impl App {
         self.modal.dialog.is_some()
             || self.workspace.board.notices.conversion_prompt
             || self.workspace.confirm_close
-            || self.workspace.board.notices.arrange_prompt.is_some()
+            || self.workspace.board.intake.burst.prompt().is_some()
             || self.shortcuts.blocked()
             || self.editing.is_some()
             || self.shell.context().text_edit_focused()
@@ -441,30 +442,6 @@ impl App {
         self.rebuild_window_surfaces();
         Ok(())
     }
-    fn paste(&mut self) {
-        if self.workspace.board.locked || self.workspace.board.intake.loading {
-            return;
-        }
-        if self.workspace.board.file.discarding {
-            return;
-        }
-        if !self.workspace.finish_added() {
-            return;
-        }
-        // A new paste supersedes a pending arrangement prompt.
-        self.workspace.board.notices.arrange_prompt = None;
-        match self
-            .workspace
-            .board
-            .clipboard()
-            .requests
-            .try_send(moth_platform::ClipboardRequest::Paste)
-        {
-            Ok(()) => self.workspace.board.intake.pasting += 1,
-            Err(_) => self.workspace.board.notices.message = moth_ui::Text::ClipboardBusy.into(),
-        }
-    }
-
     fn open_files(&mut self, images: bool) {
         if self.workspace.confirm_close || self.window.file_picker.is_some() {
             return;
@@ -642,7 +619,7 @@ impl App {
                 self.import(path);
             }
         }
-        self.workspace.board.intake.files_received = true;
+        self.workspace.board.intake.burst.files_received();
     }
 
     /// Creates an empty note at `world` and opens the inline editor for it.
@@ -974,7 +951,7 @@ impl App {
                     self.import(path);
                 }
             }
-            self.workspace.board.intake.files_received = true;
+            self.workspace.board.intake.burst.files_received();
         }
         if self.workspace.library
             && self.workspace.refresh_library
@@ -1346,7 +1323,7 @@ impl App {
                 NativeEvent::DropStarted => self.workspace.receiving_drop = true,
                 NativeEvent::DropFinished => {
                     self.workspace.receiving_drop = false;
-                    self.workspace.board.intake.files_received = true;
+                    self.workspace.board.intake.burst.files_received();
                     self.redraw();
                 }
                 NativeEvent::Drop(path) => self.import(path),
@@ -1397,7 +1374,7 @@ impl App {
             || self.workspace.board.notices.conversion_prompt
             || self.workspace.library
             || self.modal.dialog.is_some()
-            || self.workspace.board.notices.arrange_prompt.is_some()
+            || self.workspace.board.intake.burst.prompt().is_some()
             || self.shortcuts.blocked()
             || self.editing.is_some()
         {
@@ -2431,7 +2408,7 @@ impl App {
                 if self.modal.dialog.is_none()
                     && !self.workspace.board.notices.conversion_prompt
                     && !self.workspace.confirm_close
-                    && self.workspace.board.notices.arrange_prompt.is_none()
+                    && self.workspace.board.intake.burst.prompt().is_none()
                 {
                     let (action, changed, setting) =
                         self.shortcuts.show(ui, &|a| enabled[a as usize]);
@@ -3120,7 +3097,7 @@ fn minimap_items(
     let mut backdrop = moth_scene::Item::group(
         moth_scene::Group {
             title: String::new(),
-            color: moth_scene::GROUP_COLORS,
+            color: u32::from(moth_scene::GROUP_COLORS),
         },
         to_world(panel),
         Default::default(),

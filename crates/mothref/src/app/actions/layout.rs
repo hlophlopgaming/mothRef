@@ -15,7 +15,7 @@ impl App {
         use Action::*;
         // While the post-import prompt is open, layouts apply to the imported items.
         if matches!(action, Horizontal | Vertical | Grid | Optimal)
-            && let Some(ids) = self.workspace.board.notices.arrange_prompt.clone()
+            && let Some(ids) = self.workspace.board.intake.burst.prompt().cloned()
         {
             let mode = match action {
                 Horizontal => arrange::Arrange::Horizontal,
@@ -24,30 +24,19 @@ impl App {
                 _ => arrange::Arrange::Optimal,
             };
             self.apply(Intent::Arrange(mode, ids), event_loop);
-            self.apply(Intent::DismissArrangePrompt, event_loop);
             return None;
         }
-        let mut items = Self::selected_items(&self.workspace.board, action);
+        let mut items = layout_items(&self.workspace.board.scene, &self.workspace.board.selection);
         let intent = match action {
             ArrangeOptions => {
                 self.tools.arrange.open = true;
                 return None;
             }
-            ScaleApply => {
-                if items.is_empty() {
-                    items = self.workspace.board.scene.items().collect();
-                    items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
-                }
-                Intent::Commands(arrange::scale(&items, self.tools.arrange.factor))
-            }
+            ScaleApply => Intent::Commands(arrange::scale(&items, self.tools.arrange.factor)),
             Horizontal | Vertical | Grid | Optimal | ArrangeName | ArrangeTime | PackFit
             | NormalizeWidth | NormalizeHeight | NormalizeSize | NormalizeArea | AlignLeft
             | AlignRight | AlignTop | AlignBottom | Stack | DistributeHorizontal
             | DistributeVertical => {
-                if items.is_empty() || action == PackFit {
-                    items = self.workspace.board.scene.items().collect();
-                    items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
-                }
                 let commands = match action {
                     NormalizeWidth | NormalizeHeight | NormalizeSize | NormalizeArea => {
                         arrange::normalize(
@@ -92,10 +81,75 @@ impl App {
                         )
                     }
                 };
+                if action == PackFit {
+                    let ids = items.iter().map(|item| item.id).collect();
+                    let in_flight = self.workspace.board.intake.in_flight;
+                    self.workspace
+                        .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+                    if self.workspace.board.intake.in_flight > in_flight {
+                        self.workspace.board.intake.layout_fit = Some(ids);
+                    }
+                    return None;
+                }
                 Intent::Commands(commands)
             }
             _ => return None,
         };
         Some(intent)
+    }
+}
+
+/// An empty selection means the board; an empty selected group means no members.
+fn layout_items<'a>(scene: &'a Scene, selection: &HashSet<Uuid>) -> Vec<&'a Item> {
+    let mut items: Vec<_> = if selection.is_empty() {
+        scene.items().collect()
+    } else {
+        selection.iter().filter_map(|id| scene.get(*id)).collect()
+    };
+    items.retain(|item| !item.is_group());
+    items.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
+    items
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn pack_scope_keeps_single_selection_and_empty_group_off_the_rest_of_the_board() {
+        let mut scene = Scene::default();
+        let rect = Rect {
+            x: 0.,
+            y: 0.,
+            width: 100.,
+            height: 100.,
+        };
+        let a = Item::text("a", rect, None);
+        let b = Item::text("b", rect, Some(&a.z));
+        let group = Item::group(Default::default(), rect, Default::default());
+        let (a_id, b_id, group_id) = (a.id, b.id, group.id);
+        for item in [a, b, group] {
+            scene.apply(Command::Insert(item)).unwrap();
+        }
+        assert_eq!(
+            layout_items(&scene, &HashSet::from([a_id]))
+                .iter()
+                .map(|i| i.id)
+                .collect::<Vec<_>>(),
+            vec![a_id]
+        );
+        assert!(layout_items(&scene, &HashSet::from([group_id])).is_empty());
+        assert_eq!(layout_items(&scene, &HashSet::new()).len(), 2);
+        scene
+            .apply(Command::SetParent {
+                id: a_id,
+                parent: Some(group_id),
+            })
+            .unwrap();
+        let mut selection = HashSet::from([group_id]);
+        selection::with_members(&scene, &mut selection, None);
+        let items = layout_items(&scene, &selection);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, a_id);
+        assert!(!items.iter().any(|i| i.id == b_id));
     }
 }

@@ -1,16 +1,16 @@
-# MothRef format, schema 7
+# MothRef format, schema 8
 
 All integers and IEEE-754 f32 coordinates are little-endian. Core readers accept
 seekable byte streams; native filesystem paths are never serialized. Schema 1 is the
 first persistent format; there is no schema 0 board to migrate. Schema 2 adds item
 content transforms; schema 3 adds text notes; schema 4 adds appearance and source
 filenames; schema 5 adds image sampling and fixed-width note metrics; schema 6 adds
-nested groups; schema 7 adds the board preview record. The reader keeps the schema 1, 2, 3, 4, 5 and 6 record layouts, so every older board and journal still opens: a schema 1 insert
+nested groups; schema 7 adds the board preview record; schema 8 adds custom RGB group colors. The reader keeps the schema 1, 2, 3, 4, 5 and 6 record layouts, so every older board and journal still opens: a schema 1 insert
 carries no transform and migrates to the identity transform. Future schemas must
 retain both readers and provide explicit migrations.
 
-The 16-byte header is `MOTH`, u32 schema version `7`, then eight zero bytes.
-Readers accept versions 1 through 7 and reject every other version. Every record
+The 16-byte header is `MOTH`, u32 schema version `8`, then eight zero bytes.
+Readers accept versions 1 through 8 and reject every other version. Every record
 consists of a payload followed by a 96-byte footer:
 
 | Footer offset | Size | Meaning |
@@ -184,3 +184,24 @@ it, then atomically replaces the destination (`ReplaceFileW` on Windows, rename
 and directory sync on Unix). Failed compaction cannot destroy the previous board.
 Compaction currently runs on the storage worker after a save when the file is
 larger than twice its estimated live original bytes and at least 1 MiB.
+
+## Migration 7 → 8
+
+Schema 8 adds exact sRGB group colors while retaining the six theme palette codes.
+Tags 16 and 18 keep their frozen schema-6 layouts for palette group inserts and
+SetGroup commands. Two additional command tags carry custom colors:
+
+- `19`: group insert, identical to tag 16 except the color at offset 33 is a
+  little-endian u32 `0x01RRGGBB`, followed by the u16 title length, UTF-8 title,
+  parent UUID and fractional index.
+- `20`: SetGroup, identical to tag 18 except the color at offset 17 is that u32.
+
+The high byte must be 1 for RGB; palette codes remain 0 through 5. Invalid colors
+and overlong titles are rejected. Alpha is a presentation choice and is not stored.
+Checkpoints use the same insert tags. Preview records keep the schema-7 layout.
+
+Migration reads schemas 1–7 through their existing layouts; the next save uses the
+existing atomic compaction path to write schema 8, never rewriting an old header
+in place. `corpus/moth/v7.moth` remains frozen; `v8.moth` includes nested groups,
+a custom RGB group, palette groups, images and notes. Older applications reject
+schema 8, including boards whose groups still use palette colors.

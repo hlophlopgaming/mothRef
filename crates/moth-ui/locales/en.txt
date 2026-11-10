@@ -74,7 +74,7 @@ ResetCamera = Reset camera
 NextImage = Focus next image
 PreviousImage = Focus previous image
 CanvasGrayscale = Grayscale canvas
-PackFit = Pack all and fit
+PackFit = Pack and fit
 CoordinatePicker = Pick image coordinates and info
 ExportZip = Originals as ZIP…
 ChangedSetting = * differs from the default
@@ -616,3 +616,5 @@ BackupAvailable = Backup available
 OpenBackup = Open backup
 BackupOpened = Backup opened. Save it to keep the recovered board.
 BackupUnavailable = The backup is no longer available.
+
+GroupCustom = Custom RGB…

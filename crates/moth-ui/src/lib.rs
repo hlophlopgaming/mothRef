@@ -151,6 +151,8 @@ pub enum Text {
     GroupWing,
     /// Backdrop color.
     GroupLilac,
+    /// Opens the exact RGB group color editor.
+    GroupCustom,
     /// Title chip of a group without a title.
     UntitledGroup,
     /// Hint beside the title being typed: Enter keeps it, Esc leaves it untitled.

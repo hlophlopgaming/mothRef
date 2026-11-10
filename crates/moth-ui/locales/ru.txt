@@ -74,7 +74,7 @@ ResetCamera = Сбросить камеру
 NextImage = Следующее изображение
 PreviousImage = Предыдущее изображение
 CanvasGrayscale = Чёрно-белый холст
-PackFit = Упаковать всё и вписать
+PackFit = Упаковать и вписать
 CoordinatePicker = Координаты и сведения об изображении
 ExportZip = Оригиналы в ZIP…
 ChangedSetting = * отличается от значения по умолчанию
@@ -616,3 +616,5 @@ BackupAvailable = Есть резервная копия
 OpenBackup = Открыть резервную копию
 BackupOpened = Резервная копия открыта. Сохраните восстановленную доску.
 BackupUnavailable = Резервная копия больше недоступна.
+
+GroupCustom = Свой цвет RGB…

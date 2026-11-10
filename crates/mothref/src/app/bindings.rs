@@ -167,6 +167,9 @@ actions! {
     GroupSky, GroupSky, "", None;
     GroupWing, GroupWing, "", None;
     GroupLilac, GroupLilac, "", None;
+    GroupCustom, GroupCustom, "", None;
+    ApplyGroupColor, ApplyItem, "", None;
+    CancelGroupColor, Cancel, "", None;
     Layers, Layers, "", None;
     DrawingSession, DrawingSession, "F5", None;
 

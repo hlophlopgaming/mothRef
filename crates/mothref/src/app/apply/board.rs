@@ -15,11 +15,7 @@ impl App {
                     editing.focus = false;
                 }
             }
-            Intent::Paste => {
-                if !self.workspace.board.file.discarding {
-                    self.paste();
-                }
-            }
+            Intent::Paste => self.workspace.paste(),
             Intent::Undo => self.workspace.persist(moth_platform::boards::Request::Undo),
             Intent::Redo => self.workspace.persist(moth_platform::boards::Request::Redo),
             Intent::AddNote(world) => self.add_note(world),
@@ -107,22 +103,9 @@ impl App {
                         self.settings.gap,
                     )
                 };
-                // Layout changes belong to the still-open insertion group.
-                let previous = self.workspace.board.notices.added.take();
-                if !commands.is_empty() {
-                    let pending = self.workspace.board.intake.in_flight;
-                    self.workspace
-                        .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
-                    if self.workspace.board.intake.in_flight == pending {
-                        self.workspace.board.notices.added = previous;
-                        return false;
-                    }
+                if !self.workspace.arrange_added(commands, ids, mode) {
+                    return false;
                 }
-                self.workspace.board.notices.added = Some(document::Added {
-                    ids,
-                    mode,
-                    needs_fit: true,
-                });
                 self.settings.default_arrange = mode as u8;
                 self.apply(Intent::PreferencesDirty, event_loop);
             }
@@ -133,7 +116,7 @@ impl App {
                 self.workspace
                     .persist(moth_platform::boards::Request::OriginalGeometry { ids, mode });
             }
-            Intent::DismissArrangePrompt => self.workspace.board.notices.arrange_prompt = None,
+            Intent::DismissArrangePrompt => self.workspace.board.intake.burst.dismiss_prompt(),
             _ => {}
         }
         true

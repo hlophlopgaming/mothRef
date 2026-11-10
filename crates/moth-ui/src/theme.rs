@@ -114,14 +114,18 @@ impl Tokens {
         Color32::from_rgba_unmultiplied(r, g, b, 235)
     }
     /// A group's swatch; unknown codes fall back to neutral.
-    pub fn group(self, code: u8) -> Color32 {
+    pub fn group(self, code: u32) -> Color32 {
+        let [tag, r, g, b] = code.to_be_bytes();
+        if tag == 1 {
+            return Color32::from_rgb(r, g, b);
+        }
         self.groups
             .get(code as usize)
             .copied()
             .unwrap_or(self.groups[0])
     }
     /// Backdrop fill and border of a group, translucent so the canvas reads through.
-    pub fn group_backdrop(self, code: u8) -> [Color32; 2] {
+    pub fn group_backdrop(self, code: u32) -> [Color32; 2] {
         let [r, g, b, _] = self.group(code).to_array();
         let (fill, border) = if self.dark { (34, 120) } else { (38, 120) };
         [
@@ -130,7 +134,7 @@ impl Tokens {
         ]
     }
     /// Text on a filled group swatch (a selected title chip): dark on light swatches.
-    pub fn on_group(self, code: u8) -> Color32 {
+    pub fn on_group(self, code: u32) -> Color32 {
         let [r, g, b, _] = self.group(code).to_array();
         let luma = 0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32;
         if luma > 140. {
@@ -140,7 +144,7 @@ impl Tokens {
         }
     }
     /// Title chip fill of a group: the canvas tinted towards its swatch.
-    pub fn group_chip(self, code: u8) -> Color32 {
+    pub fn group_chip(self, code: u32) -> Color32 {
         self.surface.lerp_to_gamma(self.group(code), 0.14)
     }
     /// Dark palette from the «Pixel» exploration (docs/DESIGN.md): Screen
@@ -711,6 +715,13 @@ mod custom_color_tests {
     use super::*;
     #[test]
     fn colors_validate_and_override_both_palettes() {
+        for tokens in [Tokens::DARK, Tokens::LIGHT] {
+            for rgb in [[0, 0, 0], [255, 255, 255], [12, 128, 240]] {
+                let code = u32::from_be_bytes([1, rgb[0], rgb[1], rgb[2]]);
+                assert_eq!(tokens.group(code).to_array(), [rgb[0], rgb[1], rgb[2], 255]);
+                assert!(tokens.group_backdrop(code)[0].a() > 0);
+            }
+        }
         let color = Some([16, 128, 255]);
         assert_eq!(decode_color(&encode_color(color)), color);
         for bad in ["", "#FFFFFF", "GGFFFF", "ＦＦ", "00000", "0000000"] {

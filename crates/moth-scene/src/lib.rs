@@ -39,13 +39,23 @@ pub const GROUP_HEADER: f32 = 36.0;
 pub struct Group {
     /// Shown in the title chip; empty means untitled.
     pub title: String,
-    /// Palette code below [`GROUP_COLORS`]; never a literal color, so themes stay free.
-    pub color: u8,
+    /// Theme palette code, or tagged RGB (`0x01RRGGBB`) for a custom swatch.
+    pub color: u32,
 }
 impl Group {
+    /// Encodes an exact sRGB swatch without confusing black with a palette code.
+    pub fn custom_color([r, g, b]: [u8; 3]) -> u32 {
+        u32::from_be_bytes([1, r, g, b])
+    }
+    /// Returns a custom swatch; palette colors continue to follow the theme.
+    pub fn rgb(&self) -> Option<[u8; 3]> {
+        let [tag, r, g, b] = self.color.to_be_bytes();
+        (tag == 1).then_some([r, g, b])
+    }
     /// Rejects values a reader or the UI could not show safely.
     pub fn valid(&self) -> bool {
-        self.title.len() <= MAX_GROUP_TITLE && self.color < GROUP_COLORS
+        self.title.len() <= MAX_GROUP_TITLE
+            && (self.color < u32::from(GROUP_COLORS) || self.rgb().is_some())
     }
 }
 /// Note font size in world units; the renderer and the UI share it so measured
@@ -1404,7 +1414,7 @@ mod tests {
             let mut ids = Vec::new();
             for i in 0..12 {
                 let item = if i % 3 == 0 {
-                    Item::group(Group { title: format!("g{i}"), color: (i % 6) as u8 }, square(i as f32 * 40.), FractionalIndex::default())
+                    Item::group(Group { title: format!("g{i}"), color: (i % 6) as u32 }, square(i as f32 * 40.), FractionalIndex::default())
                 } else {
                     Item::image(blake3::hash(&[i as u8]), square(i as f32 * 40.), None)
                 };
@@ -1418,7 +1428,7 @@ mod tests {
                     1 => Command::SetParent { id, parent: None },
                     2 => Command::SetRect { id, rect: Rect { x: value, y: value / 2., width: 10. + turn, height: 20. } },
                     3 => Command::SetTransform { id, transform: Transform { rotation: turn, ..Transform::default() } },
-                    4 => Command::SetGroup { id, group: Group { title: "t".into(), color: b as u8 % GROUP_COLORS } },
+                    4 => Command::SetGroup { id, group: Group { title: "t".into(), color: if b % 2 == 0 { Group::custom_color([a as u8, b as u8, 240]) } else { u32::from(b as u8 % GROUP_COLORS) } } },
                     _ => Command::Remove(id),
                 };
                 let before = snapshot(&scene);

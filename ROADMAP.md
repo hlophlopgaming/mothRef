@@ -37,7 +37,7 @@ Every milestone and every pull request is judged against these, in this order:
 
 ## Where we are
 
-Latest release: **0.1.0-alpha.22** (2026-11-08). Pre-alpha builds for Windows, macOS and Linux are attached to every tagged release on GitHub Releases.
+Latest release: **0.1.0-alpha.23** (2026-11-10). Pre-alpha builds for Windows, macOS and Linux are attached to every tagged release on GitHub Releases.
 
 | Milestone | State | What is left |
 | --- | --- | --- |
@@ -215,6 +215,7 @@ Open:
 <summary>Done</summary>
 
 - [x] Performance mode setting: In memory (default), In memory with low zoom quality, Cache on disk, No cache; persisted, explained in English and Russian
+- [x] Full-resolution opening can snapshot current-schema boards into private recovery storage on Linux reflink filesystems, preserving independent originals and falling back to the existing copy path elsewhere.
 - [x] Decode once per zoom range: larger whole-image previews use 2× headroom; coarse fallbacks stay at their requested size, and cached previews/tiles avoid re-reading, decoding and BC7-encoding the original
 - [x] RAM cache with an explicit budget and LRU eviction (12.5% of available RAM, at most 1 GiB, written through to disk), released when leaving an in-memory mode
 - [x] Disk cache: GPU-ready pyramids in the OS cache folder, per-mip checksums, 8 GiB budget, LRU pruning off the UI thread
@@ -242,6 +243,7 @@ Open:
 <details>
 <summary>Done</summary>
 
+- [x] Image intake owns burst completion, arrangement feedback and undo-group lifetime together; the prompt and worker drain share readiness, and rejected layouts remain retryable.
 - [x] Canvas zoom buttons repeat while held; parented file picker; initial interface scale accounts for monitor resolution and native DPI, with a persisted override in Settings › Appearance.
 - [x] Empty-board file and paste buttons sit above canvas input so clicking them does not start a selection.
 
@@ -353,6 +355,7 @@ Open:
 <summary>Done</summary>
 
 - [x] Minimap / navigator: board overview with the viewport rectangle; click or drag to move the camera; toggle with a shortcut — shipped early with configurable size, position and opacity (0.1.0-alpha.9–10)
+- [x] Group refinements: nested title chips avoid overlap; new groups get automatic colors; group color actions show swatches and an exact RGB picker (schema 8); pack and fit respects selection.
 - [x] Groups and a hierarchy tree view: Ctrl/⌘+G adds a tinted backdrop that hugs its members and focuses an inline title field at once; clicking the title selects the whole group, dragging it moves the group, dropping an item on the backdrop adds it and dragging it out takes it out; groups nest; the hierarchy tree lives in a slide-out Layers drawer where rows drag into groups, next to other items or out to the board; images pasted or dropped onto a backdrop join that group; exports draw backdrops and titles (DESIGN.md screen 14; `.moth` schema 6, [decision 0021](docs/decisions/0021-groups.md))
 - [x] **Key feature of 0.7.** Timed drawing sessions (gesture mode) on top of the slideshow: images from the board, a group or a selection; fixed intervals (30 s, 1, 2, 5, 10 min) or a session plan (for example 10 × 30 s, 5 × 2 min); pause, skip, countdown and a sound cue; list of the shown images at the end; runs full screen or in a mini window pinned over other apps that keeps the current image's aspect ratio while resized — setup with saved plans, 3-2-1 countdown, last-seconds warning, auto-hiding panel, "+30 s", summary with stars and four kinds of repeat (DESIGN.md screens 12–12д)
 

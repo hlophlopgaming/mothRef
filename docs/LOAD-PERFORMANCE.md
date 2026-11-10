@@ -771,3 +771,76 @@ PNG cold zoom is dominated by re-reading rows above each batch (16 passes over
 sequential JPEG. On reference hardware, record the same table with three runs per
 cell (medians), plus the app's board open time with these images on a board.
 
+
+## Linux reflink opening — 2026-11-10
+
+Full-resolution opening now requests an optional private filesystem snapshot;
+see [decision 0024](decisions/0024-reflink-opening.md). The existing recovery
+journal remains independent of the user file. Other modes retain early preview
+loading; old/damaged files, unsupported filesystems and excessive retained
+original history fall back to ordinary copying.
+
+### Measurement
+
+This session used a one-off profiler around the production storage worker,
+`DecodePool::preload` and disk-cache backend, excluding the real window, GPU
+uploads and frame pacing. Source, recovery and cache were on Btrfs on the same
+Apacer SATA SSD; `/tmp` was not used for timed durable writes. Builds finished
+before measurements, which ran one at a time. The OS source cache was warm.
+
+The workload was a private copy of `HEAD:hardPics.moth`: 29 unique images,
+76,931,569 encoded original bytes, 2,506 BC7 tiles and 29 previews totaling
+165,406,384 prepared bytes. The old schema-4 sample was compacted into schema 7
+only in the scratch directory; both implementations were compared against that
+same schema-7 file. The user's working-tree deletion was preserved.
+
+Three alternating runs per implementation, medians and ranges:
+
+| LOD cache | Original copy path | Snapshot path |
+| --- | ---: | ---: |
+| Ready | 492 ms (407–509) | 221 ms (214–234) |
+| Empty | 2147 ms (1798–2793) | 2020 ms (1840–2255) |
+
+Ready-cache full preparation improved by 55.1% (2.23×). User-space
+writes fell from about 77 MB to 4,860 bytes of checkpoint/recovery metadata;
+process I/O accounting reported about 0.3 MB written instead of 77 MB. The new
+private inode required reading its original data from disk for validation, so
+this is not a claim of zero I/O. The empty-cache runs remain around two seconds,
+with substantial variance; no reliable cold-cache speedup is claimed.
+
+The first prepared result arrives later on the snapshot path. It is therefore
+selected only by full-resolution mode, which waits for complete detail anyway.
+Viewport modes continue using the original progressive copy path.
+
+The current binary was also exercised with the schema-4 sample and with recovery
+storage on a different filesystem (tmpfs); both completed through the fallback.
+The tmpfs result is a compatibility check, not a durable-storage timing comparison.
+
+### Validation and limits
+
+- Release application and xtask builds passed; the original release binary is
+  retained as `target/release/mothref-before-reflink`.
+- Storage tests: 34 passed, 2 existing manual benchmarks ignored, run sequentially
+  with disk-backed TMPDIR. Coverage includes independent source edits, retained
+  original offsets, snapshot history trimming, fallback cases, malformed-input
+  retry, every item kind, save/undo/recovery and five process kills after the first
+  durable loading acknowledgment.
+- App tests: 153 passed, 1 existing manual measurement ignored. The 20 document
+  tests were rerun after the final storage changes and passed.
+- Formatting, workspace Clippy and cargo-deny passed. Cargo-deny reported existing
+  duplicate-dependency warnings; no dependency version or lockfile changed.
+- `xtask killtest 50` passed: no acknowledged commands lost.
+- Windows/macOS/Android retain the ordinary copy branch; native execution on those
+  systems was not performed. GPU uploads, real UI open time, power-loss behavior
+  and the tier-3 release gate were not measured/run here.
+
+Session-local profiler and logs are under `/tmp/mothref-load-profile.rs`,
+`/tmp/mothref-profile-rlibs.json`, `/tmp/mothref-load-review-snapshot-final.txt`,
+`/tmp/mothref-load-review-snapshot-cold-final.txt` and
+`/tmp/mothref-load-review-snapshot-crossfs.txt`. They are diagnostic artifacts,
+not a permanent benchmark command; reference-hardware qualification remains open.
+
+Possible APFS/macOS, ReFS/Windows and NTFS storage follow-ups are recorded in
+[deferred work](DEFERRED.md#ускорить-открытие-досок-на-macos-и-windows).
+They are not implemented or measured, and the Linux speedup is not a projection
+for those platforms.

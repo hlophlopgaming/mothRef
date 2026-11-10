@@ -22,10 +22,10 @@ impl App {
             DismissRecovery | RestoreRecovery => {
                 !self.workspace.recovery_paths().is_empty() && self.workspace.board.idle()
             }
-            CancelArrange => self.workspace.board.notices.arrange_prompt.is_some(),
+            CancelArrange => self.workspace.board.intake.burst.prompt().is_some(),
             _ => {
                 // The added-images toast: its layouts and undo.
-                self.workspace.board.notices.added.is_some()
+                self.workspace.board.intake.burst.added().is_some()
                     && self.workspace.board.idle()
                     && !self.workspace.board.locked
             }
@@ -42,7 +42,7 @@ impl App {
             action,
             AddedHorizontal | AddedVertical | AddedGrid | AddedOptimal
         ) {
-            if let Some(added) = &self.workspace.board.notices.added {
+            if let Some(added) = self.workspace.board.intake.burst.added() {
                 let ids = added.ids.clone();
                 let mode = match action {
                     AddedHorizontal => arrange::Arrange::Horizontal,

@@ -9,6 +9,8 @@ pub(super) struct Modal {
     /// The system "Save as" dialog is open; the board waits for its answer.
     pub(super) dialog: Option<()>,
     pub(super) recovery: usize,
+    /// Snapshot of target groups and the uncommitted RGB draft.
+    pub(super) group_color: Option<(Vec<moth_scene::Uuid>, [u8; 3])>,
 }
 
 impl Modal {
@@ -23,6 +25,42 @@ impl Modal {
     ) -> Vec<Intent> {
         let mut intents = Vec::new();
         let board = &workspace.board;
+        if let Some((_, rgb)) = &mut self.group_color {
+            let mut open = true;
+            egui::Window::new(moth_ui::text(moth_ui::Text::GroupColor))
+                .id(egui::Id::new("group_color_picker"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .show(ui.ctx(), |ui| {
+                    let mut color =
+                        moth_ui::tokens(ui.ctx()).group(moth_scene::Group::custom_color(*rgb));
+                    if egui::color_picker::color_picker_color32(
+                        ui,
+                        &mut color,
+                        egui::color_picker::Alpha::Opaque,
+                    ) {
+                        *rgb = [color.r(), color.g(), color.b()];
+                    }
+                    ui.horizontal(|ui| {
+                        for (label, channel) in ["R", "G", "B"].into_iter().zip(rgb.iter_mut()) {
+                            ui.label(label);
+                            ui.add(egui::DragValue::new(channel).range(0..=255));
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        for action in [Action::ApplyGroupColor, Action::CancelGroupColor] {
+                            if super::surfaces::button(ui, action, enabled, registry, false, false)
+                            {
+                                intents.push(Intent::Action(action));
+                            }
+                        }
+                    });
+                });
+            if !open {
+                intents.push(Intent::Action(Action::CancelGroupColor));
+            }
+        }
         let recovery_paths = workspace.recovery_paths();
         if workspace.library && !recovery_paths.is_empty() && board.scene.is_empty() {
             self.recovery = self.recovery.min(recovery_paths.len() - 1);
@@ -208,15 +246,14 @@ impl Modal {
                 intents.push(Intent::Action(Action::KeepOpen));
             }
         }
-        let settled = board.settled();
+        let settled = workspace.intake_settled();
         if let Err(wait) = settled
-            && board.notices.arrange_prompt.is_some()
+            && board.intake.burst.prompt().is_some()
         {
             // Images are still arriving: the prompt (and auto-arrange) waits for all of them.
             ui.ctx().request_repaint_after(wait);
         }
-        if let Some(ids) = board.notices.arrange_prompt.clone()
-            && !workspace.receiving_drop
+        if let Some(ids) = board.intake.burst.prompt().cloned()
             && settled.is_ok()
         {
             if settings.auto_arrange || ids.len() <= settings.threshold {
@@ -224,7 +261,6 @@ impl Modal {
                     super::tools::layout(settings.default_arrange).1,
                     ids.clone(),
                 ));
-                intents.push(Intent::DismissArrangePrompt);
             } else {
                 let tokens = moth_ui::tokens(ui.ctx());
                 let modal = egui::Modal::new(egui::Id::new("arrange_prompt"))
@@ -284,7 +320,7 @@ impl Modal {
                 }
             }
         }
-        if let Some(added) = &board.notices.added {
+        if let Some(added) = board.intake.burst.added() {
             intents.extend(super::surfaces::added(
                 ui.ctx(),
                 board.view.viewport,

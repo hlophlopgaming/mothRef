@@ -341,7 +341,7 @@ pub(super) fn backdrops(
     tokens: moth_ui::Tokens,
 ) -> [moth_render::Backdrop; moth_scene::GROUP_COLORS as usize] {
     std::array::from_fn(|code| {
-        let [fill, border] = tokens.group_backdrop(code as u8);
+        let [fill, border] = tokens.group_backdrop(code as u32);
         moth_render::Backdrop {
             fill: linear(fill),
             border: linear(border),

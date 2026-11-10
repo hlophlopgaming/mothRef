@@ -56,7 +56,9 @@ pub(super) fn area(action: Action) -> Area {
         | CancelItem | ResetRotation | ResetFlip | ResetScale | NormalizeScale
         | SamplingDefault | SamplingSmooth | SamplingNearest | SamplingAutomatic => Area::Edit,
         Group | Ungroup | EnterGroup | RenameGroup | GroupNeutral | GroupSage | GroupAmber
-        | GroupSky | GroupWing | GroupLilac => Area::Group,
+        | GroupSky | GroupWing | GroupLilac | GroupCustom | ApplyGroupColor | CancelGroupColor => {
+            Area::Group
+        }
         Horizontal | Vertical | Grid | Optimal | ArrangeName | ArrangeTime | PackFit
         | NormalizeWidth | NormalizeHeight | NormalizeSize | NormalizeArea | AlignLeft
         | AlignRight | AlignTop | AlignBottom | Stack | DistributeHorizontal
@@ -90,7 +92,7 @@ pub(super) fn gate(action: Action) -> Gate {
     match action {
         SaveAndClose | Discard | KeepOpen | CancelDialog | ContinueConversion | SaveConversion
         | DismissRecovery | RestoreRecovery | CancelArrange | AddedHorizontal | AddedVertical
-        | AddedGrid | AddedOptimal | UndoAdded | DismissAdded => Gate::None,
+        | AddedGrid | AddedOptimal | UndoAdded | DismissAdded | CancelGroupColor => Gate::None,
         Layers | DrawingSession | ClickThrough => Gate::NoSession,
         Palette | BindingSettings | Shortcuts | Settings | CloseWindow | New | Open | Images
         | Library | CloseTab | NextTab | Overlay | Minimize | Maximize | Fullscreen | WindowBar
@@ -109,12 +111,12 @@ pub(super) fn gate(action: Action) -> Gate {
         | SendBack | BringForward | SendBackward | EditItem | ApplyItem | CancelItem
         | ResetRotation | ResetFlip | ResetScale | NormalizeScale | Group | Ungroup
         | EnterGroup | RenameGroup | GroupNeutral | GroupSage | GroupAmber | GroupSky
-        | GroupWing | GroupLilac | Horizontal | Vertical | Grid | Optimal | ArrangeName
-        | ArrangeTime | PackFit | NormalizeWidth | NormalizeHeight | NormalizeSize
-        | NormalizeArea | AlignLeft | AlignRight | AlignTop | AlignBottom | Stack
-        | DistributeHorizontal | DistributeVertical | ArrangeOptions | ScaleApply | MoveDrag
-        | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag | PanSpaceDrag | PanAltDrag
-        | ZoomDrag => Gate::Ready,
+        | GroupWing | GroupLilac | GroupCustom | ApplyGroupColor | Horizontal | Vertical | Grid
+        | Optimal | ArrangeName | ArrangeTime | PackFit | NormalizeWidth | NormalizeHeight
+        | NormalizeSize | NormalizeArea | AlignLeft | AlignRight | AlignTop | AlignBottom
+        | Stack | DistributeHorizontal | DistributeVertical | ArrangeOptions | ScaleApply
+        | MoveDrag | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag | PanSpaceDrag
+        | PanAltDrag | ZoomDrag => Gate::Ready,
     }
 }
 impl App {

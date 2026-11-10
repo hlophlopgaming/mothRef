@@ -2,6 +2,7 @@
 //! Serializes durable mutations on a bounded storage queue.
 use super::DesktopStorage;
 mod recovery;
+mod snapshot;
 use moth_format::{Handle, Storage, board};
 use moth_scene::{BlobId, Command, Item, Rect, Scene};
 pub use recovery::Recovery;
@@ -35,6 +36,8 @@ pub enum Request {
     Autosave(PathBuf),
     /// Load into an empty board and establish a new recovery journal.
     Open(PathBuf),
+    /// Prefer a private filesystem snapshot when the caller waits for full detail.
+    OpenSnapshot(PathBuf),
     /// Copy a backup into a new private journal without retaining its save path.
     OpenBackup(PathBuf),
     /// Restore a validated private journal, retaining its original save destination.
@@ -322,14 +325,7 @@ impl State {
 
     fn journal(&mut self) -> io::Result<&mut File> {
         if self.journal.is_none() {
-            let directory = self.storage.recovery_directory()?;
-            std::fs::create_dir_all(&directory)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
-            }
-            let guard = recovery::lock(&directory.join("board.moth"))?;
+            let (directory, guard) = recovery::prepare(&self.storage)?;
             self.journal = Some(create(&directory.join("board.moth"))?);
             self.journal_guard = Some(guard);
             sync_directory(&self.storage.base_directory()?)?;
@@ -614,14 +610,33 @@ impl State {
         }
         Ok(Completion::Saved)
     }
+    /// Originals must remain independent of changes to the user-opened file.
+    fn snapshot(&mut self, source: &File) -> io::Result<Option<board::Board>> {
+        if self.journal.is_some() {
+            return Ok(None);
+        }
+        match snapshot::prepare(&self.storage, source) {
+            Ok(Some(prepared)) => {
+                self.journal = Some(prepared.journal);
+                self.journal_guard = Some(prepared.guard);
+                Ok(Some(prepared.board))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => {
+                self.poisoned = true;
+                Err(e)
+            }
+        }
+    }
     fn open(&mut self, path: PathBuf) -> io::Result<Completion> {
-        self.open_from(path.clone(), Some(path), false)
+        self.open_from(path.clone(), Some(path), false, false)
     }
     fn open_from(
         &mut self,
         path: PathBuf,
         destination: Option<PathBuf>,
         restored: bool,
+        snapshot: bool,
     ) -> io::Result<Completion> {
         let _span = tracing::info_span!("open_board").entered();
         if !self.scene.is_empty() {
@@ -644,9 +659,17 @@ impl State {
         if file.metadata()?.len() > 8 * 1024 * 1024 * 1024 {
             return Err(error("MothRef board exceeds 8 GiB file limit"));
         }
-        let loaded = {
-            let _span = tracing::info_span!("parse_moth").entered();
-            board::read(&mut file).map_err(error)?
+        let snapshot = if snapshot {
+            self.snapshot(&file)?
+        } else {
+            None
+        };
+        let (loaded, cloned) = match snapshot {
+            Some(loaded) => (loaded, true),
+            None => {
+                let _span = tracing::info_span!("parse_moth").entered();
+                (board::read(&mut file).map_err(error)?, false)
+            }
         };
         self.journal()?;
         if let Some(destination) = &self.destination {
@@ -677,25 +700,34 @@ impl State {
                         .ok_or_else(|| error("Missing original"))?;
                     let _span =
                         tracing::info_span!("stage_original", bytes = blob.length).entered();
-                    file.seek(SeekFrom::Start(blob.offset))?;
-                    let mut bytes = vec![0; blob.length as usize];
-                    file.read_exact(&mut bytes)?;
-                    if blake3::hash(&bytes) != hash {
-                        return Err(error("Source changed before it could be saved"));
-                    }
-                    let handle = self.append_original(&bytes)?;
+                    let handle = if cloned {
+                        self.storage.register_range(
+                            self.storage.recovery_directory()?.join("board.moth"),
+                            *blob,
+                        )?
+                    } else {
+                        file.seek(SeekFrom::Start(blob.offset))?;
+                        let mut bytes = vec![0; blob.length as usize];
+                        file.read_exact(&mut bytes)?;
+                        if blake3::hash(&bytes) != hash {
+                            return Err(error("Source changed before it could be saved"));
+                        }
+                        self.append_original(&bytes)?
+                    };
                     self.blobs.insert(hash);
                     copied.insert(hash);
                     self.sources.insert(hash, handle);
                     batch.sources.push((hash, handle));
-                    batch.bytes += bytes.len();
+                    batch.bytes += blob.length as usize;
                 }
                 let command = Command::Insert(item.clone());
                 if self.scene.is_empty() {
                     self.undo.clear();
                     self.redo.clear();
                 }
-                self.append_pending(2, &board::encode(&command))?;
+                if !cloned {
+                    self.append_pending(2, &board::encode(&command))?;
+                }
                 self.scene.apply(command.clone()).map_err(error)?;
                 batch.commands.push(command);
                 self.publish_loading(&mut batch, false)?;
@@ -706,7 +738,9 @@ impl State {
             self.publish_loading(&mut batch, true)?;
         }
         loading?;
-        self.commit(3, &board::snapshot(&loaded.scene).map_err(error)?)?;
+        if !cloned {
+            self.commit(3, &board::snapshot(&loaded.scene).map_err(error)?)?;
+        }
         self.sources.retain(|hash, _| copied.contains(hash));
         self.blobs = copied;
         self.undo.clear();
@@ -977,7 +1011,13 @@ impl State {
             }
             Request::Autosave(path) => Ok(Some(self.save(path, false)?)),
             Request::Open(path) => Ok(Some(self.open(path)?)),
-            Request::OpenBackup(path) => Ok(Some(self.open_from(path, None, true)?)),
+            Request::OpenSnapshot(path) => Ok(Some(self.open_from(
+                path.clone(),
+                Some(path),
+                false,
+                true,
+            )?)),
+            Request::OpenBackup(path) => Ok(Some(self.open_from(path, None, true, false)?)),
             Request::Restore(path) => {
                 let directory = recovery::validate(&self.storage, &path)?;
                 if directory == self.storage.recovery_directory()? {
@@ -988,7 +1028,7 @@ impl State {
                     tracing::warn!(%error, "recovery destination unavailable; restoring as an unnamed board");
                     None
                 });
-                let completion = self.open_from(path.clone(), destination, true)?;
+                let completion = self.open_from(path.clone(), destination, true, false)?;
                 // Keep the source bytes even when a damaged tail was only partially recoverable.
                 let archive = directory.join(format!("restored-{}.moth", uuid::Uuid::now_v7()));
                 if let Err(error) =
@@ -1550,7 +1590,9 @@ mod tests {
         std::fs::create_dir_all(&directory).unwrap();
         let (source, copy) = (directory.join("all.moth"), directory.join("copy.moth"));
         std::fs::write(&source, bytes).unwrap();
-        first.request(Request::Open(source)).unwrap();
+        let handle = first.storage.register(source.clone()).unwrap();
+        board::compact(first.storage.as_ref(), handle).unwrap();
+        first.request(Request::OpenSnapshot(source)).unwrap();
         same(&first.scene, "open");
         first.request(Request::Save(copy.clone())).unwrap();
         first.journal = None;
@@ -2033,6 +2075,289 @@ mod tests {
         }
     }
 
+    #[test]
+    fn current_schema_snapshot_is_independent_and_keeps_edits_recoverable() {
+        let mut opened = state();
+        let root = opened.storage.base_directory().unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("input.moth");
+        let bytes = include_bytes!("../../../corpus/moth/v7.moth");
+        std::fs::write(&source, bytes).unwrap();
+        let handle = opened.storage.register(source.clone()).unwrap();
+        board::compact(opened.storage.as_ref(), handle).unwrap();
+        let loaded = board::read(&mut File::open(&source).unwrap()).unwrap();
+        let checkpoint = board::snapshot(&loaded.scene).unwrap();
+        let mut file = OpenOptions::new().append(true).open(&source).unwrap();
+        for _ in 0..10 {
+            append_record(&mut file, 3, &checkpoint).unwrap();
+        }
+        file.sync_all().unwrap();
+        drop(file);
+        let bytes = std::fs::read(&source).unwrap();
+        let probe = root.join("probe.tmp");
+        let supported = snapshot::clone(&File::open(&source).unwrap(), &probe)
+            .unwrap()
+            .is_some();
+        if probe.exists() {
+            std::fs::remove_file(probe).unwrap();
+        }
+        opened
+            .request(Request::OpenSnapshot(source.clone()))
+            .unwrap();
+        let journal = opened
+            .storage
+            .recovery_directory()
+            .unwrap()
+            .join("board.moth");
+        if supported {
+            assert_eq!(
+                opened.commits, 0,
+                "supported snapshots must avoid rebuilding the journal"
+            );
+            assert!(
+                journal.metadata().unwrap().len() < bytes.len() as u64,
+                "old layout checkpoints are trimmed from the private snapshot"
+            );
+            let recovered = board::read(&mut File::open(&journal).unwrap()).unwrap();
+            for (hash, blob) in &loaded.blobs {
+                assert_eq!(recovered.blobs[hash].offset, blob.offset);
+            }
+        }
+        let note = Item::text(
+            "after opening",
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 100.,
+                height: 40.,
+            },
+            None,
+        );
+        opened
+            .request(Request::Apply(Command::Insert(note.clone()), None))
+            .unwrap();
+        assert_eq!(
+            std::fs::read(&source).unwrap(),
+            bytes,
+            "journal appends must not modify the source"
+        );
+        std::fs::write(&source, b"external replacement").unwrap();
+        for (hash, handle) in &opened.sources {
+            assert_eq!(
+                blake3::hash(&opened.original(*hash, *handle).unwrap()),
+                *hash
+            );
+        }
+        let expected: Vec<_> = opened.scene.items().cloned().collect();
+        opened.journal = None;
+        opened.journal_guard = None;
+        opened.destination = None;
+        let mut restored = state();
+        let restored_root = restored.storage.base_directory().unwrap();
+        restored.storage = Arc::new(DesktopStorage::in_directory(root.clone()));
+        restored.request(Request::Restore(journal)).unwrap();
+        for item in &expected {
+            assert_eq!(restored.scene.get(item.id), Some(item));
+        }
+        assert_eq!(restored.scene.len(), expected.len());
+        restored
+            .request(Request::Apply(
+                Command::SetRect {
+                    id: note.id,
+                    rect: Rect {
+                        x: 10.,
+                        ..note.rect
+                    },
+                },
+                None,
+            ))
+            .unwrap();
+        restored.request(Request::Undo).unwrap();
+        assert_eq!(restored.scene.get(note.id), Some(&note));
+        let saved = root.join("saved.moth");
+        restored.save(saved.clone(), false).unwrap();
+        assert_eq!(
+            board::read(&mut File::open(saved).unwrap())
+                .unwrap()
+                .scene
+                .len(),
+            expected.len()
+        );
+        assert_eq!(std::fs::read(&source).unwrap(), b"external replacement");
+        drop(restored);
+        drop(opened);
+        std::fs::remove_dir_all(root).unwrap();
+        if restored_root.exists() {
+            std::fs::remove_dir_all(restored_root).unwrap();
+        }
+    }
+
+    #[test]
+    fn snapshot_falls_back_for_old_damaged_or_bloated_boards() {
+        for case in ["old", "damaged", "bloated"] {
+            let mut opened = state();
+            let root = opened.storage.base_directory().unwrap();
+            std::fs::create_dir_all(&root).unwrap();
+            let path = root.join("input.moth");
+            let mut bytes = if case == "old" {
+                include_bytes!("../../../corpus/moth/v4.moth").to_vec()
+            } else {
+                include_bytes!("../../../corpus/moth/v7.moth").to_vec()
+            };
+            if case == "damaged" {
+                bytes.extend_from_slice(b"torn tail");
+            }
+            std::fs::write(&path, &bytes).unwrap();
+            if case == "bloated" {
+                let loaded = board::read(&mut std::io::Cursor::new(&bytes)).unwrap();
+                let mut bloated = Vec::new();
+                board::initialize(&mut bloated).unwrap();
+                let offset = bloated.len() as u64;
+                board::append(&mut bloated, offset, 1, &vec![42; 64 * 1024]).unwrap();
+                for blob in loaded.blobs.values() {
+                    let offset = bloated.len() as u64;
+                    board::append(
+                        &mut bloated,
+                        offset,
+                        1,
+                        &bytes[blob.offset as usize..(blob.offset + blob.length) as usize],
+                    )
+                    .unwrap();
+                }
+                let offset = bloated.len() as u64;
+                board::append(
+                    &mut bloated,
+                    offset,
+                    3,
+                    &board::snapshot(&loaded.scene).unwrap(),
+                )
+                .unwrap();
+                std::fs::write(&path, bloated).unwrap();
+            }
+            let mut file = File::open(&path).unwrap();
+            let loaded = board::read(&mut file).unwrap();
+            assert!(opened.snapshot(&file).unwrap().is_none(), "{case}");
+            assert!(opened.journal.is_none());
+            opened.request(Request::OpenSnapshot(path)).unwrap();
+            assert_eq!(opened.scene.len(), loaded.scene.len());
+            let journal = opened
+                .storage
+                .recovery_directory()
+                .unwrap()
+                .join("board.moth");
+            assert!(
+                !board::read(&mut File::open(journal).unwrap())
+                    .unwrap()
+                    .recovered
+            );
+            assert!(
+                !std::fs::read_dir(opened.storage.recovery_directory().unwrap())
+                    .unwrap()
+                    .any(|e| e.unwrap().path().extension().is_some_and(|x| x == "tmp"))
+            );
+            drop(opened);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn invalid_snapshot_input_does_not_poison_the_next_open() {
+        let mut opened = state();
+        let root = opened.storage.base_directory().unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("input.moth");
+        let mut bytes = include_bytes!("../../../corpus/moth/v7.moth").to_vec();
+        bytes[..4].copy_from_slice(b"NOPE");
+        std::fs::write(&source, bytes).unwrap();
+        assert!(
+            opened
+                .request(Request::OpenSnapshot(source.clone()))
+                .is_err()
+        );
+        assert!(!opened.poisoned);
+        assert!(opened.journal.is_none());
+        std::fs::write(&source, include_bytes!("../../../corpus/moth/v7.moth")).unwrap();
+        opened.request(Request::OpenSnapshot(source)).unwrap();
+        assert!(!opened.scene.is_empty());
+        drop(opened);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn snapshot_open_crash_writer() {
+        let Some(root) = std::env::var_os("MOTHREF_SNAPSHOT_CRASH_ROOT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let ready = root.join("ready");
+        let storage = Arc::new(DesktopStorage::in_directory(root.join("recovery")));
+        let worker = Worker::new_tab(
+            storage,
+            Arc::new(move || {
+                std::fs::write(&ready, b"durable loading batch").unwrap();
+                loop {
+                    std::thread::park();
+                }
+            }),
+        )
+        .unwrap();
+        worker
+            .requests
+            .send(Request::OpenSnapshot(root.join("input.moth")))
+            .unwrap();
+        loop {
+            std::thread::park();
+        }
+    }
+
+    #[test]
+    fn snapshot_open_recovers_when_killed_after_first_loading_ack() {
+        for _ in 0..5 {
+            let root = std::env::temp_dir()
+                .join(format!("mothref-snapshot-crash-{}", uuid::Uuid::now_v7()));
+            std::fs::create_dir_all(&root).unwrap();
+            let source = root.join("input.moth");
+            let bytes = include_bytes!("../../../corpus/moth/v7.moth");
+            std::fs::write(&source, bytes).unwrap();
+            let preparing = DesktopStorage::in_directory(root.join("preparing"));
+            let handle = preparing.register(source.clone()).unwrap();
+            board::compact(&preparing, handle).unwrap();
+            let bytes = std::fs::read(&source).unwrap();
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "boards::tests::snapshot_open_crash_writer",
+                    "--nocapture",
+                ])
+                .env("MOTHREF_SNAPSHOT_CRASH_ROOT", &root)
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !root.join("ready").exists() && std::time::Instant::now() < deadline {
+                if child.try_wait().unwrap().is_some() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            let ready = root.join("ready").exists();
+            let _ = child.kill();
+            child.wait().unwrap();
+            assert!(ready, "child must publish durable loading progress");
+            let storage = DesktopStorage::in_directory(root.join("recovery"));
+            let journals = recovery::discover(&storage).unwrap();
+            assert_eq!(journals.len(), 1);
+            let recovered = board::read(&mut File::open(&journals[0].journal).unwrap()).unwrap();
+            assert!(!recovered.scene.is_empty());
+            for item in recovered.scene.items() {
+                if let Some(hash) = item.blob() {
+                    assert!(recovered.blobs.contains_key(&hash));
+                }
+            }
+            assert_eq!(std::fs::read(source).unwrap(), bytes);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
     #[test]
     fn opening_reads_originals_from_its_own_journal() {
         let mut state = state();

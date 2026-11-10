@@ -45,7 +45,12 @@ pub(super) fn create(scene: &Scene, selection: &HashSet<Uuid>) -> Option<(Uuid, 
         .map(|item| moth_scene::footprint(item))
         .reduce(union)?;
     let mut group = Item::group(
-        Group::default(),
+        Group {
+            color: (scene.items().filter(|item| item.is_group()).count()
+                % (moth_scene::GROUP_COLORS as usize - 1)
+                + 1) as u32,
+            ..Group::default()
+        },
         moth_scene::group_frame(hull),
         FractionalIndex::new_before(&first.z),
     );
@@ -222,7 +227,7 @@ pub(super) fn removal(scene: &Scene, mut ids: HashSet<Uuid>) -> Vec<Command> {
         .map(|item| Command::Remove(item.id))
         .collect()
 }
-/// Screen rectangles of the title chips drawn this frame, innermost last; the pointer
+/// Screen rectangles of the title chips drawn this frame; the pointer
 /// handler hit-tests them before the board so a chip can be grabbed like its group.
 pub(super) fn chip_rects(ctx: &egui::Context) -> Vec<(Uuid, egui::Rect)> {
     ctx.data(|data| data.get_temp(egui::Id::new("group_chips")))
@@ -244,20 +249,12 @@ pub(super) fn chips(
     let font = egui::TextStyle::Button.resolve(ui.style());
     let mut intents = Vec::new();
     let mut rects = Vec::new();
-    shown.sort_by_cached_key(|item| board.scene.ancestors(item.id).count());
-    // The title field of a group still on its way to the journal opens at once.
-    if let Some((id, frame)) = board.group_edits.pending_group
-        && board.scene.get(id).is_none()
-        && let Some((_, initial)) = board
-            .group_edits
-            .renaming
-            .as_ref()
-            .filter(|(r, _)| *r == id)
-    {
-        let corner = camera.screen([frame.x, frame.y]);
-        let left = egui::pos2(corner[0] + pad, corner[1] - height / 2.);
-        intents.extend(title_editor(ui, id, initial, left, tokens.group(0)));
-    }
+    shown.sort_by_cached_key(|item| {
+        (
+            std::cmp::Reverse(board.scene.ancestors(item.id).count()),
+            item.id,
+        )
+    });
     for item in shown.iter() {
         let Some(style) = board.group_style(item.id) else {
             continue;
@@ -265,15 +262,6 @@ pub(super) fn chips(
         let corner = camera.screen([item.rect.x, item.rect.y]);
         let left = egui::pos2(corner[0] + pad, corner[1] - height / 2.);
         let swatch = tokens.group(style.color);
-        if let Some((_, initial)) = board
-            .group_edits
-            .renaming
-            .as_ref()
-            .filter(|(id, _)| *id == item.id)
-        {
-            intents.extend(title_editor(ui, item.id, initial, left, swatch));
-            continue;
-        }
         let active = selected == Some(item.id);
         let (title, title_color) = if style.title.is_empty() {
             (
@@ -299,7 +287,27 @@ pub(super) fn chips(
             },
         );
         let width = pad + dot * 2. + pad / 1.5 + galley.size().x + pad / 1.5 + count.size().x + pad;
-        let rect = egui::Rect::from_min_size(left, egui::vec2(width, height));
+        let editing = board
+            .group_edits
+            .renaming
+            .as_ref()
+            .filter(|(id, _)| *id == item.id);
+        let width = if editing.is_some() {
+            width.max(height * 16.)
+        } else {
+            width
+        };
+        let rect = place_chip(
+            egui::Rect::from_min_size(left, egui::vec2(width, height)),
+            &rects,
+            tokens.space_xs as f32,
+        );
+        if let Some((_, initial)) = editing {
+            intents.extend(title_editor(ui, item.id, initial, rect.min, swatch));
+            let index = rects.partition_point(|(_, other)| other.bottom() > rect.bottom());
+            rects.insert(index, (item.id, rect));
+            continue;
+        }
         let painter = ui.painter();
         let radius = height / 2.;
         if active {
@@ -330,11 +338,45 @@ pub(super) fn chips(
         painter.galley(egui::pos2(x, text_y), galley, ink);
         x += title_width + pad / 1.5;
         painter.galley(egui::pos2(x, text_y), count, ink);
-        rects.push((item.id, rect));
+        let index = rects.partition_point(|(_, other)| other.bottom() > rect.bottom());
+        rects.insert(index, (item.id, rect));
+    }
+    // The title field of a group still on its way to the journal opens at once.
+    if let Some((id, frame)) = board.group_edits.pending_group
+        && board.scene.get(id).is_none()
+        && let Some((_, initial)) = board
+            .group_edits
+            .renaming
+            .as_ref()
+            .filter(|(r, _)| *r == id)
+    {
+        let corner = camera.screen([frame.x, frame.y]);
+        let left = egui::pos2(corner[0] + pad, corner[1] - height / 2.);
+        let rect = place_chip(
+            egui::Rect::from_min_size(left, egui::vec2(height * 16., height)),
+            &rects,
+            tokens.space_xs as f32,
+        );
+        intents.extend(title_editor(
+            ui,
+            id,
+            initial,
+            rect.min,
+            tokens.group(board.group_style(id).map_or(0, |style| style.color)),
+        ));
     }
     ui.ctx()
         .data_mut(|data| data.insert_temp(egui::Id::new("group_chips"), rects));
     intents
+}
+fn place_chip(mut rect: egui::Rect, occupied: &[(Uuid, egui::Rect)], gap: f32) -> egui::Rect {
+    // Occupied chips are sorted bottom-first, so moving up needs only one pass.
+    for (_, other) in occupied {
+        if other.expand(gap).intersects(rect) {
+            rect = rect.translate(egui::vec2(0., other.top() - gap - rect.bottom()));
+        }
+    }
+    rect
 }
 fn title_editor(
     ui: &mut egui::Ui,
@@ -688,5 +730,61 @@ fn layer_row(
         && *id != row.id
     {
         intents.push(super::Intent::MoveLayer(*id, Some(row.id)));
+    }
+}
+
+#[cfg(test)]
+mod chip_tests {
+    use super::*;
+    #[test]
+    fn zoomed_out_nested_titles_and_editor_never_overlap() {
+        let mut occupied = Vec::new();
+        for depth in (0..MAX_GROUP_DEPTH).rev() {
+            let desired = egui::Rect::from_min_size(
+                egui::pos2(depth as f32 * 2., depth as f32 * 3.),
+                egui::vec2(if depth == 3 { 640. } else { 140. }, 28.),
+            );
+            let rect = place_chip(desired, &occupied, 4.);
+            assert!(occupied.iter().all(|(_, other)| !rect.intersects(*other)));
+            occupied.push((Uuid::now_v7(), rect));
+        }
+        let isolated = egui::Rect::from_min_size(egui::pos2(1000., 1000.), egui::vec2(140., 28.));
+        assert_eq!(place_chip(isolated, &occupied, 4.), isolated);
+    }
+    #[test]
+    fn newly_created_groups_receive_non_neutral_colors() {
+        let mut scene = Scene::default();
+        let item = Item::text(
+            "ref",
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 100.,
+                height: 100.,
+            },
+            None,
+        );
+        let id = item.id;
+        scene.apply(Command::Insert(item)).unwrap();
+        let (first, commands) = create(&scene, &HashSet::from([id])).unwrap();
+        let mut inverses = Vec::new();
+        for command in commands {
+            inverses.push(scene.apply(command).unwrap());
+        }
+        let first_color = scene.get(first).unwrap().group_style().unwrap().color;
+        assert_ne!(first_color, 0);
+        let (second, commands) = create(&scene, &HashSet::from([first])).unwrap();
+        for command in commands {
+            inverses.push(scene.apply(command).unwrap());
+        }
+        assert_ne!(
+            scene.get(second).unwrap().group_style().unwrap().color,
+            first_color
+        );
+        for inverse in inverses.into_iter().rev() {
+            scene.apply(inverse).unwrap();
+        }
+        assert_eq!(scene.len(), 1);
+        assert!(scene.get(id).unwrap().parent.is_none());
     }
 }

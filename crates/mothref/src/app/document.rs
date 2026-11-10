@@ -92,12 +92,6 @@ fn request_priority(
         .then(a.0.tile.cmp(&b.0.tile))
         .then(a.0.side.cmp(&b.0.side))
 }
-pub(super) struct Added {
-    pub ids: Vec<Uuid>,
-    pub mode: super::arrange::Arrange,
-    pub needs_fit: bool,
-}
-
 pub(super) struct Document {
     pub(super) view: View,
     pub(super) appearance: super::window_mode::Appearance,
@@ -127,6 +121,8 @@ pub(super) struct Document {
 #[derive(Default)]
 pub(super) struct Intake {
     pub(super) in_flight: usize,
+    /// Fit this layout only after its journal batch is acknowledged.
+    pub(super) layout_fit: Option<HashSet<Uuid>>,
     pub(super) loading: bool,
     pub(super) loading_bounds: Option<Rect>,
     pub(super) pasting: usize,
@@ -143,26 +139,7 @@ pub(super) struct Intake {
     pub(super) waiting: Vec<Handle>,
     /// Added files waiting for the clipboard worker to reduce them (Settings › Adding).
     pub(super) reducing: std::collections::VecDeque<std::path::PathBuf>,
-    pub(super) batching: bool,
-    /// Item ids inserted in the current import/paste burst, cleared when it drains.
-    pub(super) burst: Vec<Uuid>,
-    /// Files added since the board was last idle, for "Adding images: N of M".
-    pub(super) queued: usize,
-    /// A complete file list needs no quiet timer after its workers finish.
-    pub(super) files_received: bool,
-    /// Quiet fallback for backends without a file-list end marker: their queue can
-    /// empty between paths of one drop.
-    pub(super) idle_since: Option<Instant>,
-}
-impl Intake {
-    /// Records an inserted image of the current burst. While the arrange prompt is
-    /// open, images that arrive late join it, so the layout covers the whole drop.
-    pub(super) fn add_to_burst(&mut self, id: Uuid, notices: &mut Notices) {
-        match &mut notices.arrange_prompt {
-            Some(ids) => ids.push(id),
-            None => self.burst.push(id),
-        }
-    }
+    pub(super) burst: super::intake::Burst,
 }
 /// Messages and prompts waiting for the user.
 #[derive(Default)]
@@ -174,10 +151,6 @@ pub(super) struct Notices {
     pub(super) flash: Option<(moth_ui::Message, bool, Instant)>,
     /// The coordinate picker's last answer, shown in the Image pickers panel.
     pub(super) pixel_info: Option<moth_platform::export::PixelInfo>,
-    /// Ids of a finished burst awaiting an arrangement choice while the prompt is shown.
-    pub(super) arrange_prompt: Option<Vec<Uuid>>,
-    /// One import notification; its layouts share the insertion undo group until dismissed.
-    pub(super) added: Option<Added>,
     pub(super) conversion_prompt: bool,
 }
 /// Where the board lives on disk and where saving, closing and conversion stand.
@@ -682,24 +655,12 @@ impl Document {
     /// Files added and still to come in the current burst, while more than one file is
     /// being added.
     pub(super) fn import_progress(&self) -> Option<(usize, usize)> {
-        let total = self.intake.queued;
+        let total = self.intake.burst.queued();
         let remaining = self.intake.waiting.len()
             + self.intake.reducing.len()
             + self.intake.pasting
             + self.intake.pending.len();
         (total > 1 && remaining > 0).then(|| (total.saturating_sub(remaining), total))
-    }
-    /// Whether the intake has been quiet long enough for the arrange prompt; the
-    /// remaining wait otherwise, so the caller can ask for a frame then.
-    pub(super) fn settled(&self) -> Result<(), std::time::Duration> {
-        const QUIET: std::time::Duration = std::time::Duration::from_millis(300);
-        if self.idle() && self.intake.files_received {
-            return Ok(());
-        }
-        match self.intake.idle_since {
-            Some(since) if self.idle() => QUIET.checked_sub(since.elapsed()).map_or(Ok(()), Err),
-            _ => Err(QUIET),
-        }
     }
     pub(super) fn idle(&self) -> bool {
         self.intake.pasting == 0
@@ -953,46 +914,45 @@ mod tests {
     }
     use super::*;
     #[test]
-    fn the_arrange_prompt_waits_for_the_whole_drop() {
-        let root = std::env::temp_dir().join(format!("mothref-drop-burst-{}", Uuid::now_v7()));
-        let mut board = Document::with_storage(
+    fn complete_file_list_waits_for_every_worker_queue() {
+        let root = std::env::temp_dir().join(format!("mothref-intake-ready-{}", Uuid::now_v7()));
+        let board = Document::with_storage(
             Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
             Arc::new(|| {}),
             false,
         )
         .unwrap();
-        // A gap mid-drop: the first part became the prompt, more images keep coming.
-        let early: Vec<Uuid> = (0..400).map(|_| Uuid::now_v7()).collect();
-        board.notices.arrange_prompt = Some(early.clone());
-        for _ in 0..614 {
-            board
-                .intake
-                .add_to_burst(Uuid::now_v7(), &mut board.notices);
+        let mut workspace = workspace::Workspace::new(board, Arc::new(|| {}));
+        workspace.board.intake.burst.files_received();
+        assert!(workspace.intake_settled().is_ok());
+        workspace.board.intake.waiting.push(Handle(1));
+        assert!(workspace.intake_settled().is_err());
+        workspace.board.intake.waiting.clear();
+        workspace
+            .board
+            .intake
+            .pending
+            .insert(Handle(1), Pending::Import);
+        assert!(workspace.intake_settled().is_err());
+        workspace.board.intake.pending.clear();
+        workspace
+            .board
+            .intake
+            .reducing
+            .push_back(root.join("pending.png"));
+        assert!(workspace.intake_settled().is_err());
+        workspace.board.intake.reducing.clear();
+        workspace.board.intake.pasting = 1;
+        assert!(workspace.intake_settled().is_err());
+        workspace.board.intake.pasting = 0;
+        workspace.board.intake.in_flight = 1;
+        assert!(workspace.intake_settled().is_err());
+        workspace.board.intake.in_flight = 0;
+        assert!(workspace.intake_settled().is_ok());
+        workspace.board.boards.finish().unwrap();
+        if root.exists() {
+            std::fs::remove_dir_all(root).unwrap();
         }
-        assert_eq!(board.notices.arrange_prompt.as_ref().unwrap().len(), 1014);
-        assert!(board.intake.burst.is_empty());
-        // The prompt shows only after the intake has been quiet for a moment.
-        board.intake.idle_since = None;
-        assert!(board.settled().is_err());
-        board.intake.idle_since = Some(Instant::now());
-        assert!(board.settled().is_err());
-        board.intake.idle_since = Some(Instant::now() - Duration::from_secs(1));
-        assert!(board.settled().is_ok());
-        board.intake.waiting.push(Handle(1));
-        assert!(board.settled().is_err(), "files still waiting");
-        board.intake.files_received = true;
-        assert!(
-            board.settled().is_err(),
-            "a complete list still waits for decoding"
-        );
-        board.intake.waiting.clear();
-        board.intake.idle_since = None;
-        assert!(
-            board.settled().is_ok(),
-            "a complete list needs no quiet timer"
-        );
-        drop(board);
-        let _ = std::fs::remove_dir_all(root);
     }
     #[test]
     fn large_file_list_keeps_every_image_under_storage_backpressure() {
@@ -1021,7 +981,7 @@ mod tests {
             workspace.import(path.clone(), moth_io::ImageFormat::Rgba8);
         }
         workspace.receiving_drop = false;
-        workspace.board.intake.files_received = true;
+        workspace.board.intake.burst.files_received();
         let deadline = Instant::now() + Duration::from_secs(30);
         // Hold the real storage worker after its first acknowledgment, simulating a
         // slow disk while the bounded decoder queue continues producing images.
@@ -1067,12 +1027,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         let count = workspace.board.scene.len();
-        let prompt = workspace
-            .board
-            .notices
-            .arrange_prompt
-            .as_ref()
-            .map_or(0, Vec::len);
+        let prompt = workspace.board.intake.burst.prompt().map_or(0, Vec::len);
         workspace.board.boards.finish().unwrap();
         std::fs::remove_dir_all(root).unwrap();
         assert_eq!(count, 1316, "every accepted file must reach the scene");
@@ -1092,11 +1047,12 @@ mod tests {
         .unwrap();
         let mut workspace = workspace::Workspace::new(board, Arc::new(|| {}));
         workspace.receiving_drop = true;
-        workspace.board.intake.batching = true;
+        workspace.begin_batch();
         let ids: Vec<_> = (0..1014).map(|_| Uuid::now_v7()).collect();
         for part in ids.chunks(400) {
-            workspace.board.intake.burst.extend_from_slice(part);
-            workspace.board.intake.idle_since = Some(Instant::now() - Duration::from_secs(1));
+            for &id in part {
+                workspace.board.intake.burst.add(id);
+            }
             workspace.pump(workspace::Pump {
                 format: moth_io::ImageFormat::Rgba8,
                 cursor: None,
@@ -1105,10 +1061,14 @@ mod tests {
                 events: Vec::new(),
             });
             assert!(workspace.board.idle());
-            assert!(workspace.board.notices.arrange_prompt.is_none());
+            assert!(
+                workspace.intake_settled().is_err(),
+                "the native list is still arriving"
+            );
+            assert!(workspace.board.intake.burst.prompt().is_none());
         }
         workspace.receiving_drop = false;
-        workspace.board.intake.files_received = true;
+        workspace.board.intake.burst.files_received();
         workspace.pump(workspace::Pump {
             format: moth_io::ImageFormat::Rgba8,
             cursor: None,
@@ -1116,8 +1076,90 @@ mod tests {
             upload: &mut |_| {},
             events: Vec::new(),
         });
-        assert_eq!(workspace.board.notices.arrange_prompt.as_ref(), Some(&ids));
-        assert!(workspace.board.settled().is_ok());
+        assert_eq!(workspace.board.intake.burst.prompt(), Some(&ids));
+        assert!(workspace.intake_settled().is_ok());
+        workspace.board.boards.finish().unwrap();
+        if root.exists() {
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+    #[test]
+    fn refused_layout_and_batch_end_preserve_the_intake_for_retry() {
+        use moth_platform::boards::Request;
+        let root = std::env::temp_dir().join(format!("mothref-intake-retry-{}", Uuid::now_v7()));
+        let board = Document::with_storage(
+            Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
+            Arc::new(|| {}),
+            false,
+        )
+        .unwrap();
+        let mut workspace = workspace::Workspace::new(board, Arc::new(|| {}));
+        // Substitute only the transport to control backpressure without a slow disk.
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+        let original = std::mem::replace(&mut workspace.board.boards.requests, sender);
+        workspace.begin_batch();
+        let item = Item::text(
+            "new",
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 100.,
+                height: 100.,
+            },
+            None,
+        );
+        let ids = vec![item.id];
+        workspace.board.intake.burst.add(item.id);
+        workspace.board.intake.burst.files_received();
+        workspace.settle_intake();
+        let mode = arrange::Arrange::Horizontal;
+        let layout = || {
+            vec![Command::SetRect {
+                id: item.id,
+                rect: item.rect,
+            }]
+        };
+        assert!(!workspace.arrange_added(layout(), ids.clone(), mode));
+        assert_eq!(workspace.board.intake.burst.prompt(), Some(&ids));
+        assert!(workspace.board.intake.burst.added().is_none());
+        assert_eq!(workspace.board.intake.in_flight, 0);
+        assert!(matches!(receiver.try_recv().unwrap(), Request::BeginBatch));
+
+        assert!(workspace.arrange_added(layout(), ids.clone(), mode));
+        assert!(workspace.board.intake.burst.prompt().is_none());
+        assert_eq!(workspace.board.intake.in_flight, 1);
+        // A refused replacement keeps the previously accepted layout and toast.
+        assert!(!workspace.arrange_added(layout(), ids.clone(), arrange::Arrange::Vertical));
+        let added = workspace.board.intake.burst.added().unwrap();
+        assert_eq!(added.ids, ids);
+        assert!(matches!(added.mode, arrange::Arrange::Horizontal));
+        let camera = workspace.board.view.camera;
+        workspace.settle_intake();
+        assert!(workspace.board.intake.burst.added().unwrap().needs_fit);
+        assert_eq!(workspace.board.view.camera.origin, camera.origin);
+        assert_eq!(workspace.board.view.camera.zoom, camera.zoom);
+        assert!(
+            !workspace.finish_added(),
+            "EndBatch must not be lost to a full queue"
+        );
+        assert!(workspace.board.intake.burst.added().is_some());
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            Request::ApplyBatch(_)
+        ));
+
+        assert!(workspace.finish_added());
+        assert!(workspace.board.intake.burst.added().is_none());
+        assert!(matches!(receiver.try_recv().unwrap(), Request::EndBatch));
+        assert!(
+            receiver.try_recv().is_err(),
+            "no extra batch end or layout was enqueued"
+        );
+        assert!(
+            workspace.board.scene.is_empty(),
+            "unacknowledged commands stay off the scene"
+        );
+        workspace.board.boards.requests = original;
         workspace.board.boards.finish().unwrap();
         if root.exists() {
             std::fs::remove_dir_all(root).unwrap();
@@ -1193,11 +1235,7 @@ mod tests {
             (Command::Insert(a.clone()), None),
             (Command::Insert(b.clone()), None),
         ]);
-        workspace.board.notices.added = Some(Added {
-            ids: ids.clone(),
-            mode: arrange::Arrange::Horizontal,
-            needs_fit: true,
-        });
+        assert!(workspace.arrange_added(Vec::new(), ids.clone(), arrange::Arrange::Horizontal));
         drain(&mut workspace);
         for mode in [arrange::Arrange::Horizontal, arrange::Arrange::Vertical] {
             let items: Vec<_> = ids
@@ -1206,17 +1244,11 @@ mod tests {
                 .collect();
             let commands = arrange::counted(&items, mode, 1, 24.);
             let camera = workspace.board.view.camera;
-            workspace.board.notices.added = None;
-            workspace.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
-            workspace.board.notices.added = Some(Added {
-                ids: ids.clone(),
-                mode,
-                needs_fit: true,
-            });
-            assert!(workspace.board.notices.added.as_ref().unwrap().needs_fit);
+            assert!(workspace.arrange_added(commands, ids.clone(), mode));
+            assert!(workspace.board.intake.burst.added().unwrap().needs_fit);
             assert_eq!(workspace.board.view.camera.origin, camera.origin);
             drain(&mut workspace);
-            assert!(!workspace.board.notices.added.as_ref().unwrap().needs_fit);
+            assert!(!workspace.board.intake.burst.added().unwrap().needs_fit);
             let mut expected = workspace.board.view;
             expected.fit_selection(&workspace.board.scene, &ids.iter().copied().collect());
             assert_eq!(workspace.board.view.camera.origin, expected.camera.origin);
@@ -1234,7 +1266,7 @@ mod tests {
             },
             None,
         )]);
-        assert!(workspace.board.notices.added.is_none());
+        assert!(workspace.board.intake.burst.added().is_none());
         drain(&mut workspace);
         workspace.persist(moth_platform::boards::Request::Undo);
         drain(&mut workspace);
@@ -1338,19 +1370,15 @@ mod tests {
                 },
             );
             drain(&mut workspace);
-            let ids = workspace.board.notices.arrange_prompt.take().unwrap();
+            let ids = workspace.board.intake.burst.prompt().cloned().unwrap();
             assert_eq!(ids.len(), 1);
-            workspace.board.notices.added = Some(Added {
-                ids,
-                mode: arrange::Arrange::Horizontal,
-                needs_fit: true,
-            });
+            assert!(workspace.arrange_added(Vec::new(), ids, arrange::Arrange::Horizontal));
             drain(&mut workspace);
             assert_eq!(workspace.board.scene.len(), usize::from(existing) + 1);
             assert_eq!(workspace.board.view.camera.zoom, before.zoom);
             assert_eq!(workspace.board.view.camera.origin, before.origin);
             assert!(!workspace.board.view.needs_fit);
-            assert!(!workspace.board.notices.added.as_ref().unwrap().needs_fit);
+            assert!(!workspace.board.intake.burst.added().unwrap().needs_fit);
             workspace.board.boards.finish().unwrap();
             std::fs::remove_dir_all(root).unwrap();
         }
@@ -1688,7 +1716,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let backup = root.join("backup.moth");
         let original = root.join("lost-board.moth");
-        let bytes = include_bytes!("../../../../corpus/moth/v7.moth");
+        let bytes = include_bytes!("../../../../corpus/moth/v8.moth");
         std::fs::write(&backup, bytes).unwrap();
         let board = Document::with_storage(
             Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
@@ -2047,7 +2075,7 @@ mod latency {
                 for _ in 0..count {
                     workspace.import(path.clone(), moth_io::ImageFormat::Rgba8);
                 }
-                workspace.board.intake.files_received = true;
+                workspace.board.intake.burst.files_received();
                 let mut first = None;
                 let mut all = None;
                 let arranged = loop {

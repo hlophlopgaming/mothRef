@@ -171,6 +171,15 @@ The journal is the durable original store. Originals use opaque handles to bound
 read-only ranges in the session journal, with independent cursors for decoding,
 export and save; no separate `.source` copies are created. Opening `.moth` copies
 live originals in source-offset order, verifying their hashes before journaling.
+In full-resolution mode, `Request::OpenSnapshot` first tries a private Linux
+filesystem snapshot for current-schema, healthy files. It validates the snapshot,
+trims obsolete layout checkpoints after the last live original, appends the
+current checkpoint, and syncs the file and both recovery directories before
+publishing. Original offsets stay unchanged. Snapshots that would consume more
+journal headroom than rebuilding are rejected. Unsupported filesystems, old or
+damaged boards, existing journals, backup/recovery opens and other performance
+modes retain the copy path. The mode restriction preserves early previews in
+viewport modes; see [decision 0024](decisions/0024-reflink-opening.md).
 Foreign import journals unique originals directly during parsing. A new blob and
 its insert share one journal sync. Opening/import publishes the first durable item
 and then batches after 64 commands or 32 MiB of original data, allowing visible
@@ -278,6 +287,17 @@ drains all tab workers, applies journal acknowledgments to their owning scenes,
 and returns UI events. Active decoded images go straight to `Shell::upload`
 through a callback; inactive tabs never upload and no intermediate pixel queue
 accumulates. Journal identity stays with the document when tabs switch.
+
+Image bursts are owned by `app/intake.rs`: private `Burst` state stays with each
+document, and the module implements the `Workspace` operations for starting a
+paste/drop, undo-group lifetime, accepting arrangements and settling a burst.
+The modal and worker drain use the same readiness rules: native drop completion,
+all image queues and journal acknowledgments, with the existing 300 ms quiet
+fallback for sources without an end marker. An arrangement dismisses its prompt
+only after acceptance; a refused request preserves the prompt and previous
+notification for retry. Camera fitting still waits for acknowledgments and
+preserves the camera for a single image. Decode queues and full-resolution GPU
+preloading remain unchanged. See [decision 0023](decisions/0023-image-intake-bursts.md).
 
 `Document::visible` selects items; `request_images` schedules their missing LODs
 only after the frame substitutes drag/animation previews. `Shell::render`

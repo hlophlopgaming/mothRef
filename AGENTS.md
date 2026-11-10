@@ -52,6 +52,8 @@ Dependency direction is strict: `moth-scene` and `moth-format` depend on nothing
 
 Checks come in three tiers. During ordinary development, agents run formatting and Clippy for changed crates, plus `cargo deny check` when dependencies change. Run tests (including targeted tests, corpus checks, fuzzing, killtests and soak tests) and benchmarks only when preparing a release or when the maintainer explicitly requests them. Writing regression tests is still expected; running them follows this policy. Tier 3 runs in CI or by the maintainer, never inside an agent session.
 
+**Sandbox only:** Run checks, tests, fuzzers and benchmarks inside the sandbox. Never request escalation or rerun them outside it. If a sandbox restriction prevents completion, report the check as incomplete and leave it to CI or the maintainer.
+
 ### Tier 1: fast loop (every change, must finish in a few minutes)
 
 ```sh

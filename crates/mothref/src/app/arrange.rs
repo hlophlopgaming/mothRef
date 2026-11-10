@@ -704,7 +704,7 @@ mod tests {
     /// insert after what it references, and undoing the delete restores it exactly.
     #[test]
     fn duplicate_and_delete_keep_every_item_kind() {
-        let bytes = include_bytes!("../../../../corpus/moth/v7.moth");
+        let bytes = include_bytes!("../../../../corpus/moth/v8.moth");
         let mut scene = moth_format::board::read(&mut std::io::Cursor::new(&bytes[..]))
             .unwrap()
             .scene;
