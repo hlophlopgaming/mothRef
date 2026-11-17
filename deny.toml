@@ -1,5 +1,10 @@
 [advisories]
 yanked = "deny"
+ignore = [
+    # chrono is unmaintained (no fixed version). It comes only from `trash`,
+    # which uses it to write Linux trash info dates; no chrono-free `trash` release exists.
+    { id = "RUSTSEC-2026-0543", reason = "chrono via trash only; no maintained alternative release of trash yet" },
+]
 
 [licenses]
 confidence-threshold = 0.93
