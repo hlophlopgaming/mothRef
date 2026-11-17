@@ -1,0 +1,418 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="512"
+   height="512"
+   viewBox="63 124 595 595"
+   version="1.1"
+   id="svg44"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs44" />
+  <g
+     transform="translate(390 410) scale(.84) translate(-390 -400)"
+     id="g44">
+    <clipPath
+       id="dant0">
+      <path
+         d="M292 184 C262 130 200 98 120 102 C96 104 76 116 64 134 C110 152 150 182 200 186 C240 190 270 188 292 184 Z"
+         id="path1" />
+    </clipPath>
+    <path
+       d="M292 184 C262 130 200 98 120 102 C96 104 76 116 64 134 C110 152 150 182 200 186 C240 190 270 188 292 184 Z"
+       fill="#e8cfae"
+       id="path2" />
+    <g
+       clip-path="url(#dant0)"
+       id="g6">
+      <line
+         x1="104"
+         y1="70"
+         x2="126"
+         y2="210"
+         stroke="#c99f74"
+         stroke-width="11"
+         id="line2" />
+      <line
+         x1="142"
+         y1="70"
+         x2="164"
+         y2="210"
+         stroke="#c99f74"
+         stroke-width="11"
+         id="line3" />
+      <line
+         x1="180"
+         y1="70"
+         x2="202"
+         y2="210"
+         stroke="#c99f74"
+         stroke-width="11"
+         id="line4" />
+      <line
+         x1="218"
+         y1="70"
+         x2="240"
+         y2="210"
+         stroke="#c99f74"
+         stroke-width="11"
+         id="line5" />
+      <line
+         x1="256"
+         y1="70"
+         x2="278"
+         y2="210"
+         stroke="#c99f74"
+         stroke-width="11"
+         id="line6" />
+    </g>
+    <path
+       d="M292 184 C262 130 200 98 120 102 C96 104 76 116 64 134 C110 152 150 182 200 186 C240 190 270 188 292 184 Z"
+       fill="none"
+       id="path6" />
+    <path
+       d="M 330,236 C 270,170 190,128 54,128"
+       fill="none" stroke="#a8764b" stroke-width="10" stroke-linecap="round"
+       id="antenna-shaft-left" />
+    <circle cx="54" cy="128" r="9" fill="#a8764b" id="antenna-tip-left" />
+    <clipPath
+       id="dant1">
+      <path
+         d="M462 188 C500 150 560 104 642 92 C622 130 592 164 550 180 C520 190 490 192 462 188 Z"
+         id="path7" />
+    </clipPath>
+    <path
+       d="M462 188 C500 150 560 104 642 92 C622 130 592 164 550 180 C520 190 490 192 462 188 Z"
+       fill="#e8cfae"
+       id="path8" />
+    <g
+       clip-path="url(#dant1)"
+       id="g11">
+      <line
+         x1="500"
+         y1="70"
+         x2="478"
+         y2="210"
+         stroke="#c99f74"
+         stroke-width="11"
+         id="line8" />
+      <line
+         x1="540"
+         y1="70"
+         x2="518"
+         y2="210"
+         stroke="#c99f74"
+         stroke-width="11"
+         id="line9" />
+      <line
+         x1="580"
+         y1="70"
+         x2="558"
+         y2="210"
+         stroke="#c99f74"
+         stroke-width="11"
+         id="line10" />
+      <line
+         x1="620"
+         y1="70"
+         x2="598"
+         y2="210"
+         stroke="#c99f74"
+         stroke-width="11"
+         id="line11" />
+    </g>
+    <path
+       d="M462 188 C500 150 560 104 642 92 C622 130 592 164 550 180 C520 190 490 192 462 188 Z"
+       fill="none"
+       id="path11" />
+    <path
+       d="M 430,236 C 490,170 560,118 652,86"
+       fill="none" stroke="#a8764b" stroke-width="10" stroke-linecap="round"
+       id="antenna-shaft-right" />
+    <circle cx="652" cy="86" r="9" fill="#a8764b" id="antenna-tip-right" />
+    <clipPath
+       id="dw0">
+      <path
+         d="M236 496 C192 556 150 618 118 668 C113 677 118 682 128 682 L236 682 Z"
+         id="path12" />
+    </clipPath>
+    <path
+       d="M236 496 C192 556 150 618 118 668 C113 677 118 682 128 682 L236 682 Z"
+       fill="#f3dfc2"
+       id="path13" />
+    <g
+       clip-path="url(#dw0)"
+       id="g15">
+      <path
+         d="M 188.23431,576.52203 C 197.56765,603.1887 221.33333,604 236,612"
+         fill="none"
+         stroke="#dcb88f"
+         stroke-width="7"
+         stroke-linecap="round"
+         id="path14"
+         sodipodi:nodetypes="cc" />
+      <path
+         d="M164 616 Q196 646 236 650"
+         fill="none"
+         stroke="#dcb88f"
+         stroke-width="7"
+         stroke-linecap="round"
+         id="path15" />
+    </g>
+    <path
+       d="M236 496 C192 556 150 618 118 668 C113 677 118 682 128 682 L236 682 Z"
+       fill="none"
+       id="path16" />
+    <clipPath
+       id="dw1">
+      <path
+         d="M538 476 C580 536 630 606 662 648 C668 658 662 668 650 668 L568 674 Z"
+         id="path17" />
+    </clipPath>
+    <path
+       d="M538 476 C580 536 630 606 662 648 C668 658 662 668 650 668 L568 674 Z"
+       fill="#f3dfc2"
+       id="path18" />
+    <g
+       clip-path="url(#dw1)"
+       id="g20">
+      <path
+         d="M 591.93712,574.69944 C 583.93712,601.36611 554.66667,583.33333 544,590"
+         fill="none"
+         stroke="#dcb88f"
+         stroke-width="7"
+         stroke-linecap="round"
+         id="path19"
+         sodipodi:nodetypes="cc" />
+      <path
+         d="m 617.78856,611.32881 c -14.79981,29.13458 -42.8509,53.60534 -65.32881,42.83221"
+         fill="none"
+         stroke="#dcb88f"
+         stroke-width="7"
+         stroke-linecap="round"
+         id="path20"
+         sodipodi:nodetypes="cc" />
+    </g>
+    <path
+       d="M538 476 C580 536 630 606 662 648 C668 658 662 668 650 668 L568 674 Z"
+       fill="none"
+       id="path21" />
+    <g
+       id="body-outline"
+       fill="none" stroke="#d6b58b" stroke-width="12" stroke-linejoin="round">
+      <path d="M300 320 C240 400 196 510 198 610 C200 680 236 714 300 716 L520 716 C568 714 586 680 584 620 C582 530 540 420 460 318 Z" />
+      <circle cx="380" cy="262" r="104" />
+    </g>
+    <path
+       d="M300 320 C240 400 196 510 198 610 C200 680 236 714 300 716 L520 716 C568 714 586 680 584 620 C582 530 540 420 460 318 Z"
+       fill="#ffffff"
+       id="path22" />
+    <circle
+       cx="380"
+       cy="262"
+       r="104"
+       fill="#ffffff"
+       id="circle22" />
+    <path
+       d="m 300,320 c -60,80 -104,190 -102,290 2,70 38,104 102,106 h 220 c 48,-2 66,-36 64,-96 -0.56717,-25.52247 -4.35111,-52.65333 -11.30621,-80.75402 C 555.12309,468.25509 517.31336,391.07453 460,318 Z"
+       fill="#ffffff"
+       id="path23"
+       sodipodi:nodetypes="cccccscc" />
+    <circle
+       cx="380"
+       cy="262"
+       r="104"
+       fill="#ffffff"
+       id="circle23" />
+    <ellipse
+       cx="766.38086"
+       cy="69.515007"
+       rx="20.200001"
+       ry="21"
+       transform="rotate(58.12392)"
+       fill="#f4e8d6"
+       id="ellipse25" />
+    <ellipse
+       cx="798.93854"
+       cy="69.509071"
+       rx="20.200001"
+       ry="16"
+       transform="rotate(58.12392)"
+       fill="#f4e8d6"
+       id="ellipse26" />
+    <path
+       d="m 378.31875,714.59861 c 6.12254,17.54623 8.25782,29.56439 6.40584,36.05448 -6.63993,-1.20928 -23.225,-14.54498 -36.25431,-27.79612 z"
+       fill="#f4e8d6"
+       id="path26"
+       sodipodi:nodetypes="cccc" />
+    <ellipse
+       cx="470"
+       cy="652"
+       rx="32"
+       ry="27"
+       fill="#f4e8d6"
+       id="ellipse27" />
+    <ellipse
+       cx="122.73811"
+       cy="-816.13989"
+       rx="22.610556"
+       ry="18.372705"
+       transform="matrix(-0.63300306,0.77414929,-0.67541175,-0.73744082,0,0)"
+       fill="#f4e8d6"
+       id="ellipse28"
+       style="stroke-width:1.20859"
+       inkscape:transform-center-x="10.110966"
+       inkscape:transform-center-y="4.163339" />
+    <ellipse
+       cx="609.12744"
+       cy="-599.51483"
+       rx="15.8"
+       ry="14"
+       transform="rotate(101.3)"
+       fill="#f4e8d6"
+       id="ellipse29" />
+    <path
+       d="m 474.41918,728.98424 c -12.1901,10.77555 -23.44968,13.57924 -29.30339,14.29468 -1.1807,-5.77786 3.92951,-17.48348 10.27564,-32.46472 z"
+       fill="#f4e8d6"
+       id="path29"
+       sodipodi:nodetypes="cccc" />
+    <ellipse
+       cx="258"
+       cy="282"
+       rx="106"
+       ry="108"
+       fill="#3a2619"
+       id="ellipse30" />
+    <ellipse
+       cx="224"
+       cy="237"
+       rx="25"
+       ry="27"
+       fill="#fff7ea"
+       id="ellipse31" />
+    <ellipse
+       cx="500"
+       cy="284"
+       rx="80"
+       ry="102"
+       fill="#3a2619"
+       id="ellipse33" />
+    <path
+       fill="#fff7ea"
+       id="ellipse34"
+       sodipodi:type="arc"
+       sodipodi:cx="474"
+       sodipodi:cy="241"
+       sodipodi:rx="24.664408"
+       sodipodi:ry="26"
+       sodipodi:start="0"
+       sodipodi:end="6.2685224"
+       sodipodi:arc-type="slice"
+       d="m 498.66441,241 a 24.664408,26 0 0 1 -24.574,25.99983 24.664408,26 0 0 1 -24.75415,-25.80921 24.664408,26 0 0 1 24.39251,-26.18905 24.664408,26 0 0 1 24.93299,25.61721 L 474,241 Z"
+       style="stroke-width:1.13935" />
+    <path
+       d="M 358.01843,365.14936 C 361.79882,391.51608 382,392.66667 398,374 c 16,18.66667 34.12415,17.25056 33.13093,-8.14258"
+       fill="none"
+       stroke="#3d2a1f"
+       stroke-width="7"
+       stroke-linecap="round"
+       stroke-linejoin="round"
+       id="path36"
+       sodipodi:nodetypes="ccc" />
+    <g
+       transform="rotate(-6 392 608)"
+       id="g38">
+      <rect
+         x="297.74954"
+         y="538.7533"
+         width="196.9769"
+         height="140.37163"
+         rx="16.414742"
+         fill="#e8a25c"
+         id="rect36"
+         transform="matrix(0.99990598,0.01371222,0.01574322,0.99987607,0,0)"
+         style="stroke-width:1.39267" />
+      <rect
+         x="318.64102"
+         y="556.94958"
+         width="155.19392"
+         height="90.981613"
+         rx="7.4612465"
+         fill="#fff8ee"
+         id="rect37"
+         transform="matrix(0.99990598,0.01371222,0.01574322,0.99987607,0,0)"
+         style="stroke-width:1.39267" />
+      <path
+         d="m 328.8116,652.22018 49.87229,-53.88649 36.30171,31.68092 23.54635,-20.46583 45.45898,44.79945 z"
+         fill="#d98b4f"
+         id="path37"
+         style="stroke-width:1.39237" />
+      <circle
+         cx="424"
+         cy="588"
+         r="9"
+         fill="#f2b84b"
+         id="circle37" />
+    </g>
+    <ellipse
+       cx="305.29999"
+       cy="510.70001"
+       rx="40.502583"
+       ry="36"
+       transform="rotate(39.6,305.3,510.7)"
+       fill="#f4e8d6"
+       id="ellipse39" />
+    <ellipse
+       cx="336.0"
+       cy="536.0"
+       rx="24.7"
+       ry="31"
+       transform="rotate(39.6 336.0 536.0)"
+       fill="#f4e8d6"
+       id="ellipse40" />
+    <ellipse
+       cx="366.7"
+       cy="561.3"
+       rx="24.7"
+       ry="25"
+       transform="rotate(39.6 366.7 561.3)"
+       fill="#f4e8d6"
+       id="ellipse41" />
+    <path
+       d="M-6.4 -21.2 Q36.1 -11.7 46.8 0 Q36.1 11.7 -6.4 21.2 Z"
+       transform="translate(382.0 574.0) rotate(39.6)"
+       fill="#f4e8d6"
+       id="path41" />
+    <ellipse
+       transform="rotate(132.1)"
+       fill="#f4e8d6"
+       id="ellipse42"
+       ry="33"
+       rx="33.901901"
+       cy="-693.02484"
+       cx="40.094131" />
+    <ellipse
+       cx="72.449844"
+       cy="-703.63251"
+       rx="49.716599"
+       ry="28"
+       transform="rotate(132.1)"
+       fill="#f4e8d6"
+       id="ellipse43" />
+    <ellipse
+       cx="444.3"
+       cy="560.3"
+       rx="22.8"
+       ry="22"
+       transform="rotate(132.1 444.3 560.3)"
+       fill="#f4e8d6"
+       id="ellipse44" />
+    <path
+       d="M-5.6 -18.7 Q31.8 -10.3 41.1 0 Q31.8 10.3 -5.6 18.7 Z"
+       transform="translate(432.0 574.0) rotate(132.1)"
+       fill="#f4e8d6"
+       id="path44" />
+  </g>
+</svg>

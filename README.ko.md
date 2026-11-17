@@ -1,9 +1,8 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/mothref-logo-dark.png">
-  <img src="docs/assets/mothref-logo-light.png" alt="MothRef 로고: 픽셀 아트 나방" width="128" height="128">
-</picture>
+<img src="docs/assets/icon/mothref-icon-256.png" alt="MothRef" width="160" height="160">
+&nbsp;&nbsp;&nbsp;
+<img src="docs/assets/icon/mothref-icon-engraved-256.png" alt="MothRef (engraved)" width="160" height="160">
 
 # MothRef
 

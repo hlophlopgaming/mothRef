@@ -51,3 +51,10 @@ and checked with `cargo deny check`.
   This software is based in part on the work of the Independent JPEG Group.
   Sources: https://github.com/ImageOptim/mozjpeg-rust and
   https://github.com/kornelski/mozjpeg-sys. No upstream code is copied into this repo.
+
+## Artwork
+
+- `docs/assets/icon/mothref-icon-engraved.svg` (and its PNG exports): the moth
+  engraving is "Moth 5" by Firkin, uploaded to Openclipart on 2017-01-06,
+  https://openclipart.org/detail/270205/moth-5. Openclipart artwork is released
+  into the public domain. Recoloured, filled and placed on a tile for MothRef.
