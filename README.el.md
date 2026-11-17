@@ -62,7 +62,7 @@
 - Κινούμενα εφέ με ρύθμιση μειωμένης κίνησης
 
 **Εικόνες και σημειώσεις**
-- Επικόλληση (<kbd>Ctrl</kbd>+<kbd>V</kbd>), μεταφορά ή άνοιγμα αρχείων PNG, JPEG, WebP, GIF και BMP
+- Επικόλληση (<kbd>Ctrl</kbd>+<kbd>V</kbd>), μεταφορά ή άνοιγμα αρχείων PNG, JPEG, AVIF, WebP, GIF και BMP
 - Σημειώσεις κειμένου: διπλό κλικ σε κενό καμβά για δημιουργία, διπλό κλικ σε σημείωση για επεξεργασία
 - Περιστροφή, κατοπτρισμός, περικοπή, κλιμάκωση, αδιαφάνεια και αποχρώσεις του γκρι, όλα με αναίρεση
 
@@ -162,7 +162,7 @@
 
 ## Μεταγλώττιση από τον πηγαίο κώδικα
 
-Χρειάζεστε [Rust](https://rustup.rs) 1.95 ή νεότερο. Στο Linux εγκαταστήστε και τα headers των X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` και `libwayland-dev` σε Debian/Ubuntu).
+Χρειάζεστε [Rust](https://rustup.rs) 1.98 ή νεότερο. Στο Linux εγκαταστήστε και τα headers των X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` και `libwayland-dev` σε Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

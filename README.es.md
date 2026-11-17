@@ -62,7 +62,7 @@ Lo que ya funciona en la alfa actual:
 - Animaciones con opción de reducir el movimiento
 
 **Imágenes y notas**
-- Pega (<kbd>Ctrl</kbd>+<kbd>V</kbd>), arrastra o abre archivos PNG, JPEG, WebP, GIF y BMP
+- Pega (<kbd>Ctrl</kbd>+<kbd>V</kbd>), arrastra o abre archivos PNG, JPEG, AVIF, WebP, GIF y BMP
 - Notas de texto: doble clic en el lienzo vacío para crear una, doble clic en una nota para editarla
 - Girar, voltear, recortar, escalar, opacidad y escala de grises, todo con deshacer
 
@@ -162,7 +162,7 @@ El plan completo, las listas de funciones y los objetivos de rendimiento están 
 
 ## Compilar desde el código
 
-Necesitas [Rust](https://rustup.rs) 1.95 o posterior. En Linux, instala también las cabeceras de X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` y `libwayland-dev` en Debian/Ubuntu).
+Necesitas [Rust](https://rustup.rs) 1.98 o posterior. En Linux, instala también las cabeceras de X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` y `libwayland-dev` en Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

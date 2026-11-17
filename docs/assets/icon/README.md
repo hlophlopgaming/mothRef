@@ -3,7 +3,7 @@
 | File | Role |
 | --- | --- |
 | `mothref-icon.svg` | Main app icon: the moth holding a gallery. Transparent background. |
-| `mothref-icon-engraved.svg` | Alternative icon in an engraved style, for a future "change app icon" option. |
+| `mothref-icon-engraved.svg` | Alternative icon in an engraved style, available in Settings › Appearance › Application icon. |
 
 PNG exports sit next to each SVG (`-16` … `-1024` px for the main icon, `-64` … `-1024` px for the engraved one).
 Regenerate them with `rsvg-convert -w N -h N <file>.svg -o <file>-N.png`.

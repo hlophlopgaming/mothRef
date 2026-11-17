@@ -167,7 +167,7 @@ fn main() -> anyhow::Result<()> {
                         continue;
                     }
                     match path.extension().and_then(|s| s.to_str()) {
-                        Some("png" | "jpg" | "jpeg" | "rgba" | "gif" | "bmp" | "webp") => {
+                        Some("png" | "jpg" | "jpeg" | "rgba" | "gif" | "bmp" | "webp" | "avif") => {
                             let bytes = std::fs::read(&path)?;
                             let decoded = moth_io::decode(&bytes, 256)?;
                             anyhow::ensure!(

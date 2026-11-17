@@ -293,6 +293,7 @@ impl App {
                 self.shell.wake(),
                 self.shell.software(),
                 moth_platform::Desktop.window_capabilities(&window).on_top,
+                self.settings.app_icon == 1,
             ) {
                 Ok(mut overlay) => {
                     if self.settings.over_hint {
@@ -454,7 +455,7 @@ impl App {
         let dialog = if images {
             dialog.add_filter(
                 moth_ui::text(moth_ui::Text::Images),
-                &["png", "jpg", "jpeg", "webp", "gif", "bmp"],
+                &["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif"],
             )
         } else {
             dialog
@@ -908,6 +909,7 @@ impl App {
                                     .into(),
                             ));
                     }
+                    self.restyle_windows();
                     self.configure_global_shortcuts();
                     if !self.shortcuts.registry.load(&values) {
                         self.workspace.board.notices.message = moth_ui::Text::InvalidBinding.into();
@@ -2646,7 +2648,7 @@ impl App {
 impl ApplicationHandler<Wake> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.shell.window.is_none() {
-            match event_loop.create_window(panes::attributes()) {
+            match event_loop.create_window(panes::attributes(self.settings.app_icon == 1)) {
                 Ok(w) => self.shell.window = Some(Arc::new(w)),
                 Err(e) => {
                     tracing::error!(%e,"window creation failed");

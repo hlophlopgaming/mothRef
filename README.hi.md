@@ -62,7 +62,7 @@
 - कम हलचल वाली सेटिंग के साथ एनिमेशन
 
 **तस्वीरें और नोट्स**
-- PNG, JPEG, WebP, GIF और BMP फ़ाइलें पेस्ट करें (<kbd>Ctrl</kbd>+<kbd>V</kbd>), खींचकर छोड़ें या खोलें
+- PNG, JPEG, AVIF, WebP, GIF और BMP फ़ाइलें पेस्ट करें (<kbd>Ctrl</kbd>+<kbd>V</kbd>), खींचकर छोड़ें या खोलें
 - टेक्स्ट नोट्स: नया नोट बनाने के लिए खाली कैनवस पर डबल-क्लिक करें, बदलने के लिए नोट पर डबल-क्लिक करें
 - घुमाना, पलटना, क्रॉप, स्केल, अपारदर्शिता और ग्रेस्केल, सब अनडू किए जा सकते हैं
 
@@ -162,7 +162,7 @@ macOS पर <kbd>Ctrl</kbd> की जगह <kbd>Cmd</kbd> इस्तेम�
 
 ## सोर्स से बनाएँ
 
-आपको [Rust](https://rustup.rs) 1.95 या नया चाहिए। Linux पर X11/Wayland हेडर भी इंस्टॉल करें (Debian/Ubuntu पर `libxkbcommon-dev`, `libdbus-1-dev` और `libwayland-dev`)।
+आपको [Rust](https://rustup.rs) 1.98 या नया चाहिए। Linux पर X11/Wayland हेडर भी इंस्टॉल करें (Debian/Ubuntu पर `libxkbcommon-dev`, `libdbus-1-dev` और `libwayland-dev`)।
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

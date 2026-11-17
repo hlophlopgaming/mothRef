@@ -7,6 +7,20 @@ use winit::{
     window::Window,
 };
 
+pub(crate) fn application_icon(png: &[u8]) {
+    use objc2::{AllocAnyThread, MainThreadMarker};
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::NSData;
+    let Some(main) = MainThreadMarker::new() else {
+        return;
+    };
+    let data = NSData::with_bytes(png);
+    if let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) {
+        // SAFETY: called on the main thread with a valid owned image, retained by AppKit.
+        unsafe { NSApplication::sharedApplication(main).setApplicationIconImage(Some(&image)) };
+    }
+}
+
 /// Shows a pinned window on every Space, including next to full-screen apps.
 pub(crate) fn float_everywhere(window: &Window, enabled: bool) {
     let Ok(handle) = window.window_handle() else {

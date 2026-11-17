@@ -131,9 +131,17 @@ pub(super) enum WindowOp {
     Gather,
 }
 
+/// Native windows reuse the bundled, already-decoded pixels.
+pub(super) fn icon(alternative: bool) -> winit::window::Icon {
+    winit::window::Icon::from_rgba(moth_ui::brand::rgba(alternative).to_vec(), 64, 64)
+        .expect("bundled application icons contain exactly 64×64 RGBA pixels")
+}
+
 /// The main window's attributes, shared by the first and every later window.
-pub(super) fn attributes() -> winit::window::WindowAttributes {
-    Window::default_attributes()
+pub(super) fn attributes(alternative: bool) -> winit::window::WindowAttributes {
+    moth_platform::Desktop
+        .application_attributes()
+        .with_window_icon(Some(icon(alternative)))
         .with_title(moth_ui::text(moth_ui::Text::Title))
         .with_decorations(false)
         .with_transparent(true)
@@ -220,7 +228,7 @@ impl App {
             .map(|n| format!("{base} ({n})"))
             .find(|t| !taken.contains(t))
             .unwrap_or_else(|| base.to_owned());
-        let mut attributes = attributes().with_title(title);
+        let mut attributes = attributes(self.settings.app_icon == 1).with_title(title);
         if let Some(at) = at {
             attributes = attributes.with_position(at);
         }
@@ -433,12 +441,33 @@ impl App {
     /// Settings changes (theme, interface scale) reach every window.
     pub(super) fn restyle_windows(&self) {
         let tokens = self.settings.tokens();
+        let alternative = self.settings.app_icon == 1;
+        if moth_ui::brand::set(self.shell.context(), alternative) {
+            moth_platform::Desktop.application_icon(moth_ui::brand::png(alternative));
+        }
+        if let Some(window) = &self.shell.window {
+            window.set_window_icon(Some(icon(alternative)));
+        }
         for pane in &self.panes {
+            moth_ui::brand::set(&pane.shell.ctx, alternative);
             moth_ui::theme::apply(&pane.shell.ctx, &tokens);
             pane.shell.ctx.set_zoom_factor(self.settings.ui_scale);
             if let Some(window) = &pane.shell.window {
+                window.set_window_icon(Some(icon(alternative)));
                 window.request_redraw();
             }
+            for image in &pane.window.floating {
+                image.window.set_window_icon(Some(icon(alternative)));
+            }
+            if let Some(overlay) = &pane.window.overlay {
+                overlay.window.set_window_icon(Some(icon(alternative)));
+            }
+        }
+        for image in &self.window.floating {
+            image.window.set_window_icon(Some(icon(alternative)));
+        }
+        if let Some(overlay) = &self.window.overlay {
+            overlay.window.set_window_icon(Some(icon(alternative)));
         }
     }
     /// Main windows sharing one device split its video-memory limit.

@@ -62,7 +62,7 @@
 - Анимации с настройкой «меньше движения»
 
 **Картинки и заметки**
-- Вставка (<kbd>Ctrl</kbd>+<kbd>V</kbd>), перетаскивание или открытие файлов PNG, JPEG, WebP, GIF и BMP
+- Вставка (<kbd>Ctrl</kbd>+<kbd>V</kbd>), перетаскивание или открытие файлов PNG, JPEG, AVIF, WebP, GIF и BMP
 - Текстовые заметки: двойной щелчок по пустому холсту создаёт заметку, двойной щелчок по заметке открывает редактирование
 - Поворот, отражение, кадрирование, масштаб, прозрачность и оттенки серого — всё с отменой
 
@@ -162,7 +162,7 @@
 
 ## Сборка из исходников
 
-Нужен [Rust](https://rustup.rs) версии 1.95 или новее. В Linux также установите заголовки X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` и `libwayland-dev` в Debian/Ubuntu).
+Нужен [Rust](https://rustup.rs) версии 1.98 или новее и CMake, компилятор C/C++ и NASM 2.16.x для сборок x86/x86_64 ([скачать NASM 2.16.03](https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/)). В Linux также установите заголовки X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` и `libwayland-dev` в Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

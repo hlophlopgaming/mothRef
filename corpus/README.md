@@ -79,3 +79,7 @@ Frozen board migrations: `moth/v1.moth` through `moth/v4.moth` retain their
 original layouts. `moth/v5.moth` exercises per-image nearest-neighbor sampling
 and fixed-width text with an explicit font size. `cargo xtask fixture` regenerates
 only `v5.moth`; older fixtures must stay unchanged.
+
+- `images/still.avif` and `images/alpha.avif`: synthetic 31×17 RGB (120,90,60),
+  opaque and half-transparent respectively, encoded with Pillow AVIF quality 100,
+  4:4:4, speed 8. Used for preview/tile parity and original export checks.

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Semantic colors shared by every UI surface.
 use egui::{Color32, Context};
+/// Preserve the colors of bundled raster artwork.
+pub const IMAGE_TINT: Color32 = Color32::WHITE;
 /// Complete house palette; widgets read the active set from their context.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tokens {

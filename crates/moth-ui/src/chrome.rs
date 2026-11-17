@@ -141,10 +141,9 @@ pub fn toolbar(
                 ui.spacing_mut().item_spacing.x = t.space_xs as f32;
                 ui.add_space(t.space_xs as f32);
                 let (logo, _) = ui.allocate_exact_size(egui::vec2(14., 20.), egui::Sense::hover());
-                ui.painter().rect_filled(
-                    egui::Rect::from_center_size(logo.center(), egui::Vec2::splat(13.)),
-                    t.radius_s,
-                    t.accent,
+                crate::brand::paint(
+                    ui,
+                    egui::Rect::from_center_size(logo.center(), egui::Vec2::splat(20.)),
                 );
                 menus(ui);
                 // A thin rule between the app menu and the boards.

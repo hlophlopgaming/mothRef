@@ -62,7 +62,7 @@
 - 움직임 줄이기 설정이 있는 애니메이션
 
 **이미지와 메모**
-- PNG, JPEG, WebP, GIF, BMP 파일 붙여넣기(<kbd>Ctrl</kbd>+<kbd>V</kbd>), 끌어다 놓기, 열기
+- PNG, JPEG, AVIF, WebP, GIF, BMP 파일 붙여넣기(<kbd>Ctrl</kbd>+<kbd>V</kbd>), 끌어다 놓기, 열기
 - 텍스트 메모: 빈 캔버스를 더블클릭하면 새로 만들고, 메모를 더블클릭하면 편집합니다
 - 회전, 뒤집기, 자르기, 크기 조절, 불투명도, 흑백. 모두 실행 취소할 수 있습니다
 
@@ -162,7 +162,7 @@ macOS에서는 <kbd>Ctrl</kbd> 대신 <kbd>Cmd</kbd>를 사용하세요. 전체 
 
 ## 소스에서 빌드
 
-[Rust](https://rustup.rs) 1.95 이상이 필요합니다. Linux에서는 X11/Wayland 헤더도 설치하세요(Debian/Ubuntu에서는 `libxkbcommon-dev`, `libdbus-1-dev`와 `libwayland-dev`).
+[Rust](https://rustup.rs) 1.98 이상이 필요합니다. Linux에서는 X11/Wayland 헤더도 설치하세요(Debian/Ubuntu에서는 `libxkbcommon-dev`, `libdbus-1-dev`와 `libwayland-dev`).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

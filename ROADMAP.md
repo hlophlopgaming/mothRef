@@ -108,6 +108,8 @@ Concrete M0/M1 carry-over work and completion checks: [technical debt backlog](d
 - [x] Clipboard staging: application data, lossless compression, per-board ownership
   and cleanup on explicit discard (originals survive a crash; layout recovery is M1)
 - [x] Allow large JPEG sources when DCT-reduced allocation fits the decode budget
+- [x] New moth app icon and README logo; optional Photocraft-style mark in Settings › Appearance
+- [x] Static AVIF import, previews and tiles with bounded whole-frame decoding
 - [x] WebP, static GIF and BMP import (bounded WebP per ADR 0003; BMP RLE/embedded codecs unsupported)
 - [x] EXIF orientation and CMYK JPEG conversion
 - [x] Area-averaged PNG and clipboard previews, including Adam7 input
@@ -148,7 +150,6 @@ qualification move to 1.2+ and do not block earlier releases; they remain unveri
 
 Open:
 
-- [ ] New app icon and README logo — **on hold** until the final mark is drawn
 - [ ] Parity leftovers from [FEATURES.md](docs/FEATURES.md) (a few were tagged M0/M1 there but never done, so they are collected here):
   - [x] Export the selected originals, each as its own file, named after the images (maintainer, 2026-11-08)
   - [ ] Show the color gamut of an image (BR) — waiting for a decision: the maintainer asked what it shows (2026-11-05)

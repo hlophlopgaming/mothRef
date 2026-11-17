@@ -433,6 +433,28 @@ pub struct Capabilities {
 }
 /// Native operations have one boundary instead of platform cfgs in the app.
 pub trait Platform {
+    /// Stable desktop identity lets Wayland find the packaged launcher icon.
+    fn application_attributes(&self) -> winit::window::WindowAttributes {
+        let attributes = winit::window::Window::default_attributes();
+        #[cfg(target_os = "linux")]
+        let attributes = winit::platform::wayland::WindowAttributesExtWayland::with_name(
+            attributes,
+            "org.mothref.MothRef",
+            "MothRef",
+        );
+        #[cfg(target_os = "linux")]
+        let attributes = winit::platform::x11::WindowAttributesExtX11::with_name(
+            attributes,
+            "org.mothref.MothRef",
+            "MothRef",
+        );
+        attributes
+    }
+    /// Updates the Dock mark on macOS; other desktops use the window/launcher icon.
+    fn application_icon(&self, _png: &[u8]) {
+        #[cfg(target_os = "macos")]
+        macos::application_icon(_png);
+    }
     /// Opens a prepared image using the OS association; called only on a worker.
     fn open_image(&self, path: &std::path::Path) -> io::Result<()>;
     /// Queries physical RAM off the main thread; unknown systems use a fixed fallback.

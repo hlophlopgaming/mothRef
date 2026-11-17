@@ -16,7 +16,12 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libdbus-1-dev mesa-vulkan-drivers
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libdbus-1-dev mesa-vulkan-drivers cmake
+      # libaom 3.11 checks NASM 2.x help output; NASM 3 changes that interface.
+      - uses: ilammy/setup-nasm@v1
+        with:
+          version: '2.16.03'
+          from-source: ${{ runner.os == 'macOS' }}
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Report clippy diagnostics as annotations
@@ -63,12 +68,14 @@ jobs:
         with:
           ndk-version: r27c
           add-to-path: false
-      - name: Use the NDK C toolchain for the streaming JPEG decoder
+      - name: Use the NDK toolchain for native image decoders
         env:
           NDK: ${{ steps.ndk.outputs.ndk-path }}
         run: |
           bin="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
           test -x "$bin/aarch64-linux-android24-clang"
           echo "CC_aarch64_linux_android=$bin/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$NDK" >> "$GITHUB_ENV"
+          echo "CXX_aarch64_linux_android=$bin/aarch64-linux-android24-clang++" >> "$GITHUB_ENV"
           echo "AR_aarch64_linux_android=$bin/llvm-ar" >> "$GITHUB_ENV"
       - run: cargo check --target aarch64-linux-android -p moth-scene -p moth-format -p moth-io

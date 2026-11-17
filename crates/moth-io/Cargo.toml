@@ -10,6 +10,8 @@ moth-format.workspace = true
 # Large originals are hashed on the decode pool; see `content_hash`.
 blake3 = { workspace = true, features = ["rayon"] }
 image.workspace = true
+avif-parse = "2.1"
+bytemuck.workspace = true
 jpeg-decoder.workspace = true
 png.workspace = true
 gif.workspace = true
@@ -32,6 +34,7 @@ intel_tex_2 = "0.5"
 [target.'cfg(target_os = "android")'.dependencies]
 blake3 = { workspace = true, features = ["pure"] }
 
-# Browser JPEG tiles use the Web Worker backend in M8; keep core WASM builds C-free.
+# Browser native image codecs use the Web Worker backend in M8; keep core WASM builds C-free.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+avif-decode = { version = "2", default-features = false }
 mozjpeg = { version = "0.10.13", default-features = false }

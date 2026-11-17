@@ -137,6 +137,7 @@ pub(super) fn pixel_info(
         "gif" => "GIF",
         "bmp" => "BMP",
         "webp" => "WebP",
+        "avif" => "AVIF",
         _ => "RGBA",
     };
     Ok(PixelInfo {
@@ -663,9 +664,24 @@ fn extension(bytes: &[u8]) -> &'static str {
         "bmp"
     } else if bytes.starts_with(b"RIFF") {
         "webp"
+    } else if image::guess_format(bytes).ok() == Some(image::ImageFormat::Avif) {
+        "avif"
     } else {
         "mothrgba"
     }
+}
+
+#[cfg(test)]
+#[test]
+fn avif_originals_keep_their_real_extension() {
+    assert_eq!(
+        extension(&include_bytes!("../../../corpus/images/still.avif")[..16]),
+        "avif"
+    );
+    assert_eq!(
+        extension(&include_bytes!("../../../corpus/images/alpha.avif")[..16]),
+        "avif"
+    );
 }
 fn bounds(items: &[&Item], region: Option<Rect>) -> io::Result<Rect> {
     if let Some(rect) = region {

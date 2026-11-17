@@ -62,7 +62,7 @@ Mevcut alfada şimdiden çalışanlar:
 - Hareketi azaltma ayarıyla animasyonlar
 
 **Görseller ve notlar**
-- PNG, JPEG, WebP, GIF ve BMP dosyalarını yapıştırın (<kbd>Ctrl</kbd>+<kbd>V</kbd>), sürükleyin veya açın
+- PNG, JPEG, AVIF, WebP, GIF ve BMP dosyalarını yapıştırın (<kbd>Ctrl</kbd>+<kbd>V</kbd>), sürükleyin veya açın
 - Metin notları: boş tuvale çift tıklayarak oluşturun, bir nota çift tıklayarak düzenleyin
 - Döndürme, çevirme, kırpma, ölçekleme, opaklık ve gri tonlama; hepsi geri alınabilir
 
@@ -162,7 +162,7 @@ Tam plan, özellik listeleri ve performans hedefleri [ROADMAP.md](ROADMAP.md) do
 
 ## Kaynaktan derleme
 
-[Rust](https://rustup.rs) 1.95 veya daha yenisi gerekir. Linux'ta ayrıca X11/Wayland başlık dosyalarını kurun (Debian/Ubuntu'da `libxkbcommon-dev`, `libdbus-1-dev` ve `libwayland-dev`).
+[Rust](https://rustup.rs) 1.98 veya daha yenisi gerekir. Linux'ta ayrıca X11/Wayland başlık dosyalarını kurun (Debian/Ubuntu'da `libxkbcommon-dev`, `libdbus-1-dev` ve `libwayland-dev`).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

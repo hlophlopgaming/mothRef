@@ -62,7 +62,7 @@ Cosa funziona già nell'alpha attuale:
 - Animazioni con opzione di movimento ridotto
 
 **Immagini e note**
-- Incolla (<kbd>Ctrl</kbd>+<kbd>V</kbd>), trascina o apri file PNG, JPEG, WebP, GIF e BMP
+- Incolla (<kbd>Ctrl</kbd>+<kbd>V</kbd>), trascina o apri file PNG, JPEG, AVIF, WebP, GIF e BMP
 - Note di testo: doppio clic sulla tela vuota per crearne una, doppio clic su una nota per modificarla
 - Ruota, rifletti, ritaglia, ridimensiona, opacità e scala di grigi, tutto annullabile
 
@@ -162,7 +162,7 @@ Il piano completo, le liste di funzioni e gli obiettivi di prestazione sono in [
 
 ## Compilare dai sorgenti
 
-Serve [Rust](https://rustup.rs) 1.95 o successivo. Su Linux installa anche gli header di X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` e `libwayland-dev` su Debian/Ubuntu).
+Serve [Rust](https://rustup.rs) 1.98 o successivo. Su Linux installa anche gli header di X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` e `libwayland-dev` su Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

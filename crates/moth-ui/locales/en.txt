@@ -618,3 +618,8 @@ BackupOpened = Backup opened. Save it to keep the recovered board.
 BackupUnavailable = The backup is no longer available.
 
 GroupCustom = Custom RGB…
+
+AppIcon = Application icon
+IconMoth = Moth
+IconPhotocraft = Photocraft style
+AppIconHint = Changes the titlebar and supported window/Dock icons. Installed launcher and file icons keep the moth; Wayland follows the launcher.

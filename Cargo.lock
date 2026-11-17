@@ -95,6 +95,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "aom-decode"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad1739f6df0cf614139230fe5f4708eece839ef5ad74e2612c0fcb2f7b5676ab"
+dependencies = [
+ "avif-parse",
+ "bytemuck",
+ "imgref",
+ "libaom-sys",
+ "log",
+ "quick-error 2.0.1",
+ "rgb",
+ "yuv",
+]
+
+[[package]]
 name = "arboard"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -153,6 +169,32 @@ name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
+
+[[package]]
+name = "avif-decode"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da18c7f93738fca58dc85be3d93f498f7b3b52b6fcaa5b3cfb92922a3198ab46"
+dependencies = [
+ "aom-decode",
+ "imgref",
+ "quick-error 2.0.1",
+ "rgb",
+]
+
+[[package]]
+name = "avif-parse"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "048e72663e14be27bfd8a9e01e8a0bf27610511ffd5f74c7955f4e4847ce2530"
+dependencies = [
+ "arrayvec",
+ "bitreader",
+ "byteorder",
+ "fallible_collections",
+ "leb128",
+ "log",
+]
 
 [[package]]
 name = "backtrace"
@@ -226,6 +268,15 @@ name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
+
+[[package]]
+name = "bitreader"
+version = "0.3.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "886559b1e163d56c765bc3a985febb4eee8009f625244511d8ee3c432e08c066"
+dependencies = [
+ "cfg-if",
+]
 
 [[package]]
 name = "blake3"
@@ -415,6 +466,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "052af7878466feccda12ba7a6a67d019d712f296809559b47c12c8cc196d3a9a"
 dependencies = [
  "error-code",
+]
+
+[[package]]
+name = "cmake"
+version = "0.1.58"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -923,6 +983,12 @@ checksum = "f1a05365e3b1c6d1650318537c7460c6923f1abdd272ad6842baa2b509957a06"
 dependencies = [
  "num-traits",
 ]
+
+[[package]]
+name = "fallible_collections"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dab93c7205280c4785c44517fe84d99751b81f6deb8450cb196da6be88e332bb"
 
 [[package]]
 name = "fastrand"
@@ -1513,6 +1579,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65b27460c2c92b037f3f94c538ed9a3342f3fdf923606781629ccb35f82d042a"
 
 [[package]]
+name = "imgref"
+version = "1.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e44b0a4eaa4c82f441d50a963f2d5f05a787240aeee097597033e72accfd22f"
+
+[[package]]
 name = "indexmap"
 version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1690,6 +1762,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 
 [[package]]
+name = "leb128"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c83bff1d572d6b9aeef67ddfc8448e4a3737909cb28e81f97c791b9018703e52"
+
+[[package]]
+name = "libaom-sys"
+version = "0.17.2+libaom.3.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c4fce8aaf0c2d8534529b0698ed98ec1da8d35319588d20b0d79ce6446e4194"
+dependencies = [
+ "cmake",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1850,7 +1937,7 @@ checksum = "c505b3e17ed6b70a7ed2e67fbb2c560ee327353556120d6e72f5232b6880d536"
 
 [[package]]
 name = "moth-format"
-version = "0.1.0-alpha.24"
+version = "0.1.0-alpha.25"
 dependencies = [
  "blake3",
  "fractional_index",
@@ -1861,7 +1948,7 @@ dependencies = [
 
 [[package]]
 name = "moth-import"
-version = "0.1.0-alpha.24"
+version = "0.1.0-alpha.25"
 dependencies = [
  "moth-format",
  "moth-scene",
@@ -1873,10 +1960,13 @@ dependencies = [
 
 [[package]]
 name = "moth-io"
-version = "0.1.0-alpha.24"
+version = "0.1.0-alpha.25"
 dependencies = [
+ "avif-decode",
+ "avif-parse",
  "bcdec_rs",
  "blake3",
+ "bytemuck",
  "crossbeam-channel",
  "dhat",
  "gif",
@@ -1893,7 +1983,7 @@ dependencies = [
 
 [[package]]
 name = "moth-platform"
-version = "0.1.0-alpha.24"
+version = "0.1.0-alpha.25"
 dependencies = [
  "arboard",
  "base64",
@@ -1903,6 +1993,7 @@ dependencies = [
  "ctrlc",
  "dbus",
  "global-hotkey",
+ "image",
  "moth-format",
  "moth-import",
  "moth-io",
@@ -1934,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "moth-render"
-version = "0.1.0-alpha.24"
+version = "0.1.0-alpha.25"
 dependencies = [
  "bytemuck",
  "dhat",
@@ -1950,7 +2041,7 @@ dependencies = [
 
 [[package]]
 name = "moth-scene"
-version = "0.1.0-alpha.24"
+version = "0.1.0-alpha.25"
 dependencies = [
  "blake3",
  "fractional_index",
@@ -1962,14 +2053,14 @@ dependencies = [
 
 [[package]]
 name = "moth-ui"
-version = "0.1.0-alpha.24"
+version = "0.1.0-alpha.25"
 dependencies = [
  "egui",
 ]
 
 [[package]]
 name = "mothref"
-version = "0.1.0-alpha.24"
+version = "0.1.0-alpha.25"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -1990,6 +2081,7 @@ dependencies = [
  "tracing-subscriber",
  "wgpu",
  "winit",
+ "winresource",
 ]
 
 [[package]]
@@ -4852,6 +4944,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "winresource"
+version = "0.1.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2bc6d36480b829272a5bdabf08e6dca8004761c1da7e35efef800540c66221b"
+dependencies = [
+ "version_check",
+]
+
+[[package]]
 name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4952,7 +5053,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.0-alpha.24"
+version = "0.1.0-alpha.25"
 dependencies = [
  "anyhow",
  "image",
@@ -4986,6 +5087,15 @@ dependencies = [
  "quote",
  "syn 3.0.9",
  "synstructure",
+]
+
+[[package]]
+name = "yuv"
+version = "0.8.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d109d1eacc7b034329873d2d848039b365c65ab7d751b19ee84e4921c62c607"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]

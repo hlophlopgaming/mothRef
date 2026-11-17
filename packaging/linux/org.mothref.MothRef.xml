@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-mothref">
+    <comment>MothRef board</comment>
+    <comment xml:lang="ru">Доска MothRef</comment>
+    <glob pattern="*.moth"/>
+    <icon name="org.mothref.MothRef"/>
+  </mime-type>
+</mime-info>

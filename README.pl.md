@@ -62,7 +62,7 @@ Co już działa w obecnej wersji alfa:
 - Animacje z opcją ograniczenia ruchu
 
 **Obrazy i notatki**
-- Wklejaj (<kbd>Ctrl</kbd>+<kbd>V</kbd>), przeciągaj lub otwieraj pliki PNG, JPEG, WebP, GIF i BMP
+- Wklejaj (<kbd>Ctrl</kbd>+<kbd>V</kbd>), przeciągaj lub otwieraj pliki PNG, JPEG, AVIF, WebP, GIF i BMP
 - Notatki tekstowe: dwuklik na pustym płótnie tworzy notatkę, dwuklik na notatce otwiera edycję
 - Obracanie, odbijanie, kadrowanie, skalowanie, przezroczystość i skala szarości, wszystko z cofaniem
 
@@ -162,7 +162,7 @@ Pełny plan, listy funkcji i cele wydajności są w [ROADMAP.md](ROADMAP.md) (po
 
 ## Kompilacja ze źródeł
 
-Potrzebujesz [Rusta](https://rustup.rs) w wersji 1.95 lub nowszej. Na Linuksie zainstaluj też nagłówki X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` i `libwayland-dev` w Debianie/Ubuntu).
+Potrzebujesz [Rusta](https://rustup.rs) w wersji 1.98 lub nowszej. Na Linuksie zainstaluj też nagłówki X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` i `libwayland-dev` w Debianie/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

@@ -82,12 +82,15 @@ macro_rules! schema {
         pub(super) struct Settings { $(pub $field: $ty,)+ }
         impl Default for Settings { fn default() -> Self { Self { $($field: $default,)+ } } }
         pub(super) const SCHEMA: &[Entry] = &[$(Entry {
-            key:$key, section:Section::$section, label:Text::$label, kind:$kind, hint:None,
+            key:$key, section:Section::$section, label:Text::$label, kind:$kind, hint:schema!(@hint $field),
             get: $get, set: |settings, values| settings.$field = ($decode)(values),
         },)+];
-    }
+    };
+    (@hint app_icon) => { Some(Text::AppIconHint) };
+    (@hint $field:ident) => { None };
 }
 schema! {
+    app_icon: u8 = 0, "app_icon", Appearance, AppIcon, Kind::Choice(&[Text::IconMoth, Text::IconPhotocraft]), |s| s.app_icon.to_string(), |values: &BTreeMap<String,String>| values.get("app_icon").and_then(|v| v.parse().ok()).filter(|v| *v < 2).unwrap_or(0);
     view_controls_right: bool = true, "view_controls_right", Window, ViewControlsRight, Kind::Toggle, |s| s.view_controls_right.to_string(), |values: &BTreeMap<String,String>| values.get("view_controls_right").and_then(|v|v.parse().ok()).unwrap_or(true);
     over_hint: bool = true, "over_hint", Window, OverHintSetting, Kind::Toggle, |s| s.over_hint.to_string(), |values: &BTreeMap<String,String>| values.get("over_hint").and_then(|v|v.parse().ok()).unwrap_or(true);
     global_shortcuts: bool = false, "global_shortcuts", Window, GlobalShortcuts, Kind::Toggle, |s| s.global_shortcuts.to_string(), |values: &BTreeMap<String,String>| values.get("global_shortcuts").and_then(|v|v.parse().ok()).unwrap_or(false);
@@ -1047,6 +1050,29 @@ mod tests {
         assert!(!settings.auto_arrange);
         settings.load(&BTreeMap::from([("dark".into(), "true".into())]));
         assert!(settings.dark);
+    }
+
+    #[test]
+    fn app_icon_defaults_to_moth_and_roundtrips_the_alternative() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.app_icon, 0);
+        settings.load(&BTreeMap::from([("app_icon".into(), "1".into())]));
+        assert_eq!(settings.app_icon, 1);
+        let saved = settings
+            .preferences()
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v))
+            .collect();
+        let mut restored = Settings::default();
+        restored.load(&saved);
+        assert_eq!(restored.app_icon, 1);
+        for invalid in ["2", "-1", "garbage"] {
+            restored.load(&BTreeMap::from([("app_icon".into(), invalid.into())]));
+            assert_eq!(restored.app_icon, 0);
+        }
+        let entry = SCHEMA.iter().find(|entry| entry.key == "app_icon").unwrap();
+        assert!(entry.section == Section::Appearance);
+        assert_eq!(entry.hint, Some(Text::AppIconHint));
     }
 
     #[test]

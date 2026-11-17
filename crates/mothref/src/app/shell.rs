@@ -94,6 +94,7 @@ impl Shell {
         let ctx = egui::Context::default();
         moth_ui::theme(&ctx, &moth_ui::tokens(&self.ctx));
         ctx.set_zoom_factor(self.ctx.zoom_factor());
+        moth_ui::brand::set(&ctx, moth_ui::brand::alternative(&self.ctx));
         let proxy = self.proxy.clone();
         ctx.set_request_repaint_callback(move |info| {
             let _ = proxy.send_event(Wake::Repaint(info.delay));
@@ -159,9 +160,11 @@ impl Shell {
         self.gpu = None;
         let tokens = moth_ui::tokens(&self.ctx);
         let zoom = self.ctx.zoom_factor();
+        let alternative = moth_ui::brand::alternative(&self.ctx);
         self.ctx = egui::Context::default();
         moth_ui::theme(&self.ctx, &tokens);
         self.ctx.set_zoom_factor(zoom);
+        moth_ui::brand::set(&self.ctx, alternative);
         let proxy = self.proxy.clone();
         self.ctx.set_request_repaint_callback(move |info| {
             let _ = proxy.send_event(Wake::Repaint(info.delay));

@@ -62,7 +62,7 @@ O que já funciona no alfa atual:
 - Animações com opção de reduzir movimento
 
 **Imagens e notas**
-- Cole (<kbd>Ctrl</kbd>+<kbd>V</kbd>), arraste ou abra arquivos PNG, JPEG, WebP, GIF e BMP
+- Cole (<kbd>Ctrl</kbd>+<kbd>V</kbd>), arraste ou abra arquivos PNG, JPEG, AVIF, WebP, GIF e BMP
 - Notas de texto: clique duplo na tela vazia para criar, clique duplo em uma nota para editar
 - Girar, espelhar, recortar, redimensionar, opacidade e tons de cinza, tudo com desfazer
 
@@ -162,7 +162,7 @@ O plano completo, as listas de recursos e as metas de desempenho estão em [ROAD
 
 ## Compilar a partir do código-fonte
 
-Você precisa do [Rust](https://rustup.rs) 1.95 ou mais recente. No Linux, instale também os cabeçalhos do X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` e `libwayland-dev` no Debian/Ubuntu).
+Você precisa do [Rust](https://rustup.rs) 1.98 ou mais recente. No Linux, instale também os cabeçalhos do X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` e `libwayland-dev` no Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

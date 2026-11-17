@@ -111,7 +111,12 @@ pub(crate) fn probe(bytes: &[u8]) -> Result<Probe, DecodeError> {
     } else {
         let reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
         let format = reader.format();
-        let (w, h) = reader.into_dimensions()?;
+        let (w, h) = if format == Some(image::ImageFormat::Avif) {
+            let [w, h] = crate::avif::dimensions(bytes)?;
+            (w, h)
+        } else {
+            reader.into_dimensions()?
+        };
         (format, w, h)
     };
     if w == 0 || h == 0 || w > crate::MAX_DIMENSION || h > crate::MAX_DIMENSION {
@@ -255,6 +260,18 @@ where
         }
         None if probe.raw => {
             for (y, row) in bytes[48..].chunks_exact(w as usize * 4).enumerate() {
+                row_sink(y as u32, 0, 1, row, png::ColorType::Rgba)?;
+            }
+        }
+        Some(image::ImageFormat::Avif) => {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(DecodeError::Cancelled);
+            }
+            let source = crate::avif::frame(bytes)?;
+            for (y, row) in source.as_raw().chunks_exact(w as usize * 4).enumerate() {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(DecodeError::Cancelled);
+                }
                 row_sink(y as u32, 0, 1, row, png::ColorType::Rgba)?;
             }
         }
@@ -914,6 +931,8 @@ mod tests {
             include_bytes!("../../../corpus/images/rows.gif").as_slice(),
             include_bytes!("../../../corpus/images/rows.bmp").as_slice(),
             include_bytes!("../../../corpus/images/oriented.webp").as_slice(),
+            include_bytes!("../../../corpus/images/still.avif").as_slice(),
+            include_bytes!("../../../corpus/images/alpha.avif").as_slice(),
         ] {
             let images = decode_batch(bytes, &tiles, &cancel).unwrap();
             for (image, tile) in images.iter().zip(tiles) {
@@ -1095,6 +1114,8 @@ mod tests {
             include_bytes!("../../../corpus/images/adam7.png").as_slice(),
             include_bytes!("../../../corpus/images/rows.png").as_slice(),
             include_bytes!("../../../corpus/images/oriented.webp").as_slice(),
+            include_bytes!("../../../corpus/images/still.avif").as_slice(),
+            include_bytes!("../../../corpus/images/alpha.avif").as_slice(),
             include_bytes!("../../../corpus/images/oriented.jpg").as_slice(),
             include_bytes!("../../../corpus/images/cmyk.jpg").as_slice(),
         ] {

@@ -58,3 +58,10 @@ and checked with `cargo deny check`.
   engraving is "Moth 5" by Firkin, uploaded to Openclipart on 2017-01-06,
   https://openclipart.org/detail/270205/moth-5. Openclipart artwork is released
   into the public domain. Recoloured, filled and placed on a tile for MothRef.
+
+## AVIF decoding
+
+- `avif-decode` (BSD-3-Clause), `avif-parse` (MPL-2.0), `aom-decode` and
+  `libaom-sys` (BSD-2-Clause), and `yuv` (BSD-3-Clause) provide statically linked
+  AVIF/AV1 decoding. Building requires CMake, a C/C++ toolchain and, on x86,
+  NASM 2.16.x; no system libdav1d is required.

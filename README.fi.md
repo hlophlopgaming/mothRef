@@ -162,7 +162,7 @@ Koko suunnitelma, ominaisuuslistat ja suorituskykytavoitteet löytyvät tiedosto
 
 ## Kääntäminen lähdekoodista
 
-Tarvitset [Rustin](https://rustup.rs) version 1.95 tai uudemman. Linuxissa asenna myös X11/Wayland-otsikkotiedostot (`libxkbcommon-dev`, `libdbus-1-dev` ja `libwayland-dev` Debianissa/Ubuntussa).
+Tarvitset [Rustin](https://rustup.rs) version 1.98 tai uudemman. Linuxissa asenna myös X11/Wayland-otsikkotiedostot (`libxkbcommon-dev`, `libdbus-1-dev` ja `libwayland-dev` Debianissa/Ubuntussa).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

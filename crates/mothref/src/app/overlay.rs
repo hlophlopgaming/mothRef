@@ -27,10 +27,13 @@ impl Overlay {
         wake: Arc<dyn Fn() + Send + Sync>,
         software: bool,
         on_top: bool,
+        alternative: bool,
     ) -> anyhow::Result<Self> {
         let window = Arc::new(
             event_loop.create_window(
-                Window::default_attributes()
+                moth_platform::Desktop
+                    .application_attributes()
+                    .with_window_icon(Some(super::panes::icon(alternative)))
                     .with_title(moth_ui::text(moth_ui::Text::Overlay))
                     .with_decorations(false)
                     .with_resizable(true)

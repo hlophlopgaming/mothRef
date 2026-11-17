@@ -34,7 +34,12 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libdbus-1-dev
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libdbus-1-dev cmake
+      # libaom 3.11 checks NASM 2.x help output; NASM 3 changes that interface.
+      - uses: ilammy/setup-nasm@v1
+        with:
+          version: '2.16.03'
+          from-source: ${{ runner.os == 'macOS' }}
       - name: Verify tag matches Cargo version
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
@@ -50,13 +55,17 @@ jobs:
         run: |
           mkdir package
           cp target/${{ matrix.target }}/release/mothref package/
+          cp packaging/linux/*.desktop packaging/linux/*.xml package/
+          cp docs/assets/icon/mothref-icon-512.png package/org.mothref.MothRef.png
+          cp packaging/linux/README.md package/DESKTOP.md
           cp LICENSE THIRD_PARTY.md crates/moth-ui/fonts/LICENSE-*.txt package/
           tar -czf mothref-${{ matrix.name }}.tar.gz -C package .
       - name: Package Finder application
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          mkdir -p package/MothRef.app/Contents/MacOS
+          mkdir -p package/MothRef.app/Contents/MacOS package/MothRef.app/Contents/Resources
+          cp assets/icons/moth.icns package/MothRef.app/Contents/Resources/MothRef.icns
           cp target/${{ matrix.target }}/release/mothref package/MothRef.app/Contents/MacOS/
           cp LICENSE THIRD_PARTY.md crates/moth-ui/fonts/LICENSE-*.txt package/
           python3 - <<'PYTHON'
@@ -65,13 +74,17 @@ jobs:
           metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--no-deps', '--format-version', '1']))
           version = next(p['version'] for p in metadata['packages'] if p['name'] == 'mothref')
           info = dict(CFBundleExecutable='mothref', CFBundleIdentifier='org.mothref.MothRef',
-                      CFBundleName='MothRef', CFBundlePackageType='APPL',
+                      CFBundleName='MothRef', CFBundlePackageType='APPL', CFBundleIconFile='MothRef.icns',
+                      CFBundleDocumentTypes=[dict(CFBundleTypeName='MothRef board',
+                          CFBundleTypeExtensions=['moth'], CFBundleTypeRole='Editor',
+                          CFBundleTypeIconFile='MothRef.icns')],
                       CFBundleShortVersionString=version.split('-')[0], CFBundleVersion='1',
                       NSHighResolutionCapable=True)
           destination = Path('package/MothRef.app/Contents/Info.plist')
           destination.write_bytes(plistlib.dumps(info))
           assert plistlib.loads(destination.read_bytes())['CFBundleExecutable'] == 'mothref'
           assert (destination.parent / 'MacOS' / 'mothref').stat().st_mode & 0o111
+          assert (destination.parent / 'Resources' / info['CFBundleIconFile']).read_bytes().startswith(b'icns')
           PYTHON
           plutil -lint package/MothRef.app/Contents/Info.plist
           tar -czf mothref-${{ matrix.name }}.tar.gz -C package .

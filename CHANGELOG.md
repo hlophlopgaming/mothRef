@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.25 — 2026-11-17
+
+- Use the new moth mark for window icons, the titlebar, Windows executables, the macOS app bundle and Dock, Linux launchers and README headers. Settings › Appearance › Application icon offers the engraved Photocraft-style alternative and remembers it across launches. The installed launcher/file icon remains the default mark; Wayland taskbar icons follow the launcher.
+- Import static AVIF images through open, drop and paste, retain originals in boards and export them as `.avif`. Previews, full-resolution tiles and baked caches use the same bounded decoder. AVIF is limited to 32 Mi pixels and 128 MiB compressed input; animations are unsupported. Building now requires Rust 1.98, CMake and a C/C++ toolchain; x86 builds also use NASM 2.16.x. The AVIF codec is linked statically.
+
 ## 0.1.0-alpha.24 — 2026-11-10
 
 - Fix macOS CI rejecting the group RGB golden test because Metal has no software adapter. Every desktop still checks RGB pixels; Linux CI additionally forces its installed software adapter. This release includes the alpha.23 changes below, whose publication was blocked by that test.

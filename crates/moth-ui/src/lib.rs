@@ -788,6 +788,14 @@ pub enum Text {
     LockCanvas,
     /// Localized DarkTheme control.
     DarkTheme,
+    /// Preferred application mark.
+    AppIcon,
+    /// Desktop limits of the icon preference.
+    AppIconHint,
+    /// Default moth mark.
+    IconMoth,
+    /// Alternative illustrated mark.
+    IconPhotocraft,
     /// Localized UiScale control.
     UiScale,
     /// Localized Settings control.
@@ -1155,6 +1163,8 @@ pub use localization::{
     Locale, Message, ago, counted, item_counts, locale, set_locale, text, translated,
 };
 
+/// Application icon artwork and per-window choice.
+pub mod brand;
 /// House theme tokens and application.
 pub mod theme;
 pub use theme::{Tokens, tokens};

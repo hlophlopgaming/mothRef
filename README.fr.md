@@ -62,7 +62,7 @@ Ce qui fonctionne déjà dans l'alpha actuelle :
 - Animations avec option de mouvement réduit
 
 **Images et notes**
-- Collez (<kbd>Ctrl</kbd>+<kbd>V</kbd>), glissez-déposez ou ouvrez des fichiers PNG, JPEG, WebP, GIF et BMP
+- Collez (<kbd>Ctrl</kbd>+<kbd>V</kbd>), glissez-déposez ou ouvrez des fichiers PNG, JPEG, AVIF, WebP, GIF et BMP
 - Notes texte : double-clic sur la toile vide pour en créer une, double-clic sur une note pour la modifier
 - Rotation, miroir, recadrage, mise à l'échelle, opacité et niveaux de gris, tout est annulable
 
@@ -162,7 +162,7 @@ Le plan complet, les listes de fonctionnalités et les objectifs de performance 
 
 ## Compiler depuis les sources
 
-Il vous faut [Rust](https://rustup.rs) 1.95 ou plus récent. Sous Linux, installez aussi les en-têtes X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` et `libwayland-dev` sous Debian/Ubuntu).
+Il vous faut [Rust](https://rustup.rs) 1.98 ou plus récent. Sous Linux, installez aussi les en-têtes X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` et `libwayland-dev` sous Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git

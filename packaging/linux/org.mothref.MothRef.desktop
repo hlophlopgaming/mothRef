@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=MothRef
+Comment=Reference boards for artists
+Comment[ru]=Доски референсов для художников
+Exec=mothref %F
+Icon=org.mothref.MothRef
+Terminal=false
+Categories=Graphics;2DGraphics;
+MimeType=application/x-mothref;
+StartupWMClass=MothRef

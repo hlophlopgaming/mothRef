@@ -46,7 +46,9 @@ impl App {
             let result = (|| -> anyhow::Result<ImageWindow> {
                 let window = Arc::new(
                     event_loop.create_window(
-                        Window::default_attributes()
+                        moth_platform::Desktop
+                            .application_attributes()
+                            .with_window_icon(Some(super::panes::icon(self.settings.app_icon == 1)))
                             .with_title(moth_ui::text(moth_ui::Text::OverlaySelection))
                             .with_decorations(false)
                             .with_transparent(true)

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![forbid(unsafe_code)]
 //! Bounded image workers. Pixels never enter the scene model.
+mod avif;
 mod bake;
 pub mod cache;
 mod frames;
@@ -123,6 +124,9 @@ pub enum DecodeError {
     /// GIF failures remain inside the worker error boundary.
     #[error("GIF: {0}")]
     Gif(#[from] gif::DecodingError),
+    /// A malformed or unsupported AVIF container or AV1 payload.
+    #[error("AVIF: {0}")]
+    Avif(String),
 }
 /// The content hash of an original, as board blob ids use it. Large originals are
 /// hashed across the decode pool: a tile batch of a 100 MiB file otherwise spends
@@ -147,6 +151,12 @@ fn decode_inner(bytes: &[u8], side: u32) -> Result<Decoded, DecodeError> {
     }
     if bytes.starts_with(RGBA_MAGIC) {
         return decode_rgba(bytes, side.clamp(1, MAX_SIDE));
+    }
+    if image::guess_format(bytes).ok() == Some(image::ImageFormat::Avif) {
+        let source = avif::frame(bytes)?;
+        let (w, h) = source.dimensions();
+        let preview = preview::rgba(source.as_raw(), w, h, side.clamp(1, MAX_SIDE))?;
+        return Ok(pyramid(preview, content_hash(bytes), [w, h]));
     }
     let mut reader = ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
     let mut header_limits = image::Limits::default();

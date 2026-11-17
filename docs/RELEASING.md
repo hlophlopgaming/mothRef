@@ -39,3 +39,14 @@ Both paths retain rotating logs in the application's recovery root under `logs/`
 Before release, complete the native launch and window-transition matrix in
 [M3 window validation](M3-WINDOW-VALIDATION.md); packaging assertions alone do not
 qualify Explorer/Finder launches or graphics-driver transitions.
+
+Application marks are bundled from `assets/icons/`. Windows embeds `moth.ico`
+in the executable; macOS bundles `moth.icns` for Finder, the Dock and `.moth`
+documents. Linux archives include the desktop entry, PNG icon, MIME definition
+and `DESKTOP.md` with per-user installation commands. x86 builds require NASM 2.16.x
+(the workflows pin 2.16.03 because libaom 3.11 rejects NASM 3 help output); ARM builds use the same statically built libaom codec without x86 assembly.
+CMake and a C/C++ toolchain are required to build the codec.
+Before release, run the AVIF regression/corpus and allocation checks, and the
+image-reader fuzzer/IO benchmark under the policy in `AGENTS.md`. Manually check
+icon switching and relaunch persistence on Windows, macOS and X11; Wayland's
+taskbar follows the installed launcher icon, as explained in the setting.

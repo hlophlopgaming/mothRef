@@ -62,7 +62,7 @@ What works in the current alpha:
 - Animations with a reduced-motion setting
 
 **Images and notes**
-- Paste (<kbd>Ctrl</kbd>+<kbd>V</kbd>), drop or open PNG, JPEG, WebP, GIF and BMP files
+- Paste (<kbd>Ctrl</kbd>+<kbd>V</kbd>), drop or open PNG, JPEG, AVIF, WebP, GIF and BMP files
 - Plain text notes: double-click empty canvas to create one, double-click a note to edit it
 - Rotate, flip, crop, scale, opacity and grayscale, all undoable
 
@@ -158,7 +158,7 @@ The full plan, feature checklists and performance targets live in [ROADMAP.md](R
 
 ## Build from source
 
-You need [Rust](https://rustup.rs) 1.95 or newer. On Linux, also install the X11/Wayland headers
+You need [Rust](https://rustup.rs) 1.98 or newer plus CMake, a C/C++ toolchain and NASM 2.16.x for x86/x86_64 builds ([NASM 2.16.03 downloads](https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/)). On Linux, also install the X11/Wayland headers
 (`libxkbcommon-dev`, `libdbus-1-dev` and `libwayland-dev` on Debian/Ubuntu).
 
 ```sh
