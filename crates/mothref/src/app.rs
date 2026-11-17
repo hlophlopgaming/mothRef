@@ -44,6 +44,7 @@ struct Editing {
     focus: bool,
 }
 mod actions;
+pub(crate) mod agent;
 mod apply;
 mod arrange;
 mod bindings;

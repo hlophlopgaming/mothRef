@@ -38,6 +38,7 @@ crates/
   moth-web/         wasm32 entry point (M8)
   moth-thumb/       binary: thumbnails for file managers
 third_party/purcore/ local, attributed purcore safety fork (maintainer-authorized; decision 0007)
+skills/            shipped agent instructions for the CLI
 extension/          browser extension (TypeScript, Manifest V3, Firefox + Chromium)
 xtask/              build helpers: bench, corpus, packaging
 corpus/             test files: .moth, .bee, .pur (available verified samples), images
@@ -229,6 +230,7 @@ Targets are in `ROADMAP.md`. Rules for agents:
 - Small PRs, one concern each. Title format: `area: imperative summary` (for example `format: append checkpoints instead of rewriting`).
 - Commits follow Conventional Commits (`feat:`, `fix:`, `perf:`, `refactor:`, `test:`, `docs:`, `chore:`).
 - Update `CHANGELOG.md` under "Unreleased" for every user-visible change.
+- Ship board features with their native CLI interface in the same change: update `crates/mothref/src/app/agent/operations.rs` (typed JSON operations and clap flags), its `api.json`/`actions.json`, `crates/mothref/tests/cli.rs`, `docs/CLI.md` and `skills/cli-anything-mothref/SKILL.md`. Every registered `Action` needs a CLI mapping or a specific GUI-only reason. The native inventory test must account for every action/command; `mothref commands` embeds the catalog and canonical agent guide. See decision 0026 for the backend boundary.
 - Architectural decisions go into `docs/decisions/NNNN-title.md` (context, decision, consequences) and a line at the top of the decision log in `docs/decisions/README.md`.
 - Tick the matching checkbox in `ROADMAP.md` (and in `docs/FEATURES.md` for parity and Milanote items) when a task is done. Keep open items at the top of each milestone; finished ones move into its collapsed "Done" list.
 

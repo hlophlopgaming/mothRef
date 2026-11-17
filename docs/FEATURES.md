@@ -77,8 +77,8 @@ Priorities: **P0** = no release without it, **P1** = required for 1.0, **P2** = 
 | Client presentation and pitch sheet export | MothRef | P2 | M11 |
 | JSON Canvas export/import | Obsidian | P2 | M12 |
 | Deep links, wiki-links, linked `.md` notes, preview sidecar | MothRef | P2 | M12 |
-| CLI / headless automation (`clap` subcommands, `--json`) | MothRef | P2 | M13 |
-| Fetch images from HTTP(S) URLs into a board | MothRef | P2 | M13 |
+| CLI / headless automation (native subcommands + JSON-lines in the GUI binary) | MothRef | P0 | M2 — implemented; see [CLI reference](CLI.md) |
+| Fetch images from HTTP(S) URLs into a board | MothRef | P0 | M2 — CLI implemented; HTTP E2E qualification pending |
 | Local drop API, ShareX / ComfyUI / file-manager integrations (target 1.5) | RefDrop, PureDrop, MothRef | P2 | M14 |
 | PDF import with page picker (release to be confirmed) | MothRef | P2 | M15 |
 | Excalidraw, draw.io and UML/XML import (target 2.0) | MothRef | P2 | M16 |
@@ -164,7 +164,7 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 - [ ] Optional auto-downscale of very large images on import (PR) — M2
 - [x] Export selected images, all images, scene (PR, BR) — M2
 - [ ] Load most recent scene; option to reopen the last scene on start (PR) — M1
-- [ ] Open image files from the command line; first argument `.moth`/`.bee`/`.pur` opens a board (BR) — M1
+- [x] Open image files from the command line; first argument `.moth`/`.bee`/`.pur` opens a board (BR) — M1
 - [ ] Notify when pasting from an empty or unusable clipboard (BR) — M0
 - [ ] Comment on an image, shown as an icon and tooltip (PR) — M6, with comment pins
 

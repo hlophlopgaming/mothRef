@@ -115,6 +115,14 @@ fn data_directory() -> io::Result<PathBuf> {
         })
 }
 impl DesktopStorage {
+    /// Downloads an explicitly requested image using the same bounded HTTP path as paste.
+    /// Call only from a worker after a user/agent action; never from the event loop.
+    pub fn import_url(&self, url: &str) -> Result<(Handle, moth_io::Decoded), PlatformError> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            clipboard_web::import(self, url)
+        }))
+        .unwrap_or(Err(PlatformError::Panic))
+    }
     /// Isolates tools and tests from the user's recovery and recent-file catalog.
     pub fn in_directory(directory: PathBuf) -> Self {
         Self {

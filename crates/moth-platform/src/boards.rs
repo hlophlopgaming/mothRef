@@ -139,11 +139,14 @@ fn destinations() -> &'static Mutex<HashSet<PathBuf>> {
     static PATHS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
     PATHS.get_or_init(Mutex::default)
 }
-struct Destination(PathBuf);
+struct Destination {
+    path: PathBuf,
+    _guard: File,
+}
 impl Drop for Destination {
     fn drop(&mut self) {
         if let Ok(mut paths) = destinations().lock() {
-            paths.remove(&self.0);
+            paths.remove(&self.path);
         }
     }
 }
@@ -303,7 +306,11 @@ impl State {
                     .ok_or_else(|| error("Board filename is required"))?,
             )
         };
-        if self.destination.as_ref().is_some_and(|d| d.0 == canonical) {
+        if self
+            .destination
+            .as_ref()
+            .is_some_and(|d| d.path == canonical)
+        {
             return Ok(());
         }
         if !opening && path.exists() {
@@ -311,6 +318,22 @@ impl State {
                 "This board already exists. Open it before saving, or choose a new filename.",
             ));
         }
+        let directory = self.storage.base_directory()?.join("locks");
+        std::fs::create_dir_all(&directory)?;
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(
+                directory.join(
+                    blake3::hash(canonical.as_os_str().as_encoded_bytes())
+                        .to_hex()
+                        .as_str(),
+                ),
+            )?;
+        lock.try_lock()
+            .map_err(|_| error("This board is already open in another process."))?;
         {
             let mut paths = destinations()
                 .lock()
@@ -319,7 +342,10 @@ impl State {
                 return Err(error("This board is already open in another tab."));
             }
         }
-        self.destination = Some(Destination(canonical));
+        self.destination = Some(Destination {
+            path: canonical,
+            _guard: lock,
+        });
         Ok(())
     }
 
@@ -606,7 +632,7 @@ impl State {
         }
         self.journal()?;
         if let Some(destination) = &self.destination {
-            recovery::remember(&self.storage, &destination.0)?;
+            recovery::remember(&self.storage, &destination.path)?;
         }
         Ok(Completion::Saved)
     }
@@ -673,7 +699,7 @@ impl State {
         };
         self.journal()?;
         if let Some(destination) = &self.destination {
-            recovery::remember(&self.storage, &destination.0)?;
+            recovery::remember(&self.storage, &destination.path)?;
         }
         let mut batch = LoadBatch {
             bounds: loaded.scene.bounds(),
@@ -746,7 +772,10 @@ impl State {
         self.undo.clear();
         self.redo.clear();
         if let Some(destination) = &self.destination
-            && let Err(e) = recent(&self.storage.base_directory()?, Some(destination.0.clone()))
+            && let Err(e) = recent(
+                &self.storage.base_directory()?,
+                Some(destination.path.clone()),
+            )
         {
             tracing::warn!(%e, "recent file catalog unavailable");
         }
@@ -756,7 +785,7 @@ impl State {
             loaded.recovered || restored,
             self.destination
                 .as_ref()
-                .map(|destination| destination.0.clone()),
+                .map(|destination| destination.path.clone()),
         ))
     }
     /// Converts a foreign board into inserts on the current (empty) board.
@@ -3311,5 +3340,59 @@ mod tests {
         state.journal_guard = None;
         state.storage.discard().unwrap();
         std::fs::remove_dir_all(state.storage.base_directory().unwrap()).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod destination_locks {
+    use super::*;
+
+    #[test]
+    fn external_destination_lock_blocks_a_writer_and_releases_on_drop() {
+        let root =
+            std::env::temp_dir().join(format!("mothref-agent-lock-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(root.join("locks")).unwrap();
+        let path = root.join("board.moth");
+        let canonical = root.canonicalize().unwrap().join("board.moth");
+        let lock_path = root.join("locks").join(
+            blake3::hash(canonical.as_os_str().as_encoded_bytes())
+                .to_hex()
+                .as_str(),
+        );
+        let guard = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+            .unwrap();
+        guard.try_lock().unwrap();
+        let worker = Worker::new_tab(
+            Arc::new(DesktopStorage::in_directory(root.clone())),
+            Arc::new(|| {}),
+        )
+        .unwrap();
+        worker.requests.send(Request::Save(path.clone())).unwrap();
+        loop {
+            match worker.results.recv().unwrap() {
+                Completion::Saving(_) => {}
+                Completion::Failed(message) => {
+                    assert!(message.contains("another process"));
+                    break;
+                }
+                _ => panic!("locked board must not be saved"),
+            }
+        }
+        assert!(!path.exists());
+        drop(guard);
+        worker.requests.send(Request::Save(path.clone())).unwrap();
+        loop {
+            match worker.results.recv().unwrap() {
+                Completion::Saving(_) => {}
+                Completion::Saved => break,
+                _ => panic!("released board must save"),
+            }
+        }
+        worker.finish().unwrap();
+        assert!(path.exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

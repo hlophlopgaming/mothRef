@@ -1,0 +1,461 @@
+{
+  "Palette": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Shortcuts": {
+    "gui_only": "Application settings/library/view state, separate from saved scene items; edit transform.grayscale controls item appearance."
+  },
+  "BindingSettings": {
+    "gui_only": "Application settings/library/view state, separate from saved scene items; edit transform.grayscale controls item appearance."
+  },
+  "New": {
+    "operation": "create"
+  },
+  "OpenBackup": {
+    "gui_only": "Recovery/backup selection and confirmation remain in the GUI; no recovery journal is silently restored or deleted by a CLI command."
+  },
+  "Open": {
+    "operation": "open"
+  },
+  "Images": {
+    "operation": "add"
+  },
+  "Save": {
+    "operation": "save"
+  },
+  "Library": {
+    "gui_only": "Application settings/library/view state, separate from saved scene items; edit transform.grayscale controls item appearance."
+  },
+  "CloseTab": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "NextTab": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Paste": {
+    "operation": "add"
+  },
+  "Undo": {
+    "operation": "undo"
+  },
+  "Redo": {
+    "operation": "redo"
+  },
+  "ToggleView": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Overlay": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Pin": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "ClickThrough": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "OverlaySelection": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Bottom": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "LockWindow": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "ResizeSelection": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "ResizeAll": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "OpacityUp": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "OpacityDown": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "MoveWindow": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Fullscreen": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Minimize": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Maximize": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Settings": {
+    "gui_only": "Application settings/library/view state, separate from saved scene items; edit transform.grayscale controls item appearance."
+  },
+  "Deselect": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "SelectAll": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Select": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Fit": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Focus": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Previous": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Next": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "ZoomIn": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "ZoomOut": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "ZoomReset": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "PanLeft": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "PanRight": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "PanUp": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "PanDown": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "ResetCamera": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Note": {
+    "operation": "note"
+  },
+  "Delete": {
+    "operation": "delete"
+  },
+  "Duplicate": {
+    "operation": "duplicate"
+  },
+  "RotateCw": {
+    "operation": "edit"
+  },
+  "RotateCcw": {
+    "operation": "edit"
+  },
+  "FlipHorizontal": {
+    "operation": "edit"
+  },
+  "FlipVertical": {
+    "operation": "edit"
+  },
+  "ResetTransform": {
+    "operation": "reset"
+  },
+  "ResetCrop": {
+    "operation": "reset"
+  },
+  "NudgeLeft": {
+    "operation": "move"
+  },
+  "NudgeRight": {
+    "operation": "move"
+  },
+  "NudgeUp": {
+    "operation": "move"
+  },
+  "NudgeDown": {
+    "operation": "move"
+  },
+  "NudgeLeftFast": {
+    "operation": "move"
+  },
+  "NudgeRightFast": {
+    "operation": "move"
+  },
+  "NudgeUpFast": {
+    "operation": "move"
+  },
+  "NudgeDownFast": {
+    "operation": "move"
+  },
+  "BringFront": {
+    "operation": "order"
+  },
+  "SendBack": {
+    "operation": "order"
+  },
+  "BringForward": {
+    "operation": "order"
+  },
+  "SendBackward": {
+    "operation": "order"
+  },
+  "Horizontal": {
+    "operation": "layout"
+  },
+  "Vertical": {
+    "operation": "layout"
+  },
+  "Grid": {
+    "operation": "layout"
+  },
+  "Optimal": {
+    "operation": "layout"
+  },
+  "ArrangeName": {
+    "operation": "layout"
+  },
+  "ArrangeTime": {
+    "operation": "layout"
+  },
+  "PackFit": {
+    "operation": "layout"
+  },
+  "NormalizeWidth": {
+    "operation": "normalize"
+  },
+  "NormalizeHeight": {
+    "operation": "normalize"
+  },
+  "NormalizeSize": {
+    "operation": "normalize"
+  },
+  "NormalizeArea": {
+    "operation": "normalize"
+  },
+  "AlignLeft": {
+    "operation": "align"
+  },
+  "AlignRight": {
+    "operation": "align"
+  },
+  "AlignTop": {
+    "operation": "align"
+  },
+  "AlignBottom": {
+    "operation": "align"
+  },
+  "Stack": {
+    "operation": "align"
+  },
+  "Lock": {
+    "gui_only": "Application settings/library/view state, separate from saved scene items; edit transform.grayscale controls item appearance."
+  },
+  "Grayscale": {
+    "gui_only": "Application settings/library/view state, separate from saved scene items; edit transform.grayscale controls item appearance."
+  },
+  "MoveDrag": {
+    "operation": "move"
+  },
+  "ExtendDrag": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "ToggleDrag": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "DuplicateDrag": {
+    "operation": "duplicate"
+  },
+  "PanDrag": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "PanSpaceDrag": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "PanAltDrag": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "ZoomDrag": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "SaveAndClose": {
+    "operation": "save"
+  },
+  "Discard": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "KeepOpen": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "CancelDialog": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "ContinueConversion": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "SaveConversion": {
+    "operation": "save"
+  },
+  "DismissRecovery": {
+    "gui_only": "Recovery/backup selection and confirmation remain in the GUI; no recovery journal is silently restored or deleted by a CLI command."
+  },
+  "RestoreRecovery": {
+    "gui_only": "Recovery/backup selection and confirmation remain in the GUI; no recovery journal is silently restored or deleted by a CLI command."
+  },
+  "CancelArrange": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "AddedHorizontal": {
+    "operation": "layout"
+  },
+  "AddedVertical": {
+    "operation": "layout"
+  },
+  "AddedGrid": {
+    "operation": "layout"
+  },
+  "AddedOptimal": {
+    "operation": "layout"
+  },
+  "UndoAdded": {
+    "operation": "undo"
+  },
+  "DismissAdded": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "CloseWindow": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "EditNote": {
+    "operation": "edit"
+  },
+  "EditItem": {
+    "operation": "edit"
+  },
+  "ApplyItem": {
+    "operation": "edit"
+  },
+  "CancelItem": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "ArrangeOptions": {
+    "operation": "layout"
+  },
+  "ScaleApply": {
+    "operation": "scale"
+  },
+  "DistributeHorizontal": {
+    "operation": "align"
+  },
+  "DistributeVertical": {
+    "operation": "align"
+  },
+  "ResetRotation": {
+    "operation": "edit"
+  },
+  "ResetFlip": {
+    "operation": "edit"
+  },
+  "ResetScale": {
+    "operation": "reset"
+  },
+  "NormalizeScale": {
+    "operation": "reset"
+  },
+  "SampleColor": {
+    "operation": "sample"
+  },
+  "PickScreen": {
+    "gui_only": "Explicit OS desktop integration or maintenance UI, outside headless board editing; sample inspects a selected image instead of the screen."
+  },
+  "CoordinatePicker": {
+    "operation": "pixel-info"
+  },
+  "Export": {
+    "operation": "export"
+  },
+  "ExportScene": {
+    "operation": "export"
+  },
+  "ExportSelection": {
+    "operation": "export"
+  },
+  "ExportOriginal": {
+    "operation": "export"
+  },
+  "ExportOriginals": {
+    "operation": "export"
+  },
+  "ExportZip": {
+    "operation": "export"
+  },
+  "SamplingDefault": {
+    "operation": "edit"
+  },
+  "SamplingSmooth": {
+    "operation": "edit"
+  },
+  "SamplingNearest": {
+    "operation": "edit"
+  },
+  "SamplingAutomatic": {
+    "operation": "edit"
+  },
+  "OpenOriginal": {
+    "operation": "export"
+  },
+  "CopyImage": {
+    "operation": "export"
+  },
+  "ClearDiskCache": {
+    "gui_only": "Explicit OS desktop integration or maintenance UI, outside headless board editing; sample inspects a selected image instead of the screen."
+  },
+  "ShellIntegration": {
+    "gui_only": "Explicit OS desktop integration or maintenance UI, outside headless board editing; sample inspects a selected image instead of the screen."
+  },
+  "WindowBar": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Group": {
+    "operation": "group"
+  },
+  "Ungroup": {
+    "operation": "ungroup"
+  },
+  "EnterGroup": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "RenameGroup": {
+    "operation": "group-edit"
+  },
+  "GroupNeutral": {
+    "operation": "group-edit"
+  },
+  "GroupSage": {
+    "operation": "group-edit"
+  },
+  "GroupAmber": {
+    "operation": "group-edit"
+  },
+  "GroupSky": {
+    "operation": "group-edit"
+  },
+  "GroupWing": {
+    "operation": "group-edit"
+  },
+  "GroupLilac": {
+    "operation": "group-edit"
+  },
+  "GroupCustom": {
+    "operation": "group-edit"
+  },
+  "ApplyGroupColor": {
+    "operation": "group-edit"
+  },
+  "CancelGroupColor": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "Layers": {
+    "gui_only": "Interactive window, viewport, selection, prompt or tool state; headless operations take explicit UUIDs, files and world coordinates instead."
+  },
+  "DrawingSession": {
+    "gui_only": "Interactive drawing-session timer and presentation window; does not edit the saved board."
+  }
+}

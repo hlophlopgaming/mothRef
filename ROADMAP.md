@@ -65,7 +65,7 @@ Latest release: **0.1.0-alpha.24** (2026-11-10). Pre-alpha builds for Windows, m
 | 1.0 | M5, M6, M7 | All P0 and P1 features, all performance targets | |
 | 1.5 | M10 items tagged 1.5, M12, M14 | Ruler with calibration, Obsidian interop, capture integrations | |
 | 2.0 | M8, M9, M10 items tagged 2.0, M16 | Web build and collaboration; value and perspective tools; Excalidraw, draw.io, UML/XML, Blender, video frames | |
-| 1.x, no target yet | M13, M15, untagged M10 items | CLI, PDF references, other artist tools | |
+| 1.x, no target yet | M15, untagged M10 items | PDF references, other artist tools | |
 | Someday | M11 | Review workflow; not planned for any release, picked up only on request | |
 
 M8 and M9 come after 1.0, but the architecture they depend on (stable UUIDs, fractional z-order, command-based mutations, content-addressed blobs) is already in place from M0–M1. M10–M16 do not depend on M8 or M9 and ship in 1.x minor releases as they land.
@@ -156,13 +156,17 @@ Open:
   - [ ] Open image source — the URL or path the image came from (PR). Needs the source stored per image (schema 7; paths are not written to boards today) — on hold with linked files (maintainer, 2026-11-06). Wanted; handle the edge cases explicitly: an image from inside a `.zip` (show the archive and the entry, open the archive's folder), a web URL (open on click only), clipboard pastes and images embedded in `.bee` / `.pur` files (no source: say so), a file that was moved or deleted since (say it is missing, offer the last known path)
   - [ ] Arrange by file path (PR) — needs the stored source, see above
   - [ ] Optional scrollbars and menu bar (BR) — waiting for a decision: the maintainer asked what it means (2026-11-05)
-  - [ ] Open files from the command line: the first `.moth` / `.bee` / `.pur` argument opens a board, image paths are added (BR). Opening is done (the first board opens, images are added to it once it has loaded, further boards open in tabs); the documented agent-ready CLI remains with M13. Designed together with M13: the goal is that an agent can load, lay out and annotate images by itself from the documented CLI, without an MCP server (maintainer, 2026-11-05)
+
+- [ ] Qualify the M2 agent CLI HTTP download workflow and native locking on Windows/macOS; see [CLI validation](docs/CLI-VALIDATION.md).
 
 Validation notes: [editing and export](docs/M2-EDITING-VALIDATION.md), [import](docs/M2-IMPORT-VALIDATION.md), [load performance](docs/LOAD-PERFORMANCE.md), target layout [DESIGN.md](docs/DESIGN.md).
 
 <details>
 <summary>Done</summary>
 
+- [x] Open files from the command line: the first `.moth` / `.bee` / `.pur` argument opens a board, image paths are added (BR). Opening is done (the first board opens, images are added to it once it has loaded, further boards open in tabs); the documented agent-ready CLI has moved into M2 (see Done below). Original scope: the goal is that an agent can load, lay out and annotate images by itself from the documented CLI, without an MCP server (maintainer, 2026-11-05)
+- [x] Agent coordinate safety: automatic non-overlapping insertion/copy beside board bounds; explicit board-space geometry feedback and preview pixel/board transforms, documented in the CLI reference and agent skill.
+- [x] Agent-ready CLI (moved from M13): native headless subcommands in the GUI binary and a stateful JSON-lines interface; create/import/add (local and explicit HTTP URLs), M2 layouts/align/normalize, transforms/notes/groups/layers, native undo/redo, checks, original/PNG/SVG exports, JSON batches and preview bundles. Document every operation and maintain checked GUI-action coverage as the app grows. [CLI reference](docs/CLI.md), [decision 0026](docs/decisions/0026-agent-cli.md).
 - [x] Color picker: keep picking outside the window while the button is held — on X11 and Windows press on the board and drag out: the panel shows the color under the pointer and the release copies it; on Linux (the desktop portal, the only way on Wayland) and macOS (`NSColorSampler`) “Pick a color from the screen…” opens the system picker. See [editing validation](docs/M2-EDITING-VALIDATION.md#screen-color-picker--2026-11-06)
 - [x] Optional auto-downscale of very large images on import (PR) — Settings › Adding › Reduce very large images when adding: never (default), to 4096 or to 8192 px on the longer side; the board keeps the reduced copy under the file's name (JPEG stays JPEG), the file on disk is untouched; pasted pixels are not reduced
 - [x] Debug log viewer in the app (BR) — Settings › For developers › Log: the last 400 lines in memory, warnings-and-errors filter, copy, and the folder of the full log files
@@ -417,7 +421,7 @@ Release targets: items tagged **1.5** ship by 1.5, items tagged **2.0** by 2.0; 
 - [ ] User comments on the board
 - [ ] Create a separate GitHub repository for the MothRef handbook and publish it as a documentation website on GitHub Pages; link it from the app and the main repository
 - [ ] Illustrated user guide: getting started, navigation, image and board editing, library, import/export, saving and recovery, settings and keyboard/touch controls; original MothRef screenshots, annotated examples and step-by-step workflows. Use the [PureRef handbook](https://www.pureref.com/handbook/) as a structural reference, without copying its text or assets
-- [ ] API reference for the interfaces available in the documented release, with usage examples, inputs/outputs, errors and compatibility notes; link to the `.moth` format specification. Document future CLI/automation interfaces when they ship in M13
+- [ ] API reference for the interfaces available in the documented release, with usage examples, inputs/outputs, errors and compatibility notes; link to the `.moth` format specification. Maintain the shipped [CLI/automation reference](docs/CLI.md) alongside new board features
 - [ ] Multilingual handbook: English and Russian at launch, language switcher, a shared page structure and a contribution workflow for further translations; translated captions and alt text for illustrations
 - [ ] Keep handbook versions aligned with app releases; provide navigation and search across user guides and API pages, and check links and documentation builds in the handbook repository's CI
 
@@ -480,24 +484,14 @@ Integration goes through open formats and URIs, not through one application's AP
 
 **Exit criteria:** a board exported as JSON Canvas opens in Obsidian with every image, note, group and line, and imports back without loss of those elements.
 
-### M13 — Command-line tools and automation
+### M13 — Command-line tools and automation (moved to M2)
 
-A headless mode of the `mothref` binary, so agents, scripts and power users can build and edit boards without the GUI. Arguments are parsed with `clap` (subcommands, `--help`, `--json`); it lives in the existing binary, not a new crate. Every command reaches the board through the same `Command` / journal path as the GUI — the CLI never writes the `.moth` byte stream by hand.
-
-- [ ] Subcommand dispatch in `mothref` (`clap`, no new crate): `create`, `add`, `info`, `check`, `export`, and the scene edits below
-- [ ] Import: `create` a board; `add` images from local paths; fetch and add images from HTTP(S) URLs (an explicit invocation counts as the user action required by the network rule)
-- [ ] Arrange: optimal, by name, by time, by path; horizontal, vertical and square; configurable gap — the M2 layout operations, headless
-- [ ] Align and distribute, stack, normalize (width, height, size, area, scale) — the M2 operations, headless
-- [ ] Transform and metadata: move, scale, rotate, flip, crop; z-order (raise/lower, to-top/to-bottom); notes and labels
-- [ ] Read and export: `info` with items, bounds, blobs and recovery state; `check` for integrity with script exit codes; export originals and the scene to PNG/SVG
-- [ ] Machine-readable `--json` output for every command, with stable field names an agent can depend on
-- [ ] Batch: run a sequence of commands or a script file in one invocation, journaled like interactive edits
-- [ ] Data safety: the single `moth-platform` storage worker, checkpoint plus atomic replace, never an in-place write, never a panic on a corrupt file
-- [ ] Every command and flag documented in `--help` and in a CLI reference under `docs/`
-
-- [ ] Agent-ready without an MCP server (maintainer, 2026-11-05): a short "how to use MothRef from an agent" guide shipped with the CLI (what to call to load images, lay them out, add notes and groups, and check the result), so a coding agent told "load these references and arrange them" knows the commands on its own
-
-**Exit criteria:** an agent creates a board, fetches reference images from the internet, arranges them into a tidy layout, and exports a preview — in one scripted invocation, producing files the GUI opens unchanged.
+The maintainer moved the agent interface into M2 on 2026-11-17. The native
+`mothref --agent` engine and CLI-Anything frontend are documented in [CLI.md](docs/CLI.md).
+The native clap/JSON architecture is recorded in [decision 0026](docs/decisions/0026-agent-cli.md).
+Source-path sorting still follows the existing source-metadata item in M2;
+Windows/macOS manual qualification and the sandbox-blocked HTTP E2E run remain
+listed in the native [validation notes](docs/CLI-VALIDATION.md).
 
 ### M14 — Capture integrations for third-party tools (target 1.5)
 
@@ -509,7 +503,7 @@ The browser extension moved here from M3 (maintainer, 2026-10-29): it is a separ
 - [ ] Web clipper items from [FEATURES.md](docs/FEATURES.md#web-clipper-after-10-in-the-separate-browser-extension-project): Save button on hover, text clips, board picker, source URL kept
 
 - [ ] Local drop API in `moth-bridge`: a running MothRef accepts image bytes or an image URL plus source metadata (page URL, title, tool name) and adds them to a chosen board or its Inbox through a `Command`. Off by default, enabled in settings; local connections only (named pipe / Unix socket, or loopback HTTP with a per-install token); fetching a URL counts as the user action required by the network rule
-- [ ] Documented protocol with ready-to-copy examples: `curl`, Python, AutoHotkey; the M13 CLI `add` covers the "app not running" case
+- [ ] Documented protocol with ready-to-copy examples: `curl`, Python, AutoHotkey; the M2 agent CLI `add` covers the "app not running" case
 - [ ] ShareX custom destination (Windows) and examples for Flameshot and Spectacle (Linux)
 - [ ] ComfyUI custom node "Save to MothRef": generated images go to a chosen board in rows, with the workflow kept in the image metadata
 - [ ] "Send to MothRef" from the OS file manager: Explorer context menu, Nautilus and Dolphin actions, macOS Share / Services

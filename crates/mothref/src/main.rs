@@ -6,6 +6,25 @@ mod app;
 mod gpu;
 fn main() -> anyhow::Result<()> {
     moth_platform::diagnostics::parent_console();
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--agent")) {
+        return std::thread::Builder::new()
+            .name("agent".into())
+            .spawn(app::agent::run)?
+            .join()
+            .map_err(|_| anyhow::anyhow!("agent worker panicked"))?;
+    }
+    let args: Vec<_> = std::env::args_os().collect();
+    if app::agent::cli::recognizes(&args) {
+        let status = std::thread::Builder::new()
+            .name("cli".into())
+            .spawn(move || app::agent::cli::run(args))?
+            .join()
+            .map_err(|_| anyhow::anyhow!("CLI worker panicked"))?;
+        if status != 0 {
+            std::process::exit(status);
+        }
+        return Ok(());
+    }
     let (log, _logging) = moth_platform::diagnostics::start()?;
     tracing_subscriber::fmt()
         .with_writer(move || log.clone())

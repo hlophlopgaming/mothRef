@@ -1,0 +1,123 @@
+{
+  "create": {
+    "description": "Create a new native board; existing files are refused.",
+    "parameters": "path? (or --project)"
+  },
+  "open": {
+    "description": "Open a moth/bee/pur board in this session.",
+    "parameters": "path? (or --project); foreign imports need save to a new .moth"
+  },
+  "save": {
+    "description": "Checkpoint through the native storage worker.",
+    "parameters": "path? (defaults to current .moth)"
+  },
+  "info": {
+    "description": "Inspect z-sorted items, frame/rotated bounds and centers, global board bounds, coordinate conventions, blobs and recovery state.",
+    "parameters": "offset?=0, limit?=1000 (maximum 1000)"
+  },
+  "check": {
+    "description": "Validate the board through the native reader; recovered tails fail.",
+    "parameters": "none"
+  },
+  "add": {
+    "description": "Add a local image or explicitly download an HTTP(S) image.",
+    "parameters": "path OR url, at?=[x,y]; omitted at places right of board bounds with a 24-unit gap. Explicit URLs use native bounded HTTP/TLS download."
+  },
+  "note": {
+    "description": "Add a text note with estimated native font bounds.",
+    "parameters": "text, at?=[x,y]; omitted at places right of board bounds with 24 board-unit gap"
+  },
+  "edit": {
+    "description": "Edit a frame, note, label or content transform.",
+    "parameters": "id, rect?=[x,y,width,height], text?, name?, transform?={rotation,opacity,grayscale,sampling,note_font_size,note_wrap,flip,content_offset,content_scale,content_rotation}; angles in radians, sampling 0..3"
+  },
+  "layout": {
+    "description": "Arrange images and notes with the GUI layout algorithms.",
+    "parameters": "mode=horizontal|vertical|grid|optimal, ids?=[], gap?=0 (0..10000; optimal ignores gap), order?=z|name|time, count? (horizontal rows / vertical columns)",
+    "cli_name": "arrange"
+  },
+  "align": {
+    "description": "Align visible envelopes, distribute or stack.",
+    "parameters": "mode=left|right|top|bottom|horizontal|vertical|stack, ids?=[]; horizontal/vertical distribute"
+  },
+  "normalize": {
+    "description": "Match the first z-sorted item, preserving aspect except size.",
+    "parameters": "mode=width|height|size|area, ids?=[]"
+  },
+  "scale": {
+    "description": "Scale size and positions about the first item.",
+    "parameters": "factor>0, ids?=[]"
+  },
+  "move": {
+    "description": "Move frames, including members of selected groups.",
+    "parameters": "delta=[dx,dy], ids?=[]"
+  },
+  "duplicate": {
+    "description": "Copy items and remap copied group memberships.",
+    "parameters": "delta?=[dx,dy], ids?=[]; omitted delta copies beside board bounds, preserving relative positions and Y; explicit [0,0] duplicates in place"
+  },
+  "delete": {
+    "description": "Delete explicitly selected subtrees, children first.",
+    "parameters": "ids (nonempty UUID array)"
+  },
+  "group": {
+    "description": "Group explicitly selected items.",
+    "parameters": "ids (nonempty), title?=\"\", color?=0 (0..5 palette or 0x01RRGGBB integer)"
+  },
+  "ungroup": {
+    "description": "Dissolve selected top-level groups and preserve members.",
+    "parameters": "ids (nonempty)"
+  },
+  "group-edit": {
+    "description": "Rename/recolor a group.",
+    "parameters": "id, title, color"
+  },
+  "parent": {
+    "description": "Reparent an item; cycles and excessive nesting are refused.",
+    "parameters": "id, parent=UUID|null"
+  },
+  "order": {
+    "description": "Change image/note z-order; group backdrop order is derived.",
+    "parameters": "mode=raise|lower|top|bottom, ids (nonempty; individual images/notes)"
+  },
+  "reset": {
+    "description": "Reset original-backed geometry or match original pixel scale.",
+    "parameters": "mode=scale|normalize|crop|all, ids=[]"
+  },
+  "undo": {
+    "description": "Undo in a JSON-lines session or batch; history does not survive process exit.",
+    "parameters": "none"
+  },
+  "redo": {
+    "description": "Redo in a JSON-lines session or batch; history does not survive process exit.",
+    "parameters": "none"
+  },
+  "export": {
+    "description": "Export using the real native renderer; destination must be new.",
+    "parameters": "kind=scene|original|originals|archive, path, ids?=[], side?=2048 (scene longest side), region?=[x,y,width,height]; scene path .png/.svg/.pdf"
+  },
+  "pixel-info": {
+    "description": "Read original pixel coordinates and image metadata.",
+    "parameters": "id, point=[x,y] in world coordinates"
+  },
+  "capabilities": {
+    "description": "Inspect native protocol and current registered GUI actions.",
+    "parameters": "none"
+  },
+  "sample": {
+    "description": "Sample a native bounded image preview, without using the clipboard.",
+    "parameters": "id, point=[x,y] world coordinates; result message is HEX | RGB | HSV (preview sampling, not color managed)"
+  },
+  "commands": {
+    "description": "List the operation catalog, compiled command names, GUI action coverage and embedded agent guide.",
+    "parameters": "none"
+  },
+  "preview": {
+    "description": "Capture a static native preview-bundle/v1 with pixel/board transforms.",
+    "parameters": "path (bundle root directory), side?=1024; disabled in dry-run"
+  },
+  "preview-latest": {
+    "description": "Read the latest completed native preview without rendering.",
+    "parameters": "path (bundle root directory or completed bundle directory)"
+  }
+}

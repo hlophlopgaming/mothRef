@@ -19,6 +19,8 @@ moth-platform = { path = "crates/moth-platform", version = "0.1.0-alpha.25" }
 moth-import = { path = "crates/moth-import", version = "0.1.0-alpha.25" }
 anyhow = "1"
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

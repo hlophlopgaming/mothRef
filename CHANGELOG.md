@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Agent CLI inserts images and notes beside existing board content by default and places duplicates beside the board, preserving explicit coordinates for intentional overlap. Geometry replies include world bounds and centers; preview bundles supply pixel-to-board transforms for precise visual edits.
+
+- Add native CLI subcommands and a stateful `mothref --agent` JSON-lines interface in the same binary as the GUI: native board creation/import, images and explicit URL downloads, layout, notes/groups, transforms, undo/redo, integrity checks, originals/PNG/SVG export and preview bundles. See `docs/CLI.md` for installation, JSON scripts and agent usage. Updated GUI and CLI processes refuse concurrent writes to the same board.
+
 ## 0.1.0-alpha.25 — 2026-11-17
 
 - Use the new moth mark for window icons, the titlebar, Windows executables, the macOS app bundle and Dock, Linux launchers and README headers. Settings › Appearance › Application icon offers the engraved Photocraft-style alternative and remembers it across launches. The installed launcher/file icon remains the default mark; Wayland taskbar icons follow the launcher.

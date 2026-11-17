@@ -153,8 +153,24 @@ PureRef, is in [docs/SHORTCUTS.md](docs/SHORTCUTS.md).
 | **2.0** | M8, M9 | Web build and real-time collaboration | later |
 | — | — | Android app | planned |
 
-After 1.0: artist tools, review and presentation mode, Obsidian/Markdown interop and a command-line tool.
+After 1.0: artist tools, review and presentation mode, Obsidian/Markdown interop and further capture integrations.
 The full plan, feature checklists and performance targets live in [ROADMAP.md](ROADMAP.md).
+
+## Agent CLI
+
+The same `mothref` executable contains ordinary headless subcommands and a
+stateful `--agent` JSON-lines transport. No extra runtime is required:
+
+```sh
+mothref create references.moth
+mothref add references.moth image.jpg
+mothref arrange references.moth --mode grid --gap 24
+mothref info references.moth --json
+```
+
+Use `mothref --help`, the [CLI reference](docs/CLI.md) and the
+[agent guide](skills/cli-anything-mothref/SKILL.md) for commands and JSON scripts.
+The catalog/guide are also embedded in `mothref commands --json`.
 
 ## Build from source
 

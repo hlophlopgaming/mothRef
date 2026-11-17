@@ -88,6 +88,13 @@ pub enum Target {
         /// World position before the frame/content transforms are undone.
         point: [f32; 2],
     },
+    /// Samples the same bounded source preview without touching the system clipboard.
+    InspectSample {
+        /// Image to inspect, independently of a GUI selection.
+        id: Uuid,
+        /// World position mapped through the image's content transform.
+        point: [f32; 2],
+    },
 }
 /// What the coordinate picker found under the pointer, for the UI to label.
 #[derive(Clone, Debug, PartialEq)]
@@ -507,20 +514,14 @@ pub(super) fn run(
                 copy_original(storage, sources, item, &directory.join(name))?;
             }
         }
-        Target::Clipboard(id) | Target::Sample { id, .. } => {
+        Target::Clipboard(id) | Target::Sample { id, .. } | Target::InspectSample { id, .. } => {
             let bytes = original(storage, sources, item(scene, id)?)?;
             let decoded = moth_io::decode(&bytes, moth_io::MAX_SIDE).map_err(error)?;
             let mip = decoded
                 .mips
                 .first()
                 .ok_or_else(|| error("No image pixels"))?;
-            if clipboard.is_none() {
-                *clipboard = Some(arboard::Clipboard::new().map_err(error)?);
-            }
-            let clipboard = clipboard
-                .as_mut()
-                .ok_or_else(|| error("Clipboard unavailable"))?;
-            if let Target::Sample { point, format, .. } = target {
+            if let Target::Sample { point, .. } | Target::InspectSample { point, .. } = target {
                 let uv = item(scene, id)?
                     .source_uv(point, decoded.original)
                     .ok_or_else(|| error("No image pixel at this position"))?;
@@ -533,6 +534,15 @@ pub(super) fn run(
                     ((y.min(mip.height - 1) * mip.width + x.min(mip.width - 1)) * 4) as usize;
                 let p = &mip.bytes[offset..offset + 3];
                 let (hex, rgb, hsv) = color([p[0], p[1], p[2]]);
+                let Target::Sample { format, .. } = target else {
+                    return Ok(format!("{hex} | {rgb} | {hsv}"));
+                };
+                if clipboard.is_none() {
+                    *clipboard = Some(arboard::Clipboard::new().map_err(error)?);
+                }
+                let clipboard = clipboard
+                    .as_mut()
+                    .ok_or_else(|| error("Clipboard unavailable"))?;
                 clipboard
                     .set_text(match format {
                         ColorFormat::Hex => hex.clone(),
@@ -542,6 +552,12 @@ pub(super) fn run(
                     .map_err(error)?;
                 return Ok(format!("{hex} · {rgb} · {hsv}"));
             }
+            if clipboard.is_none() {
+                *clipboard = Some(arboard::Clipboard::new().map_err(error)?);
+            }
+            let clipboard = clipboard
+                .as_mut()
+                .ok_or_else(|| error("Clipboard unavailable"))?;
             clipboard
                 .set_image(arboard::ImageData {
                     width: mip.width as usize,

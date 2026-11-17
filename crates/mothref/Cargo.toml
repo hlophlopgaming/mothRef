@@ -23,6 +23,9 @@ egui-wgpu.workspace = true
 pollster.workspace = true
 crossbeam-channel.workspace = true
 rfd.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
 
 fractional_index.workspace = true
 
