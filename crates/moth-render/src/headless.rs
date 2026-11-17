@@ -702,8 +702,17 @@ pub async fn golden_bc7(software: bool) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
+    /// Every test here opens its own GPU device. Mesa's software Vulkan
+    /// driver (lavapipe, used on Linux CI) occasionally crashes the test
+    /// process with SIGSEGV when several devices are created and torn down
+    /// on parallel test threads, so the tests take turns.
+    fn gpu() -> std::sync::MutexGuard<'static, ()> {
+        static GPU: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        GPU.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
     #[test]
     fn tile_detail_fits_the_page_budget_and_recovers_when_the_ceiling_rises() {
+        let _gpu = gpu();
         use super::*;
         pollster::block_on(async {
             let instance =
@@ -755,6 +764,7 @@ mod tests {
     }
     #[test]
     fn a_full_size_class_replaces_one_layer_without_downgrading_neighbors() {
+        let _gpu = gpu();
         use super::*;
         pollster::block_on(async {
             let instance =
@@ -784,6 +794,7 @@ mod tests {
     }
     #[test]
     fn missing_tiles_preserve_the_whole_preview_across_cell_boundaries() {
+        let _gpu = gpu();
         use super::*;
         pollster::block_on(async {
             let instance =
@@ -855,6 +866,7 @@ mod tests {
     }
     #[test]
     fn tiled_detail_replaces_preview_without_double_blending_and_frees_on_zoom_out() {
+        let _gpu = gpu();
         use super::*;
         pollster::block_on(async {
             let instance =
@@ -971,6 +983,7 @@ mod tests {
     }
     #[test]
     fn zoom_out_copies_resident_mips_and_releases_pages() {
+        let _gpu = gpu();
         use super::*;
         pollster::block_on(async {
             let instance =
@@ -1077,6 +1090,7 @@ mod tests {
     }
     #[test]
     fn nearest_and_smooth_instances_share_a_texture_without_mixing_pixels() {
+        let _gpu = gpu();
         use super::*;
         use moth_scene::Sampling;
         pollster::block_on(async {
@@ -1176,6 +1190,7 @@ mod tests {
     }
     #[test]
     fn detail_refinement_blends_mips_without_extra_textures_or_geometry_changes() {
+        let _gpu = gpu();
         use super::*;
         pollster::block_on(async {
             let instance =
@@ -1255,6 +1270,7 @@ mod tests {
     }
     #[test]
     fn adaptive_budget_grows_with_pages_and_shrinks_under_memory_pressure() {
+        let _gpu = gpu();
         use super::*;
         pollster::block_on(async {
             let instance =
@@ -1297,6 +1313,7 @@ mod tests {
     }
     #[test]
     fn zoom_detail_upgrades_never_blank_other_resident_images() {
+        let _gpu = gpu();
         use super::*;
         pollster::block_on(async {
             let instance =
@@ -1364,6 +1381,7 @@ mod tests {
     }
     #[test]
     fn custom_group_rgb_golden() {
+        let _gpu = gpu();
         use super::{Camera, ImageFormat, Item, Rect, Registry, readback, target};
         // Metal has no software adapter; Linux CI explicitly checks that path.
         let software = std::env::var_os("MOTHREF_TEST_SOFTWARE").is_some();
@@ -1426,15 +1444,18 @@ mod tests {
     }
     #[test]
     fn headless_golden() {
+        let _gpu = gpu();
         pollster::block_on(super::golden(false)).unwrap();
     }
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     #[test]
     fn headless_golden_bc7() {
+        let _gpu = gpu();
         pollster::block_on(super::golden_bc7(false)).unwrap();
     }
     #[test]
     fn transparent_overlay_preserves_premultiplied_alpha_and_item_order() {
+        let _gpu = gpu();
         pollster::block_on(super::golden_view(
             false,
             0.55,
@@ -1445,6 +1466,7 @@ mod tests {
     }
     #[test]
     fn view_image_opacity_preserves_canvas_background() {
+        let _gpu = gpu();
         for alpha in [0.4, 1.] {
             for opacity in [0., 0.55, 1.] {
                 let clear = wgpu::Color {
@@ -1459,10 +1481,12 @@ mod tests {
     }
     #[test]
     fn canvas_grid_stays_behind_opaque_images() {
+        let _gpu = gpu();
         pollster::block_on(super::golden_view(false, 1., wgpu::Color::BLACK, true)).unwrap();
     }
     #[test]
     fn rotated_cropped_and_mirrored_content_matches_the_scene() {
+        let _gpu = gpu();
         pollster::block_on(super::golden_transform(false)).unwrap();
     }
 }
