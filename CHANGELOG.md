@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.27 — 2026-11-17
+
 - Agent CLI inserts images and notes beside existing board content by default and places duplicates beside the board, preserving explicit coordinates for intentional overlap. Geometry replies include world bounds and centers; preview bundles supply pixel-to-board transforms for precise visual edits.
 
 - Add native CLI subcommands and a stateful `mothref --agent` JSON-lines interface in the same binary as the GUI: native board creation/import, images and explicit URL downloads, layout, notes/groups, transforms, undo/redo, integrity checks, originals/PNG/SVG export and preview bundles. See `docs/CLI.md` for installation, JSON scripts and agent usage. Updated GUI and CLI processes refuse concurrent writes to the same board.
