@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.26 — 2026-11-17
+
+- Fix the Linux CI and release builds failing to install NASM: there is no prebuilt NASM 2.16.03 for Linux, so Linux now builds it from source like macOS. This release includes the alpha.25 changes below, whose publication was blocked by that failure.
+- Update rustix to 1.1.6 (RUSTSEC-2026-0486). The dependency check now records why the unmaintained-chrono advisory (RUSTSEC-2026-0543) is accepted: chrono comes only from the `trash` crate.
+
 ## 0.1.0-alpha.25 — 2026-11-17
 
 - Use the new moth mark for window icons, the titlebar, Windows executables, the macOS app bundle and Dock, Linux launchers and README headers. Settings › Appearance › Application icon offers the engraved Photocraft-style alternative and remembers it across launches. The installed launcher/file icon remains the default mark; Wayland taskbar icons follow the launcher.
