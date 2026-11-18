@@ -387,7 +387,7 @@ impl Tools {
                     egui::ComboBox::from_id_salt("arrange_order")
                         .selected_text(text(order_label(self.arrange.order)))
                         .show_ui(ui, |ui| {
-                            for i in 0..4 {
+                            for i in [0, 1, 4, 2, 3] {
                                 ui.selectable_value(
                                     &mut self.arrange.order,
                                     i,
@@ -1085,6 +1085,7 @@ fn order_label(i: u8) -> Text {
         1 => Text::ByFilename,
         2 => Text::ByTime,
         3 => Text::Random,
+        4 => Text::ByPath,
         _ => Text::ByLayer,
     }
 }

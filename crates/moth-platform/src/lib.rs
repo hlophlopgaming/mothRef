@@ -143,6 +143,7 @@ impl DesktopStorage {
             range: None,
             member: None,
             label: None,
+            staged: None,
         })
     }
     /// Registers a read-only ZIP entry without doing I/O on the caller.
@@ -152,6 +153,7 @@ impl DesktopStorage {
             range: None,
             member: Some(member),
             label: None,
+            staged: None,
         })
     }
     fn register_range(&self, path: PathBuf, range: moth_format::board::Blob) -> io::Result<Handle> {
@@ -160,6 +162,7 @@ impl DesktopStorage {
             range: Some(range),
             member: None,
             label: None,
+            staged: None,
         })
     }
     fn register_source(&self, source: source::Source) -> io::Result<Handle> {
@@ -200,6 +203,30 @@ impl DesktopStorage {
                     .map(|name| name.to_string_lossy().chars().take(256).collect())
             })
             .unwrap_or_default()
+    }
+    /// Where the registered image came from, for the board to keep: the file or ZIP
+    /// entry it is read from, or what a staged copy was made from. `None` for pasted
+    /// pixels and images inside imported boards. No filesystem access.
+    pub fn source_of(&self, handle: Handle) -> Option<moth_scene::Source> {
+        let paths = self.paths.lock().ok()?;
+        let source = paths.get(&handle)?;
+        if let Some(staged) = &source.staged {
+            return staged.clone();
+        }
+        if source.range.is_some() {
+            return None;
+        }
+        let path = file_source(&source.path)?;
+        match (&source.member, path) {
+            (Some(entry), moth_scene::Source::File(archive)) => {
+                let source = moth_scene::Source::Archive {
+                    archive,
+                    entry: entry.clone(),
+                };
+                source.valid().then_some(source)
+            }
+            (_, path) => Some(path),
+        }
     }
     /// Persists clipboard originals on a worker before acknowledging a paste.
     pub fn stage_rgba(
@@ -257,7 +284,17 @@ impl DesktopStorage {
             Ok(hash)
         })();
         match result {
-            Ok(hash) => Ok((self.register(path)?, hash)),
+            // Pasted pixels came from no file: the staged copy is not their source.
+            Ok(hash) => Ok((
+                self.register_source(source::Source {
+                    path,
+                    range: None,
+                    member: None,
+                    label: None,
+                    staged: Some(None),
+                })?,
+                hash,
+            )),
             Err(error) => {
                 let _ = std::fs::remove_file(&path);
                 Err(error)
@@ -296,13 +333,11 @@ impl DesktopStorage {
         }
         Ok((directory, used))
     }
-    fn stage_encoded(&self, bytes: &[u8]) -> Result<(Handle, moth_io::Decoded), PlatformError> {
-        self.stage_labelled(bytes, None)
-    }
-    fn stage_labelled(
+    pub(crate) fn stage_labelled(
         &self,
         bytes: &[u8],
         label: Option<String>,
+        origin: Option<moth_scene::Source>,
     ) -> Result<(Handle, moth_io::Decoded), PlatformError> {
         let image = moth_io::decode(bytes, 256)?;
         let (directory, _) = self.staging_directory(bytes.len() as u64)?;
@@ -328,6 +363,7 @@ impl DesktopStorage {
                 range: None,
                 member: None,
                 label,
+                staged: Some(origin),
             })?)
         })();
         match result {
@@ -719,7 +755,12 @@ fn reduce_file(storage: &DesktopStorage, path: PathBuf, side: u32) -> ClipboardC
             let label = path
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned());
-            Ok(Some(storage.stage_labelled(&reduced.bytes, label)?))
+            let origin = file_source(&path);
+            Ok(Some(storage.stage_labelled(
+                &reduced.bytes,
+                label,
+                origin,
+            )?))
         },
     ))
     .unwrap_or(Err(PlatformError::Panic));
@@ -731,6 +772,13 @@ fn reduce_file(storage: &DesktopStorage, path: PathBuf, side: u32) -> ClipboardC
             ClipboardCompletion::Keep(path)
         }
     }
+}
+/// A file's absolute path as a board source; `None` when it is not valid UTF-8 or too
+/// long to store. Makes a relative path absolute without touching the filesystem.
+pub fn file_source(path: &std::path::Path) -> Option<moth_scene::Source> {
+    let path = std::path::absolute(path).ok()?;
+    let source = moth_scene::Source::File(path.to_str()?.to_owned());
+    source.valid().then_some(source)
 }
 /// Serializes clipboard staging and explicit board disposal.
 pub struct ClipboardWorker {
@@ -857,6 +905,42 @@ fn atomic_replace(source: &std::path::Path, target: &std::path::Path) -> io::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sources_come_from_files_archives_and_staged_origins_but_not_pasted_pixels() {
+        let root = std::env::temp_dir().join(format!("mothref-sources-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir(&root).unwrap();
+        let storage = DesktopStorage::in_directory(root.clone());
+        let file = root.join("wall.png");
+        let handle = storage.register(file.clone()).unwrap();
+        assert_eq!(
+            storage.source_of(handle),
+            Some(moth_scene::Source::File(file.to_str().unwrap().into()))
+        );
+        let zipped = storage
+            .register_zip(root.join("pack.zip"), "walls/b.png".into())
+            .unwrap();
+        assert_eq!(
+            storage.source_of(zipped),
+            Some(moth_scene::Source::Archive {
+                archive: root.join("pack.zip").to_str().unwrap().into(),
+                entry: "walls/b.png".into(),
+            })
+        );
+        let pasted = storage.stage_rgba(1, 1, &[1, 2, 3, 255]).unwrap();
+        assert_eq!(storage.source_of(pasted), None);
+        let url = moth_scene::Source::Url("https://example.com/a.png".into());
+        let png = include_bytes!("../../../corpus/images/rows.png");
+        let (downloaded, _) = storage
+            .stage_labelled(png, None, Some(url.clone()))
+            .unwrap();
+        assert_eq!(storage.source_of(downloaded), Some(url));
+        let relative = storage.register(PathBuf::from("relative.png")).unwrap();
+        assert!(matches!(
+            storage.source_of(relative),
+            Some(moth_scene::Source::File(path)) if std::path::Path::new(&path).is_absolute()
+        ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn original_ranges_cannot_be_used_as_writable_destinations() {
         let root = std::env::temp_dir().join(format!("mothref-read-only-{}", uuid::Uuid::now_v7()));

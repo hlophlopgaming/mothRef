@@ -89,6 +89,8 @@ pub enum Completion {
     SettingsSaved,
     /// Export succeeded; sampling details are returned when applicable.
     Exported(String),
+    /// What "Open source" did.
+    Source(super::export::SourceOutcome),
     /// The coordinate picker's answer, labelled by the UI.
     PixelInfo(super::export::PixelInfo),
     /// Applies an already-journaled mutation on the UI thread.
@@ -1018,6 +1020,9 @@ impl State {
                 .map_err(|_| error("Export decoder panicked"))??;
                 Ok(Some(Completion::PixelInfo(info)))
             }
+            Request::Export(super::export::Target::Source(id)) => Ok(Some(Completion::Source(
+                super::export::open_source(&self.scene, id)?,
+            ))),
             Request::Export(target) => {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     super::export::run(

@@ -73,6 +73,8 @@ pub(super) fn import(
 ) -> Result<(moth_format::Handle, moth_io::Decoded), PlatformError> {
     let _span = tracing::info_span!("clipboard_download").entered();
     let mut url = web_url(value, None)?;
+    // The board keeps the address the user gave, never one carrying a password.
+    let requested = (url.password().is_none()).then(|| url.to_string());
     let certificates = rustls_native_certs::load_native_certs().certs;
     let roots: ureq::tls::RootCerts = certificates
         .iter()
@@ -133,7 +135,10 @@ pub(super) fn import(
         if bytes.len() as u64 > moth_io::MAX_INPUT_BYTES {
             return Err(PlatformError::Budget("Downloaded image exceeds 256 MiB"));
         }
-        return storage.stage_encoded(&bytes);
+        let origin = requested
+            .map(moth_scene::Source::Url)
+            .filter(moth_scene::Source::valid);
+        return storage.stage_labelled(&bytes, None, origin);
     }
     Err(PlatformError::Download("too many redirects"))
 }

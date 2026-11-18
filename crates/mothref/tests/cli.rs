@@ -256,10 +256,13 @@ fn all_layout_modes_and_scene_edits_use_native_flags() {
     let cli = Native::new();
     cli.op("create", &[]);
     let image = cli.image();
-    let a = cli.op("add", &[image.to_str().unwrap()])["results"][0]["id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+    let added = cli.op("add", &[image.to_str().unwrap()]);
+    let a = added["results"][0]["id"].as_str().unwrap().to_owned();
+    // The board keeps where the image came from, as an absolute path.
+    assert_eq!(
+        added["results"][0]["item"]["source"]["file"],
+        json!(std::path::absolute(&image).unwrap().to_str().unwrap())
+    );
     assert_eq!(
         cli.op("pixel-info", &["--id", &a, "--point", "0.5,0.5"])["results"][0]["pixel"],
         json!([0, 0])
@@ -277,6 +280,7 @@ fn all_layout_modes_and_scene_edits_use_native_flags() {
     for mode in ["horizontal", "vertical", "grid", "optimal"] {
         cli.op("arrange", &["--mode", mode]);
     }
+    cli.op("arrange", &["--mode", "grid", "--order", "path"]);
     for mode in [
         "left",
         "right",
@@ -548,7 +552,7 @@ fn raw_transport_does_not_autosave_and_native_cli_handles_stdin_batches() {
 
 #[test]
 fn foreign_boards_support_read_only_inspection_and_native_conversion() {
-    for name in ["moth/v8.moth", "bee/tiny.bee", "pur/v2.1-redbar.pur"] {
+    for name in ["moth/v9.moth", "bee/tiny.bee", "pur/v2.1-redbar.pur"] {
         let cli = Native::new();
         let source = corpus(name);
         let before = fs::read(&source).unwrap();
@@ -681,7 +685,7 @@ fn coordinate_limit_errors_leave_saved_bytes_unchanged() {
 #[test]
 fn recovered_tail_requires_a_clean_save_as_before_check_passes() {
     let cli = Native::new();
-    fs::copy(corpus("moth/v8.moth"), &cli.board).unwrap();
+    fs::copy(corpus("moth/v9.moth"), &cli.board).unwrap();
     fs::OpenOptions::new()
         .append(true)
         .open(&cli.board)

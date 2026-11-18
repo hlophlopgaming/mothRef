@@ -215,6 +215,9 @@
   "ArrangeTime": {
     "operation": "layout"
   },
+  "ArrangePath": {
+    "operation": "layout"
+  },
   "PackFit": {
     "operation": "layout"
   },
@@ -400,6 +403,9 @@
   },
   "OpenOriginal": {
     "operation": "export"
+  },
+  "OpenSource": {
+    "gui_only": "Shows the file manager or the browser on the user's desktop; headless sessions read an image's source from the `source` field of its item JSON."
   },
   "CopyImage": {
     "operation": "export"

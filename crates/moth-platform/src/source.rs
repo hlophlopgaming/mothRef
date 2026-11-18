@@ -14,6 +14,10 @@ pub(crate) struct Source {
     /// Name shown for the image instead of the file's own (a reduced copy keeps the
     /// name of the file it was made from).
     pub label: Option<String>,
+    /// Set for a copy staged in the board's recovery folder (pasted pixels, a
+    /// download, a reduced image): where the copy came from, if anywhere. Images read
+    /// straight from `path` came from that file, or from `member` inside it.
+    pub staged: Option<Option<moth_scene::Source>>,
 }
 
 impl Source {
@@ -145,6 +149,7 @@ mod tests {
         let source = Source {
             member: None,
             label: None,
+            staged: None,
             path: path.clone(),
             range: Some(moth_format::board::Blob {
                 offset: 6,
@@ -173,6 +178,7 @@ mod tests {
         let overflow = Source {
             member: None,
             label: None,
+            staged: None,
             path: path.clone(),
             range: Some(moth_format::board::Blob {
                 offset: u64::MAX,

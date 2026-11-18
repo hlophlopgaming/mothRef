@@ -22,6 +22,7 @@ pub(super) const ARRANGE: &[Slot] = &[
     S,
     A(ArrangeName),
     A(ArrangeTime),
+    A(ArrangePath),
     A(ArrangeOptions),
 ];
 const NORMALIZE: &[Slot] = &[
@@ -116,6 +117,7 @@ pub(super) const CONTEXT_MENU: &[Slot] = &[
     A(Duplicate),
     A(CopyImage),
     A(OpenOriginal),
+    A(OpenSource),
     A(SampleColor),
     A(CoordinatePicker),
     A(Export),

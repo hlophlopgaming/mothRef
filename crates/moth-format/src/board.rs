@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Versioned append-only records. A checksummed footer commits one record.
 use crate::ReadSeek;
-use moth_scene::{BlobId, Command, Content, Group, Item, Rect, Scene, Transform, Uuid};
+use moth_scene::{BlobId, Command, Content, Group, Item, Rect, Scene, Source, Transform, Uuid};
 use std::{
     collections::HashMap,
     io::{self, SeekFrom, Write},
@@ -9,8 +9,10 @@ use std::{
 
 /// Schema the writer produces. Boards with an older header are compacted to it before
 /// a checkpoint is appended, so a file never mixes record layouts across headers.
-pub const SCHEMA: u8 = 8;
-const HEADER: &[u8; 16] = b"MOTH\x08\0\0\0\0\0\0\0\0\0\0\0";
+pub const SCHEMA: u8 = 9;
+const HEADER: &[u8; 16] = b"MOTH\x09\0\0\0\0\0\0\0\0\0\0\0";
+/// Schema-8 boards predate image sources.
+const HEADER_V8: &[u8; 16] = b"MOTH\x08\0\0\0\0\0\0\0\0\0\0\0";
 const HEADER_V7: &[u8; 16] = b"MOTH\x07\0\0\0\0\0\0\0\0\0\0\0";
 /// Schema-6 boards predate the board preview record.
 const HEADER_V6: &[u8; 16] = b"MOTH\x06\0\0\0\0\0\0\0\0\0\0\0";
@@ -40,7 +42,10 @@ pub const MAX_THUMBNAIL_SIDE: u16 = 256;
 const PREVIEW_VERSION: u8 = 1;
 /// Longest accepted image command payload: the largest fractional index plus its fixed
 /// fields and, from schema 6, the parent id.
-const MAX_COMMAND: u64 = 5219 + 16;
+const MAX_COMMAND: u64 = 5219 + 16 + SOURCE_BLOCK;
+/// Largest source block of a schema-9 image insert: kind, then one or two
+/// length-prefixed strings.
+const SOURCE_BLOCK: u64 = 1 + 2 * (2 + moth_scene::MAX_SOURCE as u64);
 /// Longest fractional index any insert may carry.
 const MAX_INDEX: usize = 4096;
 /// Bytes of a group insert before its title: tag, id, rectangle, color and u16 length.
@@ -181,7 +186,7 @@ pub fn peek_preview(reader: &mut dyn ReadSeek) -> Result<Option<Preview>, Error>
     reader.seek(SeekFrom::Start(0))?;
     let mut header = [0; 16];
     reader.read_exact(&mut header)?;
-    if &header != HEADER && &header != HEADER_V7 {
+    if &header != HEADER && &header != HEADER_V8 && &header != HEADER_V7 {
         return Ok(None);
     }
     let length = reader.seek(SeekFrom::End(0))?;
@@ -248,13 +253,16 @@ pub fn encode(command: &Command) -> Vec<u8> {
     match command {
         Command::Insert(item) => match &item.content {
             Content::Image(blob) => {
-                bytes.push(14);
+                bytes.push(if item.source.is_some() { 21 } else { 14 });
                 bytes.extend_from_slice(item.id.as_bytes());
                 bytes.extend_from_slice(blob.as_bytes());
                 rect_bytes(&mut bytes, item.rect);
                 transform_bytes(&mut bytes, item.transform);
                 bytes.extend_from_slice(&(item.name.len() as u16).to_le_bytes());
                 bytes.extend_from_slice(item.name.as_bytes());
+                if let Some(source) = &item.source {
+                    source_bytes(&mut bytes, source);
+                }
                 bytes.extend_from_slice(parent_bytes(item.parent).as_bytes());
                 bytes.extend_from_slice(item.z.as_bytes());
             }
@@ -311,6 +319,27 @@ pub fn encode(command: &Command) -> Vec<u8> {
         }
     }
     bytes
+}
+fn source_bytes(bytes: &mut Vec<u8>, source: &Source) {
+    match source {
+        Source::File(path) => {
+            bytes.push(1);
+            text_into(bytes, path);
+        }
+        Source::Archive { archive, entry } => {
+            bytes.push(2);
+            text_into(bytes, archive);
+            text_into(bytes, entry);
+        }
+        Source::Url(url) => {
+            bytes.push(3);
+            text_into(bytes, url);
+        }
+    }
+}
+fn text_into(bytes: &mut Vec<u8>, text: &str) {
+    bytes.extend_from_slice(&(text.len() as u16).to_le_bytes());
+    bytes.extend_from_slice(text.as_bytes());
 }
 /// The nil UUID marks "on the board"; it is never a valid item id (ids are UUIDv7).
 fn parent_bytes(parent: Option<Uuid>) -> Uuid {
@@ -393,7 +422,7 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
         ))
     };
     let rect = || -> Result<Rect, Error> {
-        let start = if matches!(bytes[0], 1 | 4 | 8 | 11 | 14) {
+        let start = if matches!(bytes[0], 1 | 4 | 8 | 11 | 14 | 21) {
             49
         } else {
             17
@@ -409,12 +438,12 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
         let flags = *bytes.get(start + 4).ok_or(Error::Invalid)?;
         Ok(Transform {
             rotation: float(start, 0)?,
-            opacity: if matches!(bytes[0], 8..=15) {
+            opacity: if matches!(bytes[0], 8..=15 | 21) {
                 float(start + 21, 0)?
             } else {
                 1.0
             },
-            grayscale: if matches!(bytes[0], 8..=15) {
+            grayscale: if matches!(bytes[0], 8..=15 | 21) {
                 match bytes.get(start + 25) {
                     Some(0) => false,
                     Some(1) => true,
@@ -423,18 +452,18 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             } else {
                 false
             },
-            sampling: if matches!(bytes[0], 11..=15) {
+            sampling: if matches!(bytes[0], 11..=15 | 21) {
                 moth_scene::Sampling::from_code(*bytes.get(start + 26).ok_or(Error::Invalid)?)
                     .ok_or(Error::Invalid)?
             } else {
                 moth_scene::Sampling::Default
             },
-            note_font_size: if matches!(bytes[0], 11..=15) {
+            note_font_size: if matches!(bytes[0], 11..=15 | 21) {
                 float(start + 27, 0)?
             } else {
                 0.
             },
-            note_wrap: if matches!(bytes[0], 11..=15) {
+            note_wrap: if matches!(bytes[0], 11..=15 | 21) {
                 match bytes.get(start + 31) {
                     Some(0) => false,
                     Some(1) => true,
@@ -465,6 +494,49 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             .map_err(|_| Error::Invalid)?
             .to_owned();
         Ok((name, end))
+    };
+    // Schema 9 stores the image source between the name and the parent.
+    let source = |start: usize| -> Result<(Option<Source>, usize), Error> {
+        if bytes[0] != 21 {
+            return Ok((None, start));
+        }
+        let text = |start: usize| -> Result<(String, usize), Error> {
+            let len = u16::from_le_bytes(
+                bytes
+                    .get(start..start + 2)
+                    .ok_or(Error::Invalid)?
+                    .try_into()
+                    .map_err(|_| Error::Invalid)?,
+            ) as usize;
+            if len > moth_scene::MAX_SOURCE {
+                return Err(Error::Budget);
+            }
+            let end = start + 2 + len;
+            let text = std::str::from_utf8(bytes.get(start + 2..end).ok_or(Error::Invalid)?)
+                .map_err(|_| Error::Invalid)?
+                .to_owned();
+            Ok((text, end))
+        };
+        let (source, end) = match bytes.get(start).ok_or(Error::Invalid)? {
+            1 => {
+                let (path, end) = text(start + 1)?;
+                (Source::File(path), end)
+            }
+            2 => {
+                let (archive, end) = text(start + 1)?;
+                let (entry, end) = text(end)?;
+                (Source::Archive { archive, entry }, end)
+            }
+            3 => {
+                let (url, end) = text(start + 1)?;
+                (Source::Url(url), end)
+            }
+            _ => return Err(Error::Invalid),
+        };
+        if !source.valid() {
+            return Err(Error::Invalid);
+        }
+        Ok((Some(source), end))
     };
     // Schema 6 stores the parent between the name and the fractional index.
     let parent = |start: usize| -> Result<(Option<Uuid>, usize), Error> {
@@ -527,8 +599,9 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             z: fractional_index::FractionalIndex::from_bytes(bytes[65..].to_vec())
                 .map_err(|_| Error::Invalid)?,
             parent: None,
+            source: None,
         })),
-        4 | 8 | 11 | 14
+        4 | 8 | 11 | 14 | 21
             if bytes.len() > INSERT_V2_FIXED + if bytes[0] >= 8 { 5 } else { 0 }
                 && bytes.len() as u64 <= MAX_COMMAND =>
         {
@@ -537,6 +610,7 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             } else {
                 (String::new(), 86)
             };
+            let (source, index) = source(index)?;
             let (parent, index) = parent(index)?;
             Ok(Command::Insert(Item {
                 id,
@@ -551,6 +625,7 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
                 )
                 .map_err(|_| Error::Invalid)?,
                 parent,
+                source,
             }))
         }
         6 | 9 | 12 | 15
@@ -598,6 +673,7 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
                 )
                 .map_err(|_| Error::Invalid)?,
                 parent,
+                source: None,
             }))
         }
         16 | 19
@@ -618,6 +694,7 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
                 )
                 .map_err(|_| Error::Invalid)?,
                 parent,
+                source: None,
             }))
         }
         17 if bytes.len() == 33 => Ok(Command::SetParent {
@@ -670,6 +747,7 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
     let mut header = [0; 16];
     reader.read_exact(&mut header)?;
     if &header != HEADER
+        && &header != HEADER_V8
         && &header != HEADER_V7
         && &header != HEADER_V6
         && &header != HEADER_V5
@@ -780,7 +858,7 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
                     board.scene = restore(&bytes, &board.blobs)?;
                 }
                 // Previews are derived data for the library: the scene never reads them.
-                PREVIEW if &header == HEADER || &header == HEADER_V7 => {}
+                PREVIEW if &header == HEADER || &header == HEADER_V8 || &header == HEADER_V7 => {}
                 _ => return Err(Error::Invalid),
             }
             board.recovered |= start != committed;
@@ -1019,6 +1097,74 @@ mod tests {
         for item in old.scene.items() {
             assert_eq!(restored.get(item.id), Some(item));
         }
+    }
+    #[test]
+    fn schema_eight_migrates_to_nine_and_sources_round_trip() {
+        let old = read(&mut Cursor::new(
+            include_bytes!("../../../corpus/moth/v8.moth").as_slice(),
+        ))
+        .unwrap();
+        assert!(old.scene.items().all(|item| item.source.is_none()));
+        let current = read(&mut Cursor::new(
+            include_bytes!("../../../corpus/moth/v9.moth").as_slice(),
+        ))
+        .unwrap();
+        let sources: Vec<_> = current
+            .scene
+            .items()
+            .filter_map(|item| item.source.clone())
+            .collect();
+        assert_eq!(
+            sources.len(),
+            3,
+            "the fixture holds a file, an archive entry and a URL"
+        );
+        assert!(sources.contains(&Source::Url("https://example.com/rows.png".into())));
+        // A checkpoint keeps every source exactly, and images without one stay without.
+        for scene in [&old.scene, &current.scene] {
+            let blobs = if std::ptr::eq(scene, &old.scene) {
+                &old.blobs
+            } else {
+                &current.blobs
+            };
+            let restored = restore(&snapshot(scene).unwrap(), blobs).unwrap();
+            for item in scene.items() {
+                assert_eq!(restored.get(item.id), Some(item));
+            }
+        }
+    }
+    #[test]
+    fn malformed_sources_are_rejected() {
+        let mut item = Item::image(
+            BlobId::from_bytes([3; 32]),
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 1.,
+                height: 1.,
+            },
+            None,
+        );
+        item.source = Some(Source::Archive {
+            archive: "/a.zip".into(),
+            entry: "b.png".into(),
+        });
+        let bytes = encode(&Command::Insert(item.clone()));
+        assert_eq!(bytes[0], 21);
+        let Command::Insert(decoded) = decode(&bytes).unwrap() else {
+            panic!("an image insert decodes to an insert");
+        };
+        assert_eq!(decoded, item);
+        // The source kind sits right after the empty name, at offset 97 + 2.
+        let mut unknown = bytes.clone();
+        unknown[99] = 9;
+        assert!(decode(&unknown).is_err());
+        let mut empty = item.clone();
+        empty.source = Some(Source::File(String::new()));
+        assert!(decode(&encode(&Command::Insert(empty))).is_err());
+        let mut long = item;
+        long.source = Some(Source::Url("x".repeat(moth_scene::MAX_SOURCE + 1)));
+        assert!(decode(&encode(&Command::Insert(long))).is_err());
     }
     #[test]
     fn previews_round_trip_and_reject_what_does_not_fit() {

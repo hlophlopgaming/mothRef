@@ -6,6 +6,7 @@ Moved from `ROADMAP.md` on 2026-10-26. Add new lines at the top of the table.
 
 | Date | Decision |
 | --- | --- |
+| 2026-11-18 | [Image sources](0027-image-sources.md): schema 9 keeps each image's file, ZIP entry or URL as opaque metadata for Open source and Arrange by file path; the storage worker checks and reveals it |
 | 2026-11-17 | [Agent CLI](0026-agent-cli.md): move automation into M2; native clap subcommands and JSON-lines in the same GUI binary, shared writer locks and checked action coverage |
 | 2026-11-10 | [Group colors and titles](0025-group-colors-and-titles.md): schema 8 stores exact RGB alongside theme presets; automatic colors, RGB picker and swatch previews; nested title chips avoid overlap; pack and fit respects selection |
 | 2026-11-10 | [Reflink opening](0024-reflink-opening.md): full-resolution mode may create a validated independent private journal snapshot on Linux reflink filesystems, preserving original offsets and journal headroom; other modes and unsupported, old or damaged files keep ordinary copying |

@@ -152,10 +152,10 @@ Open:
 
 - [ ] Parity leftovers from [FEATURES.md](docs/FEATURES.md) (a few were tagged M0/M1 there but never done, so they are collected here):
   - [x] Export the selected originals, each as its own file, named after the images (maintainer, 2026-11-08)
-  - [ ] Show the color gamut of an image (BR) — waiting for a decision: the maintainer asked what it shows (2026-11-05)
-  - [ ] Open image source — the URL or path the image came from (PR). Needs the source stored per image (schema 7; paths are not written to boards today) — on hold with linked files (maintainer, 2026-11-06). Wanted; handle the edge cases explicitly: an image from inside a `.zip` (show the archive and the entry, open the archive's folder), a web URL (open on click only), clipboard pastes and images embedded in `.bee` / `.pur` files (no source: say so), a file that was moved or deleted since (say it is missing, offer the last known path)
-  - [ ] Arrange by file path (PR) — needs the stored source, see above
-  - [ ] Optional scrollbars and menu bar (BR) — waiting for a decision: the maintainer asked what it means (2026-11-05)
+  - [ ] Show the color gamut of an image (BR) — wanted, "pretty and above all fast" (maintainer, 2026-11-18): a hue/saturation wheel of the image's colors in its own window, plus a gamut card kept on the board as its own element with its own UI (like Milanote's color cards), with an arrow to the image it was made from
+  - [x] Open image source — the file, archive entry or URL the image came from (PR). Schema 9 stores the source per image ([decision 0027](docs/decisions/0027-image-sources.md)); a moved file says where it was, pasted and imported images say they have none
+  - [x] Arrange by file path (PR) — folders together, numbers by value; also `--order path` in the CLI
+  - [ ] Optional scrollbars and menu bar (BR) — a "Show menu bar" setting is wanted (maintainer, 2026-11-18)
 
 - [ ] Qualify the M2 agent CLI HTTP download workflow and native locking on Windows/macOS; see [CLI validation](docs/CLI-VALIDATION.md).
 

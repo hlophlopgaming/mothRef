@@ -1,16 +1,18 @@
-# MothRef format, schema 8
+# MothRef format, schema 9
 
 All integers and IEEE-754 f32 coordinates are little-endian. Core readers accept
-seekable byte streams; native filesystem paths are never serialized. Schema 1 is the
+seekable byte streams and never open a path. From schema 9 an image may carry its
+source (where it was added from) as text the user can open again; readers treat it
+as opaque metadata, see decision 0027. Schema 1 is the
 first persistent format; there is no schema 0 board to migrate. Schema 2 adds item
 content transforms; schema 3 adds text notes; schema 4 adds appearance and source
 filenames; schema 5 adds image sampling and fixed-width note metrics; schema 6 adds
-nested groups; schema 7 adds the board preview record; schema 8 adds custom RGB group colors. The reader keeps the schema 1, 2, 3, 4, 5 and 6 record layouts, so every older board and journal still opens: a schema 1 insert
+nested groups; schema 7 adds the board preview record; schema 8 adds custom RGB group colors; schema 9 adds image sources. The reader keeps the schema 1, 2, 3, 4, 5 and 6 record layouts, so every older board and journal still opens: a schema 1 insert
 carries no transform and migrates to the identity transform. Future schemas must
 retain both readers and provide explicit migrations.
 
-The 16-byte header is `MOTH`, u32 schema version `8`, then eight zero bytes.
-Readers accept versions 1 through 8 and reject every other version. Every record
+The 16-byte header is `MOTH`, u32 schema version `9`, then eight zero bytes.
+Readers accept versions 1 through 9 and reject every other version. Every record
 consists of a payload followed by a 96-byte footer:
 
 | Footer offset | Size | Meaning |
@@ -205,3 +207,28 @@ existing atomic compaction path to write schema 8, never rewriting an old header
 in place. `corpus/moth/v7.moth` remains frozen; `v8.moth` includes nested groups,
 a custom RGB group, palette groups, images and notes. Older applications reject
 schema 8, including boards whose groups still use palette colors.
+
+## Migration 8 → 9
+
+Schema 9 records where each image came from, so it can be opened again ("Open
+source") and images can be arranged by file path. One command tag is added:
+
+- `21`: image insert, identical to tag 14 up to the end of the name, then a source
+  block, then the parent UUID and the fractional index. The source block is a kind
+  byte and one or two strings, each a u16 byte length and UTF-8 text of 1 to 4096
+  bytes:
+  - `1`, path: a file, as an absolute path;
+  - `2`, archive path, entry name: an entry inside a ZIP archive;
+  - `3`, URL: an http(s) address the image was downloaded from.
+
+Writers use tag 14 for an image without a source (pasted pixels, images from
+imported `.bee`/`.pur` boards, images added before schema 9) and tag 21 otherwise.
+Any other kind byte, an empty or overlong string, or invalid UTF-8 rejects the
+command. Notes and groups never carry a source. Checkpoints use the same insert
+tags; preview records keep the schema-7 layout.
+
+Sources are metadata only: the original bytes stay in the board, and no reader
+opens a source to show an image. Migration reads schemas 1–8 through their existing
+layouts, where every image has no source; the next save compacts to schema 9 with
+the existing atomic path. `corpus/moth/v8.moth` remains frozen; `v9.moth` holds one
+image of each source kind and one without. Older applications reject schema 9.

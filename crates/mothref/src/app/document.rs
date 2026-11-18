@@ -1716,7 +1716,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let backup = root.join("backup.moth");
         let original = root.join("lost-board.moth");
-        let bytes = include_bytes!("../../../../corpus/moth/v8.moth");
+        let bytes = include_bytes!("../../../../corpus/moth/v9.moth");
         std::fs::write(&backup, bytes).unwrap();
         let board = Document::with_storage(
             Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),
@@ -1741,7 +1741,7 @@ mod tests {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert_eq!(workspace.board.scene.len(), 6);
+        assert_eq!(workspace.board.scene.len(), 7);
         assert!(workspace.board.file.path.is_empty());
         assert!(workspace.board.file.dirty);
         assert_eq!(workspace.board.title(), "lost-board");

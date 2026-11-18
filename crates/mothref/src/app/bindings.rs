@@ -91,6 +91,7 @@ actions! {
     Optimal, Optimal, "", Some(moth_ui::icons::Icon::ArrangeOptimal);
     ArrangeName, ArrangeName, "", None;
     ArrangeTime, ArrangeTime, "", None;
+    ArrangePath, ArrangePath, "", None;
     PackFit, PackFit, "", Some(moth_ui::icons::Icon::ArrangeOptimal);
     NormalizeWidth, NormalizeWidth, "", None;
     NormalizeHeight, NormalizeHeight, "", None;
@@ -153,6 +154,7 @@ actions! {
     SamplingNearest, SamplingNearest, "", None;
     SamplingAutomatic, SamplingAutomatic, "", None;
     OpenOriginal, OpenOriginal, "", Some(moth_ui::icons::Icon::OpenExternal);
+    OpenSource, OpenSource, "", Some(moth_ui::icons::Icon::Folder);
     CopyImage, CopyImage, "", None;
     ClearDiskCache, ClearDiskCache, "", Some(moth_ui::icons::Icon::Close);
     ShellIntegration, InstallShellIntegration, "", None;

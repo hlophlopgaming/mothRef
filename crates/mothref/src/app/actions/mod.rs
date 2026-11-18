@@ -59,14 +59,13 @@ pub(super) fn area(action: Action) -> Area {
         | GroupSky | GroupWing | GroupLilac | GroupCustom | ApplyGroupColor | CancelGroupColor => {
             Area::Group
         }
-        Horizontal | Vertical | Grid | Optimal | ArrangeName | ArrangeTime | PackFit
-        | NormalizeWidth | NormalizeHeight | NormalizeSize | NormalizeArea | AlignLeft
-        | AlignRight | AlignTop | AlignBottom | Stack | DistributeHorizontal
+        Horizontal | Vertical | Grid | Optimal | ArrangeName | ArrangeTime | ArrangePath
+        | PackFit | NormalizeWidth | NormalizeHeight | NormalizeSize | NormalizeArea
+        | AlignLeft | AlignRight | AlignTop | AlignBottom | Stack | DistributeHorizontal
         | DistributeVertical | ArrangeOptions | ScaleApply => Area::Arrange,
-        Export | SampleColor | PickScreen | CoordinatePicker | OpenOriginal | CopyImage
-        | ExportScene | ExportSelection | ExportOriginal | ExportOriginals | ExportZip => {
-            Area::Export
-        }
+        Export | SampleColor | PickScreen | CoordinatePicker | OpenOriginal | OpenSource
+        | CopyImage | ExportScene | ExportSelection | ExportOriginal | ExportOriginals
+        | ExportZip => Area::Export,
         DrawingSession => Area::Session,
         MoveDrag | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag | PanSpaceDrag
         | PanAltDrag | ZoomDrag => Area::Pointer,
@@ -102,7 +101,7 @@ pub(super) fn gate(action: Action) -> Gate {
         PanLeft | PanRight | PanUp | PanDown | Fit | Focus | Previous | Next | ZoomIn | ZoomOut
         | ZoomReset | ResetCamera | Select | ToggleView | Deselect | SelectAll | Lock
         | Grayscale | Save | ExportScene | ExportSelection | ExportOriginal | ExportOriginals
-        | ExportZip | CopyImage | OpenOriginal | Export | SampleColor | PickScreen
+        | ExportZip | CopyImage | OpenOriginal | OpenSource | Export | SampleColor | PickScreen
         | CoordinatePicker | SamplingDefault | SamplingSmooth | SamplingNearest
         | SamplingAutomatic | EditNote => Gate::Board,
         Paste | Undo | Redo | Note | Delete | Duplicate | RotateCw | RotateCcw | FlipHorizontal
@@ -112,11 +111,11 @@ pub(super) fn gate(action: Action) -> Gate {
         | ResetRotation | ResetFlip | ResetScale | NormalizeScale | Group | Ungroup
         | EnterGroup | RenameGroup | GroupNeutral | GroupSage | GroupAmber | GroupSky
         | GroupWing | GroupLilac | GroupCustom | ApplyGroupColor | Horizontal | Vertical | Grid
-        | Optimal | ArrangeName | ArrangeTime | PackFit | NormalizeWidth | NormalizeHeight
-        | NormalizeSize | NormalizeArea | AlignLeft | AlignRight | AlignTop | AlignBottom
-        | Stack | DistributeHorizontal | DistributeVertical | ArrangeOptions | ScaleApply
-        | MoveDrag | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag | PanSpaceDrag
-        | PanAltDrag | ZoomDrag => Gate::Ready,
+        | Optimal | ArrangeName | ArrangeTime | ArrangePath | PackFit | NormalizeWidth
+        | NormalizeHeight | NormalizeSize | NormalizeArea | AlignLeft | AlignRight | AlignTop
+        | AlignBottom | Stack | DistributeHorizontal | DistributeVertical | ArrangeOptions
+        | ScaleApply | MoveDrag | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag
+        | PanSpaceDrag | PanAltDrag | ZoomDrag => Gate::Ready,
     }
 }
 impl App {
@@ -215,6 +214,7 @@ impl super::tools::Tools {
         match self.arrange.order {
             1 => items.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id))),
             2 => items.sort_by_key(|i| i.id),
+            4 => items.sort_by(|a, b| arrange::by_path(a, b)),
             3 => items.sort_by_key(|i| {
                 i.id.as_u128()
                     .wrapping_mul(self.arrange.random_salt | 1)

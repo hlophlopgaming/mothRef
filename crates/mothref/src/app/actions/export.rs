@@ -32,7 +32,7 @@ impl App {
                     && !self.workspace.board.selection.is_empty()
             }
             ExportOriginal => export_ready && single_image(),
-            CopyImage | OpenOriginal => single_image(),
+            CopyImage | OpenOriginal | OpenSource => single_image(),
             // The system picker, where there is one (the desktop portal, macOS).
             PickScreen => self.shell.window.as_ref().is_some_and(|window| {
                 moth_platform::screen_color::capabilities(window).interactive
@@ -76,6 +76,12 @@ impl App {
                 };
                 self.tools.viewer = Some(super::super::tools::ViewerNotice::new());
                 Intent::Export(moth_platform::export::Target::Viewer(item.id))
+            }
+            OpenSource => {
+                let [item] = items.as_slice() else {
+                    return None;
+                };
+                Intent::Export(moth_platform::export::Target::Source(item.id))
             }
             CopyImage => {
                 let [item] = items.as_slice() else {

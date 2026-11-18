@@ -319,6 +319,22 @@ pub enum Text {
     FindFile,
     /// File dialog title.
     FindFileTitle,
+    /// Context action: show where an image came from.
+    OpenSource,
+    /// Arrange action ordered by each image's source path.
+    ArrangePath,
+    /// Arrange order: by source path.
+    ByPath,
+    /// The source file was shown in the file manager.
+    SourceShown,
+    /// The archive was shown; `{name}` is the entry inside it.
+    SourceInArchive,
+    /// The source web address was opened.
+    SourceOpened,
+    /// The source file is gone; `{path}` is where it was.
+    SourceMissing,
+    /// The image has no saved source.
+    NoSource,
     /// Library order: by the board file's last change.
     LastEdited,
     /// Library order: by number of items.

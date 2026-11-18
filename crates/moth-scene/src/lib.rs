@@ -22,6 +22,41 @@ pub enum Content {
     /// A titled backdrop that hugs its members; it owns no pixels and no text body.
     Group(Group),
 }
+/// Upper bound on each UTF-8 string of an image [`Source`].
+pub const MAX_SOURCE: usize = 4096;
+/// Where an image came from, kept so the user can open it again or arrange images
+/// by it. The board never reads it to show the image: the original bytes are stored.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Source {
+    /// A file on disk, as an absolute path.
+    File(String),
+    /// An entry inside a ZIP archive: the archive's absolute path and the entry name.
+    Archive {
+        /// Absolute path of the archive.
+        archive: String,
+        /// Entry name inside the archive.
+        entry: String,
+    },
+    /// A web address the image was downloaded from.
+    Url(String),
+}
+impl Source {
+    /// Rejects empty or oversized strings a reader or the UI could not handle.
+    pub fn valid(&self) -> bool {
+        let ok = |text: &str| !text.is_empty() && text.len() <= MAX_SOURCE;
+        match self {
+            Source::File(path) | Source::Url(path) => ok(path),
+            Source::Archive { archive, entry } => ok(archive) && ok(entry),
+        }
+    }
+    /// The text arrange-by-path sorts on: the path, `archive/entry` or the URL.
+    pub fn sort_key(&self) -> String {
+        match self {
+            Source::File(path) | Source::Url(path) => path.clone(),
+            Source::Archive { archive, entry } => format!("{archive}/{entry}"),
+        }
+    }
+}
 /// Upper bound on a group title's UTF-8 length.
 pub const MAX_GROUP_TITLE: usize = 256;
 /// Number of backdrop colors; the theme maps each code to a light and a dark token.
@@ -266,6 +301,8 @@ pub struct Item {
     pub z: FractionalIndex,
     /// The group this item belongs to; `None` sits directly on the board.
     pub parent: Option<Uuid>,
+    /// Where an image came from; `None` for pasted pixels, imported boards and notes.
+    pub source: Option<Source>,
 }
 impl Item {
     /// Appends an image above the supplied fractional index.
@@ -278,6 +315,7 @@ impl Item {
             transform: Transform::default(),
             z: above.map(FractionalIndex::new_after).unwrap_or_default(),
             parent: None,
+            source: None,
         }
     }
     /// Appends a note above the supplied fractional index.
@@ -290,6 +328,7 @@ impl Item {
             transform: Transform::default(),
             z: above.map(FractionalIndex::new_after).unwrap_or_default(),
             parent: None,
+            source: None,
         }
     }
     /// Creates a group whose backdrop rests at `rect` until it gains members.
@@ -302,6 +341,7 @@ impl Item {
             transform: Transform::default(),
             z,
             parent: None,
+            source: None,
         }
     }
     /// The group's title and color, or `None` for images and notes.
@@ -603,6 +643,9 @@ impl Scene {
                     || !item.transform.valid()
                     || item.id.get_version_num() != 7
                     || item.name.len() > 1024
+                    || item.source.as_ref().is_some_and(|source| {
+                        !source.valid() || !matches!(item.content, Content::Image(_))
+                    })
                 {
                     return Err(SceneError::Invalid);
                 }

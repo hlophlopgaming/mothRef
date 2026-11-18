@@ -544,6 +544,7 @@ impl Workspace {
                     if !paste {
                         item.name = self.board.storage().source_name(done.request.handle);
                     }
+                    item.source = self.board.storage().source_of(done.request.handle);
                     item.parent = super::groups::landing(&self.board.scene, point);
                     self.board.intake.burst.add(item.id);
                     self.persist(moth_platform::boards::Request::Apply(
@@ -572,6 +573,7 @@ impl Workspace {
                     if !paste {
                         item.name = self.board.storage().source_name(done.request.handle);
                     }
+                    item.source = self.board.storage().source_of(done.request.handle);
                     item.parent = super::groups::landing(&self.board.scene, point);
                     self.board.intake.burst.add(item.id);
                     self.persist(moth_platform::boards::Request::Apply(
@@ -746,6 +748,31 @@ impl Workspace {
                                 moth_ui::Message::Count(moth_ui::Text::ImportSkippedCount, skipped)
                             };
                             self.board.fit();
+                        }
+                        Completion::Source(outcome) => {
+                            use moth_platform::export::SourceOutcome;
+                            self.board.file.exporting = false;
+                            let language = moth_ui::locale();
+                            let say = |key| moth_ui::translated(language, key);
+                            let (message, ok): (moth_ui::Message, bool) = match outcome {
+                                SourceOutcome::Shown => (moth_ui::Text::SourceShown.into(), true),
+                                SourceOutcome::Opened => (moth_ui::Text::SourceOpened.into(), true),
+                                SourceOutcome::InArchive(entry) => (
+                                    say(moth_ui::Text::SourceInArchive)
+                                        .replace("{name}", &entry)
+                                        .into(),
+                                    true,
+                                ),
+                                SourceOutcome::Missing(path) => (
+                                    say(moth_ui::Text::SourceMissing)
+                                        .replace("{path}", &path)
+                                        .into(),
+                                    false,
+                                ),
+                                SourceOutcome::Unknown => (moth_ui::Text::NoSource.into(), false),
+                            };
+                            self.board.notices.message = message.clone();
+                            self.board.notices.flash = Some((message, ok, Instant::now()));
                         }
                         Completion::PixelInfo(info) => {
                             self.board.file.exporting = false;

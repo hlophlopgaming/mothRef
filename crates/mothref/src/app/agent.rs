@@ -152,7 +152,14 @@ fn item_json(item: &Item) -> Value {
             ("group", json!({"title":group.title,"color":group.color}))
         }
     };
-    json!({"id":item.id.to_string(),"name":item.name,"kind":kind,"content":content,
+    let source = item.source.as_ref().map(|source| match source {
+        moth_scene::Source::File(path) => json!({"file":path}),
+        moth_scene::Source::Archive { archive, entry } => {
+            json!({"archive":archive,"entry":entry})
+        }
+        moth_scene::Source::Url(url) => json!({"url":url}),
+    });
+    json!({"id":item.id.to_string(),"name":item.name,"kind":kind,"content":content,"source":source,
         "parent":item.parent.map(|id|id.to_string()),"rect":[r.x,r.y,r.width,r.height],
         "bounds":rect_json(moth_scene::footprint(item)),"center":[r.x+r.width/2.,r.y+r.height/2.],
         "transform":{"rotation":t.rotation,"opacity":t.opacity,"grayscale":t.grayscale,"sampling":t.sampling as u8,

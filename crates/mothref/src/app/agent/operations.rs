@@ -420,6 +420,7 @@ impl Session {
                     self.top().as_ref(),
                 );
                 item.name = name;
+                item.source = self.storage.source_of(handle);
                 let identity = item.id.to_string();
                 let geometry = item_json(&item);
                 self.request(Request::Apply(Command::Insert(item), Some(handle)))?;
@@ -505,7 +506,8 @@ impl Session {
                     "z" => {}
                     "name" => items.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id))),
                     "time" => items.sort_by_key(|i| i.id),
-                    _ => bail!("order must be z, name or time; source paths are not stored"),
+                    "path" => items.sort_by(|a, b| arrange::by_path(a, b)),
+                    _ => bail!("order must be z, name, time or path"),
                 }
                 let mode = match mode.as_str() {
                     "horizontal" => arrange::Arrange::Horizontal,

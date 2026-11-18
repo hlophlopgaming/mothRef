@@ -200,7 +200,7 @@ fn killtest_impl(count: usize, loading: bool) -> anyhow::Result<()> {
 }
 pub fn fixture() -> anyhow::Result<()> {
     std::fs::create_dir_all("corpus/moth")?;
-    // corpus/moth/v1.moth through v7.moth are frozen migration fixtures;
+    // corpus/moth/v1.moth through v8.moth are frozen migration fixtures;
     // regenerating them with the current writer would erase that coverage.
     let mut bytes = Vec::new();
     board::initialize(&mut bytes)?;
@@ -220,6 +220,10 @@ pub fn fixture() -> anyhow::Result<()> {
         ..Default::default()
     };
     item.name = "rows.png".into();
+    // Schema 9: images keep where they came from, in all three kinds.
+    item.source = Some(moth_scene::Source::File(
+        "/references/walls/rows.png".into(),
+    ));
     let mut note = Item::text(
         "a note that wraps to a fixed frame width",
         Rect {
@@ -256,6 +260,15 @@ pub fn fixture() -> anyhow::Result<()> {
     // belongs here too.
     let mut loose = self::item();
     loose.rect.x = 40.;
+    loose.source = Some(moth_scene::Source::Archive {
+        archive: "/references/pack.zip".into(),
+        entry: "walls/rows.png".into(),
+    });
+    let mut downloaded = self::item();
+    downloaded.rect.x = 120.;
+    downloaded.source = Some(moth_scene::Source::Url(
+        "https://example.com/rows.png".into(),
+    ));
     let empty = Item::group(
         moth_scene::Group {
             title: "empty".into(),
@@ -274,6 +287,7 @@ pub fn fixture() -> anyhow::Result<()> {
     scene.apply(Command::Insert(item))?;
     scene.apply(Command::Insert(note))?;
     scene.apply(Command::Insert(loose))?;
+    scene.apply(Command::Insert(downloaded))?;
     scene.apply(Command::Insert(empty))?;
     let offset = bytes.len() as u64;
     board::append(&mut bytes, offset, 3, &board::snapshot(&scene)?)?;
@@ -300,7 +314,7 @@ pub fn fixture() -> anyhow::Result<()> {
         board::PREVIEW,
         &board::encode_preview(&preview)?,
     )?;
-    std::fs::write("corpus/moth/v8.moth", bytes)?;
+    std::fs::write("corpus/moth/v9.moth", bytes)?;
     Ok(())
 }
 pub fn roundtrip(path: &Path) -> anyhow::Result<()> {
@@ -390,7 +404,7 @@ impl Soak {
                     break;
                 }
                 Completion::Opened(_, _, _, _) => anyhow::bail!("unexpected open completion"),
-                Completion::Exported(_) | Completion::PixelInfo(_) => {
+                Completion::Exported(_) | Completion::PixelInfo(_) | Completion::Source(_) => {
                     anyhow::bail!("unexpected export completion")
                 }
                 Completion::Imported(_, _, _) => anyhow::bail!("unexpected import completion"),
