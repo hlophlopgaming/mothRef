@@ -146,6 +146,60 @@ pub fn normalize(items: &[&Item], mode: Normalize) -> Vec<Command> {
         .collect()
 }
 
+/// Arrange-by-path order: images from the same folder end up next to each other,
+/// folders in order and files within a folder by name, with numbers compared by value
+/// ("2.png" before "10.png") and letter case ignored. Images without a saved source
+/// (pasted, from an imported board) follow, by name.
+pub fn by_path(a: &Item, b: &Item) -> std::cmp::Ordering {
+    let key = |item: &Item| item.source.as_ref().map(moth_scene::Source::sort_key);
+    match (key(a), key(b)) {
+        (Some(x), Some(y)) => natural(&x, &y),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => natural(&a.name, &b.name),
+    }
+    .then(a.id.cmp(&b.id))
+}
+/// Compares text the way people sort file names: runs of digits by their value,
+/// everything else case-insensitively, and `/` or `\\` before any other character
+/// so a folder's files stay ahead of a sibling folder whose name extends it.
+pub fn natural(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (mut a, mut b) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        match (a.peek().copied(), b.peek().copied()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
+                let digits = |chars: &mut std::iter::Peekable<std::str::Chars>| {
+                    let mut run = String::new();
+                    while let Some(c) = chars.peek().copied().filter(char::is_ascii_digit) {
+                        run.push(c);
+                        chars.next();
+                    }
+                    run
+                };
+                let (x, y) = (digits(&mut a), digits(&mut b));
+                let (tx, ty) = (x.trim_start_matches('0'), y.trim_start_matches('0'));
+                let order = tx.len().cmp(&ty.len()).then_with(|| tx.cmp(ty));
+                if order != Ordering::Equal {
+                    return order;
+                }
+            }
+            (Some(x), Some(y)) => {
+                let rank = |c: char| (!matches!(c, '/' | '\\'), c.to_lowercase().next());
+                let order = rank(x).cmp(&rank(y));
+                if order != Ordering::Equal {
+                    return order;
+                }
+                a.next();
+                b.next();
+            }
+        }
+    }
+}
+
 /// Repositions frames starting at the reference anchor, keeping each frame's size.
 pub fn arrange(
     items: &[&Item],
@@ -704,7 +758,7 @@ mod tests {
     /// insert after what it references, and undoing the delete restores it exactly.
     #[test]
     fn duplicate_and_delete_keep_every_item_kind() {
-        let bytes = include_bytes!("../../../../corpus/moth/v8.moth");
+        let bytes = include_bytes!("../../../../corpus/moth/v9.moth");
         let mut scene = moth_format::board::read(&mut std::io::Cursor::new(&bytes[..]))
             .unwrap()
             .scene;
@@ -1115,6 +1169,52 @@ mod tests {
         for rect in &out {
             assert!((rect.width * rect.height - target).abs() < 1e-1);
         }
+    }
+
+    #[test]
+    fn path_order_keeps_folders_together_and_counts_numbers_by_value() {
+        use moth_scene::Source;
+        let image = |source: Option<Source>, name: &str| {
+            let mut item = Item::image(
+                moth_scene::BlobId::from_bytes([1; 32]),
+                Rect {
+                    x: 0.,
+                    y: 0.,
+                    width: 1.,
+                    height: 1.,
+                },
+                None,
+            );
+            item.source = source;
+            item.name = name.into();
+            item
+        };
+        let file = |path: &str| Some(Source::File(path.into()));
+        let mut items = [
+            image(None, "pasted"),
+            image(file("/refs/trees-old/a.png"), "a.png"),
+            image(file("/refs/trees/10.png"), "10.png"),
+            image(
+                Some(Source::Url("https://example.com/x.png".into())),
+                "x.png",
+            ),
+            image(file("/refs/Trees/2.png"), "2.png"),
+            image(
+                Some(Source::Archive {
+                    archive: "/refs/pack.zip".into(),
+                    entry: "b.png".into(),
+                }),
+                "b.png",
+            ),
+        ];
+        items.sort_by(by_path);
+        let order: Vec<_> = items.iter().map(|item| item.name.as_str()).collect();
+        assert_eq!(
+            order,
+            ["b.png", "2.png", "10.png", "a.png", "x.png", "pasted"],
+            "the archive, then trees/ with 2 before 10 ignoring case, then trees-old/, \
+             the URL and finally images without a source"
+        );
     }
 
     #[test]

@@ -18,8 +18,34 @@ pub(super) struct Tools {
     pub arrange: ArrangeOptions,
     pub export: ExportForm,
     pub pickers: Pickers,
+    pub gamut: GamutPanel,
     /// Open original: the short notice shown while the system viewer starts.
     pub viewer: Option<ViewerNotice>,
+}
+/// The Color gamut panel: the measured image and how the panel shows it.
+#[derive(Default)]
+pub(super) struct GamutPanel {
+    pub open: bool,
+    /// The image being measured or shown.
+    pub image: Option<Uuid>,
+    pub view: u8,
+    pub sort: u8,
+    /// The HEX code just copied from a swatch, shown for a moment.
+    pub copied: Option<(String, std::time::Instant)>,
+}
+/// Whether dark text reads better than white on this color.
+pub(super) fn light_color([r, g, b]: [u8; 3]) -> bool {
+    0.2126 * f32::from(r) + 0.7152 * f32::from(g) + 0.0722 * f32::from(b) > 150.
+}
+/// Main colors placed on the wheel by hue and saturation, numbered in display order.
+pub(super) fn gamut_marks(colors: &[([u8; 3], u8)]) -> Vec<([u8; 3], f32, f32)> {
+    colors
+        .iter()
+        .map(|(rgb, _)| {
+            let (hue, saturation) = moth_scene::hue_saturation(*rgb);
+            (*rgb, hue, saturation)
+        })
+        .collect()
 }
 /// An export waiting for its destination from the system "Save as" dialog.
 pub(super) enum PendingExport {
@@ -226,7 +252,12 @@ impl Tools {
         enabled: &[bool],
         registry: &Registry,
     ) -> Vec<Intent> {
-        if !self.edit.open && !self.arrange.open && !self.export.open && !self.pickers.open {
+        if !self.edit.open
+            && !self.arrange.open
+            && !self.export.open
+            && !self.pickers.open
+            && !self.gamut.open
+        {
             viewer_notice(ui.ctx(), &mut self.viewer, board, settings.reduced_motion);
             flash_notice(ui.ctx(), board, settings.reduced_motion);
             import_notice(ui.ctx(), board, settings.reduced_motion);
@@ -387,7 +418,7 @@ impl Tools {
                     egui::ComboBox::from_id_salt("arrange_order")
                         .selected_text(text(order_label(self.arrange.order)))
                         .show_ui(ui, |ui| {
-                            for i in 0..4 {
+                            for i in [0, 1, 4, 2, 3] {
                                 ui.selectable_value(
                                     &mut self.arrange.order,
                                     i,
@@ -556,7 +587,143 @@ impl Tools {
         if !open {
             *tool = super::gesture::Tool::Select;
         }
+        let mut open = self.gamut.open;
+        side_panel(
+            ui.ctx(),
+            "color_gamut",
+            Text::ColorGamut,
+            &mut open,
+            &mut top,
+            |ui| self.gamut_panel(ui, board, &mut intents),
+        );
+        self.gamut.open = open;
         intents
+    }
+    fn gamut_panel(&mut self, ui: &mut egui::Ui, board: &Document, intents: &mut Vec<Intent>) {
+        let tokens = moth_ui::tokens(ui.ctx());
+        let Some(measured) = &board.notices.gamut else {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(egui::RichText::new(text(Text::MeasuringColors)).color(tokens.text_muted));
+            });
+            export_feedback(ui, board);
+            return;
+        };
+        let mut gamut = measured.clone();
+        gamut.view = self.gamut.view;
+        gamut.sort = self.gamut.sort;
+        ui.horizontal_wrapped(|ui| {
+            for (view, label) in [Text::GamutWindows, Text::GamutCells, Text::GamutShares]
+                .into_iter()
+                .enumerate()
+            {
+                ui.selectable_value(&mut self.gamut.view, view as u8, text(label));
+            }
+        });
+        ui.add_space(tokens.space_s as f32);
+        let side = ui.available_width();
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::hover());
+        let ordered = gamut.ordered();
+        let marks = gamut_marks(&ordered);
+        moth_ui::gamut::Wheel {
+            grid: &gamut.grid,
+            hues: moth_scene::GAMUT_HUES,
+            rings: moth_scene::GAMUT_RINGS,
+            view: gamut.view,
+            marks: &marks,
+        }
+        .paint(ui.painter(), rect.center(), side / 2. - 2.);
+        ui.add_space(tokens.space_s as f32);
+        ui.label(egui::RichText::new(text(Text::GamutOrder)).color(tokens.text_muted));
+        ui.horizontal_wrapped(|ui| {
+            for (sort, label) in [
+                Text::GamutSortShare,
+                Text::GamutSortWarm,
+                Text::GamutSortLight,
+                Text::GamutSortHue,
+                Text::GamutSortSaturation,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                ui.selectable_value(&mut self.gamut.sort, sort as u8, text(label));
+            }
+        });
+        ui.add_space(tokens.space_xs as f32);
+        let count = ordered.len().max(1) as f32;
+        let gap = tokens.space_xs as f32;
+        let width = (ui.available_width() - gap * (count - 1.)) / count;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for (number, (rgb, share)) in ordered.iter().enumerate() {
+                let (rect, response) =
+                    ui.allocate_exact_size(egui::vec2(width, 34.), egui::Sense::click());
+                let fill = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+                ui.painter().rect_filled(rect, tokens.radius_s, fill);
+                if response.hovered() {
+                    ui.painter().rect_stroke(
+                        rect,
+                        tokens.radius_s,
+                        egui::Stroke::new(2., tokens.accent),
+                        egui::StrokeKind::Outside,
+                    );
+                }
+                let hex = format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2]);
+                if gamut.view == 2 {
+                    let ink = if light_color(*rgb) {
+                        egui::Color32::from_gray(25)
+                    } else {
+                        egui::Color32::WHITE
+                    };
+                    ui.painter().text(
+                        rect.left_top() + egui::vec2(5., 3.),
+                        egui::Align2::LEFT_TOP,
+                        (number + 1).to_string(),
+                        egui::FontId::proportional(11.),
+                        ink,
+                    );
+                }
+                let response =
+                    response.on_hover_text(format!("{hex} · {:.0}%", f32::from(*share) / 2.55));
+                if response.clicked() {
+                    ui.ctx().copy_text(hex.clone());
+                    self.gamut.copied = Some((hex, std::time::Instant::now()));
+                }
+            }
+        });
+        let copied = self
+            .gamut
+            .copied
+            .as_ref()
+            .filter(|(_, at)| at.elapsed().as_secs_f32() < 2.);
+        let hint = match copied {
+            Some((hex, at)) => {
+                ui.ctx().request_repaint_after(
+                    std::time::Duration::from_secs(2).saturating_sub(at.elapsed()),
+                );
+                moth_ui::translated(moth_ui::locale(), Text::HexCopied).replace("{hex}", hex)
+            }
+            None => text(Text::GamutHint).to_owned(),
+        };
+        ui.label(egui::RichText::new(hint).color(tokens.text_muted).small());
+        ui.add_space(tokens.space_s as f32);
+        let image = self.gamut.image.and_then(|id| board.scene.get(id));
+        if ui
+            .add_enabled(image.is_some(), egui::Button::new(text(Text::PutOnBoard)))
+            .clicked()
+            && let Some(image) = image
+        {
+            let bounds = moth_scene::footprint(image);
+            let width = (bounds.width.max(bounds.height) * 0.6).clamp(240., 4000.);
+            let rect = Rect {
+                x: bounds.x + bounds.width + width * 0.25,
+                y: bounds.y,
+                width,
+                height: width * 1.3,
+            };
+            let card = moth_scene::Item::gamut_card(gamut, rect, board.scene.top());
+            intents.push(Intent::Commands(vec![moth_scene::Command::Insert(card)]));
+        }
     }
 }
 /// A tool panel at the right edge, under the window bar: title, close button and
@@ -1085,6 +1252,7 @@ fn order_label(i: u8) -> Text {
         1 => Text::ByFilename,
         2 => Text::ByTime,
         3 => Text::Random,
+        4 => Text::ByPath,
         _ => Text::ByLayer,
     }
 }

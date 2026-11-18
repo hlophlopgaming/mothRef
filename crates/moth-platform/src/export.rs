@@ -72,6 +72,17 @@ pub enum Target {
         /// Selected identities (a group brings its images), or empty for the board.
         ids: Vec<Uuid>,
     },
+    /// Measure the colors an image shows for a gamut card; with `card`, the answer
+    /// updates that card.
+    Gamut {
+        /// The image to measure.
+        image: Uuid,
+        /// The gamut card to update, if any.
+        card: Option<Uuid>,
+    },
+    /// Show where an image came from: its file in the file manager, the archive it
+    /// was in, or its web address in the browser.
+    Source(Uuid),
     /// Original-pixel coordinates and metadata at a world point.
     Info {
         /// Image underneath the chosen point.
@@ -95,6 +106,92 @@ pub enum Target {
         /// World position mapped through the image's content transform.
         point: [f32; 2],
     },
+}
+/// What "Open source" did, for the UI to word.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SourceOutcome {
+    /// The file was shown in the file manager.
+    Shown,
+    /// The archive was shown; the image is this entry inside it.
+    InArchive(String),
+    /// The web address was opened in the browser.
+    Opened,
+    /// The file (or archive) is no longer at this path.
+    Missing(String),
+    /// The image has no source: pasted pixels or an image from an imported board.
+    Unknown,
+}
+/// Shows an image's source. Checks the file on the storage worker, never on the UI
+/// thread, because a path on a disconnected drive can block.
+pub(super) fn open_source(scene: &Scene, id: Uuid) -> io::Result<SourceOutcome> {
+    use moth_scene::Source;
+    let item = scene
+        .get(id)
+        .ok_or_else(|| error("Image no longer exists"))?;
+    let reveal = |path: &str| -> io::Result<bool> {
+        let path = std::path::Path::new(path);
+        if !path.try_exists().unwrap_or(false) {
+            return Ok(false);
+        }
+        super::viewer::reveal(path)?;
+        Ok(true)
+    };
+    Ok(match &item.source {
+        None => SourceOutcome::Unknown,
+        Some(Source::File(path)) => {
+            if reveal(path)? {
+                SourceOutcome::Shown
+            } else {
+                SourceOutcome::Missing(path.clone())
+            }
+        }
+        Some(Source::Archive { archive, entry }) => {
+            if reveal(archive)? {
+                SourceOutcome::InArchive(entry.clone())
+            } else {
+                SourceOutcome::Missing(archive.clone())
+            }
+        }
+        Some(Source::Url(url)) => {
+            if !web_address(url) {
+                return Err(error("The saved web address is not an http or https link"));
+            }
+            super::viewer::open(std::path::Path::new(url))?;
+            SourceOutcome::Opened
+        }
+    })
+}
+/// Measures an image's colors from a small preview of its original. Rotation and
+/// crop are ignored: the gamut describes the image file, not the frame.
+pub(super) fn gamut(
+    storage: &DesktopStorage,
+    scene: &Scene,
+    sources: &HashMap<BlobId, Handle>,
+    id: Uuid,
+) -> io::Result<moth_scene::Gamut> {
+    let item = scene
+        .get(id)
+        .ok_or_else(|| error("Image no longer exists"))?;
+    let bytes = original(storage, sources, item)?;
+    let decoded = moth_io::decode(&bytes, moth_io::gamut::SIDE).map_err(error)?;
+    if decoded.format != moth_io::ImageFormat::Rgba8 {
+        return Err(error("Unexpected preview encoding"));
+    }
+    let mip = decoded
+        .mips
+        .iter()
+        .find(|mip| mip.width.max(mip.height) <= moth_io::gamut::SIDE)
+        .or(decoded.mips.last())
+        .ok_or_else(|| error("Image has no preview"))?;
+    Ok(moth_io::gamut::measure_item(
+        &mip.bytes, mip.width, mip.height, item,
+    ))
+}
+/// Only plain http and https links go to the browser; anything else could start a
+/// program through the system's URL handlers.
+fn web_address(url: &str) -> bool {
+    (url.starts_with("https://") || url.starts_with("http://"))
+        && !url.chars().any(|c| c.is_control() || c.is_whitespace())
 }
 /// What the coordinate picker found under the pointer, for the UI to label.
 #[derive(Clone, Debug, PartialEq)]
@@ -438,6 +535,11 @@ pub(super) fn run(
     clipboard: &mut Option<arboard::Clipboard>,
 ) -> io::Result<String> {
     match target {
+        Target::Gamut { image: id, .. } | Target::Source(id) => {
+            return Err(error(format!(
+                "Source of {id} is answered by the storage worker"
+            )));
+        }
         Target::Viewer(id) => {
             use crate::Platform;
             let item = scene

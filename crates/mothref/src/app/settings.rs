@@ -87,9 +87,11 @@ macro_rules! schema {
         },)+];
     };
     (@hint app_icon) => { Some(Text::AppIconHint) };
+    (@hint menu_bar) => { Some(Text::ShowMenuBarHint) };
     (@hint $field:ident) => { None };
 }
 schema! {
+    menu_bar: bool = false, "menu_bar", Appearance, ShowMenuBar, Kind::Toggle, |s| s.menu_bar.to_string(), |values: &BTreeMap<String,String>| values.get("menu_bar").and_then(|v| v.parse().ok()).unwrap_or(false);
     app_icon: u8 = 0, "app_icon", Appearance, AppIcon, Kind::Choice(&[Text::IconMoth, Text::IconPhotocraft]), |s| s.app_icon.to_string(), |values: &BTreeMap<String,String>| values.get("app_icon").and_then(|v| v.parse().ok()).filter(|v| *v < 2).unwrap_or(0);
     view_controls_right: bool = true, "view_controls_right", Window, ViewControlsRight, Kind::Toggle, |s| s.view_controls_right.to_string(), |values: &BTreeMap<String,String>| values.get("view_controls_right").and_then(|v|v.parse().ok()).unwrap_or(true);
     over_hint: bool = true, "over_hint", Window, OverHintSetting, Kind::Toggle, |s| s.over_hint.to_string(), |values: &BTreeMap<String,String>| values.get("over_hint").and_then(|v|v.parse().ok()).unwrap_or(true);

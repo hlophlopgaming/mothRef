@@ -351,9 +351,11 @@ fn items(
                     egui::StrokeKind::Inside,
                 );
             }
-            // Notes are drawn by the UI layer in screen space.
+            // Notes and gamut cards are drawn by the UI layer in screen space.
             None => {
-                if editing.as_ref().is_none_or(|e| e.id != item.id) {
+                if item.gamut().is_some() {
+                    draw_gamut(ui, &view.camera, item, &board.scene);
+                } else if editing.as_ref().is_none_or(|e| e.id != item.id) {
                     draw_note(ui, &view.camera, item);
                 }
             }
@@ -495,6 +497,13 @@ fn selection(
                     let group = super::selection::single_group(&board.scene, &board.selection);
                     let kind = if let Some(group) = group {
                         super::surfaces::SelectionKind::Group(board.scene.children(group).count())
+                    } else if !board.selection.is_empty()
+                        && board
+                            .selection
+                            .iter()
+                            .all(|id| board.scene.get(*id).is_some_and(|i| i.gamut().is_some()))
+                    {
+                        super::surfaces::SelectionKind::Gamut
                     } else if board.selection.len() > 1 {
                         super::surfaces::SelectionKind::Several
                     } else if board
@@ -759,6 +768,160 @@ fn screen_corners(camera: &Camera, rect: Rect, rotation: f32) -> [egui::Pos2; 4]
         let point = camera.screen(corner);
         egui::pos2(point[0], point[1])
     })
+}
+
+/// Draws a color gamut card in screen space: its title, the wheel in the card's view,
+/// the main colors in its order, and a dashed arrow to the image it was measured from
+/// while that image is on the board. Like notes, it is drawn above images.
+fn draw_gamut(ui: &egui::Ui, camera: &Camera, item: &Item, scene: &moth_scene::Scene) {
+    let Some(gamut) = item.gamut() else {
+        return;
+    };
+    let tokens = moth_ui::tokens(ui.ctx());
+    let opacity = item.transform.opacity;
+    let corners = item.rect.corners(0.).map(|corner| {
+        let s = camera.screen(corner);
+        egui::pos2(s[0], s[1])
+    });
+    let card = egui::Rect::from_min_max(corners[0], corners[3]);
+    if !ui.clip_rect().expand(card.width()).intersects(card) {
+        return;
+    }
+    let painter = ui.painter().with_clip_rect(ui.clip_rect());
+    let image = gamut.image.and_then(|id| scene.get(id));
+    // Arrow first, so the card covers its start.
+    if let Some(image) = image {
+        let bounds = moth_scene::footprint(image);
+        let a = camera.screen([bounds.x, bounds.y]);
+        let b = camera.screen([bounds.x + bounds.width, bounds.y + bounds.height]);
+        let target = egui::Rect::from_min_max(egui::pos2(a[0], a[1]), egui::pos2(b[0], b[1]));
+        let from = edge_point(card, target.center());
+        let to = edge_point(target, card.center());
+        if (to - from).length() > 12. {
+            let color = tokens.accent.gamma_multiply(0.85 * opacity);
+            let width = (card.width() / 160.).clamp(1., 4.);
+            let direction = (to - from).normalized();
+            let tip = to - direction * width * 2.;
+            painter.extend(egui::Shape::dashed_line(
+                &[from, tip],
+                egui::Stroke::new(width, color),
+                width * 4.,
+                width * 3.,
+            ));
+            let size = width * 5.;
+            let side = egui::vec2(-direction.y, direction.x);
+            painter.line_segment(
+                [tip, tip - direction * size + side * size * 0.6],
+                egui::Stroke::new(width, color),
+            );
+            painter.line_segment(
+                [tip, tip - direction * size - side * size * 0.6],
+                egui::Stroke::new(width, color),
+            );
+        }
+    }
+    let unit = card.width() / 320.;
+    let radius = tokens.radius_l as f32 * unit;
+    painter.rect_filled(card, radius, tokens.note_fill().gamma_multiply(opacity));
+    painter.rect_stroke(
+        card,
+        radius,
+        egui::Stroke::new(1., tokens.border.gamma_multiply(opacity)),
+        egui::StrokeKind::Inside,
+    );
+    let pad = 16. * unit;
+    let readable = 13. * unit >= 6.;
+    let header = if readable {
+        painter.text(
+            card.left_top() + egui::vec2(pad, pad),
+            egui::Align2::LEFT_TOP,
+            moth_ui::text(moth_ui::Text::ColorGamut),
+            egui::FontId::proportional(15. * unit),
+            tokens.text.gamma_multiply(opacity),
+        );
+        pad + 22. * unit
+    } else {
+        pad
+    };
+    if readable && image.is_some_and(|image| gamut.stale(image)) {
+        // The image was cropped, flipped or reframed after measuring.
+        let font = egui::FontId::proportional(11. * unit);
+        let label = moth_ui::text(moth_ui::Text::GamutStale).to_owned();
+        let galley = painter.layout_no_wrap(label, font, tokens.on_accent);
+        let size = galley.size() + egui::vec2(16. * unit, 8. * unit);
+        let badge = egui::Rect::from_min_size(
+            egui::pos2(card.right() - pad - size.x, card.top() + pad - 2. * unit),
+            size,
+        );
+        painter.rect_filled(badge, size.y / 2., tokens.accent.gamma_multiply(opacity));
+        painter.galley(
+            badge.min + egui::vec2(8. * unit, 4. * unit),
+            galley,
+            tokens.on_accent,
+        );
+    }
+    let ordered = gamut.ordered();
+    let swatch = 30. * unit;
+    let label = if readable { 16. * unit } else { 0. };
+    let bottom = pad + swatch + label;
+    let room = egui::Rect::from_min_max(
+        card.left_top() + egui::vec2(pad, header + pad * 0.5),
+        card.right_bottom() - egui::vec2(pad, bottom + pad * 0.5),
+    );
+    let diameter = room.width().min(room.height());
+    if diameter > 8. {
+        let marks = super::tools::gamut_marks(&ordered);
+        moth_ui::gamut::Wheel {
+            grid: &gamut.grid,
+            hues: moth_scene::GAMUT_HUES,
+            rings: moth_scene::GAMUT_RINGS,
+            view: gamut.view,
+            marks: &marks,
+        }
+        .paint(&painter, room.center(), diameter / 2.);
+    }
+    let count = ordered.len().max(1) as f32;
+    let gap = 6. * unit;
+    let width = (card.width() - pad * 2. - gap * (count - 1.)) / count;
+    let top = card.bottom() - pad - swatch - label;
+    for (number, (rgb, _)) in ordered.iter().enumerate() {
+        let left = card.left() + pad + number as f32 * (width + gap);
+        let rect = egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, swatch));
+        let fill = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]).gamma_multiply(opacity);
+        painter.rect_filled(rect, 6. * unit, fill);
+        if readable {
+            if gamut.view == 2 {
+                painter.text(
+                    rect.left_top() + egui::vec2(4. * unit, 3. * unit),
+                    egui::Align2::LEFT_TOP,
+                    (number + 1).to_string(),
+                    egui::FontId::proportional(10. * unit),
+                    if super::tools::light_color(*rgb) {
+                        egui::Color32::from_gray(25)
+                    } else {
+                        egui::Color32::WHITE
+                    },
+                );
+            }
+            painter.text(
+                egui::pos2(rect.left(), rect.bottom() + 3. * unit),
+                egui::Align2::LEFT_TOP,
+                format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2]),
+                egui::FontId::monospace((9. * unit).min(width / 6.)),
+                tokens.text_muted.gamma_multiply(opacity),
+            );
+        }
+    }
+}
+
+/// Where the line from `rect`'s center towards `toward` leaves the rectangle.
+fn edge_point(rect: egui::Rect, toward: egui::Pos2) -> egui::Pos2 {
+    let d = toward - rect.center();
+    if d.x.abs() < f32::EPSILON && d.y.abs() < f32::EPSILON {
+        return rect.center();
+    }
+    let scale = (rect.width() / 2. / d.x.abs()).min(rect.height() / 2. / d.y.abs());
+    rect.center() + d * scale.min(1.)
 }
 
 /// Draws a note's card and text in screen space. shortcut: notes render in the

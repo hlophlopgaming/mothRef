@@ -33,9 +33,9 @@ impl App {
                 return None;
             }
             ScaleApply => Intent::Commands(arrange::scale(&items, self.tools.arrange.factor)),
-            Horizontal | Vertical | Grid | Optimal | ArrangeName | ArrangeTime | PackFit
-            | NormalizeWidth | NormalizeHeight | NormalizeSize | NormalizeArea | AlignLeft
-            | AlignRight | AlignTop | AlignBottom | Stack | DistributeHorizontal
+            Horizontal | Vertical | Grid | Optimal | ArrangeName | ArrangeTime | ArrangePath
+            | PackFit | NormalizeWidth | NormalizeHeight | NormalizeSize | NormalizeArea
+            | AlignLeft | AlignRight | AlignTop | AlignBottom | Stack | DistributeHorizontal
             | DistributeVertical => {
                 let commands = match action {
                     NormalizeWidth | NormalizeHeight | NormalizeSize | NormalizeArea => {
@@ -68,6 +68,9 @@ impl App {
                         }
                         if action == ArrangeTime {
                             self.tools.arrange.order = 2;
+                        }
+                        if action == ArrangePath {
+                            self.tools.arrange.order = 4;
                         }
                         self.tools.arrange(
                             &mut items,

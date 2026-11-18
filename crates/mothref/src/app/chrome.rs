@@ -28,6 +28,8 @@ pub(super) struct Chrome<'a> {
     pub windows: &'a [String],
     pub enabled: &'a [bool],
     pub registry: &'a super::bindings::Registry,
+    /// Settings › Appearance › Show menu bar.
+    pub menu_bar: bool,
 }
 
 /// Draws the titlebar, tab strip, status bar and (in library mode) the catalog.
@@ -67,7 +69,7 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
         moth_ui::Status {
             path: &ctx.board.file.path,
             adapter: &ctx.gpu.adapter,
-            count: ctx.board.scene.len() - ctx.board.scene.group_count(),
+            count: ctx.board.scene.len() - ctx.board.scene.group_count() - ctx.board.gamut_count,
             images: ctx.board.image_count,
             selected: ctx.board.selection.len(),
             zoom: ctx.board.view.camera.zoom,
@@ -92,6 +94,19 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
         &tab_labels,
         |ui| super::surfaces::window_menu(ui, ctx.enabled, ctx.registry, &mut intents),
     );
+    if ctx.menu_bar {
+        let t = moth_ui::tokens(ui.ctx());
+        egui::Panel::top("menu_bar")
+            .frame(
+                egui::Frame::new()
+                    .fill(t.sidebar)
+                    .stroke(egui::Stroke::new(1., t.divider))
+                    .inner_margin(egui::Margin::symmetric(t.space_s as i8, 2)),
+            )
+            .show(ui, |ui| {
+                super::surfaces::menu_bar(ui, ctx.enabled, ctx.registry, &mut intents)
+            });
+    }
     let opacity = ui.ctx().animate_bool_with_time(
         egui::Id::new("library_visibility"),
         ctx.library,

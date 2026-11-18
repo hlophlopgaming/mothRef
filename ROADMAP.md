@@ -152,10 +152,10 @@ Open:
 
 - [ ] Parity leftovers from [FEATURES.md](docs/FEATURES.md) (a few were tagged M0/M1 there but never done, so they are collected here):
   - [x] Export the selected originals, each as its own file, named after the images (maintainer, 2026-11-08)
-  - [ ] Show the color gamut of an image (BR) — waiting for a decision: the maintainer asked what it shows (2026-11-05)
-  - [ ] Open image source — the URL or path the image came from (PR). Needs the source stored per image (schema 7; paths are not written to boards today) — on hold with linked files (maintainer, 2026-11-06). Wanted; handle the edge cases explicitly: an image from inside a `.zip` (show the archive and the entry, open the archive's folder), a web URL (open on click only), clipboard pastes and images embedded in `.bee` / `.pur` files (no source: say so), a file that was moved or deleted since (say it is missing, offer the last known path)
-  - [ ] Arrange by file path (PR) — needs the stored source, see above
-  - [ ] Optional scrollbars and menu bar (BR) — waiting for a decision: the maintainer asked what it means (2026-11-05)
+  - [x] Show the color gamut of an image (BR) — Color gamut panel and gamut cards on the board with an arrow to their image; views: gamut windows, painter's cells, hue shares with marked main colors; main colors sortable ([decision 0028](docs/decisions/0028-color-gamut-cards.md)). Cards in scene exports remain open
+  - [x] Open image source — the file, archive entry or URL the image came from (PR). Schema 9 stores the source per image ([decision 0027](docs/decisions/0027-image-sources.md)); a moved file says where it was, pasted and imported images say they have none
+  - [x] Arrange by file path (PR) — folders together, numbers by value; also `--order path` in the CLI
+  - [x] Optional menu bar (BR) — Settings › Appearance › Show menu bar (off by default): File, Edit, View, Image, Arrange, Window, Help, built from the action lists (maintainer, 2026-11-18). Optional scrollbars were not asked for
 
 - [ ] Qualify the M2 agent CLI HTTP download workflow and native locking on Windows/macOS; see [CLI validation](docs/CLI-VALIDATION.md).
 

@@ -54,7 +54,7 @@ explicit ids. Angles are radians; points/rectangles use comma-separated numbers.
 | `note BOARD TEXT` | Add a note; optional `--at x,y` |
 | `info BOARD` | Inspect state; `--offset 0 --limit 1000` (page size capped at 1000) |
 | `check BOARD` | Read native integrity/recovery status; recovered/torn files fail; use a clean Save As to remove recovery status |
-| `arrange BOARD` | `--mode horizontal\|vertical\|grid\|optimal` (default grid), `--gap N`, `--order z\|name\|time`, optional `--count N`, `--id ...`; alias `layout` |
+| `arrange BOARD` | `--mode horizontal\|vertical\|grid\|optimal` (default grid), `--gap N`, `--order z\|name\|time\|path`, optional `--count N`, `--id ...`; alias `layout` |
 | `align BOARD` | `--mode left\|right\|top\|bottom\|horizontal\|vertical\|stack`, `--id ...`; horizontal/vertical distribute |
 | `normalize BOARD` | `--mode width\|height\|size\|area`, `--id ...`; match first z-sorted item |
 | `scale BOARD` | `--factor N`, `--id ...`; scale sizes/positions about first selected frame |
@@ -70,6 +70,7 @@ explicit ids. Angles are radians; points/rectangles use comma-separated numbers.
 | `edit BOARD` | Required `--id UUID`; frame/text/name and transform flags below |
 | `export BOARD DESTINATION` | `--kind scene\|original\|originals\|archive` (default scene), `--id ...`, `--side N` (default 2048), optional `--region x,y,w,h` |
 | `pixel-info BOARD` | `--id UUID --point x,y`; original pixel coordinate and image metadata |
+| `gamut BOARD` | `--id IMAGE [--view windows\|cells\|shares] [--sort share\|warm\|light\|hue\|saturation] [--at x,y]`; measures the visible part of the image and adds a color gamut card beside it, linked to the image by an arrow; with a gamut card's id it measures that card's image again, keeping its view and order |
 | `sample BOARD` | `--id UUID --point x,y`; HEX/RGB/HSV sampled without clipboard access |
 | `preview BOARD DIRECTORY` | Capture immutable native preview bundle under DIRECTORY; `--side N` defaults 1024 |
 | `preview-latest DIRECTORY` | Read latest completed bundle (or pass a specific completed bundle directory) |
@@ -87,8 +88,11 @@ Use group-edit for group titles; edit name applies to images/notes.
 
 Group colors are palette codes 0..5 or tagged RGB `0x01RRGGBB` (hex accepted by
 `--color`; JSON uses an integer). Layout count means rows in horizontal flow or
-columns in vertical flow. Optimal ignores gap and packs tightly. Source-path
-sorting is unavailable until source metadata ships in the app.
+columns in vertical flow. Optimal ignores gap and packs tightly. `--order path`
+sorts by each image's saved source: images from one folder stay together, numbers
+compare by value, and images without a source (pasted, from imported boards) come
+last. Item JSON carries the source as `{"file": PATH}`, `{"archive": PATH,
+"entry": NAME}`, `{"url": URL}` or `null`.
 
 Scene export chooses PNG/SVG/PDF from the destination extension. `original`
 requires one image UUID; `originals` creates a new directory; `archive` creates ZIP.

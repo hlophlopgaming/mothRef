@@ -319,6 +319,72 @@ pub enum Text {
     FindFile,
     /// File dialog title.
     FindFileTitle,
+    /// Context action: show where an image came from.
+    OpenSource,
+    /// Arrange action ordered by each image's source path.
+    ArrangePath,
+    /// Arrange order: by source path.
+    ByPath,
+    /// The source file was shown in the file manager.
+    SourceShown,
+    /// The archive was shown; `{name}` is the entry inside it.
+    SourceInArchive,
+    /// The source web address was opened.
+    SourceOpened,
+    /// The source file is gone; `{path}` is where it was.
+    SourceMissing,
+    /// The image has no saved source.
+    NoSource,
+    /// Setting: show the classic menu bar.
+    ShowMenuBar,
+    /// Explains the menu bar setting.
+    ShowMenuBarHint,
+    /// Menu bar: file commands.
+    MenuFile,
+    /// Menu bar: editing commands.
+    MenuEdit,
+    /// Menu bar: view commands.
+    MenuView,
+    /// Menu bar: image commands.
+    MenuImage,
+    /// Menu bar: window commands.
+    MenuWindow,
+    /// Menu bar: help.
+    MenuHelp,
+    /// Color gamut: ColorGamut.
+    ColorGamut,
+    /// Color gamut: GamutWindows.
+    GamutWindows,
+    /// Color gamut: GamutCells.
+    GamutCells,
+    /// Color gamut: GamutShares.
+    GamutShares,
+    /// Color gamut: GamutSortShare.
+    GamutSortShare,
+    /// Color gamut: GamutSortWarm.
+    GamutSortWarm,
+    /// Color gamut: GamutSortLight.
+    GamutSortLight,
+    /// Color gamut: GamutSortHue.
+    GamutSortHue,
+    /// Color gamut: GamutSortSaturation.
+    GamutSortSaturation,
+    /// Color gamut: GamutView.
+    GamutView,
+    /// Color gamut: GamutOrder.
+    GamutOrder,
+    /// Color gamut: PutOnBoard.
+    PutOnBoard,
+    /// Color gamut: MeasuringColors.
+    MeasuringColors,
+    /// Color gamut: GamutHint.
+    GamutHint,
+    /// Color gamut: HexCopied.
+    HexCopied,
+    /// Re-measure a gamut card from its image.
+    GamutRefresh,
+    /// Badge on a gamut card whose image now shows other pixels.
+    GamutStale,
     /// Library order: by the board file's last change.
     LastEdited,
     /// Library order: by number of items.
@@ -1163,8 +1229,9 @@ pub use localization::{
     Locale, Message, ago, counted, item_counts, locale, set_locale, text, translated,
 };
 
-/// Application icon artwork and per-window choice.
 pub mod brand;
+/// Application icon artwork and per-window choice.
+pub mod gamut;
 /// House theme tokens and application.
 pub mod theme;
 pub use theme::{Tokens, tokens};

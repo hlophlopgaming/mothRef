@@ -73,8 +73,9 @@ Use `--dry-run` to validate without saving board files; it still uses private
 staging, but exports/preview captures are refused. `.bee`/`.pur` conversion requires
 an explicit native destination, e.g. `mothref open legacy.bee -o converted.moth`.
 HTTP(S) imports require explicit `add --url URL` or a raw add with `url`; the native
-downloader enforces size, redirects and a total timeout. Source URLs/paths are
-not persisted, so source-path sorting remains unavailable.
+downloader enforces size, redirects and a total timeout. Each added image keeps
+its source (absolute file path, ZIP archive and entry, or URL) in the item's
+`source` field; `arrange --order path` sorts by it, folders together.
 
 Scripts are sequential, not transactions: earlier explicit saves/exports remain
 if a later operation fails; unsaved acknowledged edits remain in GUI recovery.

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Color gamut: right-click an image › Color gamut shows which hues and saturations it uses on a color wheel, in three views — gamut windows, painter's cells, and hue shares with the main colors marked — and its main colors, sorted by share, warm to cold, light to dark, hue or saturation; click a color to copy its HEX code. Colors come from the part of the image its frame shows, after crop, rotation and flip. Put on board adds a gamut card beside the image with a dashed arrow to it; the card keeps its colors if the image is removed, and its view and order change from the selection bar. When the image is cropped, flipped or reframed afterwards, the card shows "Image changed" and Update color gamut measures it again. Also `mothref gamut` in the CLI. Gamut cards are not included in PNG/SVG/PDF board exports yet.
+- Settings › Appearance › Show menu bar adds a classic File, Edit, View, Image, Arrange, Window and Help bar under the title bar, with every command and its shortcut. Off by default.
+- Images remember where they came from: the file, the entry inside a ZIP archive, or the web address. Right-click an image › Open source shows the file selected in the file manager (or the archive it was in), or opens the address in the browser; a file that has moved says where it used to be, and pasted images say they have no source. Arrange › Arrange by file path (and By file path in the arrange options, `--order path` in the CLI) keeps each folder's images together, in name order with numbers by value. Boards are now saved as schema 9; older MothRef versions cannot open them. A shared board shows the paths its images were added from.
+
 ## 0.1.0-alpha.27 — 2026-11-17
 
 - Agent CLI inserts images and notes beside existing board content by default and places duplicates beside the board, preserving explicit coordinates for intentional overlap. Geometry replies include world bounds and centers; preview bundles supply pixel-to-board transforms for precise visual edits.

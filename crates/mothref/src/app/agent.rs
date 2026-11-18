@@ -105,6 +105,23 @@ impl Session {
             }
         }
     }
+    /// Measures an image's colors on the storage worker for a gamut card.
+    fn measure_gamut(&mut self, image: moth_scene::Uuid) -> Result<moth_scene::Gamut> {
+        self.worker
+            .requests
+            .send(Request::Export(moth_platform::export::Target::Gamut {
+                image,
+                card: None,
+            }))?;
+        loop {
+            match self.worker.results.recv()? {
+                Completion::Gamut(gamut, _) => return Ok(gamut),
+                Completion::Failed(message) => bail!("{message}"),
+                Completion::Saving(_) | Completion::Loading { .. } => {}
+                _ => bail!("unexpected storage completion"),
+            }
+        }
+    }
     fn apply(&mut self, commands: Vec<Command>) -> Result<Value> {
         // Validate the complete batch before the worker journals its first command.
         let mut scratch = Scene::default();
@@ -151,8 +168,20 @@ fn item_json(item: &Item) -> Value {
         moth_scene::Content::Group(group) => {
             ("group", json!({"title":group.title,"color":group.color}))
         }
+        moth_scene::Content::Gamut(gamut) => (
+            "gamut",
+            json!({"image":gamut.image.map(|id|id.to_string()),"view":gamut.view,"sort":gamut.sort,
+                "colors":gamut.colors.iter().map(|([r,g,b],share)| json!({"hex":format!("#{r:02X}{g:02X}{b:02X}"),"share":f32::from(*share)/255.})).collect::<Vec<_>>()}),
+        ),
     };
-    json!({"id":item.id.to_string(),"name":item.name,"kind":kind,"content":content,
+    let source = item.source.as_ref().map(|source| match source {
+        moth_scene::Source::File(path) => json!({"file":path}),
+        moth_scene::Source::Archive { archive, entry } => {
+            json!({"archive":archive,"entry":entry})
+        }
+        moth_scene::Source::Url(url) => json!({"url":url}),
+    });
+    json!({"id":item.id.to_string(),"name":item.name,"kind":kind,"content":content,"source":source,
         "parent":item.parent.map(|id|id.to_string()),"rect":[r.x,r.y,r.width,r.height],
         "bounds":rect_json(moth_scene::footprint(item)),"center":[r.x+r.width/2.,r.y+r.height/2.],
         "transform":{"rotation":t.rotation,"opacity":t.opacity,"grayscale":t.grayscale,"sampling":t.sampling as u8,

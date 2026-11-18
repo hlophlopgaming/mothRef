@@ -22,6 +22,7 @@ pub(super) const ARRANGE: &[Slot] = &[
     S,
     A(ArrangeName),
     A(ArrangeTime),
+    A(ArrangePath),
     A(ArrangeOptions),
 ];
 const NORMALIZE: &[Slot] = &[
@@ -116,6 +117,11 @@ pub(super) const CONTEXT_MENU: &[Slot] = &[
     A(Duplicate),
     A(CopyImage),
     A(OpenOriginal),
+    A(OpenSource),
+    A(ColorGamut),
+    A(GamutRefresh),
+    G(Text::GamutView, GAMUT_VIEW),
+    G(Text::GamutOrder, GAMUT_SORT),
     A(SampleColor),
     A(CoordinatePicker),
     A(Export),
@@ -136,6 +142,8 @@ const TOOLBAR: &[Slot] = &[
 ];
 pub(super) enum SelectionKind {
     Image,
+    /// One or more color gamut cards.
+    Gamut,
     Several,
     Note,
     /// One group, with the number of its direct members.
@@ -159,6 +167,21 @@ const MULTI_BAR: &[Slot] = &[
     A(Duplicate),
 ];
 const NOTE_BAR: &[Slot] = &[A(EditNote), A(EditItem), A(Duplicate), A(Delete)];
+pub(super) const GAMUT_VIEW: &[Slot] = &[A(GamutWindows), A(GamutCells), A(GamutShares)];
+pub(super) const GAMUT_SORT: &[Slot] = &[
+    A(GamutSortShare),
+    A(GamutSortWarm),
+    A(GamutSortLight),
+    A(GamutSortHue),
+    A(GamutSortSaturation),
+];
+const GAMUT_BAR: &[Slot] = &[
+    A(GamutRefresh),
+    G(Text::GamutView, GAMUT_VIEW),
+    G(Text::GamutOrder, GAMUT_SORT),
+    A(Duplicate),
+    A(Delete),
+];
 pub(super) const GROUP_COLOR: &[Slot] = &[
     A(GroupNeutral),
     A(GroupSage),
@@ -179,6 +202,7 @@ fn selection_bar(kind: SelectionKind) -> &'static [Slot] {
         SelectionKind::Image => IMAGE_BAR,
         SelectionKind::Several => MULTI_BAR,
         SelectionKind::Note => NOTE_BAR,
+        SelectionKind::Gamut => GAMUT_BAR,
         SelectionKind::Group(_) => GROUP_BAR,
     }
 }
@@ -455,6 +479,119 @@ fn row(
             }
         }
     }
+}
+/// The optional classic menu bar (Settings › Appearance › Show menu bar): every
+/// command grouped the way desktop programs do, built from the same action lists as
+/// the other surfaces.
+pub(super) fn menu_bar(
+    ui: &mut egui::Ui,
+    enabled: &[bool],
+    registry: &Registry,
+    intents: &mut Vec<Intent>,
+) {
+    const MENU_FILE: &[Slot] = &[
+        A(New),
+        A(Open),
+        A(Save),
+        A(Library),
+        S,
+        A(Images),
+        A(Export),
+        S,
+        A(CloseTab),
+        A(CloseWindow),
+    ];
+    const MENU_EDIT: &[Slot] = &[
+        A(Undo),
+        A(Redo),
+        S,
+        A(Paste),
+        A(Duplicate),
+        A(Delete),
+        S,
+        A(SelectAll),
+        A(Deselect),
+        S,
+        A(Note),
+        A(EditNote),
+        A(EditItem),
+        S,
+        A(Group),
+        A(Ungroup),
+        A(EnterGroup),
+        A(RenameGroup),
+        G(Text::GroupColor, GROUP_COLOR),
+        S,
+        A(Settings),
+    ];
+    const MENU_VIEW: &[Slot] = &[
+        A(ZoomIn),
+        A(ZoomOut),
+        A(ZoomReset),
+        A(Fit),
+        A(Focus),
+        S,
+        A(ToggleView),
+        A(Layers),
+        A(Lock),
+        A(Grayscale),
+        A(DrawingSession),
+    ];
+    const MENU_IMAGE: &[Slot] = &[
+        G(Text::Content, TRANSFORM),
+        G(Text::ImageSampling, SAMPLING),
+        S,
+        A(CopyImage),
+        A(OpenOriginal),
+        A(OpenSource),
+        A(ColorGamut),
+        S,
+        A(SampleColor),
+        A(PickScreen),
+        A(CoordinatePicker),
+    ];
+    const MENU_ARRANGE: &[Slot] = &[
+        A(Horizontal),
+        A(Vertical),
+        A(Grid),
+        A(Optimal),
+        A(PackFit),
+        S,
+        A(ArrangeName),
+        A(ArrangeTime),
+        A(ArrangePath),
+        A(ArrangeOptions),
+        S,
+        G(Text::Normalize, NORMALIZE),
+        G(Text::AlignGroup, ALIGN),
+        G(Text::OrderGroup, ORDER),
+    ];
+    const MENU_WINDOW: &[Slot] = &[
+        A(Overlay),
+        A(Pin),
+        G(Text::WindowSettings, WINDOW_MODES),
+        S,
+        A(Fullscreen),
+        A(Minimize),
+        A(Maximize),
+        A(NextTab),
+    ];
+    const MENU_HELP: &[Slot] = &[A(Shortcuts), A(Palette), A(BindingSettings)];
+    egui::MenuBar::new().ui(ui, |ui| {
+        for (title, slots) in [
+            (Text::MenuFile, MENU_FILE),
+            (Text::MenuEdit, MENU_EDIT),
+            (Text::MenuView, MENU_VIEW),
+            (Text::MenuImage, MENU_IMAGE),
+            (Text::Arrange, MENU_ARRANGE),
+            (Text::MenuWindow, MENU_WINDOW),
+            (Text::MenuHelp, MENU_HELP),
+        ] {
+            ui.menu_button(text(title), |ui| {
+                menu(ui, slots, enabled, registry, intents)
+            });
+        }
+    });
 }
 pub(super) fn window_menu(
     ui: &mut egui::Ui,

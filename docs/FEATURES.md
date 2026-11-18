@@ -104,7 +104,7 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 - [x] Optimal — tightly pack all selected displayed bounds into a compact square, with no gap or resizing; independent of window size and zoom (maintainer clarification)
 - [x] By name / by filename (PR, BR)
 - [x] By time added (PR)
-- [ ] By file path (PR)
+- [x] By file path (PR)
 - [x] Randomly (PR 2.1)
 - [ ] By hierarchy order (PR) — M4, needs the hierarchy
 - [x] Horizontal, vertical and square layouts by filename (BR)
@@ -155,8 +155,8 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 ### Pickers and info (M2)
 - [ ] Color picker: RGB / HSV / HEX, copy value, keep picking outside the window while the button is held, ignores image opacity (PR, BR) — all done except picking outside the window
 - [ ] Coordinate picker: pixel X/Y, image name, source, size, size of the selection (PR) — picker exists; check every field before ticking
-- [ ] Show color gamut of an image (BR)
-- [ ] Open image source — the URL or path the image came from (PR); filled automatically by the browser extension
+- [x] Show color gamut of an image (BR)
+- [x] Open image source — the URL or path the image came from (PR); filled automatically by the browser extension
 
 ### Images, files and export
 - [ ] Embed images or link to files on disk (PR) — M5

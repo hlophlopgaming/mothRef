@@ -21,7 +21,7 @@
   },
   "add": {
     "description": "Add a local image or explicitly download an HTTP(S) image.",
-    "parameters": "path OR url, at?=[x,y]; omitted at places right of board bounds with a 24-unit gap. Explicit URLs use native bounded HTTP/TLS download."
+    "parameters": "path OR url, at?=[x,y]; omitted at places right of board bounds with a 24-unit gap. Explicit URLs use native bounded HTTP/TLS download. The item keeps its source (absolute path or URL) in `source`."
   },
   "note": {
     "description": "Add a text note with estimated native font bounds.",
@@ -33,7 +33,7 @@
   },
   "layout": {
     "description": "Arrange images and notes with the GUI layout algorithms.",
-    "parameters": "mode=horizontal|vertical|grid|optimal, ids?=[], gap?=0 (0..10000; optimal ignores gap), order?=z|name|time, count? (horizontal rows / vertical columns)",
+    "parameters": "mode=horizontal|vertical|grid|optimal, ids?=[], gap?=0 (0..10000; optimal ignores gap), order?=z|name|time|path (path: folders together, numbers by value), count? (horizontal rows / vertical columns)",
     "cli_name": "arrange"
   },
   "align": {
@@ -103,6 +103,10 @@
   "capabilities": {
     "description": "Inspect native protocol and current registered GUI actions.",
     "parameters": "none"
+  },
+  "gamut": {
+    "description": "Measure an image's colors and put a color gamut card beside it, with an arrow to the image. The card keeps its colors if the image is removed.",
+    "parameters": "id (image, or a gamut card to measure its image again keeping view/order), view?=windows|cells|shares, sort?=share|warm|light|hue|saturation, at?=[x,y]; colors come from the visible part of the image (crop, rotation, flip); item JSON kind gamut lists colors as {hex, share}"
   },
   "sample": {
     "description": "Sample a native bounded image preview, without using the clipboard.",

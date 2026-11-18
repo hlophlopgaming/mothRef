@@ -544,6 +544,7 @@ impl Workspace {
                     if !paste {
                         item.name = self.board.storage().source_name(done.request.handle);
                     }
+                    item.source = self.board.storage().source_of(done.request.handle);
                     item.parent = super::groups::landing(&self.board.scene, point);
                     self.board.intake.burst.add(item.id);
                     self.persist(moth_platform::boards::Request::Apply(
@@ -572,6 +573,7 @@ impl Workspace {
                     if !paste {
                         item.name = self.board.storage().source_name(done.request.handle);
                     }
+                    item.source = self.board.storage().source_of(done.request.handle);
                     item.parent = super::groups::landing(&self.board.scene, point);
                     self.board.intake.burst.add(item.id);
                     self.persist(moth_platform::boards::Request::Apply(
@@ -587,6 +589,8 @@ impl Workspace {
     }
     fn drain_results(&mut self, active: bool, pump: &mut Pump<'_>) {
         let point = self.board.cursor_point(pump.cursor, pump.fallback);
+        // Edits answered by the worker, journaled once the queue has been read.
+        let mut deferred: Vec<Vec<(Command, Option<Handle>)>> = Vec::new();
         while let Ok(done) = self.board.boards().results.try_recv() {
             use moth_platform::boards::Completion;
             match done {
@@ -747,6 +751,51 @@ impl Workspace {
                             };
                             self.board.fit();
                         }
+                        Completion::Gamut(mut gamut, card) => {
+                            self.board.file.exporting = false;
+                            let Some(card) = card else {
+                                self.board.notices.gamut = Some(gamut);
+                                continue;
+                            };
+                            // Updating a card keeps its place, view and order.
+                            if let Some(item) = self.board.scene.get(card)
+                                && let Some(old) = item.gamut()
+                            {
+                                gamut.view = old.view;
+                                gamut.sort = old.sort;
+                                let mut updated = item.clone();
+                                updated.content = moth_scene::Content::Gamut(Box::new(gamut));
+                                deferred.push(vec![
+                                    (Command::Remove(card), None),
+                                    (Command::Insert(updated), None),
+                                ]);
+                            }
+                        }
+                        Completion::Source(outcome) => {
+                            use moth_platform::export::SourceOutcome;
+                            self.board.file.exporting = false;
+                            let language = moth_ui::locale();
+                            let say = |key| moth_ui::translated(language, key);
+                            let (message, ok): (moth_ui::Message, bool) = match outcome {
+                                SourceOutcome::Shown => (moth_ui::Text::SourceShown.into(), true),
+                                SourceOutcome::Opened => (moth_ui::Text::SourceOpened.into(), true),
+                                SourceOutcome::InArchive(entry) => (
+                                    say(moth_ui::Text::SourceInArchive)
+                                        .replace("{name}", &entry)
+                                        .into(),
+                                    true,
+                                ),
+                                SourceOutcome::Missing(path) => (
+                                    say(moth_ui::Text::SourceMissing)
+                                        .replace("{path}", &path)
+                                        .into(),
+                                    false,
+                                ),
+                                SourceOutcome::Unknown => (moth_ui::Text::NoSource.into(), false),
+                            };
+                            self.board.notices.message = message.clone();
+                            self.board.notices.flash = Some((message, ok, Instant::now()));
+                        }
                         Completion::PixelInfo(info) => {
                             self.board.file.exporting = false;
                             self.board.notices.message = info.summary().into();
@@ -814,6 +863,9 @@ impl Workspace {
                     }
                 }
             }
+        }
+        for batch in deferred {
+            self.persist_batch(batch);
         }
         while self.can_complete_import() {
             let Ok(done) = self.board.decode().results.try_recv() else {

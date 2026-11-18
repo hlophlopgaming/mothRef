@@ -215,6 +215,9 @@
   "ArrangeTime": {
     "operation": "layout"
   },
+  "ArrangePath": {
+    "operation": "layout"
+  },
   "PackFit": {
     "operation": "layout"
   },
@@ -401,6 +404,9 @@
   "OpenOriginal": {
     "operation": "export"
   },
+  "OpenSource": {
+    "gui_only": "Shows the file manager or the browser on the user's desktop; headless sessions read an image's source from the `source` field of its item JSON."
+  },
   "CopyImage": {
     "operation": "export"
   },
@@ -457,5 +463,35 @@
   },
   "DrawingSession": {
     "gui_only": "Interactive drawing-session timer and presentation window; does not edit the saved board."
+  },
+  "ColorGamut": {
+    "operation": "gamut"
+  },
+  "GamutWindows": {
+    "operation": "gamut"
+  },
+  "GamutCells": {
+    "operation": "gamut"
+  },
+  "GamutShares": {
+    "operation": "gamut"
+  },
+  "GamutSortShare": {
+    "operation": "gamut"
+  },
+  "GamutSortWarm": {
+    "operation": "gamut"
+  },
+  "GamutSortLight": {
+    "operation": "gamut"
+  },
+  "GamutSortHue": {
+    "operation": "gamut"
+  },
+  "GamutSortSaturation": {
+    "operation": "gamut"
+  },
+  "GamutRefresh": {
+    "operation": "gamut"
   }
 }
