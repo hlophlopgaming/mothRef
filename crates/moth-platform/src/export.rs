@@ -72,8 +72,14 @@ pub enum Target {
         /// Selected identities (a group brings its images), or empty for the board.
         ids: Vec<Uuid>,
     },
-    /// Measure the colors an image uses for a gamut card.
-    Gamut(Uuid),
+    /// Measure the colors an image shows for a gamut card; with `card`, the answer
+    /// updates that card.
+    Gamut {
+        /// The image to measure.
+        image: Uuid,
+        /// The gamut card to update, if any.
+        card: Option<Uuid>,
+    },
     /// Show where an image came from: its file in the file manager, the archive it
     /// was in, or its web address in the browser.
     Source(Uuid),
@@ -177,7 +183,9 @@ pub(super) fn gamut(
         .find(|mip| mip.width.max(mip.height) <= moth_io::gamut::SIDE)
         .or(decoded.mips.last())
         .ok_or_else(|| error("Image has no preview"))?;
-    Ok(moth_io::gamut::measure(&mip.bytes, Some(id)))
+    Ok(moth_io::gamut::measure_item(
+        &mip.bytes, mip.width, mip.height, item,
+    ))
 }
 /// Only plain http and https links go to the browser; anything else could start a
 /// program through the system's URL handlers.
@@ -527,7 +535,7 @@ pub(super) fn run(
     clipboard: &mut Option<arboard::Clipboard>,
 ) -> io::Result<String> {
     match target {
-        Target::Gamut(id) | Target::Source(id) => {
+        Target::Gamut { image: id, .. } | Target::Source(id) => {
             return Err(error(format!(
                 "Source of {id} is answered by the storage worker"
             )));

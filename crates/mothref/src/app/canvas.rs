@@ -788,8 +788,9 @@ fn draw_gamut(ui: &egui::Ui, camera: &Camera, item: &Item, scene: &moth_scene::S
         return;
     }
     let painter = ui.painter().with_clip_rect(ui.clip_rect());
+    let image = gamut.image.and_then(|id| scene.get(id));
     // Arrow first, so the card covers its start.
-    if let Some(image) = gamut.image.and_then(|id| scene.get(id)) {
+    if let Some(image) = image {
         let bounds = moth_scene::footprint(image);
         let a = camera.screen([bounds.x, bounds.y]);
         let b = camera.screen([bounds.x + bounds.width, bounds.y + bounds.height]);
@@ -842,6 +843,23 @@ fn draw_gamut(ui: &egui::Ui, camera: &Camera, item: &Item, scene: &moth_scene::S
     } else {
         pad
     };
+    if readable && image.is_some_and(|image| gamut.stale(image)) {
+        // The image was cropped, flipped or reframed after measuring.
+        let font = egui::FontId::proportional(11. * unit);
+        let label = moth_ui::text(moth_ui::Text::GamutStale).to_owned();
+        let galley = painter.layout_no_wrap(label, font, tokens.on_accent);
+        let size = galley.size() + egui::vec2(16. * unit, 8. * unit);
+        let badge = egui::Rect::from_min_size(
+            egui::pos2(card.right() - pad - size.x, card.top() + pad - 2. * unit),
+            size,
+        );
+        painter.rect_filled(badge, size.y / 2., tokens.accent.gamma_multiply(opacity));
+        painter.galley(
+            badge.min + egui::vec2(8. * unit, 4. * unit),
+            galley,
+            tokens.on_accent,
+        );
+    }
     let ordered = gamut.ordered();
     let swatch = 30. * unit;
     let label = if readable { 16. * unit } else { 0. };

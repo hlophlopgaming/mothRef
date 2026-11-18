@@ -260,7 +260,6 @@ pub fn fixture() -> anyhow::Result<()> {
     // belongs here too.
     let mut loose = self::item();
     loose.rect.x = 40.;
-    let loose_id = loose.id;
     loose.source = Some(moth_scene::Source::Archive {
         archive: "/references/pack.zip".into(),
         entry: "walls/rows.png".into(),
@@ -287,11 +286,12 @@ pub fn fixture() -> anyhow::Result<()> {
     scene.apply(Command::Insert(inner))?;
     scene.apply(Command::Insert(item))?;
     scene.apply(Command::Insert(note))?;
-    scene.apply(Command::Insert(loose))?;
+    scene.apply(Command::Insert(loose.clone()))?;
     scene.apply(Command::Insert(downloaded))?;
     // Schema 9 also adds gamut cards, measured from the image's pixels.
     let decoded_rows = moth_io::decode(original, moth_io::gamut::SIDE)?;
-    let mut gamut = moth_io::gamut::measure(&decoded_rows.mips[0].bytes, Some(loose_id));
+    let mip = &decoded_rows.mips[0];
+    let mut gamut = moth_io::gamut::measure_item(&mip.bytes, mip.width, mip.height, &loose);
     gamut.view = 2;
     gamut.sort = 1;
     scene.apply(Command::Insert(Item::gamut_card(
@@ -423,7 +423,7 @@ impl Soak {
                 Completion::Exported(_)
                 | Completion::PixelInfo(_)
                 | Completion::Source(_)
-                | Completion::Gamut(_) => {
+                | Completion::Gamut(..) => {
                     anyhow::bail!("unexpected export completion")
                 }
                 Completion::Imported(_, _, _) => anyhow::bail!("unexpected import completion"),

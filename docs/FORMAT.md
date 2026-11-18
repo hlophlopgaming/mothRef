@@ -233,8 +233,10 @@ Schema 9 also adds color gamut cards (decision 0028), with one more tag:
   32-byte transform of tag 14, 65 parent UUID (nil: on the board), 81 image UUID
   (nil: none; the image the card was measured from, which need not exist), 97 view
   (0 windows, 1 cells, 2 shares), 98 sort (0 share, 1 warm to cold, 2 light to dark,
-  3 hue, 4 saturation), 99 the coverage grid of 72 hue sectors × 20 saturation rings
-  (1440 bytes, row-major by hue, the fullest cell 255), then a color count (0–8),
+  3 hue, 4 saturation), 99 a u32 basis (a fingerprint of the image's original,
+  frame proportions and content transform when measured; a different value now marks
+  the card as out of date), 103 the coverage grid of 72 hue sectors × 20 saturation
+  rings (1440 bytes, row-major by hue, the fullest cell 255), then a color count (0–8),
   that many colors as sRGB plus a share byte, and the fractional index.
 
 A view or sort outside its range, more than eight colors or a short grid rejects the

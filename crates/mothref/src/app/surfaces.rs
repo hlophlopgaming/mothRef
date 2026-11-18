@@ -119,6 +119,7 @@ pub(super) const CONTEXT_MENU: &[Slot] = &[
     A(OpenOriginal),
     A(OpenSource),
     A(ColorGamut),
+    A(GamutRefresh),
     G(Text::GamutView, GAMUT_VIEW),
     G(Text::GamutOrder, GAMUT_SORT),
     A(SampleColor),
@@ -175,6 +176,7 @@ pub(super) const GAMUT_SORT: &[Slot] = &[
     A(GamutSortSaturation),
 ];
 const GAMUT_BAR: &[Slot] = &[
+    A(GamutRefresh),
     G(Text::GamutView, GAMUT_VIEW),
     G(Text::GamutOrder, GAMUT_SORT),
     A(Duplicate),

@@ -381,6 +381,10 @@ pub enum Text {
     GamutHint,
     /// Color gamut: HexCopied.
     HexCopied,
+    /// Re-measure a gamut card from its image.
+    GamutRefresh,
+    /// Badge on a gamut card whose image now shows other pixels.
+    GamutStale,
     /// Library order: by the board file's last change.
     LastEdited,
     /// Library order: by number of items.

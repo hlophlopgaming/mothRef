@@ -45,6 +45,9 @@ pub struct Gamut {
     /// Order of the main colors: 0 share, 1 warm to cold, 2 light to dark, 3 hue,
     /// 4 saturation.
     pub sort: u8,
+    /// [`Gamut::basis_of`] the image when it was measured: a different value now means
+    /// the image was cropped, flipped or reframed since, and the card can be updated.
+    pub basis: u32,
     /// Share of pixels per (hue sector, saturation ring), row-major by hue, scaled so
     /// the fullest cell is 255. Length [`GAMUT_HUES`] × [`GAMUT_RINGS`].
     pub grid: Vec<u8>,
@@ -71,6 +74,35 @@ pub fn hue_saturation([r, g, b]: [u8; 3]) -> (f32, f32) {
     (hue / 6., saturation)
 }
 impl Gamut {
+    /// What a measurement depends on: the original, the frame's proportions and the
+    /// content transform (crop, rotation, flip). Moving, resizing proportionally or
+    /// changing opacity keep it; anything that shows other pixels changes it.
+    pub fn basis_of(image: &Item) -> u32 {
+        let t = image.transform;
+        let mut bytes = Vec::with_capacity(80);
+        if let Some(blob) = image.blob() {
+            bytes.extend_from_slice(blob.as_bytes());
+        }
+        let ratio = image.rect.width / image.rect.height.max(f32::MIN_POSITIVE);
+        for value in [
+            ratio,
+            t.rotation,
+            t.content_offset[0],
+            t.content_offset[1],
+            t.content_scale,
+            t.content_rotation,
+        ] {
+            // Rounded, so float noise from proportional resizing does not count.
+            bytes.extend_from_slice(&((value * 1000.).round() as i64).to_le_bytes());
+        }
+        bytes.push(u8::from(t.flip[0]) | u8::from(t.flip[1]) << 1);
+        let hash = blake3::hash(&bytes);
+        u32::from_le_bytes(hash.as_bytes()[..4].try_into().unwrap_or_default())
+    }
+    /// Whether `image` now shows other pixels than when the card was measured.
+    pub fn stale(&self, image: &Item) -> bool {
+        Self::basis_of(image) != self.basis
+    }
     /// The main colors in the card's chosen order. Grays (almost no saturation) have
     /// no temperature or hue: those orders put them last, lightest first.
     pub fn ordered(&self) -> Vec<([u8; 3], u8)> {

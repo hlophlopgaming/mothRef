@@ -654,3 +654,5 @@ PutOnBoard = Положить на доску
 MeasuringColors = Считаю цвета…
 GamutHint = Нажмите на цвет, чтобы скопировать его HEX-код.
 HexCopied = Скопировано: {hex}
+GamutRefresh = Обновить цветовой охват
+GamutStale = Картинка изменилась

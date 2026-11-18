@@ -287,6 +287,11 @@ fn all_layout_modes_and_scene_edits_use_native_flags() {
     assert_eq!(card["content"]["image"], json!(a));
     assert_eq!(card["content"]["view"], 2);
     assert!(!card["content"]["colors"].as_array().unwrap().is_empty());
+    // Given the card, the image is measured again and the card keeps its view.
+    let card_id = card["id"].as_str().unwrap().to_owned();
+    let again = cli.op("gamut", &["--id", &card_id]);
+    assert_eq!(again["results"][0]["item"]["content"]["view"], 2);
+    assert_eq!(again["results"][0]["item"]["content"]["sort"], 1);
     for mode in [
         "left",
         "right",

@@ -654,3 +654,5 @@ PutOnBoard = Put on board
 MeasuringColors = Measuring colors…
 GamutHint = Click a color to copy its HEX code.
 HexCopied = Copied {hex}
+GamutRefresh = Update color gamut
+GamutStale = Image changed

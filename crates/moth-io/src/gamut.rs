@@ -11,11 +11,41 @@ pub use moth_scene::hue_saturation;
 /// Measures straight RGBA pixels. Transparent pixels are ignored; an image with no
 /// opaque pixel gives an empty grid and no colors.
 pub fn measure(rgba: &[u8], image: Option<Uuid>) -> Gamut {
+    tally(rgba.as_chunks::<4>().0.iter().copied(), image)
+}
+/// Measures what `item` shows of its image: only the pixels inside its frame, after
+/// crop, rotation and flip. `rgba` is a straight-alpha preview of the original of any
+/// size; the result records [`Gamut::basis_of`] the item.
+pub fn measure_item(rgba: &[u8], width: u32, height: u32, item: &moth_scene::Item) -> Gamut {
+    const SAMPLES: u32 = 160;
+    let (w, h) = (width as usize, height as usize);
+    let rect = item.rect;
+    let (sin, cos) = item.transform.rotation.sin_cos();
+    let center = [rect.x + rect.width / 2., rect.y + rect.height / 2.];
+    let pixels = (0..SAMPLES * SAMPLES).filter_map(|i| {
+        let u = ((i % SAMPLES) as f32 + 0.5) / SAMPLES as f32 - 0.5;
+        let v = ((i / SAMPLES) as f32 + 0.5) / SAMPLES as f32 - 0.5;
+        let local = [u * rect.width, v * rect.height];
+        let world = [
+            center[0] + local[0] * cos - local[1] * sin,
+            center[1] + local[0] * sin + local[1] * cos,
+        ];
+        let uv = item.source_uv(world, [width, height])?;
+        let x = ((uv[0] * w as f32) as usize).min(w.checked_sub(1)?);
+        let y = ((uv[1] * h as f32) as usize).min(h.checked_sub(1)?);
+        let at = (y * w + x) * 4;
+        rgba.get(at..at + 4)?.try_into().ok()
+    });
+    let mut gamut = tally(pixels, Some(item.id));
+    gamut.basis = Gamut::basis_of(item);
+    gamut
+}
+fn tally(pixels: impl Iterator<Item = [u8; 4]>, image: Option<Uuid>) -> Gamut {
     let mut cells = vec![0u32; GAMUT_HUES * GAMUT_RINGS];
     // Main colors: 4 bits per channel, with the sum of the real colors per bucket.
     let mut buckets = vec![(0u32, [0u64; 3]); 4096];
     let mut total = 0u32;
-    for pixel in rgba.as_chunks::<4>().0 {
+    for pixel in pixels {
         if pixel[3] < 128 {
             continue;
         }
@@ -75,6 +105,7 @@ pub fn measure(rgba: &[u8], image: Option<Uuid>) -> Gamut {
         image,
         view: 0,
         sort: 0,
+        basis: 0,
         grid,
         colors,
     }
@@ -114,5 +145,40 @@ mod tests {
         let total: u32 = gamut.colors.iter().map(|c| u32::from(c.1)).sum();
         assert!((250..=255).contains(&total), "shares {total}");
         assert_eq!(hue_saturation([0, 0, 255]), (2. / 3., 1.));
+    }
+    #[test]
+    fn a_cropped_frame_measures_only_what_it_shows_and_records_its_basis() {
+        // Left half red, right half blue.
+        let mut pixels = Vec::new();
+        for _ in 0..4 {
+            for x in 0..4 {
+                pixels.extend_from_slice(&if x < 2 {
+                    [255, 0, 0, 255]
+                } else {
+                    [0, 0, 255, 255]
+                });
+            }
+        }
+        let rect = moth_scene::Rect {
+            x: 0.,
+            y: 0.,
+            width: 4.,
+            height: 4.,
+        };
+        let mut item = moth_scene::Item::image(blake3::hash(b"original"), rect, None);
+        let whole = measure_item(&pixels, 4, 4, &item);
+        assert_eq!(whole.colors.len(), 2);
+        assert!(!whole.stale(&item));
+        // Show only the left half: zoom content 2x and shift it right by a quarter.
+        item.transform.content_scale = 2.;
+        item.transform.content_offset = [0.5, 0.];
+        assert!(whole.stale(&item), "a new crop shows other pixels");
+        let cropped = measure_item(&pixels, 4, 4, &item);
+        assert_eq!(cropped.colors.len(), 1);
+        assert_eq!(cropped.colors[0].0, [255, 0, 0]);
+        // Moving the frame keeps the basis.
+        let mut moved = item.clone();
+        moved.rect.x += 100.;
+        assert!(!cropped.stale(&moved));
     }
 }

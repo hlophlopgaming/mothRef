@@ -109,10 +109,13 @@ impl Session {
     fn measure_gamut(&mut self, image: moth_scene::Uuid) -> Result<moth_scene::Gamut> {
         self.worker
             .requests
-            .send(Request::Export(moth_platform::export::Target::Gamut(image)))?;
+            .send(Request::Export(moth_platform::export::Target::Gamut {
+                image,
+                card: None,
+            }))?;
         loop {
             match self.worker.results.recv()? {
-                Completion::Gamut(gamut) => return Ok(gamut),
+                Completion::Gamut(gamut, _) => return Ok(gamut),
                 Completion::Failed(message) => bail!("{message}"),
                 Completion::Saving(_) | Completion::Loading { .. } => {}
                 _ => bail!("unexpected storage completion"),

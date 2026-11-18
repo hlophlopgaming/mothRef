@@ -64,9 +64,11 @@ pub(super) fn area(action: Action) -> Area {
         | AlignLeft | AlignRight | AlignTop | AlignBottom | Stack | DistributeHorizontal
         | DistributeVertical | ArrangeOptions | ScaleApply => Area::Arrange,
         Export | SampleColor | PickScreen | CoordinatePicker | OpenOriginal | OpenSource
-        | ColorGamut | GamutWindows | GamutCells | GamutShares | GamutSortShare | GamutSortWarm
-        | GamutSortLight | GamutSortHue | GamutSortSaturation | CopyImage | ExportScene
-        | ExportSelection | ExportOriginal | ExportOriginals | ExportZip => Area::Export,
+        | ColorGamut | GamutRefresh | GamutWindows | GamutCells | GamutShares | GamutSortShare
+        | GamutSortWarm | GamutSortLight | GamutSortHue | GamutSortSaturation | CopyImage
+        | ExportScene | ExportSelection | ExportOriginal | ExportOriginals | ExportZip => {
+            Area::Export
+        }
         DrawingSession => Area::Session,
         MoveDrag | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag | PanSpaceDrag
         | PanAltDrag | ZoomDrag => Area::Pointer,
@@ -116,10 +118,9 @@ pub(super) fn gate(action: Action) -> Gate {
         | NormalizeHeight | NormalizeSize | NormalizeArea | AlignLeft | AlignRight | AlignTop
         | AlignBottom | Stack | DistributeHorizontal | DistributeVertical | ArrangeOptions
         | ScaleApply | MoveDrag | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag
-        | PanSpaceDrag | PanAltDrag | ZoomDrag | GamutWindows | GamutCells | GamutShares
-        | GamutSortShare | GamutSortWarm | GamutSortLight | GamutSortHue | GamutSortSaturation => {
-            Gate::Ready
-        }
+        | PanSpaceDrag | PanAltDrag | ZoomDrag | GamutRefresh | GamutWindows | GamutCells
+        | GamutShares | GamutSortShare | GamutSortWarm | GamutSortLight | GamutSortHue
+        | GamutSortSaturation => Gate::Ready,
     }
 }
 impl App {

@@ -156,6 +156,7 @@ actions! {
     OpenOriginal, OpenOriginal, "", Some(moth_ui::icons::Icon::OpenExternal);
     OpenSource, OpenSource, "", Some(moth_ui::icons::Icon::Folder);
     ColorGamut, ColorGamut, "", Some(moth_ui::icons::Icon::Palette);
+    GamutRefresh, GamutRefresh, "", None;
     GamutWindows, GamutWindows, "", None;
     GamutCells, GamutCells, "", None;
     GamutShares, GamutShares, "", None;

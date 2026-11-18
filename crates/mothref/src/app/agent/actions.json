@@ -490,5 +490,8 @@
   },
   "GamutSortSaturation": {
     "operation": "gamut"
+  },
+  "GamutRefresh": {
+    "operation": "gamut"
   }
 }

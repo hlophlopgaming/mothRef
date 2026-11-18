@@ -352,6 +352,7 @@ fn gamut_bytes(bytes: &mut Vec<u8>, gamut: &Gamut) {
     bytes.extend_from_slice(parent_bytes(gamut.image).as_bytes());
     bytes.push(gamut.view);
     bytes.push(gamut.sort);
+    bytes.extend_from_slice(&gamut.basis.to_le_bytes());
     bytes.extend_from_slice(&gamut.grid);
     bytes.push(gamut.colors.len() as u8);
     for ([r, g, b], share) in &gamut.colors {
@@ -359,9 +360,9 @@ fn gamut_bytes(bytes: &mut Vec<u8>, gamut: &Gamut) {
     }
 }
 /// Bytes of a gamut insert before its fractional index, with no colors: tag, id,
-/// rectangle, transform, parent, image, view, sort, grid and color count.
+/// rectangle, transform, parent, image, view, sort, basis, grid and color count.
 const INSERT_GAMUT_FIXED: usize =
-    1 + 16 + 16 + 32 + 16 + 16 + 2 + moth_scene::GAMUT_HUES * moth_scene::GAMUT_RINGS + 1;
+    1 + 16 + 16 + 32 + 16 + 16 + 2 + 4 + moth_scene::GAMUT_HUES * moth_scene::GAMUT_RINGS + 1;
 fn text_into(bytes: &mut Vec<u8>, text: &str) {
     bytes.extend_from_slice(&(text.len() as u16).to_le_bytes());
     bytes.extend_from_slice(text.as_bytes());
@@ -736,8 +737,13 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             let at = at + 16;
             let cells = moth_scene::GAMUT_HUES * moth_scene::GAMUT_RINGS;
             let (view, sort) = (bytes[at], bytes[at + 1]);
-            let grid = bytes[at + 2..at + 2 + cells].to_vec();
-            let at = at + 2 + cells;
+            let basis = u32::from_le_bytes(
+                bytes[at + 2..at + 6]
+                    .try_into()
+                    .map_err(|_| Error::Invalid)?,
+            );
+            let grid = bytes[at + 6..at + 6 + cells].to_vec();
+            let at = at + 6 + cells;
             let count = bytes[at] as usize;
             if count > moth_scene::GAMUT_COLORS {
                 return Err(Error::Invalid);
@@ -754,6 +760,7 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
                 image,
                 view,
                 sort,
+                basis,
                 grid,
                 colors,
             };
@@ -1219,6 +1226,7 @@ mod tests {
             image: Some(Uuid::now_v7()),
             view: 1,
             sort: 3,
+            basis: 0xDEAD_BEEF,
             grid: (0..moth_scene::GAMUT_HUES * moth_scene::GAMUT_RINGS)
                 .map(|i| i as u8)
                 .collect(),
@@ -1238,7 +1246,8 @@ mod tests {
             panic!("a gamut insert decodes to an insert");
         };
         assert_eq!(decoded, card);
-        let view = INSERT_GAMUT_FIXED - 1 - moth_scene::GAMUT_HUES * moth_scene::GAMUT_RINGS - 2;
+        let view =
+            INSERT_GAMUT_FIXED - 1 - moth_scene::GAMUT_HUES * moth_scene::GAMUT_RINGS - 4 - 2;
         for (offset, value) in [(view, 3), (view + 1, 9), (INSERT_GAMUT_FIXED - 1, 9)] {
             let mut bad = bytes.clone();
             bad[offset] = value;

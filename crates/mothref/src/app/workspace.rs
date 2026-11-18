@@ -589,6 +589,8 @@ impl Workspace {
     }
     fn drain_results(&mut self, active: bool, pump: &mut Pump<'_>) {
         let point = self.board.cursor_point(pump.cursor, pump.fallback);
+        // Edits answered by the worker, journaled once the queue has been read.
+        let mut deferred: Vec<Vec<(Command, Option<Handle>)>> = Vec::new();
         while let Ok(done) = self.board.boards().results.try_recv() {
             use moth_platform::boards::Completion;
             match done {
@@ -749,9 +751,25 @@ impl Workspace {
                             };
                             self.board.fit();
                         }
-                        Completion::Gamut(gamut) => {
+                        Completion::Gamut(mut gamut, card) => {
                             self.board.file.exporting = false;
-                            self.board.notices.gamut = Some(gamut);
+                            let Some(card) = card else {
+                                self.board.notices.gamut = Some(gamut);
+                                continue;
+                            };
+                            // Updating a card keeps its place, view and order.
+                            if let Some(item) = self.board.scene.get(card)
+                                && let Some(old) = item.gamut()
+                            {
+                                gamut.view = old.view;
+                                gamut.sort = old.sort;
+                                let mut updated = item.clone();
+                                updated.content = moth_scene::Content::Gamut(Box::new(gamut));
+                                deferred.push(vec![
+                                    (Command::Remove(card), None),
+                                    (Command::Insert(updated), None),
+                                ]);
+                            }
                         }
                         Completion::Source(outcome) => {
                             use moth_platform::export::SourceOutcome;
@@ -845,6 +863,9 @@ impl Workspace {
                     }
                 }
             }
+        }
+        for batch in deferred {
+            self.persist_batch(batch);
         }
         while self.can_complete_import() {
             let Ok(done) = self.board.decode().results.try_recv() else {

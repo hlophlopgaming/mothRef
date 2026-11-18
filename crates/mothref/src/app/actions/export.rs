@@ -43,6 +43,19 @@ impl App {
                         .is_some_and(|item| item.gamut().is_some())
                 })
             }
+            // Only cards whose image is still on the board can be measured again.
+            GamutRefresh => {
+                let board = &self.workspace.board;
+                board.idle()
+                    && board.selection.iter().any(|id| {
+                        board
+                            .scene
+                            .get(*id)
+                            .and_then(|item| item.gamut())
+                            .and_then(|gamut| gamut.image)
+                            .is_some_and(|image| board.scene.get(image).is_some())
+                    })
+            }
             // The system picker, where there is one (the desktop portal, macOS).
             PickScreen => self.shell.window.as_ref().is_some_and(|window| {
                 moth_platform::screen_color::capabilities(window).interactive
@@ -95,7 +108,31 @@ impl App {
                 self.tools.gamut.open = true;
                 self.tools.gamut.image = Some(id);
                 self.workspace.board.notices.gamut = None;
-                Intent::Export(moth_platform::export::Target::Gamut(id))
+                Intent::Export(moth_platform::export::Target::Gamut {
+                    image: id,
+                    card: None,
+                })
+            }
+            GamutRefresh => {
+                let board = &self.workspace.board;
+                let requests: Vec<_> = board
+                    .selection
+                    .iter()
+                    .filter_map(|id| {
+                        let image = board.scene.get(*id)?.gamut()?.image?;
+                        board.scene.get(image)?;
+                        Some(moth_platform::boards::Request::Export(
+                            moth_platform::export::Target::Gamut {
+                                image,
+                                card: Some(*id),
+                            },
+                        ))
+                    })
+                    .collect();
+                for request in requests {
+                    self.workspace.persist(request);
+                }
+                return None;
             }
             GamutWindows | GamutCells | GamutShares | GamutSortShare | GamutSortWarm
             | GamutSortLight | GamutSortHue | GamutSortSaturation => {

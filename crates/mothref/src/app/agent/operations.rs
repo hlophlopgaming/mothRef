@@ -201,19 +201,19 @@ pub(super) enum Operation {
         region: Option<[f32; 4]>,
     },
     #[command(
-        about = "Measure an image's colors and put a color gamut card beside it, with an arrow to the image."
+        about = "Measure an image's colors and put a color gamut card beside it, with an arrow to the image; given a gamut card, measure its image again."
     )]
     Gamut {
         #[arg(long, allow_hyphen_values = true)]
         id: String,
         /// windows (gamut windows), cells (painter's cells) or shares (hue shares and marked main colors).
-        #[serde(default = "gamut_view")]
-        #[arg(long, default_value = "windows")]
-        view: String,
+        #[serde(default)]
+        #[arg(long)]
+        view: Option<String>,
         /// Order of the main colors: share, warm, light, hue or saturation.
-        #[serde(default = "gamut_sort")]
-        #[arg(long, default_value = "share")]
-        sort: String,
+        #[serde(default)]
+        #[arg(long)]
+        sort: Option<String>,
         #[serde(default)]
         #[arg(long, value_parser = super::cli::pair, allow_hyphen_values = true)]
         at: Option<[f32; 2]>,
@@ -225,12 +225,6 @@ pub(super) enum Operation {
         #[arg(long, value_parser = super::cli::pair, allow_hyphen_values = true)]
         point: [f32; 2],
     },
-}
-fn gamut_view() -> String {
-    "windows".into()
-}
-fn gamut_sort() -> String {
-    "share".into()
 }
 fn preview_side() -> u32 {
     1024
@@ -344,21 +338,54 @@ impl Session {
                 sort,
                 at,
             } => {
-                let image = id(&identity)?;
-                let item = self.scene.get(image).context("item does not exist")?;
-                ensure!(item.blob().is_some(), "gamut needs an image id");
-                let bounds = moth_scene::footprint(item);
+                let target = id(&identity)?;
+                let item = self
+                    .scene
+                    .get(target)
+                    .context("item does not exist")?
+                    .clone();
+                let view = view
+                    .map(|view| {
+                        ["windows", "cells", "shares"]
+                            .iter()
+                            .position(|v| *v == view)
+                            .context("view must be windows, cells or shares")
+                    })
+                    .transpose()?;
+                let sort = sort
+                    .map(|sort| {
+                        ["share", "warm", "light", "hue", "saturation"]
+                            .iter()
+                            .position(|v| *v == sort)
+                            .context("sort must be share, warm, light, hue or saturation")
+                    })
+                    .transpose()?;
+                // A card: measure its image again, keeping place, view and order.
+                if let Some(old) = item.gamut() {
+                    let old = old.clone();
+                    let image = old.image.context("this gamut card has no image")?;
+                    ensure!(
+                        self.scene.get(image).is_some(),
+                        "the card's image is no longer on the board"
+                    );
+                    let mut gamut = self.measure_gamut(image)?;
+                    gamut.view = view.map_or(old.view, |v| v as u8);
+                    gamut.sort = sort.map_or(old.sort, |v| v as u8);
+                    let mut updated = item.clone();
+                    updated.content = moth_scene::Content::Gamut(Box::new(gamut));
+                    let geometry = item_json(&updated);
+                    self.apply(vec![Command::Remove(target), Command::Insert(updated)])?;
+                    return Ok(json!({"id":identity,"item":geometry}));
+                }
+                ensure!(
+                    item.blob().is_some(),
+                    "gamut needs an image or a gamut card id"
+                );
+                let image = target;
+                let bounds = moth_scene::footprint(&item);
                 let mut gamut = self.measure_gamut(image)?;
-                gamut.view = ["windows", "cells", "shares"]
-                    .iter()
-                    .position(|v| *v == view)
-                    .context("view must be windows, cells or shares")?
-                    as u8;
-                gamut.sort = ["share", "warm", "light", "hue", "saturation"]
-                    .iter()
-                    .position(|v| *v == sort)
-                    .context("sort must be share, warm, light, hue or saturation")?
-                    as u8;
+                gamut.view = view.unwrap_or(0) as u8;
+                gamut.sort = sort.unwrap_or(0) as u8;
                 let width = (bounds.width.max(bounds.height) * 0.6).clamp(240., 4000.);
                 let at = at.unwrap_or([bounds.x + bounds.width + width * 0.25, bounds.y]);
                 let card = Item::gamut_card(
