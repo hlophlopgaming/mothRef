@@ -118,6 +118,9 @@ pub(super) const CONTEXT_MENU: &[Slot] = &[
     A(CopyImage),
     A(OpenOriginal),
     A(OpenSource),
+    A(ColorGamut),
+    G(Text::GamutView, GAMUT_VIEW),
+    G(Text::GamutOrder, GAMUT_SORT),
     A(SampleColor),
     A(CoordinatePicker),
     A(Export),
@@ -138,6 +141,8 @@ const TOOLBAR: &[Slot] = &[
 ];
 pub(super) enum SelectionKind {
     Image,
+    /// One or more color gamut cards.
+    Gamut,
     Several,
     Note,
     /// One group, with the number of its direct members.
@@ -161,6 +166,20 @@ const MULTI_BAR: &[Slot] = &[
     A(Duplicate),
 ];
 const NOTE_BAR: &[Slot] = &[A(EditNote), A(EditItem), A(Duplicate), A(Delete)];
+pub(super) const GAMUT_VIEW: &[Slot] = &[A(GamutWindows), A(GamutCells), A(GamutShares)];
+pub(super) const GAMUT_SORT: &[Slot] = &[
+    A(GamutSortShare),
+    A(GamutSortWarm),
+    A(GamutSortLight),
+    A(GamutSortHue),
+    A(GamutSortSaturation),
+];
+const GAMUT_BAR: &[Slot] = &[
+    G(Text::GamutView, GAMUT_VIEW),
+    G(Text::GamutOrder, GAMUT_SORT),
+    A(Duplicate),
+    A(Delete),
+];
 pub(super) const GROUP_COLOR: &[Slot] = &[
     A(GroupNeutral),
     A(GroupSage),
@@ -181,6 +200,7 @@ fn selection_bar(kind: SelectionKind) -> &'static [Slot] {
         SelectionKind::Image => IMAGE_BAR,
         SelectionKind::Several => MULTI_BAR,
         SelectionKind::Note => NOTE_BAR,
+        SelectionKind::Gamut => GAMUT_BAR,
         SelectionKind::Group(_) => GROUP_BAR,
     }
 }
@@ -522,6 +542,7 @@ pub(super) fn menu_bar(
         A(CopyImage),
         A(OpenOriginal),
         A(OpenSource),
+        A(ColorGamut),
         S,
         A(SampleColor),
         A(PickScreen),

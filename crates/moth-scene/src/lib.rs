@@ -21,6 +21,93 @@ pub enum Content {
     Text(String),
     /// A titled backdrop that hugs its members; it owns no pixels and no text body.
     Group(Group),
+    /// A color gamut card: which hues and saturations an image uses and its main colors.
+    Gamut(Box<Gamut>),
+}
+/// Hue sectors of a [`Gamut`] coverage grid.
+pub const GAMUT_HUES: usize = 72;
+/// Saturation rings of a [`Gamut`] coverage grid, from gray at the center outwards.
+pub const GAMUT_RINGS: usize = 20;
+/// Main colors a [`Gamut`] keeps at most.
+pub const GAMUT_COLORS: usize = 8;
+/// How a gamut card draws its coverage.
+pub const GAMUT_VIEWS: u8 = 3;
+/// Orders a gamut card offers for its main colors.
+pub const GAMUT_SORTS: u8 = 5;
+/// What colors an image uses, measured once and kept on the board, so the card stays
+/// when the image is removed. Holds no pixels: a coarse coverage grid and a few colors.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Gamut {
+    /// The image it was measured from; drawn as an arrow while that image exists.
+    pub image: Option<Uuid>,
+    /// 0 gamut windows, 1 painter's cells, 2 mask with hue shares and marked colors.
+    pub view: u8,
+    /// Order of the main colors: 0 share, 1 warm to cold, 2 light to dark, 3 hue,
+    /// 4 saturation.
+    pub sort: u8,
+    /// Share of pixels per (hue sector, saturation ring), row-major by hue, scaled so
+    /// the fullest cell is 255. Length [`GAMUT_HUES`] × [`GAMUT_RINGS`].
+    pub grid: Vec<u8>,
+    /// Main colors as sRGB with their share of the image (0–255), largest first.
+    pub colors: Vec<([u8; 3], u8)>,
+}
+/// Hue (0–1, red at 0) and saturation (0–1) of an sRGB color, as in HSV.
+pub fn hue_saturation([r, g, b]: [u8; 3]) -> (f32, f32) {
+    let [r, g, b] = [r, g, b].map(|v| f32::from(v) / 255.);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+    let saturation = if max > 0. { delta / max } else { 0. };
+    if delta <= 0. {
+        return (0., saturation);
+    }
+    let hue = if max == r {
+        ((g - b) / delta).rem_euclid(6.)
+    } else if max == g {
+        (b - r) / delta + 2.
+    } else {
+        (r - g) / delta + 4.
+    };
+    (hue / 6., saturation)
+}
+impl Gamut {
+    /// The main colors in the card's chosen order. Grays (almost no saturation) have
+    /// no temperature or hue: those orders put them last, lightest first.
+    pub fn ordered(&self) -> Vec<([u8; 3], u8)> {
+        let mut colors = self.colors.clone();
+        let luminance = |[r, g, b]: [u8; 3]| {
+            0.2126 * f32::from(r) + 0.7152 * f32::from(g) + 0.0722 * f32::from(b)
+        };
+        let gray = |color: [u8; 3]| hue_saturation(color).1 < 0.12;
+        // Degrees from the warmest hue (orange, 30°) around the circle: 0 warm, 180 cold.
+        let coldness = |color: [u8; 3]| {
+            let degrees = hue_saturation(color).0 * 360.;
+            let away = (degrees - 30.).abs();
+            away.min(360. - away)
+        };
+        let key = |color: [u8; 3]| -> f32 {
+            match self.sort {
+                1 if gray(color) => 1000. - luminance(color),
+                1 => coldness(color),
+                2 => -luminance(color),
+                3 if gray(color) => 1000. - luminance(color),
+                3 => hue_saturation(color).0 * 360.,
+                4 => -hue_saturation(color).1,
+                _ => 0.,
+            }
+        };
+        if self.sort != 0 {
+            colors.sort_by(|a, b| key(a.0).total_cmp(&key(b.0)));
+        }
+        colors
+    }
+    /// Rejects shapes a reader or the painter could not use.
+    pub fn valid(&self) -> bool {
+        self.view < GAMUT_VIEWS
+            && self.sort < GAMUT_SORTS
+            && self.grid.len() == GAMUT_HUES * GAMUT_RINGS
+            && self.colors.len() <= GAMUT_COLORS
+    }
 }
 /// Upper bound on each UTF-8 string of an image [`Source`].
 pub const MAX_SOURCE: usize = 4096;
@@ -393,7 +480,7 @@ impl Item {
     pub fn blob(&self) -> Option<BlobId> {
         match self.content {
             Content::Image(blob) => Some(blob),
-            Content::Text(_) | Content::Group(_) => None,
+            Content::Text(_) | Content::Group(_) | Content::Gamut(_) => None,
         }
     }
     /// Legacy notes derive text scale from their unwrapped height until first edited.
@@ -415,11 +502,31 @@ impl Item {
             self.transform
         }
     }
+    /// The gamut card's contents, or `None` for other items.
+    pub fn gamut(&self) -> Option<&Gamut> {
+        match &self.content {
+            Content::Gamut(gamut) => Some(gamut),
+            _ => None,
+        }
+    }
+    /// Creates a gamut card at `rect`, above `above`.
+    pub fn gamut_card(gamut: Gamut, rect: Rect, above: Option<&FractionalIndex>) -> Self {
+        Self {
+            id: Uuid::now_v7(),
+            name: String::new(),
+            content: Content::Gamut(Box::new(gamut)),
+            rect,
+            transform: Transform::default(),
+            z: above.map(FractionalIndex::new_after).unwrap_or_default(),
+            parent: None,
+            source: None,
+        }
+    }
     /// The note text, or `None` for images.
     pub fn note(&self) -> Option<&str> {
         match &self.content {
             Content::Text(text) => Some(text),
-            Content::Image(_) | Content::Group(_) => None,
+            Content::Image(_) | Content::Group(_) | Content::Gamut(_) => None,
         }
     }
 }
@@ -651,6 +758,11 @@ impl Scene {
                 }
                 if let Content::Group(group) = &item.content
                     && (!group.valid() || item.transform != Transform::default())
+                {
+                    return Err(SceneError::Invalid);
+                }
+                if let Content::Gamut(gamut) = &item.content
+                    && !gamut.valid()
                 {
                     return Err(SceneError::Invalid);
                 }

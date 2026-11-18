@@ -7,7 +7,7 @@ as opaque metadata, see decision 0027. Schema 1 is the
 first persistent format; there is no schema 0 board to migrate. Schema 2 adds item
 content transforms; schema 3 adds text notes; schema 4 adds appearance and source
 filenames; schema 5 adds image sampling and fixed-width note metrics; schema 6 adds
-nested groups; schema 7 adds the board preview record; schema 8 adds custom RGB group colors; schema 9 adds image sources. The reader keeps the schema 1, 2, 3, 4, 5 and 6 record layouts, so every older board and journal still opens: a schema 1 insert
+nested groups; schema 7 adds the board preview record; schema 8 adds custom RGB group colors; schema 9 adds image sources and color gamut cards. The reader keeps the schema 1, 2, 3, 4, 5 and 6 record layouts, so every older board and journal still opens: a schema 1 insert
 carries no transform and migrates to the identity transform. Future schemas must
 retain both readers and provide explicit migrations.
 
@@ -227,8 +227,22 @@ Any other kind byte, an empty or overlong string, or invalid UTF-8 rejects the
 command. Notes and groups never carry a source. Checkpoints use the same insert
 tags; preview records keep the schema-7 layout.
 
+Schema 9 also adds color gamut cards (decision 0028), with one more tag:
+
+- `22`: gamut insert. Offset 0 tag, 1 item UUID, 17 rectangle (four f32), 33 the
+  32-byte transform of tag 14, 65 parent UUID (nil: on the board), 81 image UUID
+  (nil: none; the image the card was measured from, which need not exist), 97 view
+  (0 windows, 1 cells, 2 shares), 98 sort (0 share, 1 warm to cold, 2 light to dark,
+  3 hue, 4 saturation), 99 the coverage grid of 72 hue sectors × 20 saturation rings
+  (1440 bytes, row-major by hue, the fullest cell 255), then a color count (0–8),
+  that many colors as sRGB plus a share byte, and the fractional index.
+
+A view or sort outside its range, more than eight colors or a short grid rejects the
+command. Changing a card's view or order journals Remove plus Insert, so no update
+command is needed.
+
 Sources are metadata only: the original bytes stay in the board, and no reader
 opens a source to show an image. Migration reads schemas 1–8 through their existing
 layouts, where every image has no source; the next save compacts to schema 9 with
 the existing atomic path. `corpus/moth/v8.moth` remains frozen; `v9.moth` holds one
-image of each source kind and one without. Older applications reject schema 9.
+image of each source kind, one without, and a gamut card. Older applications reject schema 9.

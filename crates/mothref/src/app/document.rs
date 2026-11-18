@@ -102,6 +102,8 @@ pub(super) struct Document {
     clipboard: moth_platform::ClipboardWorker,
     pub(super) scene: Scene,
     pub(super) image_count: usize,
+    /// Gamut cards, so the status counts notes without them.
+    pub(super) gamut_count: usize,
     boards: moth_platform::boards::Worker,
     pub(super) locked: bool,
     pub(super) grayscale: bool,
@@ -151,6 +153,8 @@ pub(super) struct Notices {
     pub(super) flash: Option<(moth_ui::Message, bool, Instant)>,
     /// The coordinate picker's last answer, shown in the Image pickers panel.
     pub(super) pixel_info: Option<moth_platform::export::PixelInfo>,
+    /// The last measured color gamut, shown in the Color gamut panel.
+    pub(super) gamut: Option<moth_scene::Gamut>,
     pub(super) conversion_prompt: bool,
 }
 /// Where the board lives on disk and where saving, closing and conversion stand.
@@ -187,6 +191,7 @@ impl Document {
     /// Opening a scene recounts once; normal edits maintain the count incrementally.
     pub(super) fn replace_scene(&mut self, scene: Scene) {
         self.image_count = scene.items().filter(|item| item.blob().is_some()).count();
+        self.gamut_count = scene.items().filter(|item| item.gamut().is_some()).count();
         self.scene = scene;
     }
     /// Called only for commands acknowledged by the journal worker.
@@ -211,6 +216,18 @@ impl Document {
             }
             _ => 0,
         };
+        let gamut_delta: isize = match &command {
+            Command::Insert(item) if item.gamut().is_some() => 1,
+            Command::Remove(id)
+                if self
+                    .scene
+                    .get(*id)
+                    .is_some_and(|item| item.gamut().is_some()) =>
+            {
+                -1
+            }
+            _ => 0,
+        };
         let now = Instant::now();
         let before = id.and_then(|id| {
             self.motion
@@ -219,6 +236,7 @@ impl Document {
         });
         let inverse = self.scene.apply(command)?;
         self.image_count = self.image_count.saturating_add_signed(image_delta);
+        self.gamut_count = self.gamut_count.saturating_add_signed(gamut_delta);
         if let Some(id) = id {
             self.motion.record(before, self.scene.get(id).cloned(), now);
         }
@@ -632,6 +650,7 @@ impl Document {
             clipboard,
             scene: Scene::default(),
             image_count: 0,
+            gamut_count: 0,
             boards,
             locked: false,
             grayscale: false,
@@ -1741,7 +1760,7 @@ mod tests {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert_eq!(workspace.board.scene.len(), 7);
+        assert_eq!(workspace.board.scene.len(), 8);
         assert!(workspace.board.file.path.is_empty());
         assert!(workspace.board.file.dirty);
         assert_eq!(workspace.board.title(), "lost-board");

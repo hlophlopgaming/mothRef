@@ -200,6 +200,24 @@ pub(super) enum Operation {
         #[arg(long, value_parser = super::cli::rectangle, allow_hyphen_values = true)]
         region: Option<[f32; 4]>,
     },
+    #[command(
+        about = "Measure an image's colors and put a color gamut card beside it, with an arrow to the image."
+    )]
+    Gamut {
+        #[arg(long, allow_hyphen_values = true)]
+        id: String,
+        /// windows (gamut windows), cells (painter's cells) or shares (hue shares and marked main colors).
+        #[serde(default = "gamut_view")]
+        #[arg(long, default_value = "windows")]
+        view: String,
+        /// Order of the main colors: share, warm, light, hue or saturation.
+        #[serde(default = "gamut_sort")]
+        #[arg(long, default_value = "share")]
+        sort: String,
+        #[serde(default)]
+        #[arg(long, value_parser = super::cli::pair, allow_hyphen_values = true)]
+        at: Option<[f32; 2]>,
+    },
     #[command(about = "Read original pixel coordinates and image metadata.")]
     PixelInfo {
         #[arg(long, allow_hyphen_values = true)]
@@ -207,6 +225,12 @@ pub(super) enum Operation {
         #[arg(long, value_parser = super::cli::pair, allow_hyphen_values = true)]
         point: [f32; 2],
     },
+}
+fn gamut_view() -> String {
+    "windows".into()
+}
+fn gamut_sort() -> String {
+    "share".into()
 }
 fn preview_side() -> u32 {
     1024
@@ -261,6 +285,7 @@ impl Operation {
             Create { .. }
             | Save { .. }
             | Add { .. }
+            | Gamut { .. }
             | Note { .. }
             | Edit { .. }
             | Layout { .. }
@@ -313,6 +338,39 @@ impl Session {
             Capabilities => Ok(
                 json!({"protocol":1,"gui_actions":crate::app::bindings::ACTIONS.iter().map(|a|a.id()).collect::<Vec<_>>()}),
             ),
+            Gamut {
+                id: identity,
+                view,
+                sort,
+                at,
+            } => {
+                let image = id(&identity)?;
+                let item = self.scene.get(image).context("item does not exist")?;
+                ensure!(item.blob().is_some(), "gamut needs an image id");
+                let bounds = moth_scene::footprint(item);
+                let mut gamut = self.measure_gamut(image)?;
+                gamut.view = ["windows", "cells", "shares"]
+                    .iter()
+                    .position(|v| *v == view)
+                    .context("view must be windows, cells or shares")?
+                    as u8;
+                gamut.sort = ["share", "warm", "light", "hue", "saturation"]
+                    .iter()
+                    .position(|v| *v == sort)
+                    .context("sort must be share, warm, light, hue or saturation")?
+                    as u8;
+                let width = (bounds.width.max(bounds.height) * 0.6).clamp(240., 4000.);
+                let at = at.unwrap_or([bounds.x + bounds.width + width * 0.25, bounds.y]);
+                let card = Item::gamut_card(
+                    gamut,
+                    rect([at[0], at[1], width, width * 1.3])?,
+                    self.top().as_ref(),
+                );
+                let identity = card.id.to_string();
+                let geometry = item_json(&card);
+                self.apply(vec![Command::Insert(card)])?;
+                Ok(json!({"id":identity,"item":geometry}))
+            }
             Sample {
                 id: identity,
                 point,

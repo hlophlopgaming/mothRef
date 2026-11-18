@@ -463,5 +463,32 @@
   },
   "DrawingSession": {
     "gui_only": "Interactive drawing-session timer and presentation window; does not edit the saved board."
+  },
+  "ColorGamut": {
+    "operation": "gamut"
+  },
+  "GamutWindows": {
+    "operation": "gamut"
+  },
+  "GamutCells": {
+    "operation": "gamut"
+  },
+  "GamutShares": {
+    "operation": "gamut"
+  },
+  "GamutSortShare": {
+    "operation": "gamut"
+  },
+  "GamutSortWarm": {
+    "operation": "gamut"
+  },
+  "GamutSortLight": {
+    "operation": "gamut"
+  },
+  "GamutSortHue": {
+    "operation": "gamut"
+  },
+  "GamutSortSaturation": {
+    "operation": "gamut"
   }
 }

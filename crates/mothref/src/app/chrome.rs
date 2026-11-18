@@ -69,7 +69,7 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
         moth_ui::Status {
             path: &ctx.board.file.path,
             adapter: &ctx.gpu.adapter,
-            count: ctx.board.scene.len() - ctx.board.scene.group_count(),
+            count: ctx.board.scene.len() - ctx.board.scene.group_count() - ctx.board.gamut_count,
             images: ctx.board.image_count,
             selected: ctx.board.selection.len(),
             zoom: ctx.board.view.camera.zoom,

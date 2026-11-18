@@ -5,6 +5,7 @@ mod avif;
 mod bake;
 pub mod cache;
 mod frames;
+pub mod gamut;
 pub use frames::release_idle as release_idle_frames;
 mod pack;
 mod preload;

@@ -64,8 +64,9 @@ pub(super) fn area(action: Action) -> Area {
         | AlignLeft | AlignRight | AlignTop | AlignBottom | Stack | DistributeHorizontal
         | DistributeVertical | ArrangeOptions | ScaleApply => Area::Arrange,
         Export | SampleColor | PickScreen | CoordinatePicker | OpenOriginal | OpenSource
-        | CopyImage | ExportScene | ExportSelection | ExportOriginal | ExportOriginals
-        | ExportZip => Area::Export,
+        | ColorGamut | GamutWindows | GamutCells | GamutShares | GamutSortShare | GamutSortWarm
+        | GamutSortLight | GamutSortHue | GamutSortSaturation | CopyImage | ExportScene
+        | ExportSelection | ExportOriginal | ExportOriginals | ExportZip => Area::Export,
         DrawingSession => Area::Session,
         MoveDrag | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag | PanSpaceDrag
         | PanAltDrag | ZoomDrag => Area::Pointer,
@@ -101,8 +102,8 @@ pub(super) fn gate(action: Action) -> Gate {
         PanLeft | PanRight | PanUp | PanDown | Fit | Focus | Previous | Next | ZoomIn | ZoomOut
         | ZoomReset | ResetCamera | Select | ToggleView | Deselect | SelectAll | Lock
         | Grayscale | Save | ExportScene | ExportSelection | ExportOriginal | ExportOriginals
-        | ExportZip | CopyImage | OpenOriginal | OpenSource | Export | SampleColor | PickScreen
-        | CoordinatePicker | SamplingDefault | SamplingSmooth | SamplingNearest
+        | ExportZip | CopyImage | OpenOriginal | OpenSource | ColorGamut | Export | SampleColor
+        | PickScreen | CoordinatePicker | SamplingDefault | SamplingSmooth | SamplingNearest
         | SamplingAutomatic | EditNote => Gate::Board,
         Paste | Undo | Redo | Note | Delete | Duplicate | RotateCw | RotateCcw | FlipHorizontal
         | FlipVertical | ResetTransform | ResetCrop | NudgeLeft | NudgeRight | NudgeUp
@@ -115,7 +116,10 @@ pub(super) fn gate(action: Action) -> Gate {
         | NormalizeHeight | NormalizeSize | NormalizeArea | AlignLeft | AlignRight | AlignTop
         | AlignBottom | Stack | DistributeHorizontal | DistributeVertical | ArrangeOptions
         | ScaleApply | MoveDrag | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag
-        | PanSpaceDrag | PanAltDrag | ZoomDrag => Gate::Ready,
+        | PanSpaceDrag | PanAltDrag | ZoomDrag | GamutWindows | GamutCells | GamutShares
+        | GamutSortShare | GamutSortWarm | GamutSortLight | GamutSortHue | GamutSortSaturation => {
+            Gate::Ready
+        }
     }
 }
 impl App {

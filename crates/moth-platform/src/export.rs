@@ -72,6 +72,8 @@ pub enum Target {
         /// Selected identities (a group brings its images), or empty for the board.
         ids: Vec<Uuid>,
     },
+    /// Measure the colors an image uses for a gamut card.
+    Gamut(Uuid),
     /// Show where an image came from: its file in the file manager, the archive it
     /// was in, or its web address in the browser.
     Source(Uuid),
@@ -152,6 +154,30 @@ pub(super) fn open_source(scene: &Scene, id: Uuid) -> io::Result<SourceOutcome> 
             SourceOutcome::Opened
         }
     })
+}
+/// Measures an image's colors from a small preview of its original. Rotation and
+/// crop are ignored: the gamut describes the image file, not the frame.
+pub(super) fn gamut(
+    storage: &DesktopStorage,
+    scene: &Scene,
+    sources: &HashMap<BlobId, Handle>,
+    id: Uuid,
+) -> io::Result<moth_scene::Gamut> {
+    let item = scene
+        .get(id)
+        .ok_or_else(|| error("Image no longer exists"))?;
+    let bytes = original(storage, sources, item)?;
+    let decoded = moth_io::decode(&bytes, moth_io::gamut::SIDE).map_err(error)?;
+    if decoded.format != moth_io::ImageFormat::Rgba8 {
+        return Err(error("Unexpected preview encoding"));
+    }
+    let mip = decoded
+        .mips
+        .iter()
+        .find(|mip| mip.width.max(mip.height) <= moth_io::gamut::SIDE)
+        .or(decoded.mips.last())
+        .ok_or_else(|| error("Image has no preview"))?;
+    Ok(moth_io::gamut::measure(&mip.bytes, Some(id)))
 }
 /// Only plain http and https links go to the browser; anything else could start a
 /// program through the system's URL handlers.
@@ -501,7 +527,7 @@ pub(super) fn run(
     clipboard: &mut Option<arboard::Clipboard>,
 ) -> io::Result<String> {
     match target {
-        Target::Source(id) => {
+        Target::Gamut(id) | Target::Source(id) => {
             return Err(error(format!(
                 "Source of {id} is answered by the storage worker"
             )));

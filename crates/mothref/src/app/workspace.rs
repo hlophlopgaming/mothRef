@@ -749,6 +749,10 @@ impl Workspace {
                             };
                             self.board.fit();
                         }
+                        Completion::Gamut(gamut) => {
+                            self.board.file.exporting = false;
+                            self.board.notices.gamut = Some(gamut);
+                        }
                         Completion::Source(outcome) => {
                             use moth_platform::export::SourceOutcome;
                             self.board.file.exporting = false;

@@ -89,6 +89,8 @@ pub enum Completion {
     SettingsSaved,
     /// Export succeeded; sampling details are returned when applicable.
     Exported(String),
+    /// An image's colors, measured for a gamut card.
+    Gamut(moth_scene::Gamut),
     /// What "Open source" did.
     Source(super::export::SourceOutcome),
     /// The coordinate picker's answer, labelled by the UI.
@@ -1019,6 +1021,13 @@ impl State {
                 }))
                 .map_err(|_| error("Export decoder panicked"))??;
                 Ok(Some(Completion::PixelInfo(info)))
+            }
+            Request::Export(super::export::Target::Gamut(id)) => {
+                let gamut = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    super::export::gamut(&self.storage, &self.scene, &self.sources, id)
+                }))
+                .map_err(|_| error("Export decoder panicked"))??;
+                Ok(Some(Completion::Gamut(gamut)))
             }
             Request::Export(super::export::Target::Source(id)) => Ok(Some(Completion::Source(
                 super::export::open_source(&self.scene, id)?,

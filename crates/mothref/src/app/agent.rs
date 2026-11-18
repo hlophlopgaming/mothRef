@@ -105,6 +105,20 @@ impl Session {
             }
         }
     }
+    /// Measures an image's colors on the storage worker for a gamut card.
+    fn measure_gamut(&mut self, image: moth_scene::Uuid) -> Result<moth_scene::Gamut> {
+        self.worker
+            .requests
+            .send(Request::Export(moth_platform::export::Target::Gamut(image)))?;
+        loop {
+            match self.worker.results.recv()? {
+                Completion::Gamut(gamut) => return Ok(gamut),
+                Completion::Failed(message) => bail!("{message}"),
+                Completion::Saving(_) | Completion::Loading { .. } => {}
+                _ => bail!("unexpected storage completion"),
+            }
+        }
+    }
     fn apply(&mut self, commands: Vec<Command>) -> Result<Value> {
         // Validate the complete batch before the worker journals its first command.
         let mut scratch = Scene::default();
@@ -151,6 +165,11 @@ fn item_json(item: &Item) -> Value {
         moth_scene::Content::Group(group) => {
             ("group", json!({"title":group.title,"color":group.color}))
         }
+        moth_scene::Content::Gamut(gamut) => (
+            "gamut",
+            json!({"image":gamut.image.map(|id|id.to_string()),"view":gamut.view,"sort":gamut.sort,
+                "colors":gamut.colors.iter().map(|([r,g,b],share)| json!({"hex":format!("#{r:02X}{g:02X}{b:02X}"),"share":f32::from(*share)/255.})).collect::<Vec<_>>()}),
+        ),
     };
     let source = item.source.as_ref().map(|source| match source {
         moth_scene::Source::File(path) => json!({"file":path}),

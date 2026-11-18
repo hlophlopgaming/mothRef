@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Versioned append-only records. A checksummed footer commits one record.
 use crate::ReadSeek;
-use moth_scene::{BlobId, Command, Content, Group, Item, Rect, Scene, Source, Transform, Uuid};
+use moth_scene::{
+    BlobId, Command, Content, Gamut, Group, Item, Rect, Scene, Source, Transform, Uuid,
+};
 use std::{
     collections::HashMap,
     io::{self, SeekFrom, Write},
@@ -278,6 +280,15 @@ pub fn encode(command: &Command) -> Vec<u8> {
                 bytes.extend_from_slice(parent_bytes(item.parent).as_bytes());
                 bytes.extend_from_slice(item.z.as_bytes());
             }
+            Content::Gamut(gamut) => {
+                bytes.push(22);
+                bytes.extend_from_slice(item.id.as_bytes());
+                rect_bytes(&mut bytes, item.rect);
+                transform_bytes(&mut bytes, item.transform);
+                bytes.extend_from_slice(parent_bytes(item.parent).as_bytes());
+                gamut_bytes(&mut bytes, gamut);
+                bytes.extend_from_slice(item.z.as_bytes());
+            }
             Content::Group(group) => {
                 bytes.push(if group.rgb().is_some() { 19 } else { 16 });
                 bytes.extend_from_slice(item.id.as_bytes());
@@ -337,6 +348,20 @@ fn source_bytes(bytes: &mut Vec<u8>, source: &Source) {
         }
     }
 }
+fn gamut_bytes(bytes: &mut Vec<u8>, gamut: &Gamut) {
+    bytes.extend_from_slice(parent_bytes(gamut.image).as_bytes());
+    bytes.push(gamut.view);
+    bytes.push(gamut.sort);
+    bytes.extend_from_slice(&gamut.grid);
+    bytes.push(gamut.colors.len() as u8);
+    for ([r, g, b], share) in &gamut.colors {
+        bytes.extend_from_slice(&[*r, *g, *b, *share]);
+    }
+}
+/// Bytes of a gamut insert before its fractional index, with no colors: tag, id,
+/// rectangle, transform, parent, image, view, sort, grid and color count.
+const INSERT_GAMUT_FIXED: usize =
+    1 + 16 + 16 + 32 + 16 + 16 + 2 + moth_scene::GAMUT_HUES * moth_scene::GAMUT_RINGS + 1;
 fn text_into(bytes: &mut Vec<u8>, text: &str) {
     bytes.extend_from_slice(&(text.len() as u16).to_le_bytes());
     bytes.extend_from_slice(text.as_bytes());
@@ -438,12 +463,12 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
         let flags = *bytes.get(start + 4).ok_or(Error::Invalid)?;
         Ok(Transform {
             rotation: float(start, 0)?,
-            opacity: if matches!(bytes[0], 8..=15 | 21) {
+            opacity: if matches!(bytes[0], 8..=15 | 21 | 22) {
                 float(start + 21, 0)?
             } else {
                 1.0
             },
-            grayscale: if matches!(bytes[0], 8..=15 | 21) {
+            grayscale: if matches!(bytes[0], 8..=15 | 21 | 22) {
                 match bytes.get(start + 25) {
                     Some(0) => false,
                     Some(1) => true,
@@ -452,18 +477,18 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             } else {
                 false
             },
-            sampling: if matches!(bytes[0], 11..=15 | 21) {
+            sampling: if matches!(bytes[0], 11..=15 | 21 | 22) {
                 moth_scene::Sampling::from_code(*bytes.get(start + 26).ok_or(Error::Invalid)?)
                     .ok_or(Error::Invalid)?
             } else {
                 moth_scene::Sampling::Default
             },
-            note_font_size: if matches!(bytes[0], 11..=15 | 21) {
+            note_font_size: if matches!(bytes[0], 11..=15 | 21 | 22) {
                 float(start + 27, 0)?
             } else {
                 0.
             },
-            note_wrap: if matches!(bytes[0], 11..=15 | 21) {
+            note_wrap: if matches!(bytes[0], 11..=15 | 21 | 22) {
                 match bytes.get(start + 31) {
                     Some(0) => false,
                     Some(1) => true,
@@ -691,6 +716,61 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
                 transform: Transform::default(),
                 z: fractional_index::FractionalIndex::from_bytes(
                     bytes.get(index..).ok_or(Error::Invalid)?.to_vec(),
+                )
+                .map_err(|_| Error::Invalid)?,
+                parent,
+                source: None,
+            }))
+        }
+        22 if bytes.len() > INSERT_GAMUT_FIXED
+            && bytes.len() <= INSERT_GAMUT_FIXED + 4 * moth_scene::GAMUT_COLORS + MAX_INDEX =>
+        {
+            let uuid = |start: usize| -> Result<Option<Uuid>, Error> {
+                let id = Uuid::from_slice(bytes.get(start..start + 16).ok_or(Error::Invalid)?)
+                    .map_err(|_| Error::Invalid)?;
+                Ok((!id.is_nil()).then_some(id))
+            };
+            let parent = uuid(17 + 16 + 32)?;
+            let at = 17 + 16 + 32 + 16;
+            let image = uuid(at)?;
+            let at = at + 16;
+            let cells = moth_scene::GAMUT_HUES * moth_scene::GAMUT_RINGS;
+            let (view, sort) = (bytes[at], bytes[at + 1]);
+            let grid = bytes[at + 2..at + 2 + cells].to_vec();
+            let at = at + 2 + cells;
+            let count = bytes[at] as usize;
+            if count > moth_scene::GAMUT_COLORS {
+                return Err(Error::Invalid);
+            }
+            let colors = bytes
+                .get(at + 1..at + 1 + 4 * count)
+                .ok_or(Error::Invalid)?
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|[r, g, b, share]| ([*r, *g, *b], *share))
+                .collect();
+            let gamut = Gamut {
+                image,
+                view,
+                sort,
+                grid,
+                colors,
+            };
+            if !gamut.valid() {
+                return Err(Error::Invalid);
+            }
+            Ok(Command::Insert(Item {
+                id,
+                name: String::new(),
+                content: Content::Gamut(Box::new(gamut)),
+                rect: rect()?,
+                transform: transform(33)?,
+                z: fractional_index::FractionalIndex::from_bytes(
+                    bytes
+                        .get(at + 1 + 4 * count..)
+                        .ok_or(Error::Invalid)?
+                        .to_vec(),
                 )
                 .map_err(|_| Error::Invalid)?,
                 parent,
@@ -1132,6 +1212,39 @@ mod tests {
                 assert_eq!(restored.get(item.id), Some(item));
             }
         }
+    }
+    #[test]
+    fn gamut_cards_round_trip_and_reject_bad_shapes() {
+        let gamut = moth_scene::Gamut {
+            image: Some(Uuid::now_v7()),
+            view: 1,
+            sort: 3,
+            grid: (0..moth_scene::GAMUT_HUES * moth_scene::GAMUT_RINGS)
+                .map(|i| i as u8)
+                .collect(),
+            colors: vec![([1, 2, 3], 200), ([250, 128, 0], 55)],
+        };
+        let rect = Rect {
+            x: 1.,
+            y: 2.,
+            width: 30.,
+            height: 40.,
+        };
+        let mut card = Item::gamut_card(gamut, rect, None);
+        card.parent = Some(Uuid::now_v7());
+        card.transform.opacity = 0.5;
+        let bytes = encode(&Command::Insert(card.clone()));
+        let Command::Insert(decoded) = decode(&bytes).unwrap() else {
+            panic!("a gamut insert decodes to an insert");
+        };
+        assert_eq!(decoded, card);
+        let view = INSERT_GAMUT_FIXED - 1 - moth_scene::GAMUT_HUES * moth_scene::GAMUT_RINGS - 2;
+        for (offset, value) in [(view, 3), (view + 1, 9), (INSERT_GAMUT_FIXED - 1, 9)] {
+            let mut bad = bytes.clone();
+            bad[offset] = value;
+            assert!(decode(&bad).is_err(), "byte {offset} = {value}");
+        }
+        assert!(decode(&bytes[..INSERT_GAMUT_FIXED]).is_err());
     }
     #[test]
     fn malformed_sources_are_rejected() {

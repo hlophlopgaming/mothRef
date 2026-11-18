@@ -32,7 +32,17 @@ impl App {
                     && !self.workspace.board.selection.is_empty()
             }
             ExportOriginal => export_ready && single_image(),
-            CopyImage | OpenOriginal | OpenSource => single_image(),
+            CopyImage | OpenOriginal | OpenSource | ColorGamut => single_image(),
+            GamutWindows | GamutCells | GamutShares | GamutSortShare | GamutSortWarm
+            | GamutSortLight | GamutSortHue | GamutSortSaturation => {
+                let board = &self.workspace.board;
+                board.selection.iter().any(|id| {
+                    board
+                        .scene
+                        .get(*id)
+                        .is_some_and(|item| item.gamut().is_some())
+                })
+            }
             // The system picker, where there is one (the desktop portal, macOS).
             PickScreen => self.shell.window.as_ref().is_some_and(|window| {
                 moth_platform::screen_color::capabilities(window).interactive
@@ -76,6 +86,55 @@ impl App {
                 };
                 self.tools.viewer = Some(super::super::tools::ViewerNotice::new());
                 Intent::Export(moth_platform::export::Target::Viewer(item.id))
+            }
+            ColorGamut => {
+                let [item] = items.as_slice() else {
+                    return None;
+                };
+                let id = item.id;
+                self.tools.gamut.open = true;
+                self.tools.gamut.image = Some(id);
+                self.workspace.board.notices.gamut = None;
+                Intent::Export(moth_platform::export::Target::Gamut(id))
+            }
+            GamutWindows | GamutCells | GamutShares | GamutSortShare | GamutSortWarm
+            | GamutSortLight | GamutSortHue | GamutSortSaturation => {
+                let (view, sort) = match action {
+                    GamutWindows => (Some(0), None),
+                    GamutCells => (Some(1), None),
+                    GamutShares => (Some(2), None),
+                    GamutSortShare => (None, Some(0)),
+                    GamutSortWarm => (None, Some(1)),
+                    GamutSortLight => (None, Some(2)),
+                    GamutSortHue => (None, Some(3)),
+                    _ => (None, Some(4)),
+                };
+                let board = &self.workspace.board;
+                let mut commands = Vec::new();
+                for id in &board.selection {
+                    let Some(item) = board.scene.get(*id) else {
+                        continue;
+                    };
+                    let Some(gamut) = item.gamut() else {
+                        continue;
+                    };
+                    let mut changed = gamut.clone();
+                    changed.view = view.unwrap_or(gamut.view);
+                    changed.sort = sort.unwrap_or(gamut.sort);
+                    if changed == *gamut {
+                        continue;
+                    }
+                    let mut replacement = item.clone();
+                    replacement.content = moth_scene::Content::Gamut(Box::new(changed));
+                    commands.extend([
+                        moth_scene::Command::Remove(item.id),
+                        moth_scene::Command::Insert(replacement),
+                    ]);
+                }
+                if commands.is_empty() {
+                    return None;
+                }
+                Intent::Commands(commands)
             }
             OpenSource => {
                 let [item] = items.as_slice() else {

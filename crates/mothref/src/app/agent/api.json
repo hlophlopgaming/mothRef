@@ -104,6 +104,10 @@
     "description": "Inspect native protocol and current registered GUI actions.",
     "parameters": "none"
   },
+  "gamut": {
+    "description": "Measure an image's colors and put a color gamut card beside it, with an arrow to the image. The card keeps its colors if the image is removed.",
+    "parameters": "id (image), view?=windows|cells|shares, sort?=share|warm|light|hue|saturation, at?=[x,y]; item JSON kind gamut lists colors as {hex, share}"
+  },
   "sample": {
     "description": "Sample a native bounded image preview, without using the clipboard.",
     "parameters": "id, point=[x,y] world coordinates; result message is HEX | RGB | HSV (preview sampling, not color managed)"

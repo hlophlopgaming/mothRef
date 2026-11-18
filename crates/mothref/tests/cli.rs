@@ -281,6 +281,12 @@ fn all_layout_modes_and_scene_edits_use_native_flags() {
         cli.op("arrange", &["--mode", mode]);
     }
     cli.op("arrange", &["--mode", "grid", "--order", "path"]);
+    let card = cli.op("gamut", &["--id", &a, "--view", "shares", "--sort", "warm"]);
+    let card = &card["results"][0]["item"];
+    assert_eq!(card["kind"], "gamut");
+    assert_eq!(card["content"]["image"], json!(a));
+    assert_eq!(card["content"]["view"], 2);
+    assert!(!card["content"]["colors"].as_array().unwrap().is_empty());
     for mode in [
         "left",
         "right",
@@ -401,7 +407,7 @@ fn all_layout_modes_and_scene_edits_use_native_flags() {
     assert_eq!(transformed["transform"]["grayscale"], true);
     assert_eq!(transformed["transform"]["sampling"], 2);
     assert!((transformed["transform"]["opacity"].as_f64().unwrap() - 0.8).abs() < 1e-6);
-    assert_eq!(info["items_total"], 2);
+    assert_eq!(info["items_total"], 3, "image, note and gamut card");
     assert!(
         info["items"]
             .as_array()

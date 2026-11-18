@@ -351,6 +351,36 @@ pub enum Text {
     MenuWindow,
     /// Menu bar: help.
     MenuHelp,
+    /// Color gamut: ColorGamut.
+    ColorGamut,
+    /// Color gamut: GamutWindows.
+    GamutWindows,
+    /// Color gamut: GamutCells.
+    GamutCells,
+    /// Color gamut: GamutShares.
+    GamutShares,
+    /// Color gamut: GamutSortShare.
+    GamutSortShare,
+    /// Color gamut: GamutSortWarm.
+    GamutSortWarm,
+    /// Color gamut: GamutSortLight.
+    GamutSortLight,
+    /// Color gamut: GamutSortHue.
+    GamutSortHue,
+    /// Color gamut: GamutSortSaturation.
+    GamutSortSaturation,
+    /// Color gamut: GamutView.
+    GamutView,
+    /// Color gamut: GamutOrder.
+    GamutOrder,
+    /// Color gamut: PutOnBoard.
+    PutOnBoard,
+    /// Color gamut: MeasuringColors.
+    MeasuringColors,
+    /// Color gamut: GamutHint.
+    GamutHint,
+    /// Color gamut: HexCopied.
+    HexCopied,
     /// Library order: by the board file's last change.
     LastEdited,
     /// Library order: by number of items.
@@ -1195,8 +1225,9 @@ pub use localization::{
     Locale, Message, ago, counted, item_counts, locale, set_locale, text, translated,
 };
 
-/// Application icon artwork and per-window choice.
 pub mod brand;
+/// Application icon artwork and per-window choice.
+pub mod gamut;
 /// House theme tokens and application.
 pub mod theme;
 pub use theme::{Tokens, tokens};

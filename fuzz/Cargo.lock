@@ -596,6 +596,7 @@ dependencies = [
  "intel_tex_2",
  "jpeg-decoder",
  "moth-format",
+ "moth-scene",
  "mozjpeg",
  "png",
  "rayon",

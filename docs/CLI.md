@@ -70,6 +70,7 @@ explicit ids. Angles are radians; points/rectangles use comma-separated numbers.
 | `edit BOARD` | Required `--id UUID`; frame/text/name and transform flags below |
 | `export BOARD DESTINATION` | `--kind scene\|original\|originals\|archive` (default scene), `--id ...`, `--side N` (default 2048), optional `--region x,y,w,h` |
 | `pixel-info BOARD` | `--id UUID --point x,y`; original pixel coordinate and image metadata |
+| `gamut BOARD` | `--id IMAGE [--view windows\|cells\|shares] [--sort share\|warm\|light\|hue\|saturation] [--at x,y]`; measures the image's colors and adds a color gamut card beside it, linked to the image by an arrow |
 | `sample BOARD` | `--id UUID --point x,y`; HEX/RGB/HSV sampled without clipboard access |
 | `preview BOARD DIRECTORY` | Capture immutable native preview bundle under DIRECTORY; `--side N` defaults 1024 |
 | `preview-latest DIRECTORY` | Read latest completed bundle (or pass a specific completed bundle directory) |
