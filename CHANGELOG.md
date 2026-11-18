@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Settings › Appearance › Show menu bar adds a classic File, Edit, View, Image, Arrange, Window and Help bar under the title bar, with every command and its shortcut. Off by default.
 - Images remember where they came from: the file, the entry inside a ZIP archive, or the web address. Right-click an image › Open source shows the file selected in the file manager (or the archive it was in), or opens the address in the browser; a file that has moved says where it used to be, and pasted images say they have no source. Arrange › Arrange by file path (and By file path in the arrange options, `--order path` in the CLI) keeps each folder's images together, in name order with numbers by value. Boards are now saved as schema 9; older MothRef versions cannot open them. A shared board shows the paths its images were added from.
 
 ## 0.1.0-alpha.27 — 2026-11-17

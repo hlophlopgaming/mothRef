@@ -155,7 +155,7 @@ Open:
   - [ ] Show the color gamut of an image (BR) — wanted, "pretty and above all fast" (maintainer, 2026-11-18): a hue/saturation wheel of the image's colors in its own window, plus a gamut card kept on the board as its own element with its own UI (like Milanote's color cards), with an arrow to the image it was made from
   - [x] Open image source — the file, archive entry or URL the image came from (PR). Schema 9 stores the source per image ([decision 0027](docs/decisions/0027-image-sources.md)); a moved file says where it was, pasted and imported images say they have none
   - [x] Arrange by file path (PR) — folders together, numbers by value; also `--order path` in the CLI
-  - [ ] Optional scrollbars and menu bar (BR) — a "Show menu bar" setting is wanted (maintainer, 2026-11-18)
+  - [x] Optional menu bar (BR) — Settings › Appearance › Show menu bar (off by default): File, Edit, View, Image, Arrange, Window, Help, built from the action lists (maintainer, 2026-11-18). Optional scrollbars were not asked for
 
 - [ ] Qualify the M2 agent CLI HTTP download workflow and native locking on Windows/macOS; see [CLI validation](docs/CLI-VALIDATION.md).
 

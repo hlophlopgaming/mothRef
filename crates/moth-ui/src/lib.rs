@@ -335,6 +335,22 @@ pub enum Text {
     SourceMissing,
     /// The image has no saved source.
     NoSource,
+    /// Setting: show the classic menu bar.
+    ShowMenuBar,
+    /// Explains the menu bar setting.
+    ShowMenuBarHint,
+    /// Menu bar: file commands.
+    MenuFile,
+    /// Menu bar: editing commands.
+    MenuEdit,
+    /// Menu bar: view commands.
+    MenuView,
+    /// Menu bar: image commands.
+    MenuImage,
+    /// Menu bar: window commands.
+    MenuWindow,
+    /// Menu bar: help.
+    MenuHelp,
     /// Library order: by the board file's last change.
     LastEdited,
     /// Library order: by number of items.

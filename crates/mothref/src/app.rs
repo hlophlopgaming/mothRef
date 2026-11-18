@@ -2355,6 +2355,7 @@ impl App {
                         windows: &window_titles,
                         enabled: &enabled,
                         registry: &self.shortcuts.registry,
+                        menu_bar: self.settings.menu_bar,
                     },
                 );
                 if !self.workspace.library {
