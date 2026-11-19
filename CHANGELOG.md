@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.3.0-alpha.1 — 2026-11-19
+
+First public alpha (0.3): BeeRef parity, PureRef import and the zoom and memory modes are done. Boards are saved as schema 9; earlier MothRef versions cannot open them.
+
 - Running out of video memory no longer closes MothRef. Adding many images at once (reported on Windows from about 800) could fail to create a texture before the detected video-memory limit, and the graphics library then ended the app. MothRef now keeps what fits, loads the rest on demand with the existing "does not fit in video memory" notice, and writes any other graphics error to the log instead of crashing.
 - Crash reports: when MothRef did not close normally — a panic, running out of memory, a graphics driver fault — the next start shows what happened with the last log lines and, if Rust caught it, the panic. Report on GitHub opens a new issue with the report filled in; Copy report and Open log folder are next to it. Settings › For developers › Log adds Report a problem for issues that do not crash.
 - View mode (Tab) shows the whole board again: groups with their titles, notes and gamut cards, not only images. The View popover's Images only option still hides them for those who want it; boards that saved the old default show everything.
