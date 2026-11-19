@@ -405,6 +405,28 @@ pub enum Text {
     SnapToItems,
     /// Board grid: SnapHint.
     SnapHint,
+    /// Crash and problem reports: CrashTitle.
+    CrashTitle,
+    /// Crash and problem reports: CrashBody.
+    CrashBody,
+    /// Crash and problem reports: CrashDetails.
+    CrashDetails,
+    /// Crash and problem reports: ReportOnGitHub.
+    ReportOnGitHub,
+    /// Crash and problem reports: CopyReport.
+    CopyReport,
+    /// Crash and problem reports: OpenLogFolder.
+    OpenLogFolder,
+    /// Crash and problem reports: ReportProblem.
+    ReportProblem,
+    /// Crash and problem reports: CrashIssueTitle.
+    CrashIssueTitle,
+    /// Crash and problem reports: CrashWhat.
+    CrashWhat,
+    /// Crash and problem reports: ProblemIssueTitle.
+    ProblemIssueTitle,
+    /// Crash and problem reports: ProblemWhat.
+    ProblemWhat,
     /// Library order: by the board file's last change.
     LastEdited,
     /// Library order: by number of items.

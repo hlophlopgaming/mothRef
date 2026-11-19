@@ -106,6 +106,8 @@ pub struct App {
     motion: motion::DragMotion,
     editing: Option<Editing>,
     pub startup_error: Option<anyhow::Error>,
+    /// What the previous run left when it did not close normally, shown once.
+    pub crash_report: Option<moth_platform::crash::Report>,
     shell: shell::Shell,
     /// This main window's mode, pin and auxiliary windows; see `panes.rs`.
     window: panes::WindowState,
@@ -183,6 +185,7 @@ impl App {
             motion: motion::DragMotion::default(),
             editing: None,
             startup_error: None,
+            crash_report: None,
             window: panes::WindowState::new(shell.wake()),
             shell,
             input: InputState::default(),
@@ -2545,6 +2548,7 @@ impl App {
                     &enabled,
                     &self.shortcuts.registry,
                 ));
+                modal::crash(ui.ctx(), &mut self.crash_report);
             })
         };
         if !self.dragging()

@@ -872,6 +872,17 @@ fn log_viewer(ui: &mut egui::Ui, problems_only: &mut bool) {
                     }
                 });
         });
+    if ui.button(text(Text::ReportProblem)).clicked() {
+        let report = moth_platform::crash::Report {
+            panic: None,
+            log: moth_platform::diagnostics::recent().join("\n"),
+        };
+        let url = report.issue_url(text(Text::ProblemIssueTitle), text(Text::ProblemWhat));
+        if let Err(error) = moth_platform::open_external(&url) {
+            tracing::warn!(%error, "could not open the issue page");
+            ui.ctx().copy_text(url);
+        }
+    }
     if let Ok(directory) = moth_platform::diagnostics::log_directory() {
         ui.label(
             egui::RichText::new(format!(

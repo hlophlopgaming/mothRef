@@ -25,6 +25,8 @@ fn main() -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    // Before logging starts, so the previous run's last lines are what it wrote.
+    let (_session, crashed) = moth_platform::crash::begin_session();
     let (log, _logging) = moth_platform::diagnostics::start()?;
     tracing_subscriber::fmt()
         .with_writer(move || log.clone())
@@ -34,13 +36,16 @@ fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| "mothref=info,moth_render=info".into()),
         )
         .init();
-    let result = run();
+    if crashed.is_some() {
+        tracing::warn!("the previous run did not close normally");
+    }
+    let result = run(crashed);
     if let Err(error) = &result {
         tracing::error!(%error, "application stopped");
     }
     result
 }
-fn run() -> anyhow::Result<()> {
+fn run(crashed: Option<moth_platform::crash::Report>) -> anyhow::Result<()> {
     moth_platform::crash::install()?;
     let event_loop = winit::event_loop::EventLoop::<app::Wake>::with_user_event().build()?;
     let shutdown = event_loop.create_proxy();
@@ -48,6 +53,7 @@ fn run() -> anyhow::Result<()> {
         let _ = shutdown.send_event(app::Wake::Shutdown);
     }))?;
     let mut app = app::App::new(event_loop.create_proxy())?;
+    app.crash_report = crashed;
     event_loop.run_app(&mut app)?;
     if let Some(error) = app.startup_error {
         return Err(error);

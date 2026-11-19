@@ -389,7 +389,8 @@ fn items(
             );
         }
     }
-    if !overlay && !compact {
+    // Group titles show in View too, unless it was set to show images only.
+    if !overlay && (!compact || !board.appearance.images_only) {
         intents.extend(super::groups::chips(ui, board, &view.camera, &mut groups));
         if !board.scene.is_empty() {
             intents.extend(super::groups::layers(ui.ctx(), board, view.safe_area));

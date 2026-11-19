@@ -118,6 +118,11 @@ pub(super) fn open(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Opens a web link or a folder with the system's default handler.
+pub fn open_external(target: &str) -> io::Result<()> {
+    open(Path::new(target))
+}
+
 /// Shows a file selected in the system file manager (Explorer, Finder, or the Linux
 /// file manager through `org.freedesktop.FileManager1`). Where no file manager can
 /// select a file, its folder is opened instead.

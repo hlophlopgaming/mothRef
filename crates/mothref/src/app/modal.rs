@@ -13,6 +13,68 @@ pub(super) struct Modal {
     pub(super) group_color: Option<(Vec<moth_scene::Uuid>, [u8; 3])>,
 }
 
+/// The window shown after a run that did not close normally: what happened, the
+/// report, and ways to send it.
+pub(super) fn crash(ctx: &egui::Context, slot: &mut Option<moth_platform::crash::Report>) {
+    use moth_ui::{Text, text};
+    let Some(report) = slot else {
+        return;
+    };
+    let mut open = true;
+    let mut close = false;
+    let tokens = moth_ui::tokens(ctx);
+    egui::Window::new(text(Text::CrashTitle))
+        .id(egui::Id::new("crash_report"))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            ui.set_width((tokens.space_xl as f32 * 18.).min(ctx.content_rect().width() - 48.));
+            ui.label(text(Text::CrashBody));
+            ui.add_space(tokens.space_s as f32);
+            let body = report.text();
+            egui::CollapsingHeader::new(text(Text::CrashDetails))
+                .default_open(false)
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(240.)
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(&body).monospace().small())
+                                    .extend(),
+                            );
+                        });
+                });
+            ui.add_space(tokens.space_s as f32);
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(text(Text::ReportOnGitHub)).clicked() {
+                    let url = report.issue_url(text(Text::CrashIssueTitle), text(Text::CrashWhat));
+                    if let Err(error) = moth_platform::open_external(&url) {
+                        tracing::warn!(%error, "could not open the issue page");
+                        ui.ctx().copy_text(url);
+                    }
+                }
+                if ui.button(text(Text::CopyReport)).clicked() {
+                    ui.ctx().copy_text(body.clone());
+                }
+                if ui.button(text(Text::OpenLogFolder)).clicked()
+                    && let Ok(directory) = moth_platform::diagnostics::log_directory()
+                    && let Err(error) = moth_platform::open_external(&directory.to_string_lossy())
+                {
+                    tracing::warn!(%error, "could not open the log folder");
+                }
+                if ui.button(text(Text::CloseSummary)).clicked() {
+                    close = true;
+                }
+            });
+        });
+    if !open || close {
+        *slot = None;
+    }
+}
+
 impl Modal {
     /// Draws every modal (recovery, save-as, close, arrange) and returns intents.
     pub(super) fn show(
