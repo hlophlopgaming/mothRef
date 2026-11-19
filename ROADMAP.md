@@ -43,9 +43,9 @@ Latest release: **0.1.0-alpha.26** (2026-11-17). Pre-alpha builds for Windows, m
 | --- | --- | --- |
 | M0 Canvas | ✅ done | Native touch, desktop-pen and end-to-end paste qualification ([Qualification](#qualification)) |
 | M1 Reliability and file format | ✅ done | Long kill / fuzz / soak runs ([Qualification](#qualification)) |
-| M2 BeeRef parity | 🟡 almost | App icon (on hold); a dozen small parity items |
-| M2.5 Zoom performance and memory modes | 🟡 almost | Measurements on reference hardware |
-| M2.6 UI architecture | ✅ done | Native and CI screenshot qualification |
+| M2 BeeRef parity | ✅ done | Windows/macOS checks of the agent CLI ([Qualification](#qualification)) |
+| M2.5 Zoom performance and memory modes | ✅ done | Measurements on reference hardware ([Qualification](#qualification)) |
+| M2.6 UI architecture | ✅ done | Native and CI screenshot qualification ([Qualification](#qualification)) |
 | M3 Everyday usability, window, overlay | 🟡 mostly done | Native window qualification (Windows, macOS, Plasma 6, GNOME 47+) |
 | M4 PureRef 2 parity | 🟡 started | Minimap, groups and drawing sessions done; drawing, grid, GIFs, rich notes, composition overlays open |
 | M5 Library | 🟡 first slice | Start screen, search, tags, pins and folder stacks exist; index, previews, health open |
@@ -60,8 +60,8 @@ Latest release: **0.1.0-alpha.26** (2026-11-17). Pre-alpha builds for Windows, m
 | Release | Ships when these are done | Promise | State |
 | --- | --- | --- | --- |
 | 0.1 pre-alpha | M0, M1 | Does not lose data | shipping as 0.1.0-alpha.N |
-| **0.3 public alpha** | M2, M2.5, M2.6 | Replaces BeeRef, opens `.bee` and `.pur`, zooms faster than PureRef | **next** |
-| 0.7 beta | M3, M4 | Feature parity with PureRef 2 | |
+| 0.3 public alpha | M2, M2.5, M2.6 | Replaces BeeRef, opens `.bee` and `.pur`, zooms faster than PureRef | reached 2026-11-19 |
+| **0.7 beta** | M3, M4 | Feature parity with PureRef 2 | **next** |
 | 1.0 | M5, M6, M7 | All P0 and P1 features, all performance targets | |
 | 1.5 | M10 items tagged 1.5, M12, M14 | Ruler with calibration, Obsidian interop, capture integrations | |
 | 2.0 | M8, M9, M10 items tagged 2.0, M16 | Web build and collaboration; value and perspective tools; Excalidraw, draw.io, UML/XML, Blender, video frames | |
@@ -142,22 +142,23 @@ qualification move to 1.2+ and do not block earlier releases; they remain unveri
 
 ---
 
-## Now — toward 0.3 public alpha
+## Reached — 0.3 public alpha (maintainer, 2026-11-19)
+
+Every M2, M2.5 and M2.6 feature is done. Their real-hardware checks moved to [Qualification](#qualification): the maintainer runs them last, and they no longer hold the release back.
 
 ### M2 — BeeRef parity (+ PureRef import)
 
 **Exit criteria:** every BeeRef board opens losslessly; every feature in BeeRef's README and CHANGELOG is present; all M2 items in [FEATURES.md](docs/FEATURES.md) are ticked. → **Release 0.3**
 
-Open:
+Done:
 
-- [ ] Parity leftovers from [FEATURES.md](docs/FEATURES.md) (a few were tagged M0/M1 there but never done, so they are collected here):
+- [x] Parity leftovers from [FEATURES.md](docs/FEATURES.md) (a few were tagged M0/M1 there but never done, so they are collected here):
   - [x] Export the selected originals, each as its own file, named after the images (maintainer, 2026-11-08)
   - [x] Show the color gamut of an image (BR) — Color gamut panel and gamut cards on the board with an arrow to their image; views: gamut windows, painter's cells, hue shares with marked main colors; main colors sortable ([decision 0028](docs/decisions/0028-color-gamut-cards.md)). Cards in scene exports remain open
   - [x] Open image source — the file, archive entry or URL the image came from (PR). Schema 9 stores the source per image ([decision 0027](docs/decisions/0027-image-sources.md)); a moved file says where it was, pasted and imported images say they have none
   - [x] Arrange by file path (PR) — folders together, numbers by value; also `--order path` in the CLI
   - [x] Optional menu bar (BR) — Settings › Appearance › Show menu bar (off by default): File, Edit, View, Image, Arrange, Window, Help, built from the action lists (maintainer, 2026-11-18). Optional scrollbars were not asked for
 
-- [ ] Qualify the M2 agent CLI HTTP download workflow and native locking on Windows/macOS; see [CLI validation](docs/CLI-VALIDATION.md).
 
 Validation notes: [editing and export](docs/M2-EDITING-VALIDATION.md), [import](docs/M2-IMPORT-VALIDATION.md), [load performance](docs/LOAD-PERFORMANCE.md), target layout [DESIGN.md](docs/DESIGN.md).
 
@@ -212,9 +213,7 @@ Validation notes: [editing and export](docs/M2-EDITING-VALIDATION.md), [import](
 
 **Exit criteria:** in the default mode, zooming to full detail on an image already shown completes in ≤ 100 ms with a warm cache; every mode stays within its documented memory budget; "No cache" releases texture memory when zoomed out to fit the board.
 
-Open:
-
-- [ ] Measure per mode on reference hardware: warm-cache zoom latency to 2048 px, RSS after zooming in and back out, board open time; record results in [load performance](docs/LOAD-PERFORMANCE.md). 100-megapixel inputs and the procedure are ready (`xtask large-inputs`, [100-megapixel originals](docs/LOAD-PERFORMANCE.md#100-megapixel-originals--2026-11-06)); container numbers are recorded, reference-hardware runs remain
+Nothing open; reference-hardware measurements are in [Qualification](#qualification).
 
 <details>
 <summary>Done</summary>
@@ -241,9 +240,7 @@ Open:
 
 **Exit criteria:** no `Command` is built in UI code; no `Color32` literal outside the theme module; moving a button between surfaces is a one-line list change; the Board tools window is gone with no lost capability; headless UI screenshots of the board, library, settings and selection states are compared in CI.
 
-Open:
-
-- [ ] Native and CI qualification listed in [UI refactor validation](docs/plans/ui-architecture/VALIDATION.md); the minimap-thumbnail improvement remains a follow-up (no new image cache)
+Nothing open; native and CI screenshot qualification is in [Qualification](#qualification).
 
 <details>
 <summary>Done</summary>
@@ -263,7 +260,7 @@ Open:
 
 ---
 
-## Next — toward 0.7 beta
+## Now — toward 0.7 beta
 
 ### M3 — Everyday usability, board conversion, window, overlay
 
@@ -547,10 +544,13 @@ PureRef handles images and GIFs only; a PDF (an artbook, a model sheet, a manual
 
 ## Qualification
 
-Checks that need real hardware or long runs. They do not block the next alpha unless a milestone's exit criteria name them.
+Checks that need real hardware or long runs. The maintainer runs them last (2026-11-19); they do not block a release unless a milestone's exit criteria name them.
 
 - [ ] M0: real touch devices, other desktop pens and native end-to-end paste ([M0 validation](docs/M0-VALIDATION.md); Huion pen and Wayland drops are done)
 - [ ] M1: truncated-file recovery and reader fuzzing at release length; 1,000× `kill -9` ([M1 validation](docs/M1-VALIDATION.md))
+- [ ] M2: qualify the M2 agent CLI HTTP download workflow and native locking on Windows/macOS; see [CLI validation](docs/CLI-VALIDATION.md).
+- [ ] M2.5: measure per mode on reference hardware: warm-cache zoom latency to 2048 px, RSS after zooming in and back out, board open time; record results in [load performance](docs/LOAD-PERFORMANCE.md). 100-megapixel inputs and the procedure are ready (`xtask large-inputs`, [100-megapixel originals](docs/LOAD-PERFORMANCE.md#100-megapixel-originals--2026-11-06)); container numbers are recorded, reference-hardware runs remain
+- [ ] M2.6: native and CI qualification listed in [UI refactor validation](docs/plans/ui-architecture/VALIDATION.md); the minimap-thumbnail improvement remains a follow-up (no new image cache)
 - [ ] 1.0 release only: five-minute smoke soak (`cargo xtask soak 300 5`); omitted from intermediate releases per maintainer instruction on 2026-10-27
 - [ ] 1.2 or later: full eight-hour combined render/persistence soak (CI / maintainer only)
 - [ ] 1.2 or later: native Windows/macOS manual save, recovery, clipboard, close and OS-shutdown checks
