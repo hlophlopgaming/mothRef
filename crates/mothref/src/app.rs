@@ -849,6 +849,11 @@ impl App {
             }
             gpu.registry.upload(&gpu.device, &gpu.queue, &image);
             uploaded = true;
+            // Video memory ran out below the detected limit: same as overflowing it.
+            if gpu.registry.out_of_memory {
+                board.overflow_preload();
+                break;
+            }
         }
         if uploaded {
             self.redraw();

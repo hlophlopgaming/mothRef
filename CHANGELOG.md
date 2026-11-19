@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Running out of video memory no longer closes MothRef. Adding many images at once (reported on Windows from about 800) could fail to create a texture before the detected video-memory limit, and the graphics library then ended the app. MothRef now keeps what fits, loads the rest on demand with the existing "does not fit in video memory" notice, and writes any other graphics error to the log instead of crashing.
 - Crash reports: when MothRef did not close normally — a panic, running out of memory, a graphics driver fault — the next start shows what happened with the last log lines and, if Rust caught it, the panic. Report on GitHub opens a new issue with the report filled in; Copy report and Open log folder are next to it. Settings › For developers › Log adds Report a problem for issues that do not crash.
 - View mode (Tab) shows the whole board again: groups with their titles, notes and gamut cards, not only images. The View popover's Images only option still hides them for those who want it; boards that saved the old default show everything.
 - Windows: attaching above a chosen window keeps MothRef above it after you click that window. Windows does not let a background app raise its window above another app's active one, so MothRef now uses the always-on-top layer while the chosen app is active and leaves it as soon as another app is.

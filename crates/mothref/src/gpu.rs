@@ -67,6 +67,7 @@ impl Gpu {
             config.format,
             moth_render::pick_image_format(&adapter),
         );
+        moth_render::log_uncaptured_errors(&device);
         let lost = moth_render::watch_device(&device, wake);
         Ok(Self {
             instance,

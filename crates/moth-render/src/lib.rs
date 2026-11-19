@@ -302,6 +302,8 @@ pub struct Registry {
     image_format: ImageFormat,
     tile_lod_bias: u32,
     hard_limit: u64,
+    /// Video memory ran out while making room for images; the UI says so once.
+    pub out_of_memory: bool,
 }
 impl Registry {
     /// RGBA8 is the universally supported fallback; BC7 halves residency on adapters that support it.
@@ -465,6 +467,7 @@ impl Registry {
             image_format,
             tile_lod_bias: 0,
             hard_limit: MAX_TEXTURE_BUDGET,
+            out_of_memory: false,
         }
     }
     /// Highest texture ceiling [`Registry::adapt_budget`] accepts, from the detected
@@ -920,6 +923,11 @@ impl Registry {
         };
         if self.arrays[index].is_none() {
             let bytes = array_bytes(size, layers, self.image_format);
+            // Video memory can run out before the detected limit (Windows reports
+            // shared memory in it, other apps use it too). An out-of-memory error
+            // here must not end the app: the board keeps what fits and loads the
+            // rest on demand, as when it exceeds the limit.
+            let scope = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("image size class"),
                 size: wgpu::Extent3d {
@@ -936,6 +944,20 @@ impl Registry {
                     | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
+            if let Some(error) = resolved(scope.pop()) {
+                tracing::warn!(
+                    %error,
+                    allocated = self.allocated,
+                    "video memory is full; loading the rest on demand"
+                );
+                self.ceiling = self.allocated;
+                self.budget = self.budget.min(self.ceiling);
+                self.out_of_memory = true;
+                if index + 1 == self.arrays.len() {
+                    self.arrays.pop();
+                }
+                return None;
+            }
             let view = texture.create_view(&wgpu::TextureViewDescriptor {
                 dimension: Some(wgpu::TextureViewDimension::D2Array),
                 ..Default::default()
@@ -1629,6 +1651,25 @@ pub async fn request_device(
         }
         Err(e) => Err(e.to_string()),
     }
+}
+/// The result of a native wgpu future that is ready when returned (error scopes
+/// resolve as they are popped off the device's stack), without an executor.
+fn resolved<T>(future: impl std::future::Future<Output = Option<T>>) -> Option<T> {
+    let mut future = std::pin::pin!(future);
+    match future
+        .as_mut()
+        .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+    {
+        std::task::Poll::Ready(value) => value,
+        std::task::Poll::Pending => None,
+    }
+}
+/// Logs GPU errors nothing else caught instead of letting wgpu's default handler
+/// end the process; running out of video memory shows up in the log, not as a crash.
+pub fn log_uncaptured_errors(device: &wgpu::Device) {
+    device.on_uncaptured_error(Arc::new(|error: wgpu::Error| {
+        tracing::error!(%error, "graphics error");
+    }));
 }
 /// Device loss only invalidates GPU state; the caller retains scene and sources.
 pub fn watch_device(device: &wgpu::Device, wake: Arc<dyn Fn() + Send + Sync>) -> Arc<AtomicBool> {
