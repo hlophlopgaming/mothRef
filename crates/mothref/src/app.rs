@@ -73,6 +73,8 @@ mod settings;
 mod shell;
 mod shortcuts;
 mod snap;
+/// How close, in screen points, a dragged edge or center must come to snap.
+const SNAP_DISTANCE: f32 = 6.;
 mod surfaces;
 mod tools;
 mod window_mode;
@@ -104,6 +106,8 @@ pub struct App {
     motion: motion::DragMotion,
     editing: Option<Editing>,
     pub startup_error: Option<anyhow::Error>,
+    /// What the previous run left when it did not close normally, shown once.
+    pub crash_report: Option<moth_platform::crash::Report>,
     shell: shell::Shell,
     /// This main window's mode, pin and auxiliary windows; see `panes.rs`.
     window: panes::WindowState,
@@ -181,6 +185,7 @@ impl App {
             motion: motion::DragMotion::default(),
             editing: None,
             startup_error: None,
+            crash_report: None,
             window: panes::WindowState::new(shell.wake()),
             shell,
             input: InputState::default(),
@@ -844,6 +849,11 @@ impl App {
             }
             gpu.registry.upload(&gpu.device, &gpu.queue, &image);
             uploaded = true;
+            // Video memory ran out below the detected limit: same as overflowing it.
+            if gpu.registry.out_of_memory {
+                board.overflow_preload();
+                break;
+            }
         }
         if uploaded {
             self.redraw();
@@ -1862,6 +1872,7 @@ impl App {
             );
             self.motion.sample(p.position[0], Instant::now());
         }
+        self.tools.guides.clear();
         let press = gesture::Press {
             owner: (p.kind, p.id),
             start: p.position,
@@ -1913,6 +1924,88 @@ impl App {
             camera.origin[1] -= (p.position[1] - last[1]) / camera.zoom;
         }
         press.last = p.position;
+        if self.gesture.grabbed().is_some() {
+            self.snap_move(start, p.position);
+        }
+    }
+    /// Snaps the dragged selection to other items and the grid by moving the drag's
+    /// end point; Ctrl (⌘ on macOS) held places freely.
+    fn snap_move(&mut self, start: [f32; 2], end: [f32; 2]) {
+        self.tools.guides.clear();
+        let free = self.shell.context().input(|i| i.modifiers.command);
+        let grid = (self.settings.snap_grid).then(|| {
+            canvas::grid_spacing(
+                self.settings.grid_size,
+                self.workspace.board.view.camera.zoom,
+            )
+        });
+        if free || (grid.is_none() && !self.settings.snap_items) {
+            return;
+        }
+        let board = &self.workspace.board;
+        let camera = board.view.camera;
+        let zoom = camera.zoom;
+        let moved = |id: moth_scene::Uuid| {
+            let mut next = Some(id);
+            for _ in 0..=moth_scene::MAX_GROUP_DEPTH {
+                let Some(id) = next else {
+                    return false;
+                };
+                if board.selection.contains(&id) {
+                    return true;
+                }
+                next = board.scene.get(id).and_then(|item| item.parent);
+            }
+            false
+        };
+        let mut bounds: Option<Rect> = None;
+        for id in &board.selection {
+            if let Some(item) = board.scene.get(*id) {
+                let f = moth_scene::footprint(item);
+                bounds = Some(match bounds {
+                    None => f,
+                    Some(b) => {
+                        let x = b.x.min(f.x);
+                        let y = b.y.min(f.y);
+                        Rect {
+                            x,
+                            y,
+                            width: (b.x + b.width).max(f.x + f.width) - x,
+                            height: (b.y + b.height).max(f.y + f.height) - y,
+                        }
+                    }
+                });
+            }
+        }
+        let Some(bounds) = bounds else {
+            return;
+        };
+        let targets: Vec<Rect> = if self.settings.snap_items {
+            let view = board.view.viewport;
+            let a = camera.world([view.left(), view.top()]);
+            let b = camera.world([view.right(), view.bottom()]);
+            board
+                .scene
+                .query(Rect {
+                    x: a[0],
+                    y: a[1],
+                    width: (b[0] - a[0]).max(f32::MIN_POSITIVE),
+                    height: (b[1] - a[1]).max(f32::MIN_POSITIVE),
+                })
+                .into_iter()
+                .filter(|item| !item.is_group() && !moved(item.id))
+                .take(4096)
+                .map(moth_scene::footprint)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let delta = [(end[0] - start[0]) / zoom, (end[1] - start[1]) / zoom];
+        let (snapped, guides) = snap::moving(bounds, delta, &targets, grid, SNAP_DISTANCE / zoom);
+        if let Some(press) = self.gesture.press_mut() {
+            press.last = [start[0] + snapped[0] * zoom, start[1] + snapped[1] * zoom];
+        }
+        self.tools.guides = guides;
     }
     /// The owning pointer was released: a move drops the selection (or copies),
     /// a selection rectangle selects what it covers.
@@ -1926,7 +2019,16 @@ impl App {
         match std::mem::take(&mut self.gesture) {
             gesture::Gesture::Move {
                 press, duplicate, ..
-            } => self.drop_selection(press.start, p.position, duplicate),
+            } => {
+                self.tools.guides.clear();
+                // A drag ends where it was last drawn, snapped or not.
+                let end = if self.input.engaged {
+                    press.last
+                } else {
+                    p.position
+                };
+                self.drop_selection(press.start, end, duplicate)
+            }
             gesture::Gesture::Marquee(press) => self.select_area(press.start, p.position),
             _ => {}
         }
@@ -2451,6 +2553,7 @@ impl App {
                     &enabled,
                     &self.shortcuts.registry,
                 ));
+                modal::crash(ui.ctx(), &mut self.crash_report);
             })
         };
         if !self.dragging()
@@ -2471,12 +2574,18 @@ impl App {
     fn render(&mut self, output: egui::FullOutput) -> anyhow::Result<()> {
         let covered = self.covered_by_preload();
         let canvas_color = moth_ui::tokens(self.shell.context()).canvas;
+        let grid_color = moth_ui::tokens(self.shell.context()).text;
+        let grid = (self.settings.show_grid && !self.workspace.library)
+            .then(|| {
+                canvas::board_grid(&self.settings, self.workspace.board.view.camera, grid_color)
+            })
+            .flatten();
         let stage = self.session_stage();
         let Some(gpu) = self.shell.gpu.as_mut() else {
             return Ok(());
         };
         let frame = shell::Frame {
-            grid: false,
+            grid,
             ui_opacity: if self.workspace.library {
                 1.
             } else {
@@ -2516,7 +2625,7 @@ impl App {
             // A session draws its slides in screen points on its own dark stage.
             Some((_, clip, color)) => (
                 shell::Frame {
-                    grid: false,
+                    grid: None,
                     ui_opacity: 1.,
                     opacity: 1.,
                     clear: *color,

@@ -200,7 +200,7 @@ impl App {
                 screen,
                 clip: None,
                 clear: wgpu::Color::TRANSPARENT,
-                grid: false,
+                grid: None,
                 opacity: self.workspace.board.appearance.images
                     * self.workspace.board.appearance.window,
             },
@@ -288,7 +288,7 @@ mod tests {
                             screen,
                             clip: None,
                             clear: wgpu::Color::TRANSPARENT,
-                            grid: false,
+                            grid: None,
                             opacity,
                         },
                         &[&item],

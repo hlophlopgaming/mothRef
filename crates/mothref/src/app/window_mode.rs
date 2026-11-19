@@ -18,7 +18,9 @@ impl Default for Appearance {
             view: false,
             over: false,
             background: 0,
-            images_only: true,
+            // View shows the whole board: groups, notes and cards, like Collect
+            // (maintainer, 2026-11-19). "Images only" stays an opt-in.
+            images_only: false,
             images: 1.,
             canvas: 0.55,
             window: 1.,
@@ -33,8 +35,9 @@ impl Appearance {
         !compact || !self.images_only || item.blob().is_some()
     }
     pub fn encode(self) -> String {
+        // The trailing 2 marks values saved after "images only" became opt-in.
         format!(
-            "{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},2",
             u8::from(self.view),
             self.background,
             self.images,
@@ -46,9 +49,13 @@ impl Appearance {
     }
     pub fn decode(value: &str) -> Option<Self> {
         let fields: Vec<_> = value.split(',').collect();
-        if fields.len() != 7 {
-            return None;
-        }
+        // Seven fields predate opt-in "images only": its old default hid groups and
+        // notes in View, so those boards show everything again.
+        let current = match fields.len() {
+            7 => false,
+            8 if fields[7] == "2" => true,
+            _ => return None,
+        };
         let flag = |v| match v {
             "0" => Some(false),
             "1" => Some(true),
@@ -67,7 +74,7 @@ impl Appearance {
             images: opacity(fields[2])?,
             canvas: opacity(fields[3])?,
             window: opacity(fields[4]).filter(|v| *v >= 0.1)?,
-            images_only: flag(fields[5])?,
+            images_only: flag(fields[5])? && current,
         })
     }
 }
@@ -229,15 +236,17 @@ mod tests {
         let note = Item::text("Reference note", rect, None);
         let image = Item::image(BlobId::from_bytes([0; 32]), rect, None);
         assert!(Appearance::default().presents(false, &note));
-        assert!(!Appearance::default().presents(true, &note));
+        assert!(Appearance::default().presents(true, &note));
         assert!(Appearance::default().presents(true, &image));
         assert!(
-            Appearance {
-                images_only: false,
+            !Appearance {
+                images_only: true,
                 ..Appearance::default()
             }
             .presents(true, &note)
         );
+        // Values saved before images-only became opt-in show the whole board.
+        assert!(!Appearance::decode("1,0,1,1,1,1,0").unwrap().images_only);
         assert!(key("").is_none());
         assert_ne!(key("one.moth"), key("two.moth"));
     }

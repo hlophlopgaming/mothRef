@@ -385,6 +385,48 @@ pub enum Text {
     GamutRefresh,
     /// Badge on a gamut card whose image now shows other pixels.
     GamutStale,
+    /// Board grid: ToggleGrid.
+    ToggleGrid,
+    /// Board grid: ToggleSnapGrid.
+    ToggleSnapGrid,
+    /// Board grid: ShowGrid.
+    ShowGrid,
+    /// Board grid: GridStyle.
+    GridStyle,
+    /// Board grid: GridDots.
+    GridDots,
+    /// Board grid: GridLines.
+    GridLines,
+    /// Board grid: GridSize.
+    GridSize,
+    /// Board grid: SnapToGrid.
+    SnapToGrid,
+    /// Board grid: SnapToItems.
+    SnapToItems,
+    /// Board grid: SnapHint.
+    SnapHint,
+    /// Crash and problem reports: CrashTitle.
+    CrashTitle,
+    /// Crash and problem reports: CrashBody.
+    CrashBody,
+    /// Crash and problem reports: CrashDetails.
+    CrashDetails,
+    /// Crash and problem reports: ReportOnGitHub.
+    ReportOnGitHub,
+    /// Crash and problem reports: CopyReport.
+    CopyReport,
+    /// Crash and problem reports: OpenLogFolder.
+    OpenLogFolder,
+    /// Crash and problem reports: ReportProblem.
+    ReportProblem,
+    /// Crash and problem reports: CrashIssueTitle.
+    CrashIssueTitle,
+    /// Crash and problem reports: CrashWhat.
+    CrashWhat,
+    /// Crash and problem reports: ProblemIssueTitle.
+    ProblemIssueTitle,
+    /// Crash and problem reports: ProblemWhat.
+    ProblemWhat,
     /// Library order: by the board file's last change.
     LastEdited,
     /// Library order: by number of items.

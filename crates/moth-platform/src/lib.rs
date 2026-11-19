@@ -44,7 +44,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-pub use viewer::reveal;
+pub use viewer::{open_external, reveal};
 
 /// Keeps native file lists within the app's waiting import budget.
 pub const MAX_IMPORT_FILES: usize = 100_000;

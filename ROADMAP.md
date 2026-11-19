@@ -46,7 +46,7 @@ Latest release: **0.1.0-alpha.26** (2026-11-17). Pre-alpha builds for Windows, m
 | M2 BeeRef parity | ✅ done | Windows/macOS checks of the agent CLI ([Qualification](#qualification)) |
 | M2.5 Zoom performance and memory modes | ✅ done | Measurements on reference hardware ([Qualification](#qualification)) |
 | M2.6 UI architecture | ✅ done | Native and CI screenshot qualification ([Qualification](#qualification)) |
-| M3 Everyday usability, window, overlay | 🟡 mostly done | Native window qualification (Windows, macOS, Plasma 6, GNOME 47+) |
+| M3 Everyday usability, window, overlay | ✅ done | Native window qualification ([Qualification](#qualification)) |
 | M4 PureRef 2 parity | 🟡 started | Minimap, groups and drawing sessions done; drawing, grid, GIFs, rich notes, composition overlays open |
 | M5 Library | 🟡 first slice | Start screen, search, tags, pins and folder stacks exist; index, previews, health open |
 | M6 Milanote-style elements | ⚪ not started | |
@@ -262,30 +262,15 @@ Nothing open; native and CI screenshot qualification is in [Qualification](#qual
 
 ## Now — toward 0.7 beta
 
+M3 is done (maintainer, 2026-11-19); its real-system checks are in [Qualification](#qualification). M4 is the work left before the beta.
+
 ### M3 — Everyday usability, board conversion, window, overlay
 
 **Exit criteria:** daily navigation and batch editing work without middle-click or wheel input; shortcuts are discoverable and rebindable; opened `.bee` / `.pur` boards save and reopen safely as `.moth`, with conversion prompts and reports of unsupported content; the overlay works on top of Krita, Photoshop and Blender on Windows, macOS and X11.
 
-Navigation, shortcuts, the command palette, batch editing and board conversion are done (see "Done" below). Open work, grouped:
+Navigation, shortcuts, the command palette, batch editing, board conversion, window modes, the overlay, attaching to other windows, always-on-top on Wayland and board tabs are done.
 
-**Window modes and overlay** — layout in [DESIGN.md](docs/DESIGN.md) §4, screens 15–17; checks in [M3 window validation](docs/M3-WINDOW-VALIDATION.md)
-
-- [ ] Window modes: Collect (full chrome) ⇄ View (images only) with `Tab`, Over with `Ctrl/⌘+T` — built; left:
-  - [ ] Native qualification of mode transitions, opacity and blur on Linux, Windows and macOS
-  - (Group-only viewing moved to M4 groups; it needs the scene group model)
-- [ ] Transparent overlay with adjustable opacity and click-through (BeeRef #100) — X11 qualified; Windows / macOS and controller-recovery checks open
-- [ ] Attach to another application's window: implemented on Windows, X11, KDE Plasma Wayland (KWin script), GNOME Wayland (Shell extension) and macOS (follows the chosen app); KDE 5.27 and GNOME 46 checked in nested sessions; native qualification on Windows, macOS, Plasma 6 and GNOME 47+ open
-- [ ] Always on top on Wayland ([decision 0019](docs/decisions/0019-wayland-window-stacking.md)): KWin scripts on KDE Plasma, bundled GNOME Shell extension with an install button in Settings › Window and overlay — implemented; Plasma 5.27 and GNOME 46 checked in nested sessions (see M3 window validation); Plasma 6, GNOME 47–49 and real sessions open
-- [ ] Native qualification of the added parity controls: bottom stacking, position lock/maximize, floating image surfaces, resize-to-content, opacity keys, custom colors and system-global shortcuts; see [validation notes](docs/M3-WINDOW-VALIDATION.md#remaining-parity-controls-implementation)
-
-**Window reliability**
-
-- [ ] Desktop GUI launch without a terminal: no extra console window on Windows, normal Finder launch on macOS; keep diagnostic logging and intentional CLI output; qualify both launch paths
-- [ ] Windows maximize / restore / fullscreen: repeated transitions, resize and surface recreation without losing the scene (a PureRef field report, not a reproduced MothRef bug)
-
-**Tabs**
-
-- [ ] Board tabs in one window; drag a tab out into its own window and back — implemented (drag out of the tab strip; tab menu: move to new / another window, gather all tabs; drop onto another window's tab strip on Windows, macOS and X11); checked under KWin 5.27; native qualification on Windows and macOS open
+Nothing open: every M3 feature is built. Their checks on real Windows, macOS, Plasma 6 and GNOME 47+ systems moved to [Qualification](#qualification) (maintainer, 2026-11-19); layout in [DESIGN.md](docs/DESIGN.md) §4, screens 15–17.
 
 **Foreign-format policy:** `.pur` writing/export and save-back are out of scope. A `.bee` export exception may be considered separately; it is not an M3 commitment or a normal Save action. If introduced, its dialog must recommend `.moth`, explain measured size benefits and warn that repeated editing/saving between applications has no guaranteed round-trip compatibility. It must report unsupported content before writing and preserve the original file.
 
@@ -349,8 +334,10 @@ Open:
 - [ ] Emoji stamp: drop emoji reactions (like, not done, …) from a base set, with a custom emoji picker
 - [ ] Rich text notes with links and checklists; configurable heading font size (BeeRef #130)
 - [ ] Animated GIFs with frame stepping: the player sits on the image (scrubber, play/pause, frame counter, speed) and steps 1, 2, 3 or 4 frames at a time
-- [ ] Line/dot grid with snapping; automatic alignment guides and edge/center snapping (BeeRef #129). Images snap by their displayed bounds; make grid visibility and snapping independently toggleable, with a temporary bypass while dragging
+- [x] Line/dot grid with snapping; automatic alignment guides and edge/center snapping (BeeRef #129) — View › Show grid (Ctrl/⌘+') draws dots or lines behind images at a set board spacing, every fourth mark stronger and coarser when zoomed out; View › Snap to grid (Ctrl/⌘+Shift+') and Settings › Canvas › Snap to other items line up a dragged selection's edges and centers, with guides; holding Ctrl/⌘ while dragging places freely. Snapping while resizing remains open
 - [ ] Slideshow (incl. random order), embedded ICC profiles
+- [ ] Update notice: on start (at most once a day, can be turned off in Settings) check GitHub Releases for a newer version and tell the user with a short notice: version, what changed, Download / Later / Skip this version. No data is sent beyond the request itself (maintainer, 2026-11-19)
+- [ ] Self-update: download the new release for this platform, verify it against the release's `SHA256SUMS`, replace the app and restart with open boards restored from the journal; keep the previous version to roll back if the new one fails to start. Windows `.exe`, macOS `.app` and the Linux archive each need their own replace step (maintainer, 2026-11-19)
 - [ ] All parity- and Milanote-checklist items tagged M4 (presentation mode, note formatting and markdown shortcuts, sketch card, drawing shortcuts, GIF frame tools, drawing details, locked groups, hierarchy tools, note parenting and links)
 
 <details>
@@ -551,6 +538,14 @@ Checks that need real hardware or long runs. The maintainer runs them last (2026
 - [ ] M2: qualify the M2 agent CLI HTTP download workflow and native locking on Windows/macOS; see [CLI validation](docs/CLI-VALIDATION.md).
 - [ ] M2.5: measure per mode on reference hardware: warm-cache zoom latency to 2048 px, RSS after zooming in and back out, board open time; record results in [load performance](docs/LOAD-PERFORMANCE.md). 100-megapixel inputs and the procedure are ready (`xtask large-inputs`, [100-megapixel originals](docs/LOAD-PERFORMANCE.md#100-megapixel-originals--2026-11-06)); container numbers are recorded, reference-hardware runs remain
 - [ ] M2.6: native and CI qualification listed in [UI refactor validation](docs/plans/ui-architecture/VALIDATION.md); the minimap-thumbnail improvement remains a follow-up (no new image cache)
+- [ ] M3: Window modes: Collect (full chrome) ⇄ View (images only) with `Tab`, Over with `Ctrl/⌘+T` — built; native qualification of mode transitions, opacity and blur on Linux, Windows and macOS
+- [ ] M3: Transparent overlay with adjustable opacity and click-through (BeeRef #100) — X11 qualified; Windows / macOS and controller-recovery checks open
+- [ ] M3: Attach to another application's window: implemented on Windows, X11, KDE Plasma Wayland (KWin script), GNOME Wayland (Shell extension) and macOS (follows the chosen app); KDE 5.27 and GNOME 46 checked in nested sessions; native qualification on Windows, macOS, Plasma 6 and GNOME 47+ open
+- [ ] M3: Always on top on Wayland ([decision 0019](docs/decisions/0019-wayland-window-stacking.md)): KWin scripts on KDE Plasma, bundled GNOME Shell extension with an install button in Settings › Window and overlay — implemented; Plasma 5.27 and GNOME 46 checked in nested sessions (see M3 window validation); Plasma 6, GNOME 47–49 and real sessions open
+- [ ] M3: Native qualification of the added parity controls: bottom stacking, position lock/maximize, floating image surfaces, resize-to-content, opacity keys, custom colors and system-global shortcuts; see [validation notes](docs/M3-WINDOW-VALIDATION.md#remaining-parity-controls-implementation)
+- [ ] M3: Desktop GUI launch without a terminal: no extra console window on Windows, normal Finder launch on macOS; keep diagnostic logging and intentional CLI output; qualify both launch paths
+- [ ] M3: Windows maximize / restore / fullscreen: repeated transitions, resize and surface recreation without losing the scene (a PureRef field report, not a reproduced MothRef bug)
+- [ ] M3: Board tabs in one window; drag a tab out into its own window and back — implemented (drag out of the tab strip; tab menu: move to new / another window, gather all tabs; drop onto another window's tab strip on Windows, macOS and X11); checked under KWin 5.27; native qualification on Windows and macOS open
 - [ ] 1.0 release only: five-minute smoke soak (`cargo xtask soak 300 5`); omitted from intermediate releases per maintainer instruction on 2026-10-27
 - [ ] 1.2 or later: full eight-hour combined render/persistence soak (CI / maintainer only)
 - [ ] 1.2 or later: native Windows/macOS manual save, recovery, clipboard, close and OS-shutdown checks

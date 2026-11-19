@@ -204,8 +204,49 @@ pub struct Target<'a> {
     pub clear: wgpu::Color,
     /// Global viewing opacity is transient and never changes board content.
     pub opacity: f32,
-    /// The desktop board can opt into the decorative canvas grid.
-    pub grid: bool,
+    /// The board grid drawn behind images, if shown.
+    pub grid: Option<Grid>,
+}
+/// A board grid in physical pixels, computed from the camera by the caller.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Grid {
+    /// Where a grid line (or dot) crosses the screen, in physical pixels.
+    pub offset: [f32; 2],
+    /// Distance between neighbouring lines or dots, in physical pixels.
+    pub spacing: f32,
+    /// Lines instead of dots.
+    pub lines: bool,
+    /// Straight-alpha sRGB color of the strongest marks.
+    pub color: [f32; 4],
+    /// Every `major`-th mark is drawn at full strength.
+    pub major: u32,
+    /// Strength of the other marks, 0–1.
+    pub minor: f32,
+    /// Dot radius or half the line width, in physical pixels.
+    pub size: f32,
+}
+impl Grid {
+    fn bytes(&self) -> [u8; 48] {
+        let values = [
+            self.offset[0],
+            self.offset[1],
+            self.spacing.max(1.),
+            if self.lines { 1. } else { 0. },
+            self.color[0],
+            self.color[1],
+            self.color[2],
+            self.color[3],
+            self.major.max(1) as f32,
+            self.size,
+            self.minor,
+            0.,
+        ];
+        let mut bytes = [0u8; 48];
+        for (chunk, value) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(values) {
+            *chunk = value.to_le_bytes();
+        }
+        bytes
+    }
 }
 /// A viewing effect must fail before exceeding its explicit texture budget.
 #[derive(Debug, thiserror::Error)]
@@ -247,6 +288,8 @@ pub struct Registry {
     pipeline: wgpu::RenderPipeline,
     backdrop: wgpu::RenderPipeline,
     grid: wgpu::RenderPipeline,
+    grid_uniform: wgpu::Buffer,
+    grid_bind: wgpu::BindGroup,
     opacity: opacity::Pass,
     layout: wgpu::BindGroupLayout,
     instances: wgpu::Buffer,
@@ -259,6 +302,8 @@ pub struct Registry {
     image_format: ImageFormat,
     tile_lod_bias: u32,
     hard_limit: u64,
+    /// Video memory ran out while making room for images; the UI says so once.
+    pub out_of_memory: bool,
 }
 impl Registry {
     /// RGBA8 is the universally supported fallback; BC7 halves residency on adapters that support it.
@@ -352,7 +397,7 @@ impl Registry {
                 entry_point: Some("fs"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: None,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions {
@@ -365,6 +410,20 @@ impl Registry {
             multisample: Default::default(),
             multiview_mask: None,
             cache: None,
+        });
+        let grid_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("board grid"),
+            size: 48,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let grid_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("board grid"),
+            layout: &grid.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: grid_uniform.as_entire_binding(),
+            }],
         });
         let instances = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("bounded instances"),
@@ -395,6 +454,8 @@ impl Registry {
             pipeline,
             backdrop,
             grid,
+            grid_uniform,
+            grid_bind,
             opacity: opacity::Pass::new(device, format),
             layout,
             instances,
@@ -406,6 +467,7 @@ impl Registry {
             image_format,
             tile_lod_bias: 0,
             hard_limit: MAX_TEXTURE_BUDGET,
+            out_of_memory: false,
         }
     }
     /// Highest texture ceiling [`Registry::adapt_budget`] accepts, from the detected
@@ -861,6 +923,11 @@ impl Registry {
         };
         if self.arrays[index].is_none() {
             let bytes = array_bytes(size, layers, self.image_format);
+            // Video memory can run out before the detected limit (Windows reports
+            // shared memory in it, other apps use it too). An out-of-memory error
+            // here must not end the app: the board keeps what fits and loads the
+            // rest on demand, as when it exceeds the limit.
+            let scope = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("image size class"),
                 size: wgpu::Extent3d {
@@ -877,6 +944,20 @@ impl Registry {
                     | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
+            if let Some(error) = resolved(scope.pop()) {
+                tracing::warn!(
+                    %error,
+                    allocated = self.allocated,
+                    "video memory is full; loading the rest on demand"
+                );
+                self.ceiling = self.allocated;
+                self.budget = self.budget.min(self.ceiling);
+                self.out_of_memory = true;
+                if index + 1 == self.arrays.len() {
+                    self.arrays.pop();
+                }
+                return None;
+            }
             let view = texture.create_view(&wgpu::TextureViewDescriptor {
                 dimension: Some(wgpu::TextureViewDimension::D2Array),
                 ..Default::default()
@@ -1095,7 +1176,7 @@ impl Registry {
         let mut instances = Vec::with_capacity(items.len().min(MAX_INSTANCES));
         let mut classes = Vec::with_capacity(items.len().min(MAX_INSTANCES));
         let target = Target {
-            grid: false,
+            grid: None,
             ..target
         };
         let mut first = false;
@@ -1120,6 +1201,9 @@ impl Registry {
         camera: Camera,
     ) {
         let _span = tracing::info_span!("canvas_draw", visible = items.len()).entered();
+        if let Some(grid) = target.grid {
+            queue.write_buffer(&self.grid_uniform, 0, &grid.bytes());
+        }
         self.clock += 1;
         let scale = target.view.texture().width() as f32 / target.screen[0];
         let mut demand = std::collections::HashMap::<BlobId, u32>::new();
@@ -1407,8 +1491,9 @@ impl Registry {
                 if let Some([x, y, width, height]) = target.clip {
                     pass.set_scissor_rect(x, y, width, height);
                 }
-                if *first && target.grid {
+                if *first && target.grid.is_some() {
                     pass.set_pipeline(&self.grid);
+                    pass.set_bind_group(0, &self.grid_bind, &[]);
                     pass.draw(0..3, 0..1);
                 }
                 pass.set_pipeline(&self.pipeline);
@@ -1566,6 +1651,25 @@ pub async fn request_device(
         }
         Err(e) => Err(e.to_string()),
     }
+}
+/// The result of a native wgpu future that is ready when returned (error scopes
+/// resolve as they are popped off the device's stack), without an executor.
+fn resolved<T>(future: impl std::future::Future<Output = Option<T>>) -> Option<T> {
+    let mut future = std::pin::pin!(future);
+    match future
+        .as_mut()
+        .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+    {
+        std::task::Poll::Ready(value) => value,
+        std::task::Poll::Pending => None,
+    }
+}
+/// Logs GPU errors nothing else caught instead of letting wgpu's default handler
+/// end the process; running out of video memory shows up in the log, not as a crash.
+pub fn log_uncaptured_errors(device: &wgpu::Device) {
+    device.on_uncaptured_error(Arc::new(|error: wgpu::Error| {
+        tracing::error!(%error, "graphics error");
+    }));
 }
 /// Device loss only invalidates GPU state; the caller retains scene and sources.
 pub fn watch_device(device: &wgpu::Device, wake: Arc<dyn Fn() + Send + Sync>) -> Arc<AtomicBool> {

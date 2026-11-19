@@ -119,7 +119,7 @@ mod native {
             _ => None,
         }
     }
-    /// Set while the board borrowed the topmost band to stay above a topmost target.
+    /// Set while the board borrowed the topmost band to stay above the target.
     static TOPMOST: AtomicBool = AtomicBool::new(false);
     fn place(board: HWND, after: HWND) {
         // SAFETY: handles are validated by Windows; failure leaves stacking unchanged.
@@ -139,16 +139,13 @@ mod native {
         // SAFETY: reading a style of a possibly destroyed window returns zero.
         unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST != 0 }
     }
-    /// Raises the board above the target. A topmost target (another reference or
-    /// video app) can only be covered from the topmost band, which the board leaves
-    /// as soon as anything else is activated.
-    fn raise(board: HWND, target: HWND) {
-        if topmost(target) {
-            TOPMOST.store(true, Ordering::Relaxed);
-            place(board, HWND_TOPMOST);
-        } else {
-            place(board, HWND_TOP);
-        }
+    /// Raises the board above the target through the topmost band, which it leaves as
+    /// soon as anything else is activated. `HWND_TOP` is not enough: Windows does not
+    /// let a background process put its window above another process's foreground
+    /// window, so after a click on the target the board stayed underneath it.
+    fn raise(board: HWND, _target: HWND) {
+        TOPMOST.store(true, Ordering::Relaxed);
+        place(board, HWND_TOPMOST);
     }
     /// Gives the topmost band back, staying just below the newly active window.
     fn lower(board: HWND, foreground: HWND) {

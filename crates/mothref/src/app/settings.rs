@@ -88,6 +88,7 @@ macro_rules! schema {
     };
     (@hint app_icon) => { Some(Text::AppIconHint) };
     (@hint menu_bar) => { Some(Text::ShowMenuBarHint) };
+    (@hint snap_items) => { Some(Text::SnapHint) };
     (@hint $field:ident) => { None };
 }
 schema! {
@@ -143,6 +144,11 @@ schema! {
             .and_then(|v| v.parse::<f32>().ok())
             .filter(|v| v.is_finite() && (1.0..=100.0).contains(v))
             .unwrap_or(10.);
+    show_grid: bool = false, "show_grid", Canvas, ShowGrid, Kind::Toggle, |s| s.show_grid.to_string(), |values: &BTreeMap<String,String>| values.get("show_grid").and_then(|v| v.parse().ok()).unwrap_or(false);
+    grid_style: u8 = 0, "grid_style", Canvas, GridStyle, Kind::Choice(&[Text::GridDots, Text::GridLines]), |s| s.grid_style.to_string(), |values: &BTreeMap<String,String>| values.get("grid_style").and_then(|v| v.parse().ok()).filter(|v| *v < 2).unwrap_or(0);
+    grid_size: f32 = 32., "grid_size", Canvas, GridSize, Kind::Number(4.,1000., ""), |s| s.grid_size.to_string(), |values: &BTreeMap<String,String>| values.get("grid_size").and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite() && (4.0..=1000.0).contains(v)).unwrap_or(32.);
+    snap_grid: bool = false, "snap_to_grid", Canvas, SnapToGrid, Kind::Toggle, |s| s.snap_grid.to_string(), |values: &BTreeMap<String,String>| values.get("snap_to_grid").and_then(|v| v.parse().ok()).unwrap_or(false);
+    snap_items: bool = true, "snap_to_items", Canvas, SnapToItems, Kind::Toggle, |s| s.snap_items.to_string(), |values: &BTreeMap<String,String>| values.get("snap_to_items").and_then(|v| v.parse().ok()).unwrap_or(true);
     show_minimap: bool = true, "show_minimap", Canvas, ShowMinimap, Kind::Toggle, |s| s.show_minimap.to_string(), |values: &BTreeMap<String,String>| values.get("show_minimap").and_then(|v| v.parse().ok()).unwrap_or(true);
     minimap_images: bool = true, "minimap_images", Canvas, MinimapImages, Kind::Toggle, |s| s.minimap_images.to_string(), |values: &BTreeMap<String,String>| values.get("minimap_images").and_then(|v| v.parse().ok()).unwrap_or(true);
     minimap_opacity: f32 = 100., "minimap_opacity", Canvas, MinimapOpacity, Kind::Number(0.,100., "%"), |s| s.minimap_opacity.to_string(), |values: &BTreeMap<String,String>| values.get("minimap_opacity").and_then(|v| v.parse::<f32>().ok()).filter(|v| v.is_finite() && (0.0..=100.0).contains(v)).unwrap_or(100.);
@@ -866,6 +872,17 @@ fn log_viewer(ui: &mut egui::Ui, problems_only: &mut bool) {
                     }
                 });
         });
+    if ui.button(text(Text::ReportProblem)).clicked() {
+        let report = moth_platform::crash::Report {
+            panic: None,
+            log: moth_platform::diagnostics::recent().join("\n"),
+        };
+        let url = report.issue_url(text(Text::ProblemIssueTitle), text(Text::ProblemWhat));
+        if let Err(error) = moth_platform::open_external(&url) {
+            tracing::warn!(%error, "could not open the issue page");
+            ui.ctx().copy_text(url);
+        }
+    }
     if let Ok(directory) = moth_platform::diagnostics::log_directory() {
         ui.label(
             egui::RichText::new(format!(

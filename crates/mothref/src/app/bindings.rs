@@ -88,6 +88,8 @@ actions! {
     Horizontal, Horizontal, "", Some(moth_ui::icons::Icon::ArrangeHorizontal);
     Vertical, Vertical, "", Some(moth_ui::icons::Icon::ArrangeVertical);
     Grid, Grid, "", Some(moth_ui::icons::Icon::ArrangeGrid);
+    ToggleGrid, ToggleGrid, "Cmd+Quote", None;
+    ToggleSnapGrid, ToggleSnapGrid, "Cmd+Shift+Quote", None;
     Optimal, Optimal, "", Some(moth_ui::icons::Icon::ArrangeOptimal);
     ArrangeName, ArrangeName, "", None;
     ArrangeTime, ArrangeTime, "", None;
