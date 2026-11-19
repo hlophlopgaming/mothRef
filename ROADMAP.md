@@ -37,7 +37,7 @@ Every milestone and every pull request is judged against these, in this order:
 
 ## Where we are
 
-Latest release: **0.1.0-alpha.26** (2026-11-17). Pre-alpha builds for Windows, macOS and Linux are attached to every tagged release on GitHub Releases.
+Latest release: **0.3.0-alpha.1** (2026-11-19), the first public alpha. Builds for Windows, macOS and Linux are attached to every tagged release on GitHub Releases.
 
 | Milestone | State | What is left |
 | --- | --- | --- |
@@ -60,7 +60,7 @@ Latest release: **0.1.0-alpha.26** (2026-11-17). Pre-alpha builds for Windows, m
 | Release | Ships when these are done | Promise | State |
 | --- | --- | --- | --- |
 | 0.1 pre-alpha | M0, M1 | Does not lose data | shipping as 0.1.0-alpha.N |
-| 0.3 public alpha | M2, M2.5, M2.6 | Replaces BeeRef, opens `.bee` and `.pur`, zooms faster than PureRef | reached 2026-11-19 |
+| 0.3 public alpha | M2, M2.5, M2.6 | Replaces BeeRef, opens `.bee` and `.pur`, zooms faster than PureRef | shipping as 0.3.0-alpha.N since 2026-11-19 |
 | **0.7 beta** | M3, M4 | Feature parity with PureRef 2 | **next** |
 | 1.0 | M5, M6, M7 | All P0 and P1 features, all performance targets | |
 | 1.5 | M10 items tagged 1.5, M12, M14 | Ruler with calibration, Obsidian interop, capture integrations | |
