@@ -47,6 +47,9 @@ pub(super) fn canvas(ui: &mut egui::Ui, mut c: Canvas<'_>) -> Vec<Intent> {
             let (hover_id, fade, hot) = hover(ui, &c, &view);
             layout(ui, &c, &mut view, &mut actions, &mut intents);
             let returning = items(ui, &c, &view, hover_id, fade, hot, &mut intents);
+            if c.moving.is_some() {
+                guides(ui, &view.camera, &c.tools.guides);
+            }
             if !c.overlay {
                 selection(ui, &c, &view, &returning, hot, &mut intents);
                 input(ui, &mut c, &view, &mut intents);
@@ -912,6 +915,72 @@ fn draw_gamut(ui: &egui::Ui, camera: &Camera, item: &Item, scene: &moth_scene::S
             );
         }
     }
+}
+
+/// The lines a dragged selection snapped to, in the accent color, with a small cross
+/// at each end.
+fn guides(ui: &egui::Ui, camera: &Camera, guides: &[super::snap::Guide]) {
+    let color = moth_ui::tokens(ui.ctx()).accent;
+    let stroke = egui::Stroke::new(1., color);
+    for [a, b] in guides {
+        let [a, b] = [a, b].map(|p| {
+            let s = camera.screen(*p);
+            egui::pos2(s[0], s[1])
+        });
+        ui.painter().line_segment([a, b], stroke);
+        for end in [a, b] {
+            let d = 3.;
+            ui.painter()
+                .line_segment([end + egui::vec2(-d, -d), end + egui::vec2(d, d)], stroke);
+            ui.painter()
+                .line_segment([end + egui::vec2(-d, d), end + egui::vec2(d, -d)], stroke);
+        }
+    }
+}
+
+/// Smallest distance between grid marks on screen, in points; a finer grid steps up
+/// to every [`GRID_MAJOR`]-th line so it never turns into a gray haze.
+const GRID_MIN_SCREEN: f32 = 12.;
+/// Every this many grid lines one is drawn stronger.
+pub(super) const GRID_MAJOR: u32 = 4;
+/// The board grid at the current zoom, in logical points, or `None` when hidden.
+pub(super) fn board_grid(
+    settings: &super::settings::Settings,
+    camera: Camera,
+    ink: egui::Color32,
+) -> Option<moth_render::Grid> {
+    let mut world = grid_spacing(settings.grid_size, camera.zoom);
+    if !world.is_finite() || world <= 0. {
+        return None;
+    }
+    world = world.max(f32::MIN_POSITIVE);
+    let lines = settings.grid_style == 1;
+    let [r, g, b, _] = ink.to_array();
+    Some(moth_render::Grid {
+        offset: camera.screen([0., 0.]),
+        spacing: world * camera.zoom,
+        lines,
+        color: [
+            f32::from(r) / 255.,
+            f32::from(g) / 255.,
+            f32::from(b) / 255.,
+            if lines { 0.16 } else { 0.32 },
+        ],
+        major: GRID_MAJOR,
+        minor: if lines { 0.45 } else { 0.6 },
+        size: if lines { 0.5 } else { 1.2 },
+    })
+}
+/// The world spacing actually drawn: the grid size, or a multiple of it by powers of
+/// [`GRID_MAJOR`] when zoomed out so far that marks would crowd.
+pub(super) fn grid_spacing(size: f32, zoom: f32) -> f32 {
+    let mut world = size;
+    let mut steps = 0;
+    while world * zoom < GRID_MIN_SCREEN && steps < 12 {
+        world *= GRID_MAJOR as f32;
+        steps += 1;
+    }
+    world
 }
 
 /// Where the line from `rect`'s center towards `toward` leaves the rectangle.

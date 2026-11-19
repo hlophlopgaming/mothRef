@@ -93,6 +93,8 @@ pub(super) const VIEW: &[Slot] = &[
     A(Focus),
     A(Lock),
     A(Grayscale),
+    A(ToggleGrid),
+    A(ToggleSnapGrid),
     A(Overlay),
     G(Text::WindowSettings, WINDOW_MODES),
     A(Shortcuts),
@@ -535,6 +537,8 @@ pub(super) fn menu_bar(
         A(Layers),
         A(Lock),
         A(Grayscale),
+        A(ToggleGrid),
+        A(ToggleSnapGrid),
         A(DrawingSession),
     ];
     const MENU_IMAGE: &[Slot] = &[

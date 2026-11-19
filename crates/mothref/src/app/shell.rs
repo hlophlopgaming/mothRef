@@ -11,8 +11,8 @@ use moth_scene::{Camera, Item};
 /// The canvas draw parameters that do not depend on the per-frame surface view.
 #[derive(Clone, Copy)]
 pub(super) struct Frame {
-    /// Draw the decorative grid when a board is visible.
-    pub grid: bool,
+    /// The board grid behind images, when shown, in logical points.
+    pub grid: Option<moth_render::Grid>,
     /// Global viewing opacity (overlay mode).
     pub opacity: f32,
     /// Apply whole-window opacity to every UI mesh, including floating areas.
@@ -265,7 +265,13 @@ impl Shell {
             &gpu.device,
             &gpu.queue,
             moth_render::Target {
-                grid: frame.grid,
+                // The frame carries the grid in logical points; the GPU wants pixels.
+                grid: frame.grid.map(|grid| moth_render::Grid {
+                    offset: grid.offset.map(|v| v * scale),
+                    spacing: grid.spacing * scale,
+                    size: grid.size * scale,
+                    ..grid
+                }),
                 opacity: frame.opacity,
                 view: &view,
                 screen: [size.width as f32 / scale, size.height as f32 / scale],
@@ -284,7 +290,7 @@ impl Shell {
                 &gpu.device,
                 &gpu.queue,
                 moth_render::Target {
-                    grid: false,
+                    grid: None,
                     opacity: 1.,
                     view: &view,
                     screen: [size.width as f32 / scale, size.height as f32 / scale],

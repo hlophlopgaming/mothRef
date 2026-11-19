@@ -204,8 +204,49 @@ pub struct Target<'a> {
     pub clear: wgpu::Color,
     /// Global viewing opacity is transient and never changes board content.
     pub opacity: f32,
-    /// The desktop board can opt into the decorative canvas grid.
-    pub grid: bool,
+    /// The board grid drawn behind images, if shown.
+    pub grid: Option<Grid>,
+}
+/// A board grid in physical pixels, computed from the camera by the caller.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Grid {
+    /// Where a grid line (or dot) crosses the screen, in physical pixels.
+    pub offset: [f32; 2],
+    /// Distance between neighbouring lines or dots, in physical pixels.
+    pub spacing: f32,
+    /// Lines instead of dots.
+    pub lines: bool,
+    /// Straight-alpha sRGB color of the strongest marks.
+    pub color: [f32; 4],
+    /// Every `major`-th mark is drawn at full strength.
+    pub major: u32,
+    /// Strength of the other marks, 0–1.
+    pub minor: f32,
+    /// Dot radius or half the line width, in physical pixels.
+    pub size: f32,
+}
+impl Grid {
+    fn bytes(&self) -> [u8; 48] {
+        let values = [
+            self.offset[0],
+            self.offset[1],
+            self.spacing.max(1.),
+            if self.lines { 1. } else { 0. },
+            self.color[0],
+            self.color[1],
+            self.color[2],
+            self.color[3],
+            self.major.max(1) as f32,
+            self.size,
+            self.minor,
+            0.,
+        ];
+        let mut bytes = [0u8; 48];
+        for (chunk, value) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(values) {
+            *chunk = value.to_le_bytes();
+        }
+        bytes
+    }
 }
 /// A viewing effect must fail before exceeding its explicit texture budget.
 #[derive(Debug, thiserror::Error)]
@@ -247,6 +288,8 @@ pub struct Registry {
     pipeline: wgpu::RenderPipeline,
     backdrop: wgpu::RenderPipeline,
     grid: wgpu::RenderPipeline,
+    grid_uniform: wgpu::Buffer,
+    grid_bind: wgpu::BindGroup,
     opacity: opacity::Pass,
     layout: wgpu::BindGroupLayout,
     instances: wgpu::Buffer,
@@ -352,7 +395,7 @@ impl Registry {
                 entry_point: Some("fs"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: None,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions {
@@ -365,6 +408,20 @@ impl Registry {
             multisample: Default::default(),
             multiview_mask: None,
             cache: None,
+        });
+        let grid_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("board grid"),
+            size: 48,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let grid_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("board grid"),
+            layout: &grid.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: grid_uniform.as_entire_binding(),
+            }],
         });
         let instances = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("bounded instances"),
@@ -395,6 +452,8 @@ impl Registry {
             pipeline,
             backdrop,
             grid,
+            grid_uniform,
+            grid_bind,
             opacity: opacity::Pass::new(device, format),
             layout,
             instances,
@@ -1095,7 +1154,7 @@ impl Registry {
         let mut instances = Vec::with_capacity(items.len().min(MAX_INSTANCES));
         let mut classes = Vec::with_capacity(items.len().min(MAX_INSTANCES));
         let target = Target {
-            grid: false,
+            grid: None,
             ..target
         };
         let mut first = false;
@@ -1120,6 +1179,9 @@ impl Registry {
         camera: Camera,
     ) {
         let _span = tracing::info_span!("canvas_draw", visible = items.len()).entered();
+        if let Some(grid) = target.grid {
+            queue.write_buffer(&self.grid_uniform, 0, &grid.bytes());
+        }
         self.clock += 1;
         let scale = target.view.texture().width() as f32 / target.screen[0];
         let mut demand = std::collections::HashMap::<BlobId, u32>::new();
@@ -1407,8 +1469,9 @@ impl Registry {
                 if let Some([x, y, width, height]) = target.clip {
                     pass.set_scissor_rect(x, y, width, height);
                 }
-                if *first && target.grid {
+                if *first && target.grid.is_some() {
                     pass.set_pipeline(&self.grid);
+                    pass.set_bind_group(0, &self.grid_bind, &[]);
                     pass.draw(0..3, 0..1);
                 }
                 pass.set_pipeline(&self.pipeline);

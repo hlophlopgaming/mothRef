@@ -334,7 +334,7 @@ Open:
 - [ ] Emoji stamp: drop emoji reactions (like, not done, …) from a base set, with a custom emoji picker
 - [ ] Rich text notes with links and checklists; configurable heading font size (BeeRef #130)
 - [ ] Animated GIFs with frame stepping: the player sits on the image (scrubber, play/pause, frame counter, speed) and steps 1, 2, 3 or 4 frames at a time
-- [ ] Line/dot grid with snapping; automatic alignment guides and edge/center snapping (BeeRef #129). Images snap by their displayed bounds; make grid visibility and snapping independently toggleable, with a temporary bypass while dragging
+- [x] Line/dot grid with snapping; automatic alignment guides and edge/center snapping (BeeRef #129) — View › Show grid (Ctrl/⌘+') draws dots or lines behind images at a set board spacing, every fourth mark stronger and coarser when zoomed out; View › Snap to grid (Ctrl/⌘+Shift+') and Settings › Canvas › Snap to other items line up a dragged selection's edges and centers, with guides; holding Ctrl/⌘ while dragging places freely. Snapping while resizing remains open
 - [ ] Slideshow (incl. random order), embedded ICC profiles
 - [ ] All parity- and Milanote-checklist items tagged M4 (presentation mode, note formatting and markdown shortcuts, sketch card, drawing shortcuts, GIF frame tools, drawing details, locked groups, hierarchy tools, note parenting and links)
 

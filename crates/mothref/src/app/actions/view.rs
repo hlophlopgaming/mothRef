@@ -77,6 +77,14 @@ impl App {
                 self.workspace.board.grayscale = !self.workspace.board.grayscale;
                 return None;
             }
+            ToggleGrid => {
+                self.settings.show_grid = !self.settings.show_grid;
+                Intent::PreferencesDirty
+            }
+            ToggleSnapGrid => {
+                self.settings.snap_grid = !self.settings.snap_grid;
+                Intent::PreferencesDirty
+            }
             _ => return None,
         };
         Some(intent)

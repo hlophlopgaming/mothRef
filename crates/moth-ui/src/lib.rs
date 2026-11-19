@@ -385,6 +385,26 @@ pub enum Text {
     GamutRefresh,
     /// Badge on a gamut card whose image now shows other pixels.
     GamutStale,
+    /// Board grid: ToggleGrid.
+    ToggleGrid,
+    /// Board grid: ToggleSnapGrid.
+    ToggleSnapGrid,
+    /// Board grid: ShowGrid.
+    ShowGrid,
+    /// Board grid: GridStyle.
+    GridStyle,
+    /// Board grid: GridDots.
+    GridDots,
+    /// Board grid: GridLines.
+    GridLines,
+    /// Board grid: GridSize.
+    GridSize,
+    /// Board grid: SnapToGrid.
+    SnapToGrid,
+    /// Board grid: SnapToItems.
+    SnapToItems,
+    /// Board grid: SnapHint.
+    SnapHint,
     /// Library order: by the board file's last change.
     LastEdited,
     /// Library order: by number of items.

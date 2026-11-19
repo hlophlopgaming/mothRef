@@ -493,5 +493,11 @@
   },
   "GamutRefresh": {
     "operation": "gamut"
+  },
+  "ToggleGrid": {
+    "gui_only": "View preference for the desktop canvas; boards do not store it."
+  },
+  "ToggleSnapGrid": {
+    "gui_only": "Changes how pointer drags snap; the CLI places items at exact coordinates."
   }
 }

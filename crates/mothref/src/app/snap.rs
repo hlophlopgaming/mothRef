@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Rotation quantization using arithmetic rounding.
+//! Rotation quantization, and snapping moved items to the grid and to other items.
+use moth_scene::Rect;
 
 /// Round to the nearest step in radians; halfway values round away from zero.
 /// Invalid inputs or an unrepresentable result leave the angle unchanged.
@@ -12,10 +13,145 @@ pub fn snap_angle(angle: f32, step: f32) -> f32 {
     if snapped.is_finite() { snapped } else { angle }
 }
 
+/// A line drawn while snapping shows what the moved items lined up with: world
+/// endpoints of a vertical or horizontal segment.
+pub type Guide = [[f32; 2]; 2];
+
+/// How a move of `bounds` by `delta` lines up: the delta adjusted so an edge or the
+/// center of `bounds` lands on the nearest edge or center of a `target`, or on a grid
+/// line, when one is within `threshold` (world units) on that axis; plus guides for
+/// the item alignments. Each axis snaps on its own; items win ties with the grid.
+pub fn moving(
+    bounds: Rect,
+    delta: [f32; 2],
+    targets: &[Rect],
+    grid: Option<f32>,
+    threshold: f32,
+) -> ([f32; 2], Vec<Guide>) {
+    let mut out = delta;
+    let mut guides = Vec::new();
+    for axis in 0..2 {
+        let (start, size) = if axis == 0 {
+            (bounds.x, bounds.width)
+        } else {
+            (bounds.y, bounds.height)
+        };
+        let moved = start + delta[axis];
+        let marks = [moved, moved + size / 2., moved + size];
+        // (distance, adjustment, from an item)
+        let mut best: Option<(f32, f32, bool)> = None;
+        let mut consider = |adjust: f32, item: bool| {
+            let distance = adjust.abs();
+            if distance <= threshold
+                && best.is_none_or(|(d, _, was_item)| {
+                    distance < d - 1e-4 || (distance <= d + 1e-4 && item && !was_item)
+                })
+            {
+                best = Some((distance, adjust, item));
+            }
+        };
+        for target in targets {
+            let (t, ts) = if axis == 0 {
+                (target.x, target.width)
+            } else {
+                (target.y, target.height)
+            };
+            for line in [t, t + ts / 2., t + ts] {
+                for mark in marks {
+                    consider(line - mark, true);
+                }
+            }
+        }
+        if let Some(size) = grid.filter(|size| size.is_finite() && *size > 0.) {
+            for mark in [marks[0], marks[2]] {
+                consider((mark / size).round() * size - mark, false);
+            }
+        }
+        let Some((_, adjust, item)) = best else {
+            continue;
+        };
+        out[axis] = delta[axis] + adjust;
+        if !item {
+            continue;
+        }
+        // Guides along every target line the snapped marks now touch.
+        let snapped = [marks[0] + adjust, marks[1] + adjust, marks[2] + adjust];
+        let moved_span = if axis == 0 {
+            (bounds.y + out[1], bounds.y + out[1] + bounds.height)
+        } else {
+            (bounds.x + out[0], bounds.x + out[0] + bounds.width)
+        };
+        for line in snapped {
+            let mut span: Option<(f32, f32)> = None;
+            for target in targets {
+                let (t, ts, o, os) = if axis == 0 {
+                    (target.x, target.width, target.y, target.height)
+                } else {
+                    (target.y, target.height, target.x, target.width)
+                };
+                if [t, t + ts / 2., t + ts]
+                    .iter()
+                    .any(|v| (v - line).abs() <= 1e-3 * (1. + line.abs()))
+                {
+                    let (a, b) = span.unwrap_or(moved_span);
+                    span = Some((a.min(o).min(moved_span.0), b.max(o + os).max(moved_span.1)));
+                }
+            }
+            if let Some((a, b)) = span {
+                guides.push(if axis == 0 {
+                    [[line, a], [line, b]]
+                } else {
+                    [[a, line], [b, line]]
+                });
+            }
+        }
+    }
+    (out, guides)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn rect(x: f32, y: f32, width: f32, height: f32) -> Rect {
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+    #[test]
+    fn moves_snap_edges_and_centers_to_items_and_the_grid() {
+        let wide = rect(0., 0., 40., 10.);
+        let moving_rect = rect(0., 0., 10., 10.);
+        let target = rect(100., 50., 20., 30.);
+        // Left edge 3 units from the target's right edge (120): snaps, with a guide.
+        let (delta, guides) = moving(wide, [117., 0.], &[target], None, 4.);
+        assert_eq!(delta, [120., 0.]);
+        assert_eq!(guides, vec![[[120., 0.], [120., 80.]]]);
+        // Too far: nothing changes.
+        let (delta, guides) = moving(moving_rect, [140., 200.], &[target], None, 4.);
+        assert_eq!(delta, [140., 200.]);
+        assert!(guides.is_empty());
+        // Centers align: 5 + dy lands on 65, the target's center.
+        let (delta, _) = moving(moving_rect, [300., 61.], &[target], None, 4.);
+        assert_eq!(delta[1], 60.);
+        // Grid: the nearest line for either edge, no guides.
+        let (delta, guides) = moving(moving_rect, [33., 47.], &[], Some(16.), 4.);
+        assert_eq!(delta, [32., 48.]);
+        assert!(guides.is_empty());
+        // An item at the same distance as a grid line wins.
+        let (delta, guides) = moving(
+            moving_rect,
+            [1., 500.],
+            &[rect(-2., 0., 4., 4.)],
+            Some(10.),
+            3.,
+        );
+        assert_eq!(delta[0], 0.);
+        assert!(!guides.is_empty());
+    }
     #[test]
     fn rounds_both_directions_and_half_steps_away_from_zero() {
         for (angle, expected) in [

@@ -125,7 +125,7 @@ impl Harness {
                 &self.queue,
                 crate::Target {
                     opacity: 1.,
-                    grid: false,
+                    grid: None,
                     view: &view,
                     screen: [1000., 1000.],
                     clip: None,
@@ -405,7 +405,7 @@ pub async fn golden_transform(software: bool) -> Result<(), String> {
                 &queue,
                 crate::Target {
                     opacity: 1.,
-                    grid: false,
+                    grid: None,
                     view: &view,
                     screen: [64., 64.],
                     clip: None,
@@ -555,7 +555,15 @@ async fn golden_view(
                 &queue,
                 crate::Target {
                     opacity,
-                    grid,
+                    grid: grid.then_some(crate::Grid {
+                        offset: [0., 0.],
+                        spacing: 40.,
+                        lines: false,
+                        color: [1., 1., 1., 1.],
+                        major: 1,
+                        minor: 1.,
+                        size: 1.,
+                    }),
                     view: &view,
                     screen: [64., 64.],
                     clip: None,
@@ -580,12 +588,15 @@ async fn golden_view(
                 } else if world_x < 32 && world_y < 32 {
                     [120., 90., 60., 255.]
                 } else if grid {
-                    let distance = (((x as f32 + 0.5) % 40. - 20.).powi(2)
-                        + ((y as f32 + 0.5) % 40. - 20.).powi(2))
-                    .sqrt();
-                    let t = ((distance - 0.5) / 0.5).clamp(0., 1.);
+                    // White dots of radius 1 at every 40 px, blended over the clear color.
+                    let edge = |v: f32| {
+                        let q = (v + 0.5) % 40.;
+                        q.min(40. - q)
+                    };
+                    let distance = edge(x as f32).hypot(edge(y as f32));
+                    let t = ((distance - 0.5) / 1.).clamp(0., 1.);
                     let dot = 1. - t * t * (3. - 2. * t);
-                    [17. + 26. * dot, 19. + 27. * dot, 23. + 29. * dot, 255.]
+                    [255. * dot, 255. * dot, 255. * dot, 255. * dot]
                 } else {
                     [0.; 4]
                 };
@@ -661,7 +672,7 @@ pub async fn golden_bc7(software: bool) -> Result<(), String> {
             &queue,
             crate::Target {
                 opacity: 1.,
-                grid: false,
+                grid: None,
                 view: &view,
                 screen: [64., 64.],
                 clip: None,
@@ -838,7 +849,7 @@ mod tests {
                 screen: [256.; 2],
                 clip: None,
                 clear: wgpu::Color::TRANSPARENT,
-                grid: false,
+                grid: None,
                 opacity: 1.,
             };
             registry.tile_detail = false;
@@ -939,7 +950,7 @@ mod tests {
                     screen: [256., 256.],
                     clip: None,
                     clear: wgpu::Color::TRANSPARENT,
-                    grid: false,
+                    grid: None,
                     opacity: 1.,
                 };
                 for flip in [false, true] {
@@ -1035,7 +1046,7 @@ mod tests {
                     screen: [64., 64.],
                     clip: None,
                     clear: wgpu::Color::BLACK,
-                    grid: false,
+                    grid: None,
                     opacity: 1.,
                 };
                 registry.set_detail_lod(image.hash, 5.);
@@ -1153,7 +1164,7 @@ mod tests {
                                 screen: [64., 16.],
                                 clip: None,
                                 clear: wgpu::Color::BLACK,
-                                grid: false,
+                                grid: None,
                                 opacity: 1.,
                             },
                             &[&sharp, &smooth],
@@ -1241,7 +1252,7 @@ mod tests {
                             screen: [32., 32.],
                             clip: None,
                             clear: wgpu::Color::BLACK,
-                            grid: false,
+                            grid: None,
                             opacity: 1.,
                         },
                         &[&item],
@@ -1350,7 +1361,7 @@ mod tests {
                         &queue,
                         crate::Target {
                             opacity: 1.,
-                            grid: false,
+                            grid: None,
                             view: &view,
                             screen: [32., 16.],
                             clip: None,
@@ -1416,7 +1427,7 @@ mod tests {
                         &queue,
                         crate::Target {
                             opacity: 1.,
-                            grid: false,
+                            grid: None,
                             view: &view,
                             screen: [64., 64.],
                             clip: None,

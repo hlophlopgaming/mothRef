@@ -48,7 +48,7 @@ pub(super) fn area(action: Action) -> Area {
         | Minimize | Maximize => Area::Window,
         Select | Deselect | SelectAll | Fit | Focus | Previous | Next | ZoomIn | ZoomOut
         | ZoomReset | PanLeft | PanRight | PanUp | PanDown | ResetCamera | ToggleView | Lock
-        | Grayscale | Layers => Area::View,
+        | Grayscale | Layers | ToggleGrid | ToggleSnapGrid => Area::View,
         Paste | Undo | Redo | Note | EditNote | Delete | Duplicate | RotateCw | RotateCcw
         | FlipHorizontal | FlipVertical | ResetTransform | ResetCrop | NudgeLeft | NudgeRight
         | NudgeUp | NudgeDown | NudgeLeftFast | NudgeRightFast | NudgeUpFast | NudgeDownFast
@@ -106,7 +106,7 @@ pub(super) fn gate(action: Action) -> Gate {
         | Grayscale | Save | ExportScene | ExportSelection | ExportOriginal | ExportOriginals
         | ExportZip | CopyImage | OpenOriginal | OpenSource | ColorGamut | Export | SampleColor
         | PickScreen | CoordinatePicker | SamplingDefault | SamplingSmooth | SamplingNearest
-        | SamplingAutomatic | EditNote => Gate::Board,
+        | SamplingAutomatic | EditNote | ToggleGrid | ToggleSnapGrid => Gate::Board,
         Paste | Undo | Redo | Note | Delete | Duplicate | RotateCw | RotateCcw | FlipHorizontal
         | FlipVertical | ResetTransform | ResetCrop | NudgeLeft | NudgeRight | NudgeUp
         | NudgeDown | NudgeLeftFast | NudgeRightFast | NudgeUpFast | NudgeDownFast | BringFront

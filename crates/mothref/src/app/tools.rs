@@ -19,6 +19,8 @@ pub(super) struct Tools {
     pub export: ExportForm,
     pub pickers: Pickers,
     pub gamut: GamutPanel,
+    /// Alignment guides of the move being dragged, in world coordinates.
+    pub guides: Vec<super::snap::Guide>,
     /// Open original: the short notice shown while the system viewer starts.
     pub viewer: Option<ViewerNotice>,
 }
