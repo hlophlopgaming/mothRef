@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The moth icon has a thicker, darker outline (`#a97c4c`, nearly three times as wide), so it no longer blends into the light default theme and stays readable at small sizes: window, titlebar, Windows executable, macOS app and Linux launcher.
+
 ## 0.3.0-alpha.1 — 2026-11-19
 
 First public alpha (0.3): BeeRef parity, PureRef import and the zoom and memory modes are done. Boards are saved as schema 9; earlier MothRef versions cannot open them.

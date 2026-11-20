@@ -10,5 +10,5 @@ Regenerate them with `rsvg-convert -w N -h N <file>.svg -o <file>-N.png`.
 
 The engraved icon uses "Moth 5" by Firkin from Openclipart (public domain); see `THIRD_PARTY.md`.
 
-Palette: tile `#d68a55` (engraved icon); main icon body `#ffffff`, outline `#d6b58b`,
+Palette: tile `#d68a55` (engraved icon); main icon body `#ffffff`, outline `#a97c4c` (34 units wide, so it reads on light themes and at small sizes),
 antennae `#e8cfae` / `#c99f74` with shafts `#a8764b`, eyes `#3a2619`.
