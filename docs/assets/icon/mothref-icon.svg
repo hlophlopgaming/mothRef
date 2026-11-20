@@ -201,7 +201,7 @@
        id="path21" />
     <g
        id="body-outline"
-       fill="none" stroke="#d6b58b" stroke-width="12" stroke-linejoin="round">
+       fill="none" stroke="#a97c4c" stroke-width="34" stroke-linejoin="round">
       <path d="M300 320 C240 400 196 510 198 610 C200 680 236 714 300 716 L520 716 C568 714 586 680 584 620 C582 530 540 420 460 318 Z" />
       <circle cx="380" cy="262" r="104" />
     </g>
