@@ -61,6 +61,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
+      - name: Check fuzz dependencies
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: fuzz/Cargo.toml
+          arguments: --all-features --locked --config ./deny.toml
   android-core:
     # Pinned: the Android SDK installer broke when ubuntu-latest moved to Ubuntu 26.
     runs-on: ubuntu-24.04

@@ -18,6 +18,11 @@ allow = ["IJG"]
 name = "mozjpeg-sys"
 allow = ["IJG"]
 
+[[licenses.exceptions]]
+# The fuzz workspace links the NCSA-licensed LLVM libFuzzer runtime.
+name = "libfuzzer-sys"
+allow = ["NCSA"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

@@ -12,8 +12,9 @@ the software itself is still an experimental early preview.
 
 To prepare the next version:
 
-1. Update the workspace package and path-dependency versions in `Cargo.toml`, and
-   refresh `Cargo.lock` with `cargo check --workspace`.
+1. Update the workspace package and path-dependency versions in `Cargo.toml` and
+   `fuzz/Cargo.toml`. Refresh `Cargo.lock` with `cargo check --workspace` and
+   `fuzz/Cargo.lock` with `cargo metadata --manifest-path fuzz/Cargo.toml --format-version 1`.
 2. Add `docs/releases/vVERSION.md` with downloads, changes and known limitations;
    update `CHANGELOG.md`. Do not claim unfinished roadmap gates are complete.
 3. Run the checks in `AGENTS.md`, commit the release and push it to `main`.
