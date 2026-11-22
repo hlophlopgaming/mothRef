@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Update AVIF decoding to `avif-decode` 3 with `rav1d`. Source builds on x86 now require NASM.
+
 - Update the desktop UI, renderer, and other Rust dependencies. Update Trash integration to use `jiff` and remove the `chrono` advisory exception.
 
 - Release the recovery lock when a board closes, including when a child process temporarily inherited its file descriptor.

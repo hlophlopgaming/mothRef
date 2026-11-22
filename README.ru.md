@@ -162,7 +162,7 @@
 
 ## Сборка из исходников
 
-Нужен [Rust](https://rustup.rs) версии 1.98 или новее и CMake, компилятор C/C++ и Yasm либо NASM 2.16.x для сборок x86/x86_64 ([скачать NASM 2.16.03](https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/)). В Linux также установите заголовки X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` и `libwayland-dev` в Debian/Ubuntu).
+Нужны [Rust](https://rustup.rs) версии 1.98 или новее, CMake, компилятор C/C++ и NASM для сборок x86/x86_64. В Linux также установите заголовки X11/Wayland (`libxkbcommon-dev`, `libdbus-1-dev` и `libwayland-dev` в Debian/Ubuntu).
 
 ```sh
 git clone https://github.com/hlophlopgaming/mothRef.git
@@ -173,10 +173,9 @@ cargo run -p mothref --release
 В Arch/EndeavourOS зависимости сборки устанавливаются одной командой:
 
 ```sh
-sudo pacman -S --needed base-devel rust cmake yasm libxkbcommon libxkbcommon-x11 libx11 libxcursor libxi libxrandr wayland dbus
+sudo pacman -S --needed base-devel rust cmake nasm libxkbcommon libxkbcommon-x11 libx11 libxcursor libxi libxrandr wayland dbus
 ```
 
-Используйте Yasm: проверка в libaom 3.11 несовместима с NASM 3.
 Релизный пайплайн также формирует рецепт сборки Arch и пакет для pacman;
 см. [форматы и установку](docs/RELEASING.md#downloads-and-installation).
 

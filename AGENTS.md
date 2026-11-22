@@ -38,6 +38,7 @@ crates/
   moth-web/         wasm32 entry point (M8)
   moth-thumb/       binary: thumbnails for file managers
 third_party/purcore/ local, attributed purcore safety fork (maintainer-authorized; decision 0007)
+third_party/rav1d/ upstream rav1d 1.1.0 with a local manifest patch for pastey
 skills/            shipped agent instructions for the CLI
 extension/          browser extension (TypeScript, Manifest V3, Firefox + Chromium)
 xtask/              build helpers: bench, corpus, packaging
@@ -218,7 +219,7 @@ Targets are in `ROADMAP.md`. Rules for agents:
 - MothRef is **GPL-3.0-or-later**. Every new dependency must be GPLv3-compatible (MIT, Apache-2.0, BSD, Zlib, ISC, MPL-2.0, LGPL, GPLv3). `cargo deny check` enforces this. Never add a dependency that is proprietary, GPLv2-only, or has no license.
 - New source files start with `// SPDX-License-Identifier: GPL-3.0-or-later`.
 - **Porting code** from another project (for example BeeRef, GPLv3; PureRef-format, MIT; LazyRef, MIT): keep the original copyright notice, note the source and commit in the file header, and add the project to `THIRD_PARTY.md`.
-- **`purcore` (LazyRef):** the maintainer authorized a local safety fork for PureRef import on 2026-10-18. Keep its source revision and attribution in `third_party/purcore/README.md`; see `docs/decisions/0007-local-purcore-import.md`. Other vendoring/forks still need explicit authorization.
+- **Authorized local forks:** `purcore` for PureRef import ([decision 0007](docs/decisions/0007-local-purcore-import.md)) and `rav1d` for AVIF decoding ([provenance](third_party/rav1d/MOTHREF.md)). Keep source revisions and attribution current. Ask before introducing another fork or vendored dependency.
 - **Clean-room rule for PureRef:** learn the `.pur` format only from files, `purcore` and PureRef-format. Never disassemble, decompile or inspect PureRef binaries, and never paste code or text from them. Generate test files with PureRef's normal UI only.
 - "PureRef", "BeeRef" and "Milanote" are mentioned only to describe compatibility. Do not use their logos, icons or UI assets.
 

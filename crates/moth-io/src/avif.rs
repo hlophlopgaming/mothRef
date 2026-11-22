@@ -241,7 +241,7 @@ pub(super) fn frame(bytes: &[u8]) -> Result<Arc<image::RgbaImage>, DecodeError> 
     }
 }
 
-// shortcut: browser AVIF needs the Worker codec in M8, as native libaom uses C.
+// shortcut: browser AVIF stays with the Worker codec planned for M8.
 #[cfg(target_arch = "wasm32")]
 pub(super) fn frame(_bytes: &[u8]) -> Result<Arc<image::RgbaImage>, DecodeError> {
     Err(DecodeError::Budget)

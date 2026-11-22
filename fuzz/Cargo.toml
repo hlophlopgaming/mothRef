@@ -39,6 +39,9 @@ bench = false
 [workspace]
 members = ["."]
 
+[patch.crates-io]
+rav1d = { path = "../third_party/rav1d" }
+
 [[bin]]
 name = "pur_reader"
 path = "fuzz_targets/pur_reader.rs"

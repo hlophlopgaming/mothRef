@@ -55,8 +55,7 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libdbus-1-dev cmake libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2 rpm desktop-file-utils
       - if: runner.os == 'Linux' && runner.arch == 'X64'
-        run: sudo apt-get install -y yasm
-      # Linux uses the distro's Yasm; libaom 3.11 rejects NASM 3 help output.
+        run: sudo apt-get install -y nasm
       - uses: ilammy/setup-nasm@v1
         if: runner.os != 'Linux'
         with:
@@ -141,7 +140,7 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install build tools
-        run: pacman -Syu --noconfirm git rust cmake yasm libxkbcommon libxkbcommon-x11 libx11 libxcursor libxi libxrandr wayland dbus sudo
+        run: pacman -Syu --noconfirm git rust cmake nasm libxkbcommon libxkbcommon-x11 libx11 libxcursor libxi libxrandr wayland dbus sudo
       - uses: actions/download-artifact@v4
         with:
           name: mothref-source

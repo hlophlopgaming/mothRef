@@ -62,7 +62,7 @@ sudo pacman -U ./mothref-*-x86_64.pkg.tar.zst
 
 For Arch source builds, install `base-devel`, extract `mothref-arch-build.tar.gz`
 into an empty directory, then run `makepkg -si` as a regular user. It installs
-build dependencies, including Yasm, fetches the exact source archive and checks
+build dependencies, including NASM, fetches the exact source archive and checks
 its SHA-256. Cargo dependencies are fetched during `prepare()`; `build()` uses
 `--frozen`. To build an unpublished workflow run, download its matching source
 archive into the recipe directory first. Generate `.SRCINFO` with
@@ -120,10 +120,9 @@ qualify Explorer/Finder launches or graphics-driver transitions.
 Application marks are bundled from `assets/icons/`. Windows embeds `moth.ico`
 in the executable; macOS bundles `moth.icns` for Finder, the Dock and `.moth`
 documents. Linux archives include the desktop entry, PNG icon, MIME definition
-and `DESKTOP.md` with per-user installation commands. x86 builds require Yasm or
-NASM 2.16.x. Linux uses its distro's Yasm; other workflows pin NASM 2.16.03 because
-libaom 3.11 rejects NASM 3 help output. ARM builds use the same statically built libaom codec without x86 assembly.
-CMake and a C/C++ toolchain are required to build the codec.
+and `DESKTOP.md` with per-user installation commands. x86 builds require NASM for
+`rav1d`. Linux uses its distribution's NASM. The Windows and macOS workflows pin
+NASM 2.16.03. On ARM, `avif-decode` uses the Rust implementation of `rav1d`.
 Before release, run the AVIF regression/corpus and allocation checks, and the
 image-reader fuzzer/IO benchmark under the policy in `AGENTS.md`. Manually check
 icon switching and relaunch persistence on Windows, macOS and X11; Wayland's

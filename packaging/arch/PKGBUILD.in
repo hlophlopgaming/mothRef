@@ -8,7 +8,7 @@ url='https://github.com/hlophlopgaming/mothRef'
 license=('GPL-3.0-or-later')
 depends=('gcc-libs' 'glibc' 'libxkbcommon' 'libxkbcommon-x11' 'libx11'
          'libxcursor' 'libxi' 'libxrandr' 'wayland' 'dbus')
-makedepends=('rust>=1.98' 'cmake' 'yasm')
+makedepends=('rust>=1.98' 'cmake' 'nasm')
 optdepends=('vulkan-driver: Vulkan rendering' 'libegl: OpenGL rendering'
             'xdg-desktop-portal: desktop file dialogs and screen color picker')
 source=("mothref-@VERSION@-source.tar.gz::$url/releases/download/v@VERSION@/mothref-@VERSION@-source.tar.gz")
@@ -34,6 +34,7 @@ package() {
   install -Dm644 docs/assets/icon/mothref-icon-512.png "$pkgdir/usr/share/icons/hicolor/512x512/apps/org.mothref.MothRef.png"
   install -Dm644 THIRD_PARTY.md "$pkgdir/usr/share/doc/mothref/THIRD_PARTY.md"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/mothref/LICENSE"
+  install -Dm644 third_party/rav1d/COPYING "$pkgdir/usr/share/licenses/mothref/LICENSE-rav1d.txt"
   for notice in crates/moth-ui/fonts/LICENSE-*.txt; do
     install -Dm644 "$notice" "$pkgdir/usr/share/licenses/mothref/${notice##*/}"
   done

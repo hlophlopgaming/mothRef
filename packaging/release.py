@@ -25,6 +25,7 @@ def notices(destination):
     for source in [Path("LICENSE"), Path("THIRD_PARTY.md"),
                    *Path("crates/moth-ui/fonts").glob("LICENSE-*.txt")]:
         shutil.copy2(source, destination)
+    shutil.copy2("third_party/rav1d/COPYING", destination / "LICENSE-rav1d.txt")
 
 
 def archive(path, directory):

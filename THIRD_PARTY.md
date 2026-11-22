@@ -61,7 +61,10 @@ and checked with `cargo deny check`.
 
 ## AVIF decoding
 
-- `avif-decode` (BSD-3-Clause), `avif-parse` (MPL-2.0), `aom-decode` and
-  `libaom-sys` (BSD-2-Clause), and `yuv` (BSD-3-Clause) provide statically linked
-  AVIF/AV1 decoding. Building requires CMake, a C/C++ toolchain and, on x86,
-  NASM 2.16.x; no system libdav1d is required.
+- `avif-decode` (BSD-3-Clause), `avif-parse` (MPL-2.0), `rav1d` (BSD-2-Clause),
+  and `yuv` (BSD-3-Clause) provide statically linked AVIF/AV1 decoding.
+  `third_party/rav1d` contains code from revision `782dab2135ea64a057c097088a13eb8ed3cc3320`,
+  Copyright 2018–2019 VideoLAN and dav1d authors and Copyright 2023–2024 VideoLAN,
+  dav1d authors and Internet Security Research Group. See
+  [provenance](third_party/rav1d/MOTHREF.md). Binary packages include the upstream
+  terms as `LICENSE-rav1d.txt`.
