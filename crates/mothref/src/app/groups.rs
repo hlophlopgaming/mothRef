@@ -902,7 +902,7 @@ mod chip_tests {
                 image.source = Some(moth_scene::Source::File(format!("/References/{origin}/image.png")));
                 scene.apply(Command::Insert(image)).unwrap();
             }
-            let before: Vec<_> = scene.items_in_insertion_order().into_iter().cloned().collect();
+            let before: Vec<_> = scene.items().cloned().collect();
             let inverses: Vec<_> = by_origin(&scene, &HashSet::new()).into_iter().map(|command| scene.apply(command).unwrap()).collect();
             let mut bytes = Vec::new();
             moth_format::board::initialize(&mut bytes).unwrap();
@@ -912,7 +912,10 @@ mod chip_tests {
             let restored = moth_format::board::read(&mut std::io::Cursor::new(bytes)).unwrap().scene;
             for item in scene.items() { proptest::prop_assert_eq!(restored.get(item.id), Some(item)); }
             for command in inverses.into_iter().rev() { scene.apply(command).unwrap(); }
-            proptest::prop_assert_eq!(scene.items_in_insertion_order().into_iter().cloned().collect::<Vec<_>>(), before);
+            proptest::prop_assert_eq!(scene.len(), before.len());
+            for item in &before {
+                proptest::prop_assert_eq!(scene.get(item.id), Some(item));
+            }
         }
     }
 

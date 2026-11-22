@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Update the URL parser to 2.5.9 to address RUSTSEC-2026-0592.
+
 - Add native Linux ARM64 AppImage and binary archive builds on Ubuntu 24.04 ARM runners. Both artifacts are required before release publication; ARM32 is not included.
 
 - Expand release packaging to Windows ZIP and setup wizard, Apple Silicon/Intel app archives and DMGs, Linux tarball/DEB/RPM/AppImage, and native Arch packages with a checksummed source archive and PKGBUILD. Publication requires every format; manual workflow runs produce artifacts without publishing. Native installer and desktop qualification remains pending.
