@@ -6,6 +6,7 @@ Moved from `ROADMAP.md` on 2026-10-26. Add new lines at the top of the table.
 
 | Date | Decision |
 | --- | --- |
+| 2026-11-22 | [Automatic source groups](0029-automatic-source-groups.md): derive folders from existing image sources and persist automatic group identity in schema 10 |
 | 2026-11-18 | [Color gamut cards](0028-color-gamut-cards.md): a pixel-free gamut item (coverage grid, main colors, view, order, weak image link) in schema 9; measured on the storage worker from a 128 px preview; windows, cells and shares views |
 | 2026-11-18 | [Image sources](0027-image-sources.md): schema 9 keeps each image's file, ZIP entry or URL as opaque metadata for Open source and Arrange by file path; the storage worker checks and reveals it |
 | 2026-11-17 | [Agent CLI](0026-agent-cli.md): move automation into M2; native clap subcommands and JSON-lines in the same GUI binary, shared writer locks and checked action coverage |

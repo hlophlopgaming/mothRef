@@ -16,9 +16,28 @@ pub(super) struct SavedWindow {
     /// a repeat or a new session from the summary never mistakes the mini window for
     /// the user's own size, even when the restore is still being applied.
     taken: bool,
+    mini: bool,
 }
 /// Longer side of the mini window in logical points when it opens.
 const MINI_SIDE: f64 = 360.;
+
+fn mini_size(
+    current: winit::dpi::LogicalSize<f64>,
+    aspect: f32,
+    continuing: bool,
+) -> winit::dpi::LogicalSize<f64> {
+    let aspect = f64::from(aspect).clamp(0.2, 5.);
+    let side = if continuing {
+        current.width.max(current.height)
+    } else {
+        MINI_SIDE
+    };
+    if aspect >= 1. {
+        winit::dpi::LogicalSize::new(side, side / aspect)
+    } else {
+        winit::dpi::LogicalSize::new(side * aspect, side)
+    }
+}
 
 impl App {
     /// Slides a running session or its summary draws instead of the board: copies of
@@ -156,8 +175,17 @@ impl App {
         let Some(window) = self.shell.window.clone() else {
             return;
         };
+        let continuing = self
+            .window
+            .session_window
+            .as_ref()
+            .is_some_and(|s| s.taken && s.mini);
+        self.window.restoring = None;
         match &mut self.window.session_window {
-            Some(saved) => saved.taken = true,
+            Some(saved) => {
+                saved.taken = true;
+                saved.mini = mini;
+            }
             None => {
                 self.window.session_window = Some(SavedWindow {
                     size: window.inner_size(),
@@ -166,6 +194,7 @@ impl App {
                     fullscreen: window.fullscreen().is_some(),
                     pinned: self.window.pinned,
                     taken: true,
+                    mini,
                 });
             }
         }
@@ -181,20 +210,8 @@ impl App {
         if window.is_maximized() {
             window.set_maximized(false);
         }
-        let aspect = f64::from(aspect).clamp(0.2, 5.);
-        let scale = window.scale_factor();
-        let current = window.inner_size().to_logical::<f64>(scale);
-        // Keep the user's chosen size along the longer side once the window is small.
-        let side = if current.width.max(current.height) <= MINI_SIDE * 2. {
-            current.width.max(current.height)
-        } else {
-            MINI_SIDE
-        };
-        let size = if aspect >= 1. {
-            winit::dpi::LogicalSize::new(side, side / aspect)
-        } else {
-            winit::dpi::LogicalSize::new(side * aspect, side)
-        };
+        let current = window.inner_size().to_logical::<f64>(window.scale_factor());
+        let size = mini_size(current, aspect, continuing);
         let applied = window.request_inner_size(size);
         self.resized(applied);
         if !self.window.pinned {
@@ -273,5 +290,27 @@ impl App {
             self.restore_window();
             self.window.session_window = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skipping_preserves_the_resized_mini_window_long_side() {
+        let desktop = winit::dpi::LogicalSize::new(1440., 900.);
+        assert_eq!(
+            mini_size(desktop, 2., false),
+            winit::dpi::LogicalSize::new(360., 180.)
+        );
+        let resized = winit::dpi::LogicalSize::new(1200., 600.);
+        let portrait = mini_size(resized, 0.5, true);
+        assert_eq!(portrait, winit::dpi::LogicalSize::new(600., 1200.));
+        assert_eq!(mini_size(portrait, 2., true), resized);
+        assert_eq!(
+            mini_size(portrait, 1., false),
+            winit::dpi::LogicalSize::new(360., 360.)
+        );
     }
 }

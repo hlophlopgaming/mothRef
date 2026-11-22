@@ -41,6 +41,13 @@ impl App {
             )
             .is_some(),
             Group => !self.workspace.board.selection.is_empty(),
+            GroupOrigin => self.workspace.board.scene.items().any(|item| {
+                item.blob().is_some()
+                    && item.parent.is_none()
+                    && groups::image_origin(item).is_some()
+                    && (self.workspace.board.selection.is_empty()
+                        || self.workspace.board.selection.contains(&item.id))
+            }),
             // Ungroup and the backdrop colors act on the selected groups.
             _ => !groups::selected(&self.workspace.board.scene, &self.workspace.board.selection)
                 .is_empty(),
@@ -72,6 +79,10 @@ impl App {
                 let (ids, rgb) = self.modal.group_color.take()?;
                 let color = moth_scene::Group::custom_color(rgb);
                 return Some(self.set_group_color(ids, color));
+            }
+            GroupOrigin => {
+                let board = &self.workspace.board;
+                Intent::Commands(groups::by_origin(&board.scene, &board.selection))
             }
             Group => {
                 let (id, commands) =

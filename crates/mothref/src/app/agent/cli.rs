@@ -150,7 +150,15 @@ fn execute(matches: &clap::ArgMatches) -> Result<Value> {
                 matches!(ops.last(), Some(Operation::Add { at: None, .. })),
                 "--at accepts one image; omit it to place multiple images safely"
             );
+            let group_origin = matches!(
+                ops.last(),
+                Some(Operation::Add {
+                    group_origin: true,
+                    ..
+                })
+            );
             ops.extend(files.map(|path| Operation::Add {
+                group_origin,
                 path: Some(path.clone()),
                 url: None,
                 at: None,

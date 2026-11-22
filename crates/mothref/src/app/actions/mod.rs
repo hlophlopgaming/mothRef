@@ -48,17 +48,16 @@ pub(super) fn area(action: Action) -> Area {
         | Minimize | Maximize => Area::Window,
         Select | Deselect | SelectAll | Fit | Focus | Previous | Next | ZoomIn | ZoomOut
         | ZoomReset | PanLeft | PanRight | PanUp | PanDown | ResetCamera | ToggleView | Lock
-        | Grayscale | Layers | ToggleGrid | ToggleSnapGrid => Area::View,
+        | Grayscale | Layers | ToggleGrid | ToggleSnapGrid | ToggleSnapPoints => Area::View,
         Paste | Undo | Redo | Note | EditNote | Delete | Duplicate | RotateCw | RotateCcw
         | FlipHorizontal | FlipVertical | ResetTransform | ResetCrop | NudgeLeft | NudgeRight
         | NudgeUp | NudgeDown | NudgeLeftFast | NudgeRightFast | NudgeUpFast | NudgeDownFast
         | BringFront | SendBack | BringForward | SendBackward | EditItem | ApplyItem
         | CancelItem | ResetRotation | ResetFlip | ResetScale | NormalizeScale
         | SamplingDefault | SamplingSmooth | SamplingNearest | SamplingAutomatic => Area::Edit,
-        Group | Ungroup | EnterGroup | RenameGroup | GroupNeutral | GroupSage | GroupAmber
-        | GroupSky | GroupWing | GroupLilac | GroupCustom | ApplyGroupColor | CancelGroupColor => {
-            Area::Group
-        }
+        GroupOrigin | Group | Ungroup | EnterGroup | RenameGroup | GroupNeutral | GroupSage
+        | GroupAmber | GroupSky | GroupWing | GroupLilac | GroupCustom | ApplyGroupColor
+        | CancelGroupColor => Area::Group,
         Horizontal | Vertical | Grid | Optimal | ArrangeName | ArrangeTime | ArrangePath
         | PackFit | NormalizeWidth | NormalizeHeight | NormalizeSize | NormalizeArea
         | AlignLeft | AlignRight | AlignTop | AlignBottom | Stack | DistributeHorizontal
@@ -106,13 +105,15 @@ pub(super) fn gate(action: Action) -> Gate {
         | Grayscale | Save | ExportScene | ExportSelection | ExportOriginal | ExportOriginals
         | ExportZip | CopyImage | OpenOriginal | OpenSource | ColorGamut | Export | SampleColor
         | PickScreen | CoordinatePicker | SamplingDefault | SamplingSmooth | SamplingNearest
-        | SamplingAutomatic | EditNote | ToggleGrid | ToggleSnapGrid => Gate::Board,
+        | SamplingAutomatic | EditNote | ToggleGrid | ToggleSnapGrid | ToggleSnapPoints => {
+            Gate::Board
+        }
         Paste | Undo | Redo | Note | Delete | Duplicate | RotateCw | RotateCcw | FlipHorizontal
         | FlipVertical | ResetTransform | ResetCrop | NudgeLeft | NudgeRight | NudgeUp
         | NudgeDown | NudgeLeftFast | NudgeRightFast | NudgeUpFast | NudgeDownFast | BringFront
         | SendBack | BringForward | SendBackward | EditItem | ApplyItem | CancelItem
-        | ResetRotation | ResetFlip | ResetScale | NormalizeScale | Group | Ungroup
-        | EnterGroup | RenameGroup | GroupNeutral | GroupSage | GroupAmber | GroupSky
+        | ResetRotation | ResetFlip | ResetScale | NormalizeScale | GroupOrigin | Group
+        | Ungroup | EnterGroup | RenameGroup | GroupNeutral | GroupSage | GroupAmber | GroupSky
         | GroupWing | GroupLilac | GroupCustom | ApplyGroupColor | Horizontal | Vertical | Grid
         | Optimal | ArrangeName | ArrangeTime | ArrangePath | PackFit | NormalizeWidth
         | NormalizeHeight | NormalizeSize | NormalizeArea | AlignLeft | AlignRight | AlignTop

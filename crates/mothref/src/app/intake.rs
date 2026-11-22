@@ -189,6 +189,17 @@ impl Workspace {
             if self.board.intake.burst.ids.is_empty() {
                 self.end_batch();
             } else {
+                if self.auto_group_origin {
+                    let ids = self.board.intake.burst.ids.iter().copied().collect();
+                    let commands = groups::by_origin(&self.board.scene, &ids);
+                    if !commands.is_empty() {
+                        let pending = self.board.intake.in_flight;
+                        self.persist_batch(commands.into_iter().map(|c| (c, None)).collect());
+                        if self.board.intake.in_flight != pending {
+                            return;
+                        }
+                    }
+                }
                 self.board.intake.burst.prompt =
                     Some(std::mem::take(&mut self.board.intake.burst.ids));
             }

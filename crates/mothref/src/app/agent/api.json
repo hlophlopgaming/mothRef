@@ -21,7 +21,7 @@
   },
   "add": {
     "description": "Add a local image or explicitly download an HTTP(S) image.",
-    "parameters": "path OR url, at?=[x,y]; omitted at places right of board bounds with a 24-unit gap. Explicit URLs use native bounded HTTP/TLS download. The item keeps its source (absolute path or URL) in `source`."
+    "parameters": "path OR url, at?=[x,y]; omitted at places right of board bounds with a 24-unit gap. Explicit URLs use native bounded HTTP/TLS download. group_origin?=false groups this image with its source folder. The item keeps its source (absolute path or URL) in `source`."
   },
   "note": {
     "description": "Add a text note with estimated native font bounds.",
@@ -123,5 +123,13 @@
   "preview-latest": {
     "description": "Read the latest completed native preview without rendering.",
     "parameters": "path (bundle root directory or completed bundle directory)"
+  },
+  "group-origin": {
+    "description": "Group loose images by their stored origin; preserve existing groups and images with no origin.",
+    "parameters": "ids?=[] (whole board when omitted)"
+  },
+  "snap-grid": {
+    "description": "Snap the first z-sorted selected item or group to grid points on both axes, moving selected members together.",
+    "parameters": "ids?=[] (whole board when omitted), step?=100 (1..10000)"
   }
 }

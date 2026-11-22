@@ -76,6 +76,12 @@ pub(super) struct Entry {
     get: fn(&Settings) -> String,
     set: fn(&mut Settings, &BTreeMap<String, String>),
 }
+impl Entry {
+    /// Mode-specific controls are persisted here but edited in the context menu.
+    pub fn in_settings(&self) -> bool {
+        !matches!(self.key, "snap_points" | "grid_spacing")
+    }
+}
 macro_rules! schema {
     ($($field:ident: $ty:ty = $default:expr, $key:literal, $section:ident, $label:ident, $kind:expr, $get:expr, $decode:expr;)+) => {
         #[derive(Clone)]
@@ -86,6 +92,7 @@ macro_rules! schema {
             get: $get, set: |settings, values| settings.$field = ($decode)(values),
         },)+];
     };
+    (@hint snap_points) => { Some(Text::SnapGridHint) };
     (@hint app_icon) => { Some(Text::AppIconHint) };
     (@hint menu_bar) => { Some(Text::ShowMenuBarHint) };
     (@hint snap_items) => { Some(Text::SnapHint) };
@@ -93,6 +100,9 @@ macro_rules! schema {
 }
 schema! {
     menu_bar: bool = false, "menu_bar", Appearance, ShowMenuBar, Kind::Toggle, |s| s.menu_bar.to_string(), |values: &BTreeMap<String,String>| values.get("menu_bar").and_then(|v| v.parse().ok()).unwrap_or(false);
+    snap_points: bool = false, "snap_points", Canvas, SnapGrid, Kind::Toggle, |s| s.snap_points.to_string(), |v: &BTreeMap<String,String>| v.get("snap_points").or_else(|| v.get("snap_grid")).and_then(|v|v.parse().ok()).unwrap_or(false);
+    grid_spacing: f32 = 100., "grid_spacing", Canvas, GridSpacing, Kind::Number(1.,10000., ""), |s| s.grid_spacing.to_string(), |v: &BTreeMap<String,String>| v.get("grid_spacing").and_then(|v|v.parse::<f32>().ok()).filter(|v| v.is_finite() && (1. ..=10000.).contains(v)).unwrap_or(100.);
+    auto_group_origin: bool = false, "auto_group_origin", Adding, AutoGroupOrigin, Kind::Toggle, |s| s.auto_group_origin.to_string(), |values: &BTreeMap<String,String>| values.get("auto_group_origin").and_then(|v| v.parse().ok()).unwrap_or(false);
     app_icon: u8 = 0, "app_icon", Appearance, AppIcon, Kind::Choice(&[Text::IconMoth, Text::IconPhotocraft]), |s| s.app_icon.to_string(), |values: &BTreeMap<String,String>| values.get("app_icon").and_then(|v| v.parse().ok()).filter(|v| *v < 2).unwrap_or(0);
     view_controls_right: bool = true, "view_controls_right", Window, ViewControlsRight, Kind::Toggle, |s| s.view_controls_right.to_string(), |values: &BTreeMap<String,String>| values.get("view_controls_right").and_then(|v|v.parse().ok()).unwrap_or(true);
     over_hint: bool = true, "over_hint", Window, OverHintSetting, Kind::Toggle, |s| s.over_hint.to_string(), |values: &BTreeMap<String,String>| values.get("over_hint").and_then(|v|v.parse().ok()).unwrap_or(true);
@@ -459,7 +469,9 @@ impl SettingsWindow {
                                     let query = self.query.to_lowercase();
                                     for (index, entry) in
                                         SCHEMA.iter().enumerate().filter(|(_, e)| {
-                                            if query.is_empty() {
+                                            if !e.in_settings() {
+                                                false
+                                            } else if query.is_empty() {
                                                 e.section == section
                                             } else {
                                                 text(e.label).to_lowercase().contains(&query)
@@ -787,8 +799,9 @@ impl SettingsWindow {
                                             log_viewer(ui, &mut self.log_problems_only);
                                         }
                                         if ui.button(text(Text::ResetSection)).clicked() {
-                                            for entry in
-                                                SCHEMA.iter().filter(|e| e.section == section)
+                                            for entry in SCHEMA
+                                                .iter()
+                                                .filter(|e| e.in_settings() && e.section == section)
                                             {
                                                 (entry.set)(
                                                     settings,
@@ -898,6 +911,21 @@ fn log_viewer(ui: &mut egui::Ui, problems_only: &mut bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn disabled_snapping_hides_points_even_with_legacy_grid_preference() {
+        let mut settings = Settings::default();
+        settings.load(&BTreeMap::from([("show_grid".into(), "true".into())]));
+        assert!(!settings.snap_points);
+        for key in ["snap_points", "grid_spacing"] {
+            assert!(
+                !SCHEMA
+                    .iter()
+                    .find(|entry| entry.key == key)
+                    .unwrap()
+                    .in_settings()
+            );
+        }
+    }
     #[test]
     fn first_launch_scale_uses_resolution_without_doubling_native_dpi() {
         for (size, dpi, expected) in [

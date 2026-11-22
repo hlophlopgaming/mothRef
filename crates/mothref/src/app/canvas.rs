@@ -51,7 +51,7 @@ pub(super) fn canvas(ui: &mut egui::Ui, mut c: Canvas<'_>) -> Vec<Intent> {
                 guides(ui, &view.camera, &c.tools.guides);
             }
             if !c.overlay {
-                selection(ui, &c, &view, &returning, hot, &mut intents);
+                selection(ui, &mut c, &view, &returning, hot, &mut intents);
                 input(ui, &mut c, &view, &mut intents);
             }
             minimap(ui, &mut c, &mut view, &mut intents);
@@ -389,10 +389,9 @@ fn items(
             );
         }
     }
-    // Group titles show in View too, unless it was set to show images only.
-    if !overlay && (!compact || !board.appearance.images_only) {
+    if !overlay && !(compact && board.appearance.over && board.appearance.images_only) {
         intents.extend(super::groups::chips(ui, board, &view.camera, &mut groups));
-        if !board.scene.is_empty() {
+        if !compact && !board.scene.is_empty() {
             intents.extend(super::groups::layers(ui.ctx(), board, view.safe_area));
         }
     }
@@ -424,7 +423,7 @@ fn items(
 /// or the rectangle being dragged.
 fn selection(
     ui: &mut egui::Ui,
-    c: &Canvas<'_>,
+    c: &mut Canvas<'_>,
     view: &View,
     returning: &std::collections::HashMap<Uuid, Item>,
     hot: Option<HotCorner>,
@@ -524,6 +523,7 @@ fn selection(
                         frame,
                         view.viewport,
                         kind,
+                        c.settings,
                         enabled,
                         registry,
                     ));
@@ -551,13 +551,7 @@ fn input(ui: &mut egui::Ui, c: &mut Canvas<'_>, view: &View, intents: &mut Vec<I
         );
         if !secondary_gesture {
             response.context_menu(|ui| {
-                super::surfaces::context(
-                    ui,
-                    super::surfaces::CONTEXT_MENU,
-                    enabled,
-                    registry,
-                    intents,
-                )
+                super::surfaces::context(ui, c.settings, enabled, registry, intents)
             });
         }
         // Double-click edits a note in place, or creates one on empty canvas.
@@ -948,15 +942,21 @@ pub(super) const GRID_MAJOR: u32 = 4;
 pub(super) fn board_grid(
     settings: &super::settings::Settings,
     camera: Camera,
-    ink: egui::Color32,
+    tokens: &moth_ui::theme::Tokens,
 ) -> Option<moth_render::Grid> {
-    let mut world = grid_spacing(settings.grid_size, camera.zoom);
+    let points = settings.snap_points;
+    let step = if points {
+        settings.grid_spacing
+    } else {
+        settings.grid_size
+    };
+    let mut world = grid_spacing(step, camera.zoom);
     if !world.is_finite() || world <= 0. {
         return None;
     }
     world = world.max(f32::MIN_POSITIVE);
-    let lines = settings.grid_style == 1;
-    let [r, g, b, _] = ink.to_array();
+    let lines = !points && settings.grid_style == 1;
+    let [r, g, b, a] = if points { tokens.grid } else { tokens.text }.to_array();
     Some(moth_render::Grid {
         offset: camera.screen([0., 0.]),
         spacing: world * camera.zoom,
@@ -965,11 +965,23 @@ pub(super) fn board_grid(
             f32::from(r) / 255.,
             f32::from(g) / 255.,
             f32::from(b) / 255.,
-            if lines { 0.16 } else { 0.32 },
+            if points {
+                f32::from(a) / 255.
+            } else if lines {
+                0.16
+            } else {
+                0.32
+            },
         ],
         major: GRID_MAJOR,
         minor: if lines { 0.45 } else { 0.6 },
-        size: if lines { 0.5 } else { 1.2 },
+        size: if points {
+            tokens.grid_radius
+        } else if lines {
+            0.5
+        } else {
+            1.2
+        },
     })
 }
 /// The world spacing actually drawn: the grid size, or a multiple of it by powers of

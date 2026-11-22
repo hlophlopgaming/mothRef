@@ -32,7 +32,7 @@ impl Appearance {
         self.view || width < 600.
     }
     pub fn presents(self, compact: bool, item: &Item) -> bool {
-        !compact || !self.images_only || item.blob().is_some()
+        !compact || !self.over || !self.images_only || item.blob().is_some()
     }
     pub fn encode(self) -> String {
         // The trailing 2 marks values saved after "images only" became opt-in.
@@ -116,7 +116,9 @@ pub(super) fn controls(ui: &mut egui::Ui, appearance: &mut Appearance, blur: boo
         if appearance.background == 2 && !blur {
             ui.label(text(Text::GlassFallback));
         }
-        ui.checkbox(&mut appearance.images_only, text(Text::ImagesOnly));
+        if appearance.over {
+            ui.checkbox(&mut appearance.images_only, text(Text::ImagesOnly));
+        }
     });
 }
 
@@ -237,9 +239,26 @@ mod tests {
         let image = Item::image(BlobId::from_bytes([0; 32]), rect, None);
         assert!(Appearance::default().presents(false, &note));
         assert!(Appearance::default().presents(true, &note));
+        let group = Item::group(
+            moth_scene::Group {
+                title: "References".into(),
+                color: 1,
+            },
+            rect,
+            Default::default(),
+        );
+        assert!(Appearance::default().presents(true, &group));
+        let over = Appearance {
+            over: true,
+            images_only: true,
+            ..Appearance::default()
+        };
+        assert!(!over.presents(true, &note));
+        assert!(!over.presents(true, &group));
+        assert!(over.presents(true, &image));
         assert!(Appearance::default().presents(true, &image));
         assert!(
-            !Appearance {
+            Appearance {
                 images_only: true,
                 ..Appearance::default()
             }

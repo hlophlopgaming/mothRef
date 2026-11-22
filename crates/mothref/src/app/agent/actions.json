@@ -499,5 +499,12 @@
   },
   "ToggleSnapGrid": {
     "gui_only": "Changes how pointer drags snap; the CLI places items at exact coordinates."
+
+  },
+  "GroupOrigin": {
+    "operation": "group-origin"
+  },
+  "ToggleSnapPoints": {
+    "gui_only": "Context-menu snapping mode and inline grid spacing are GUI preferences; snap-grid takes explicit UUIDs and a step for the equivalent board edit."
   }
 }

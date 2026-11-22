@@ -10,6 +10,10 @@ pub struct Tokens {
     pub dark: bool,
     /// Semantic canvas color.
     pub canvas: Color32,
+    /// Dot color remains readable against the canvas.
+    pub grid: Color32,
+    /// Grid dot radius in logical points.
+    pub grid_radius: f32,
     /// Semantic accent color.
     pub accent: Color32,
     /// Accent suitable for text and thin lines.
@@ -154,6 +158,8 @@ impl Tokens {
     pub const DARK: Self = Self {
         dark: true,
         canvas: Color32::from_rgb(30, 36, 32),
+        grid: Color32::from_rgb(130, 134, 125),
+        grid_radius: 2.5,
         accent: Color32::from_rgb(166, 196, 122),
         accent_text: Color32::from_rgb(166, 196, 122),
         on_accent: Color32::from_rgb(26, 26, 26),
@@ -215,6 +221,8 @@ impl Tokens {
     pub const LIGHT: Self = Self {
         dark: false,
         canvas: Color32::from_rgb(243, 239, 228),
+        grid: Color32::from_rgb(130, 134, 125),
+        grid_radius: 2.5,
         accent: Color32::from_rgb(166, 196, 122),
         accent_text: Color32::from_rgb(65, 90, 30),
         on_accent: Color32::from_rgb(35, 36, 31),

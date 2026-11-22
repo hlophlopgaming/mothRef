@@ -160,7 +160,7 @@ impl Drop for Destination {
 /// so grouping never changes crash recovery or the `.moth` format.
 #[derive(Clone, Debug)]
 enum Step {
-    Single(Command),
+    Single(Box<Command>),
     Group(Vec<Command>),
 }
 struct Progress {
@@ -958,7 +958,7 @@ impl State {
                 let (inverse, done) = self.apply(command, source)?;
                 match &mut self.batch {
                     Some(group) => group.push(inverse),
-                    None => self.push_undo(Step::Single(inverse)),
+                    None => self.push_undo(Step::Single(Box::new(inverse))),
                 }
                 self.redo.clear();
                 Ok(Some(done))
@@ -1133,8 +1133,8 @@ impl State {
     fn replay_undo(&mut self, step: Step) -> io::Result<Completion> {
         match step {
             Step::Single(command) => {
-                let (inverse, done) = self.apply(command, None)?;
-                self.redo.push_back(Step::Single(inverse));
+                let (inverse, done) = self.apply(*command, None)?;
+                self.redo.push_back(Step::Single(Box::new(inverse)));
                 Ok(done)
             }
             Step::Group(commands) => {
@@ -1160,8 +1160,8 @@ impl State {
     fn replay_redo(&mut self, step: Step) -> io::Result<Completion> {
         match step {
             Step::Single(command) => {
-                let (inverse, done) = self.apply(command, None)?;
-                self.push_undo(Step::Single(inverse));
+                let (inverse, done) = self.apply(*command, None)?;
+                self.push_undo(Step::Single(Box::new(inverse)));
                 Ok(done)
             }
             Step::Group(commands) => {
@@ -1613,7 +1613,7 @@ mod tests {
     /// after the process dies. Item kinds that link items must be added to it.
     #[test]
     fn every_rebuild_path_keeps_every_item_kind() {
-        let bytes = include_bytes!("../../../corpus/moth/v7.moth");
+        let bytes = include_bytes!("../../../corpus/moth/v10.moth");
         let expected = board::read(&mut std::io::Cursor::new(&bytes[..])).unwrap();
         assert!(expected.scene.items().any(|i| i.parent.is_some()));
         assert!(

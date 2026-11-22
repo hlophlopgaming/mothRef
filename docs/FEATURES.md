@@ -242,10 +242,12 @@ Inventory of [Milanote](https://milanote.com) features from its [help center](ht
 - [x] Nudge with arrow keys, farther with Shift+arrows (M2)
 - [x] Send backward / bring forward one step, besides to-top / to-bottom (M2)
 - [ ] Lock item position from the context menu (M4, same as PureRef "lock item")
-- [ ] Cards snap to the grid; optional "crop images to fit the grid" (M4)
+- [x] Cards snap to grid points on both axes through the context menu shared by Collect and View; inline spacing, dots only while enabled and Shift bypass (M4)
+- [ ] Optional "crop images to fit the grid" (M4)
 - [ ] Remove image background — local model, no cloud (after 1.0)
 
 ### Organizing
+- [x] Group loose images by their source folders, explicitly or automatically when adding; existing hierarchy stays intact (M4)
 - [ ] **Unsorted tray** per board: imported and clipped items land there first, then get dragged onto the canvas; the browser extension can send to it (M6)
 - [ ] **Item labels**: colored labels on any item, rename updates everywhere, usage count, find all items with a label. Same tag system as board tags in the library (M6)
 - [ ] **Synced notes**: duplicate a note as a linked copy that stays in sync, within one board file (M6); across board files (after 1.0)

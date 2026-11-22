@@ -63,6 +63,106 @@ pub(super) fn create(scene: &Scene, selection: &HashSet<Uuid>) -> Option<(Uuid, 
     }));
     Some((id, commands))
 }
+/// Derive folder identity from the stored source without touching the filesystem.
+pub(super) fn image_origin(item: &Item) -> Option<String> {
+    fn parent(path: &str) -> Option<&str> {
+        let windows = path.starts_with(r"\\") || path.as_bytes().get(1) == Some(&b':');
+        let separator = |c| c == '/' || (windows && c == '\\');
+        let (folder, _) = path.rsplit_once(separator)?;
+        Some(if folder.is_empty() {
+            &path[..1]
+        } else {
+            folder
+        })
+    }
+    let origin = match item.source.as_ref()? {
+        moth_scene::Source::File(path) => parent(path)?.to_owned(),
+        moth_scene::Source::Archive { archive, entry } => {
+            let folder = entry.rsplit_once('/').map_or("", |(folder, _)| folder);
+            format!("{archive}!/{folder}")
+        }
+        moth_scene::Source::Url(_) => return None,
+    };
+    (origin.len() <= moth_scene::MAX_SOURCE).then_some(origin)
+}
+
+/// Groups only loose images; existing hierarchy and unknown origins stay untouched.
+pub(super) fn by_origin(scene: &Scene, selection: &HashSet<Uuid>) -> Vec<Command> {
+    group_origins(
+        scene,
+        scene
+            .items()
+            .filter(|item| selection.is_empty() || selection.contains(&item.id)),
+    )
+}
+
+/// Plans group edits for an image being inserted in the same command batch.
+pub(super) fn group_added(scene: &Scene, item: &Item) -> Vec<Command> {
+    group_origins(scene, std::iter::once(item))
+}
+
+fn group_origins<'a>(scene: &'a Scene, images: impl Iterator<Item = &'a Item>) -> Vec<Command> {
+    let order = |a: &Item, b: &Item| a.z.cmp(&b.z).then(a.id.cmp(&b.id));
+    let mut origins = std::collections::BTreeMap::<String, Vec<&Item>>::new();
+    for item in images {
+        if item.blob().is_some()
+            && item.parent.is_none()
+            && let Some(origin) = image_origin(item)
+        {
+            origins.entry(origin).or_default().push(item);
+        }
+    }
+    if origins.is_empty() {
+        return Vec::new();
+    }
+    let mut existing = std::collections::BTreeMap::<&str, &Item>::new();
+    let mut group_count = 0;
+    for item in scene.items().filter(|item| item.is_group()) {
+        group_count += 1;
+        if item.parent.is_none() && origins.contains_key(&item.origin) {
+            let candidate = existing.entry(item.origin.as_str()).or_insert(item);
+            if order(item, candidate).is_lt() {
+                *candidate = item;
+            }
+        }
+    }
+    let mut commands = Vec::new();
+    for (origin, mut images) in origins {
+        images.sort_by(|a, b| order(a, b));
+        let id = if let Some(group) = existing.get(origin.as_str()) {
+            group.id
+        } else {
+            let title = origin
+                .rsplit(['/', '\\'])
+                .find(|s| !s.is_empty())
+                .unwrap_or(&origin);
+            let mut title = title.to_owned();
+            while title.len() > moth_scene::MAX_GROUP_TITLE {
+                title.pop();
+            }
+            let color = group_count % (moth_scene::GROUP_COLORS as usize - 1) + 1;
+            group_count += 1;
+            let mut group = Item::group(
+                Group {
+                    title,
+                    color: color as u32,
+                },
+                images[0].rect,
+                FractionalIndex::new_before(&images[0].z),
+            );
+            group.origin = origin;
+            let id = group.id;
+            commands.push(Command::Insert(group));
+            id
+        };
+        commands.extend(images.into_iter().map(|item| Command::SetParent {
+            id: item.id,
+            parent: Some(id),
+        }));
+    }
+    commands
+}
+
 /// Dissolves selected groups: members move to the group's own parent, then the empty
 /// group goes.
 pub(super) fn dissolve(scene: &Scene, selection: &HashSet<Uuid>) -> Vec<Command> {
@@ -736,6 +836,86 @@ fn layer_row(
 #[cfg(test)]
 mod chip_tests {
     use super::*;
+    #[test]
+    fn origin_groups_preserve_hierarchy_reuse_identity_and_separate_equal_folder_names() {
+        let mut scene = Scene::default();
+        let rect = Rect {
+            x: 0.,
+            y: 0.,
+            width: 80.,
+            height: 60.,
+        };
+        let original = Item::group(
+            Group {
+                title: "Manual".into(),
+                color: 1,
+            },
+            rect,
+            Default::default(),
+        );
+        let parent = original.id;
+        scene.apply(Command::Insert(original)).unwrap();
+        let mut ids = Vec::new();
+        for (origin, grouped) in [
+            ("a/refs", false),
+            ("a/refs", false),
+            ("b/refs", false),
+            ("", false),
+            ("a/refs", true),
+        ] {
+            let mut item = Item::image(moth_scene::BlobId::from_bytes([0; 32]), rect, scene.top());
+            item.source = (!origin.is_empty())
+                .then(|| moth_scene::Source::File(format!("/{origin}/image.png")));
+            item.parent = grouped.then_some(parent);
+            ids.push(item.id);
+            scene.apply(Command::Insert(item)).unwrap();
+        }
+        for command in by_origin(&scene, &HashSet::new()) {
+            scene.apply(command).unwrap();
+        }
+        let a = scene.get(ids[0]).unwrap().parent.unwrap();
+        let b = scene.get(ids[2]).unwrap().parent.unwrap();
+        assert_eq!(scene.get(ids[1]).unwrap().parent, Some(a));
+        assert_ne!(a, b);
+        assert_eq!(scene.get(a).unwrap().group_style().unwrap().title, "refs");
+        assert_eq!(scene.get(b).unwrap().group_style().unwrap().title, "refs");
+        assert!(scene.get(ids[3]).unwrap().parent.is_none());
+        assert_eq!(scene.get(ids[4]).unwrap().parent, Some(parent));
+        assert!(by_origin(&scene, &HashSet::new()).is_empty());
+        let mut next = Item::image(moth_scene::BlobId::from_bytes([0; 32]), rect, scene.top());
+        next.source = Some(moth_scene::Source::File("/a/refs/next.png".into()));
+        let next_id = next.id;
+        scene.apply(Command::Insert(next)).unwrap();
+        let commands = by_origin(&scene, &HashSet::from([next_id]));
+        assert!(
+            matches!(commands.as_slice(), [Command::SetParent { id, parent: Some(parent) }] if *id == next_id && *parent == a)
+        );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn origin_grouping_undo_is_identity_and_checkpoint_preserves_origins(origins in proptest::collection::vec(0u8..4, 1..24)) {
+            let mut scene = Scene::default();
+            let blob = moth_io::content_hash(b"origin-test");
+            for (n, origin) in origins.iter().enumerate() {
+                let mut image = Item::image(blob, Rect { x: n as f32 * 100., y: 0., width: 80., height: 60. }, scene.top());
+                image.source = Some(moth_scene::Source::File(format!("/References/{origin}/image.png")));
+                scene.apply(Command::Insert(image)).unwrap();
+            }
+            let before: Vec<_> = scene.items_in_insertion_order().into_iter().cloned().collect();
+            let inverses: Vec<_> = by_origin(&scene, &HashSet::new()).into_iter().map(|command| scene.apply(command).unwrap()).collect();
+            let mut bytes = Vec::new();
+            moth_format::board::initialize(&mut bytes).unwrap();
+            moth_format::board::append(&mut bytes, 16, 1, b"origin-test").unwrap();
+            let offset = bytes.len() as u64;
+            moth_format::board::append(&mut bytes, offset, 3, &moth_format::board::snapshot(&scene).unwrap()).unwrap();
+            let restored = moth_format::board::read(&mut std::io::Cursor::new(bytes)).unwrap().scene;
+            for item in scene.items() { proptest::prop_assert_eq!(restored.get(item.id), Some(item)); }
+            for command in inverses.into_iter().rev() { scene.apply(command).unwrap(); }
+            proptest::prop_assert_eq!(scene.items_in_insertion_order().into_iter().cloned().collect::<Vec<_>>(), before);
+        }
+    }
+
     #[test]
     fn zoomed_out_nested_titles_and_editor_never_overlap() {
         let mut occupied = Vec::new();

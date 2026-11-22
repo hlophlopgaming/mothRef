@@ -29,7 +29,7 @@ Every milestone and every pull request is judged against these, in this order:
 1. **Never lose the user's work.** Every action reaches disk within 1 second. A crash costs at most the last second. This beats any feature.
 2. **Memory follows a budget, not the board size.** RAM stays within explicit budgets. Video memory follows the detected graphics card; the default full-resolution mode deliberately keeps the whole board resident up to that limit ([decision 0017](docs/decisions/0017-full-resolution-mode.md)), and the user can pick a leaner performance mode.
 3. **The UI thread never waits.** Decoding, compression, disk and network run off the main thread. Frame time target: ≤ 4 ms of main-thread work. Nothing loads while zooming in the default mode.
-4. **A reference viewer first.** View mode stays as calm as PureRef: images only. Board-building tools (notes, drawing, Milanote-style elements) live in Collect mode and never clutter View; switching modes never loses functionality.
+4. **A reference viewer first.** View mode keeps the board content visible with minimal chrome. Board-building tools (notes, drawing, Milanote-style elements) live in Collect mode and never clutter View; switching modes never loses functionality.
 5. **Small files.** Original image bytes are stored as-is (no re-encoding), deduplicated by content hash. Caches can be dropped and rebuilt.
 6. **Open.** GPL-3.0-or-later, a documented file format, import of `.bee` and `.pur`.
 
@@ -344,6 +344,9 @@ Open:
 <summary>Done</summary>
 
 - [x] Minimap / navigator: board overview with the viewport rectangle; click or drag to move the camera; toggle with a shortcut — shipped early with configurable size, position and opacity (0.1.0-alpha.9–10)
+- [x] Context-menu point-snapping controls shared by Collect and View: inline spacing, dots only while enabled, both axes, Shift bypass and native `snap-grid`
+- [x] Folder-origin grouping: explicit action and optional automatic grouping on addition, preserved hierarchy, persistent group origins (schema 10), native CLI equivalents; old boards without origin metadata remain unchanged
+- [x] View uses the same groups, titles, notes and selection as Collect; timed drawing sessions keep a resized mini window's long side across slides
 - [x] Group refinements: nested title chips avoid overlap; new groups get automatic colors; group color actions show swatches and an exact RGB picker (schema 8); pack and fit respects selection.
 - [x] Groups and a hierarchy tree view: Ctrl/⌘+G adds a tinted backdrop that hugs its members and focuses an inline title field at once; clicking the title selects the whole group, dragging it moves the group, dropping an item on the backdrop adds it and dragging it out takes it out; groups nest; the hierarchy tree lives in a slide-out Layers drawer where rows drag into groups, next to other items or out to the board; images pasted or dropped onto a backdrop join that group; exports draw backdrops and titles (DESIGN.md screen 14; `.moth` schema 6, [decision 0021](docs/decisions/0021-groups.md))
 - [x] **Key feature of 0.7.** Timed drawing sessions (gesture mode) on top of the slideshow: images from the board, a group or a selection; fixed intervals (30 s, 1, 2, 5, 10 min) or a session plan (for example 10 × 30 s, 5 × 2 min); pause, skip, countdown and a sound cue; list of the shown images at the end; runs full screen or in a mini window pinned over other apps that keeps the current image's aspect ratio while resized — setup with saved plans, 3-2-1 countdown, last-seconds warning, auto-hiding panel, "+30 s", summary with stars and four kinds of repeat (DESIGN.md screens 12–12д)
@@ -487,6 +490,7 @@ The browser extension moved here from M3 (maintainer, 2026-10-29): it is a separ
 - [ ] Web clipper items from [FEATURES.md](docs/FEATURES.md#web-clipper-after-10-in-the-separate-browser-extension-project): Save button on hover, text clips, board picker, source URL kept
 
 - [ ] Local drop API in `moth-bridge`: a running MothRef accepts image bytes or an image URL plus source metadata (page URL, title, tool name) and adds them to a chosen board or its Inbox through a `Command`. Off by default, enabled in settings; local connections only (named pipe / Unix socket, or loopback HTTP with a per-install token); fetching a URL counts as the user action required by the network rule
+- [ ] Evaluate [`craft-ipc`](https://github.com/storytold/craft-libs/tree/main/crates/ipc) as the transport for the local drop API: instance discovery, Unix sockets / Windows named pipes and token authentication. Keep the MothRef protocol and all board mutations behind the existing `Command` path; qualify Windows/macOS/Linux behavior, payload limits and dependency licenses before adoption. User control lives in Settings › Integrations; keep the listener off by default and the native transport out of Android/web core builds.
 - [ ] Documented protocol with ready-to-copy examples: `curl`, Python, AutoHotkey; the M2 agent CLI `add` covers the "app not running" case
 - [ ] ShareX custom destination (Windows) and examples for Flameshot and Spectacle (Linux)
 - [ ] ComfyUI custom node "Save to MothRef": generated images go to a chosen board in rows, with the workflow kept in the image metadata
@@ -576,23 +580,37 @@ A benchmark regression of more than 10% blocks a merge.
 
 ## Distribution
 
-All builds come from one GitHub Actions pipeline triggered by a release tag. Raw binary archives are available on GitHub Releases from **0.1 (M1)**; installers and package-manager channels follow the schedule below.
+All builds come from one GitHub Actions pipeline triggered by a release tag. Raw binary archives are available on GitHub Releases from **0.1 (M1)**.
+At the maintainer's request (2026-11-22), native installer/package generation is
+pulled forward: Windows setup wizard, macOS per-architecture DMGs, Linux DEB/RPM/
+AppImage and Arch packages. Publishing to package-manager repositories remains
+on the schedule below.
+
+- [ ] Qualify the new packaging workflow on native runners: Windows setup install/uninstall and launch; Apple Silicon/Intel DMG drag-and-drop and launch; DEB/RPM/AppImage and Arch install, desktop integration, launch and removal. The workflow and Arch recipe are implemented; no successful remote run is recorded yet.
+
+<details>
+<summary>Done</summary>
+
+- [x] Implement native package generation and require the complete artifact inventory before publication (2026-11-22).
+- [x] Add native Linux ARM64 AppImage and binary archive generation on Ubuntu 24.04 ARM; require both artifacts before publication. Remote build and native GUI qualification remain open (2026-11-22).
+
+</details>
 
 | OS | Format | Channel | From release |
 | --- | --- | --- | --- |
 | Windows | Binary `.zip` | GitHub Releases | 0.1 (M1) |
 | macOS | Binary `.tar.gz` (Apple Silicon and Intel) | GitHub Releases | 0.1 (M1) |
-| Linux | Binary `.tar.gz` (x86_64) | GitHub Releases | 0.1 (M1) |
+| Linux | Binary `.tar.gz` (x86_64 and ARM64) | GitHub Releases | x86_64: 0.1 (M1); ARM64 pipeline implemented, native qualification open |
 | Windows | Portable `.zip` (settings next to the exe when `portable.txt` exists) | GitHub Releases | 0.3 |
-| Windows | MSI (`cargo-wix`) | GitHub Releases, winget | 0.3 |
+| Windows | Setup wizard `.exe`; MSI/winget later | GitHub Releases; winget later | Pipeline implemented; native qualification open |
 | Windows | — | Scoop, Chocolatey | 1.0 |
-| macOS | Universal `.dmg` (Apple Silicon + Intel) | GitHub Releases | 0.3 |
+| macOS | `.dmg` per architecture (Apple Silicon and Intel); universal later | GitHub Releases | Pipeline implemented; native qualification open |
 | macOS | — | Homebrew cask | 0.7 |
-| Linux | AppImage | GitHub Releases | 0.3 |
+| Linux | AppImage (x86_64 and ARM64) | GitHub Releases | Pipeline implemented; native qualification open |
 | Linux | Flatpak | Flathub | 0.7 |
-| Linux | `.deb` | own apt repository | 0.7 |
-| Linux | PKGBUILD | AUR | 0.7 |
-| Linux | `.rpm` | Fedora COPR | 1.0 |
+| Linux | `.deb` | GitHub Releases; own apt repository later | Pipeline implemented; apt repository 0.7 |
+| Linux | PKGBUILD and `.pkg.tar.zst` | GitHub Releases; AUR later | Pipeline implemented; AUR 0.7 |
+| Linux | `.rpm` | GitHub Releases; Fedora COPR later | Pipeline implemented; COPR 1.0 |
 | Linux | Nix | nixpkgs | 1.0 |
 | Linux | Snap | Snap Store | after 1.0, on demand |
 | Browser | PWA | static hosting | M8 |

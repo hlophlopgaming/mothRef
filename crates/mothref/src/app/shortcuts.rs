@@ -182,15 +182,16 @@ impl Shortcuts {
             .iter()
             .enumerate()
             .filter(|(_, e)| {
-                format!(
-                    "{} {} {} {}",
-                    text(Text::Settings),
-                    text(e.section.label()),
-                    text(e.label),
-                    e.key
-                )
-                .to_lowercase()
-                .contains(&query)
+                e.in_settings()
+                    && format!(
+                        "{} {} {} {}",
+                        text(Text::Settings),
+                        text(e.section.label()),
+                        text(e.label),
+                        e.key
+                    )
+                    .to_lowercase()
+                    .contains(&query)
             })
             .map(|(index, _)| index)
             .collect()

@@ -11,8 +11,9 @@ use std::{
 
 /// Schema the writer produces. Boards with an older header are compacted to it before
 /// a checkpoint is appended, so a file never mixes record layouts across headers.
-pub const SCHEMA: u8 = 9;
-const HEADER: &[u8; 16] = b"MOTH\x09\0\0\0\0\0\0\0\0\0\0\0";
+pub const SCHEMA: u8 = 10;
+const HEADER: &[u8; 16] = b"MOTH\x0a\0\0\0\0\0\0\0\0\0\0\0";
+const HEADER_V9: &[u8; 16] = b"MOTH\x09\0\0\0\0\0\0\0\0\0\0\0";
 /// Schema-8 boards predate image sources.
 const HEADER_V8: &[u8; 16] = b"MOTH\x08\0\0\0\0\0\0\0\0\0\0\0";
 const HEADER_V7: &[u8; 16] = b"MOTH\x07\0\0\0\0\0\0\0\0\0\0\0";
@@ -188,7 +189,7 @@ pub fn peek_preview(reader: &mut dyn ReadSeek) -> Result<Option<Preview>, Error>
     reader.seek(SeekFrom::Start(0))?;
     let mut header = [0; 16];
     reader.read_exact(&mut header)?;
-    if &header != HEADER && &header != HEADER_V8 && &header != HEADER_V7 {
+    if &header != HEADER && &header != HEADER_V9 && &header != HEADER_V8 && &header != HEADER_V7 {
         return Ok(None);
     }
     let length = reader.seek(SeekFrom::End(0))?;
@@ -329,6 +330,15 @@ pub fn encode(command: &Command) -> Vec<u8> {
             group_bytes(&mut bytes, group);
         }
     }
+    if let Command::Insert(item) = command
+        && !item.origin.is_empty()
+    {
+        let mut wrapped = vec![23];
+        wrapped.extend_from_slice(&(item.origin.len() as u16).to_le_bytes());
+        wrapped.extend_from_slice(item.origin.as_bytes());
+        wrapped.extend_from_slice(&bytes);
+        return wrapped;
+    }
     bytes
 }
 fn source_bytes(bytes: &mut Vec<u8>, source: &Source) {
@@ -436,6 +446,31 @@ fn transform_bytes(bytes: &mut Vec<u8>, t: Transform) {
     bytes.push(t.note_wrap as u8);
 }
 fn decode(bytes: &[u8]) -> Result<Command, Error> {
+    if bytes.first() == Some(&23) {
+        let length = u16::from_le_bytes(
+            bytes
+                .get(1..3)
+                .ok_or(Error::Invalid)?
+                .try_into()
+                .map_err(|_| Error::Invalid)?,
+        ) as usize;
+        if length == 0 || length > moth_scene::MAX_SOURCE {
+            return Err(Error::Budget);
+        }
+        let origin = std::str::from_utf8(bytes.get(3..3 + length).ok_or(Error::Invalid)?)
+            .map_err(|_| Error::Invalid)?;
+        let inner = bytes.get(3 + length..).ok_or(Error::Invalid)?;
+        // A wrapper contains exactly one group insert, never another wrapper.
+        if !matches!(inner.first(), Some(16 | 19)) {
+            return Err(Error::Invalid);
+        }
+        let Command::Insert(mut item) = decode(inner)? else {
+            return Err(Error::Invalid);
+        };
+        item.origin = origin.to_owned();
+        return Ok(Command::Insert(item));
+    }
+
     let id =
         Uuid::from_slice(bytes.get(1..17).ok_or(Error::Invalid)?).map_err(|_| Error::Invalid)?;
     let float = |start: usize, index: usize| -> Result<f32, Error> {
@@ -617,6 +652,7 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
         1 if bytes.len() > 65 && bytes.len() <= 4161 => Ok(Command::Insert(Item {
             id,
             name: String::new(),
+            origin: String::new(),
             content: Content::Image(BlobId::from_bytes(
                 bytes[17..49].try_into().map_err(|_| Error::Invalid)?,
             )),
@@ -641,6 +677,7 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             Ok(Command::Insert(Item {
                 id,
                 name,
+                origin: String::new(),
                 content: Content::Image(BlobId::from_bytes(
                     bytes[17..49].try_into().map_err(|_| Error::Invalid)?,
                 )),
@@ -691,6 +728,7 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             Ok(Command::Insert(Item {
                 id,
                 name,
+                origin: String::new(),
                 content: Content::Text(text.to_owned()),
                 rect,
                 transform: transform(transform_start)?,
@@ -712,6 +750,7 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             Ok(Command::Insert(Item {
                 id,
                 name: String::new(),
+                origin: String::new(),
                 content: Content::Group(group),
                 rect: rect()?,
                 transform: Transform::default(),
@@ -770,6 +809,7 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             Ok(Command::Insert(Item {
                 id,
                 name: String::new(),
+                origin: String::new(),
                 content: Content::Gamut(Box::new(gamut)),
                 rect: rect()?,
                 transform: transform(33)?,
@@ -834,6 +874,7 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
     let mut header = [0; 16];
     reader.read_exact(&mut header)?;
     if &header != HEADER
+        && &header != HEADER_V9
         && &header != HEADER_V8
         && &header != HEADER_V7
         && &header != HEADER_V6
@@ -945,7 +986,11 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
                     board.scene = restore(&bytes, &board.blobs)?;
                 }
                 // Previews are derived data for the library: the scene never reads them.
-                PREVIEW if &header == HEADER || &header == HEADER_V8 || &header == HEADER_V7 => {}
+                PREVIEW
+                    if &header == HEADER
+                        || &header == HEADER_V9
+                        || &header == HEADER_V8
+                        || &header == HEADER_V7 => {}
                 _ => return Err(Error::Invalid),
             }
             board.recovered |= start != committed;
@@ -1059,6 +1104,64 @@ mod tests {
         assert_eq!(read(&mut reader).unwrap().scene.get(item.id), Some(&item));
         assert!(reader.1 < original.len() + 2048);
     }
+    #[test]
+    fn provenance_checkpoint_roundtrip_and_every_torn_tail_keep_the_previous_board() {
+        let (mut bytes, image) = base();
+        let mut board = read(&mut Cursor::new(&bytes)).unwrap();
+        let mut group = Item::group(
+            Group {
+                title: "Source".into(),
+                color: 1,
+            },
+            image.rect,
+            Default::default(),
+        );
+        group.origin = "я".repeat(moth_scene::MAX_SOURCE / 2);
+        board.scene.apply(Command::Insert(group.clone())).unwrap();
+        let start = bytes.len();
+        append(
+            &mut bytes,
+            start as u64,
+            3,
+            &snapshot(&board.scene).unwrap(),
+        )
+        .unwrap();
+        for cut in start..bytes.len() {
+            let restored = read(&mut Cursor::new(&bytes[..cut])).unwrap();
+            assert_eq!(restored.scene.get(image.id), Some(&image), "cut at {cut}");
+            assert!(restored.scene.get(group.id).is_none());
+        }
+        let restored = read(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(restored.scene.get(group.id), Some(&group));
+
+        let mut oversized = group.clone();
+        oversized.origin.push('a');
+        assert!(Scene::default().apply(Command::Insert(oversized)).is_err());
+        let encoded = encode(&Command::Insert(group));
+        let mut nested = vec![23, 1, 0, b'x'];
+        nested.extend_from_slice(&encoded);
+        assert!(decode(&nested).is_err());
+        let mut invalid = encoded;
+        invalid[3] = 0xff;
+        assert!(decode(&invalid).is_err());
+        invalid[1..3].copy_from_slice(&4097u16.to_le_bytes());
+        assert!(decode(&invalid).is_err());
+        assert!(decode(&[23, 1, 0, b'x', 2]).is_err());
+    }
+
+    #[test]
+    fn schema_nine_migrates_to_ten_without_changing_items() {
+        let old = read(&mut Cursor::new(
+            include_bytes!("../../../corpus/moth/v9.moth").as_slice(),
+        ))
+        .unwrap();
+        assert!(old.scene.items().all(|item| item.origin.is_empty()));
+        let restored = restore(&snapshot(&old.scene).unwrap(), &old.blobs).unwrap();
+        for item in old.scene.items() {
+            assert_eq!(restored.get(item.id), Some(item));
+        }
+    }
+
     fn base() -> (Vec<u8>, Item) {
         let mut bytes = Vec::new();
         initialize(&mut bytes).unwrap();

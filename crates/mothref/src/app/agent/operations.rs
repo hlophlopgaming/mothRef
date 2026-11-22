@@ -49,6 +49,9 @@ pub(super) enum Operation {
     Check,
     #[command(about = "Add a local image or explicitly download an HTTP(S) image.")]
     Add {
+        #[serde(default)]
+        #[arg(long)]
+        group_origin: bool,
         #[arg(required_unless_present = "url", conflicts_with = "url")]
         path: Option<PathBuf>,
         #[arg(long)]
@@ -134,6 +137,23 @@ pub(super) enum Operation {
     #[command(about = "Delete explicitly selected subtrees, children first.")]
     Delete {
         #[arg(long = "id", value_delimiter = ',', num_args = 1.., required = true)]
+        ids: Vec<String>,
+    },
+    #[command(about = "Group loose images by their stored origin; existing groups are preserved.")]
+    GroupOrigin {
+        #[serde(default)]
+        #[arg(long = "id", value_delimiter = ',', num_args = 1..)]
+        ids: Vec<String>,
+    },
+    #[command(
+        about = "Snap the first selected displayed bounds to grid points on both axes, moving the selection together."
+    )]
+    SnapGrid {
+        #[serde(default = "grid_spacing")]
+        #[arg(long, default_value_t = 100.)]
+        step: f32,
+        #[serde(default)]
+        #[arg(long = "id", value_delimiter = ',', num_args = 1..)]
         ids: Vec<String>,
     },
     #[command(about = "Group explicitly selected items.")]
@@ -226,6 +246,9 @@ pub(super) enum Operation {
         point: [f32; 2],
     },
 }
+fn grid_spacing() -> f32 {
+    100.
+}
 fn preview_side() -> u32 {
     1024
 }
@@ -289,6 +312,8 @@ impl Operation {
             | Move { .. }
             | Duplicate { .. }
             | Delete { .. }
+            | SnapGrid { .. }
+            | GroupOrigin { .. }
             | Group { .. }
             | Ungroup { .. }
             | GroupEdit { .. }
@@ -467,10 +492,16 @@ impl Session {
                 );
                 Ok(json!({"valid":true,"board":self.info(0,0)}))
             }
-            Add { path, url, at } => {
+            Add {
+                path,
+                url,
+                at,
+                group_origin,
+            } => {
                 let at = at.unwrap_or_else(|| self.next_anchor());
                 let (hash, size, handle, name) = match (path, url) {
                     (Some(path), None) => {
+                        let path = std::path::absolute(path)?;
                         let mut bytes = Vec::new();
                         std::fs::File::open(&path)?
                             .take(moth_io::MAX_INPUT_BYTES + 1)
@@ -506,10 +537,18 @@ impl Session {
                 );
                 item.name = name;
                 item.source = self.storage.source_of(handle);
-                let identity = item.id.to_string();
-                let geometry = item_json(&item);
-                self.request(Request::Apply(Command::Insert(item), Some(handle)))?;
-                Ok(json!({"id":identity,"item":geometry}))
+                let identity = item.id;
+                if group_origin {
+                    let commands = groups::group_added(&self.scene, &item);
+                    let mut batch = vec![(Command::Insert(item), Some(handle))];
+                    batch.extend(commands.into_iter().map(|command| (command, None)));
+                    self.request(Request::ApplyBatch(batch))?;
+                } else {
+                    self.request(Request::Apply(Command::Insert(item), Some(handle)))?;
+                }
+                Ok(
+                    json!({"id":identity.to_string(),"item":self.scene.get(identity).map(item_json)}),
+                )
             }
             Note { text, at } => {
                 let at = at.unwrap_or_else(|| self.next_anchor());
@@ -685,6 +724,32 @@ impl Session {
                 let mut items = self.selected(&ids, true)?;
                 items.sort_by_key(|i| std::cmp::Reverse(self.scene.ancestors(i.id).count()));
                 self.apply(items.iter().map(|i| Command::Remove(i.id)).collect())
+            }
+            SnapGrid { step, ids } => {
+                ensure!(
+                    step.is_finite() && (1. ..=10000.).contains(&step),
+                    "grid step must be 1..10000"
+                );
+                let items = self.selected(&ids, true)?;
+                let Some(first) = items.first() else {
+                    return Ok(self.feedback(&[]));
+                };
+                let delta =
+                    crate::app::snap::grid_delta(moth_scene::footprint(first), [0., 0.], step);
+                let commands = arrange::translate(&items, delta, false, self.top().as_ref());
+                ensure!(
+                    !commands.is_empty(),
+                    "snapped position exceeds scene limits"
+                );
+                self.apply(commands)
+            }
+            GroupOrigin { ids } => {
+                let selected = self
+                    .selected(&ids, false)?
+                    .iter()
+                    .map(|item| item.id)
+                    .collect();
+                self.apply(groups::by_origin(&self.scene, &selected))
             }
             Group { ids, title, color } => {
                 ensure!(!ids.is_empty(), "group requires explicit ids");

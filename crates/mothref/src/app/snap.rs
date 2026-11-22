@@ -109,6 +109,31 @@ pub fn moving(
     (out, guides)
 }
 
+/// Snap displayed bounds on both axes, preserving offsets between selected items.
+pub(super) fn grid_delta(bounds: moth_scene::Rect, delta: [f32; 2], step: f32) -> [f32; 2] {
+    let origin = [bounds.x, bounds.y];
+    std::array::from_fn(|axis| snap_angle(origin[axis] + delta[axis], step) - origin[axis])
+}
+
+/// Preview and release use the same endpoint; a click leaves an off-grid item put.
+pub(super) fn grid_point(
+    bounds: moth_scene::Rect,
+    start: [f32; 2],
+    point: [f32; 2],
+    zoom: f32,
+    step: f32,
+) -> [f32; 2] {
+    if point == start {
+        return point;
+    }
+    let delta = grid_delta(
+        bounds,
+        [(point[0] - start[0]) / zoom, (point[1] - start[1]) / zoom],
+        step,
+    );
+    [start[0] + delta[0] * zoom, start[1] + delta[1] * zoom]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,6 +177,47 @@ mod tests {
         assert_eq!(delta[0], 0.);
         assert!(!guides.is_empty());
     }
+    #[test]
+    fn both_axes_match_the_commit_at_different_zooms_without_moving_on_click() {
+        let mut item = moth_scene::Item::text(
+            "reference",
+            moth_scene::Rect {
+                x: 13.,
+                y: -27.,
+                width: 105.,
+                height: 97.,
+            },
+            None,
+        );
+        item.transform.rotation = 0.4;
+        let bounds = moth_scene::footprint(&item);
+        for zoom in [0.35, 1., 2.] {
+            let start = [80., 90.];
+            assert_eq!(grid_point(bounds, start, start, zoom, 100.), start);
+            for movement in [[36., 0.], [0., -31.], [36., -31.]] {
+                let point = [start[0] + movement[0] * zoom, start[1] + movement[1] * zoom];
+                let preview = grid_point(bounds, start, point, zoom, 100.);
+                let delta = grid_delta(bounds, movement, 100.);
+                for axis in 0..2 {
+                    assert!(((preview[axis] - start[axis]) / zoom - delta[axis]).abs() < 0.001);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn grid_snaps_both_axes_and_negative_coordinates_by_displayed_bounds() {
+        let bounds = moth_scene::Rect {
+            x: 13.,
+            y: -27.,
+            width: 105.,
+            height: 97.,
+        };
+        let delta = grid_delta(bounds, [36., -31.], 100.);
+        assert_eq!(delta, [-13., -73.]);
+        assert_eq!([bounds.x + delta[0], bounds.y + delta[1]], [0., -100.]);
+    }
+
     #[test]
     fn rounds_both_directions_and_half_steps_away_from_zero() {
         for (angle, expected) in [

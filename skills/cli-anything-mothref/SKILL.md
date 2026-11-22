@@ -88,3 +88,14 @@ live/diff/poll preview or automated recovery selection is provided. Scene export
 PNG/SVG/PDF and color sampling use bounded source previews; original/originals/ZIP
 exports preserve encoded source bytes. Read `docs/CLI.md` in the checkout for the
 full protocol. Ordinary file arguments (`mothref board.moth`) launch the GUI.
+
+When grouping by source, use `group-origin` (all loose images, or `--id ...`), or
+`add --group-origin` for new files. Inspect `info`'s `origin` first: older boards
+and clipboard/web images have no recoverable folder label. Existing groups stay
+intact and equal folder basenames can represent different origins. See
+[the source grouping rules](../../docs/CLI.md#source-grouping).
+
+Use `snap-grid --id UUID --step 100` for a point-snapping board edit on both axes.
+The first z-sorted selected item/group supplies the anchor; selected members keep
+their relative positions. The GUI context menu offers a persistent mode toggle and grid spacing together;
+the mode displays its own dot grid. See [point snapping](../../docs/CLI.md#point-snapping-on-the-canvas).

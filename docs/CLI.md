@@ -49,7 +49,7 @@ explicit ids. Angles are radians; points/rectangles use comma-separated numbers.
 | `create NEW.moth` | Create/save an empty native board |
 | `open INPUT` | Read/inspect `.moth`, `.bee` or `.pur`; `-o NEW.moth` converts/saves a native copy |
 | `save BOARD [NEW.moth]` | Checkpoint BOARD, or save to a new destination |
-| `add BOARD [IMAGE ...]` | Add local images; `--at x,y` is available for one image |
+| `add BOARD [IMAGE ...]` | Add local images; `--at x,y` is available for one image; `--group-origin` groups them by source folder |
 | `add BOARD --url URL` | Explicit HTTP(S) image download; optional `--at x,y` |
 | `note BOARD TEXT` | Add a note; optional `--at x,y` |
 | `info BOARD` | Inspect state; `--offset 0 --limit 1000` (page size capped at 1000) |
@@ -62,6 +62,8 @@ explicit ids. Angles are radians; points/rectangles use comma-separated numbers.
 | `duplicate BOARD` | Optional `--by dx,dy`, `--id ...`; default copies sit right of the board |
 | `delete BOARD` | Required `--id ...`; removes selected subtrees, children first |
 | `group BOARD` | Required `--id ...`, optional `--title TEXT --color N` (defaults empty/0) |
+| `snap-grid BOARD` | Optional `--id ... --step N` (default 100, range 1..10000); snap the first z-sorted displayed bounds on both axes, moving the selection together |
+| `group-origin BOARD` | Optional `--id ...`; group loose images by stored origin, preserving existing groups |
 | `ungroup BOARD` | Required `--id ...`; dissolve selected top groups, preserve members |
 | `group-edit BOARD` | Required `--id UUID --title TEXT --color N`; replace group metadata |
 | `parent BOARD` | `--id UUID --parent GROUP_UUID`; omit parent to move back onto the board |
@@ -226,3 +228,33 @@ when adding features. The catalog and agent guide are embedded in the executable
 CI compares GUI Actions and native command inventory to documented coverage.
 The board format remains the versioned [.moth specification](FORMAT.md).
 Validation status: [CLI-VALIDATION.md](CLI-VALIDATION.md).
+
+## Source grouping
+
+`info` returns each item's `origin` label. New local-file additions preserve their
+parent directory, including when their bytes are deduplicated. `group-origin`
+uses that exact label, so folders with the same final name remain separate. It
+uses the selected UUIDs or the whole board when omitted, reuses existing source
+groups, and leaves already-grouped images and unknown origins alone. A source
+group keeps its identity after renaming. Boards saved before schema 9, clipboard
+pixels and explicit URL downloads have unknown origins; filenames cannot restore
+those directories. Folder labels are saved in the board and travel with it.
+
+`add --group-origin` applies grouping after each addition. In JSON use
+`{"op":"add","path":"refs/a.png","group_origin":true}` or
+`{"op":"group-origin","ids":["UUID"]}` for an explicit grouping pass.
+
+## Point snapping on the canvas
+
+Open “Snap to points” in the canvas context menu (or the selection More menu)
+to enable or disable snapping and adjust grid spacing in the same submenu.
+This works in both Collect and View; the mode and spacing persist across launches.
+Point snapping displays its own dot grid. The regular grid and alignment guides
+are still available in Settings. Shift bypasses snapping during a drag. The grabbed item's displayed bounds determine the grid anchor, and selected
+items keep their relative positions. Clicks without movement leave items put.
+The grid follows board pan/zoom while the dots keep their screen radius.
+
+For an explicit native edit use `snap-grid BOARD --id UUID --step 100` or JSON
+`{"op":"snap-grid","ids":["UUID"],"step":100}`. The first z-sorted selected
+item/group supplies the anchor; omitted ids operate on the whole board. The GUI
+toggle changes a local preference, so it is GUI-only in the action catalog.

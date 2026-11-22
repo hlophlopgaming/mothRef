@@ -200,7 +200,7 @@ fn killtest_impl(count: usize, loading: bool) -> anyhow::Result<()> {
 }
 pub fn fixture() -> anyhow::Result<()> {
     std::fs::create_dir_all("corpus/moth")?;
-    // corpus/moth/v1.moth through v8.moth are frozen migration fixtures;
+    // corpus/moth/v1.moth through v9.moth are frozen migration fixtures;
     // regenerating them with the current writer would erase that coverage.
     let mut bytes = Vec::new();
     board::initialize(&mut bytes)?;
@@ -243,7 +243,7 @@ pub fn fixture() -> anyhow::Result<()> {
         width: 1.,
         height: 1.,
     };
-    let outer = Item::group(
+    let mut outer = Item::group(
         moth_scene::Group {
             title: "outer".into(),
             color: moth_scene::Group::custom_color([12, 128, 240]),
@@ -251,6 +251,7 @@ pub fn fixture() -> anyhow::Result<()> {
         rest,
         Default::default(),
     );
+    outer.origin = "/references/walls".into();
     let mut inner = Item::group(moth_scene::Group::default(), rest, Default::default());
     inner.parent = Some(outer.id);
     item.parent = Some(inner.id);
@@ -330,7 +331,7 @@ pub fn fixture() -> anyhow::Result<()> {
         board::PREVIEW,
         &board::encode_preview(&preview)?,
     )?;
-    std::fs::write("corpus/moth/v9.moth", bytes)?;
+    std::fs::write("corpus/moth/v10.moth", bytes)?;
     Ok(())
 }
 pub fn roundtrip(path: &Path) -> anyhow::Result<()> {

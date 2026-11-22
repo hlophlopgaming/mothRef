@@ -5,6 +5,16 @@ use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    /// Context menu mode for point snapping.
+    SnapGrid,
+    /// Explains point snapping and its temporary bypass.
+    SnapGridHint,
+    /// Distance between points in world units.
+    GridSpacing,
+    /// Group loose images by their folder of origin.
+    GroupOrigin,
+    /// Automatically group new images by their folder of origin.
+    AutoGroupOrigin,
     /// Navigator preference: show image thumbnails instead of blocks.
     MinimapImages,
     /// Plural form of a count noun.

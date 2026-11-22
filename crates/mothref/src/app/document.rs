@@ -1735,7 +1735,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let backup = root.join("backup.moth");
         let original = root.join("lost-board.moth");
-        let bytes = include_bytes!("../../../../corpus/moth/v9.moth");
+        let bytes = include_bytes!("../../../../corpus/moth/v10.moth");
         std::fs::write(&backup, bytes).unwrap();
         let board = Document::with_storage(
             Arc::new(moth_platform::DesktopStorage::in_directory(root.clone())),

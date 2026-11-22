@@ -874,6 +874,7 @@ impl App {
             .unwrap_or([0., 0.]);
         let format = self.image_format();
         self.workspace.reduce_side = self.settings.reduce_side();
+        self.workspace.auto_group_origin = self.settings.auto_group_origin;
         self.tools.pickers.screen_drag = self
             .shell
             .window
@@ -957,6 +958,7 @@ impl App {
         {
             // The preferences may have arrived in this very pump.
             self.workspace.reduce_side = self.settings.reduce_side();
+            self.workspace.auto_group_origin = self.settings.auto_group_origin;
             for path in std::mem::take(&mut self.startup_pending) {
                 if is_board_file(&path) {
                     self.open_in_tab(path);
@@ -1928,23 +1930,49 @@ impl App {
             self.snap_move(start, p.position);
         }
     }
-    /// Snaps the dragged selection to other items and the grid by moving the drag's
-    /// end point; Ctrl (⌘ on macOS) held places freely.
+    fn refresh_move_snap(&mut self) {
+        if self.gesture.grabbed().is_some()
+            && self.input.engaged
+            && let (Some(press), Some(point)) = (self.gesture.press(), self.input.cursor)
+        {
+            self.snap_move(press.start, point);
+        }
+    }
+    /// Uses the same snapped endpoint for the preview and the committed move.
     fn snap_move(&mut self, start: [f32; 2], end: [f32; 2]) {
         self.tools.guides.clear();
-        let free = self.shell.context().input(|i| i.modifiers.command);
+        if let Some(press) = self.gesture.press_mut() {
+            press.last = end;
+        }
+        if start == end
+            || self.input.modifiers.command
+            || (self.settings.snap_points && self.input.modifiers.shift)
+        {
+            return;
+        }
+        let board = &self.workspace.board;
+        let zoom = board.view.camera.zoom;
+        if self.settings.snap_points
+            && let Some((id, _)) = self.gesture.grabbed()
+            && let Some(item) = board.scene.get(id)
+        {
+            let spacing = canvas::grid_spacing(self.settings.grid_spacing, zoom);
+            let point = snap::grid_point(moth_scene::footprint(item), start, end, zoom, spacing);
+            if let Some(press) = self.gesture.press_mut() {
+                press.last = point;
+            }
+            return;
+        }
         let grid = (self.settings.snap_grid).then(|| {
             canvas::grid_spacing(
                 self.settings.grid_size,
                 self.workspace.board.view.camera.zoom,
             )
         });
-        if free || (grid.is_none() && !self.settings.snap_items) {
+        if grid.is_none() && !self.settings.snap_items {
             return;
         }
-        let board = &self.workspace.board;
         let camera = board.view.camera;
-        let zoom = camera.zoom;
         let moved = |id: moth_scene::Uuid| {
             let mut next = Some(id);
             for _ in 0..=moth_scene::MAX_GROUP_DEPTH {
@@ -2016,6 +2044,12 @@ impl App {
         {
             p.position = start;
         }
+        if self.input.engaged
+            && self.gesture.grabbed().is_some()
+            && let Some(press) = self.gesture.press()
+        {
+            self.snap_move(press.start, p.position);
+        }
         match std::mem::take(&mut self.gesture) {
             gesture::Gesture::Move {
                 press, duplicate, ..
@@ -2086,15 +2120,13 @@ impl App {
             width: (a[0] - b[0]).abs().max(1. / zoom),
             height: (a[1] - b[1]).abs().max(1. / zoom),
         };
-        let images_only =
-            self.workspace.board.view.compact && self.workspace.board.appearance.images_only;
         let board = &mut self.workspace.board;
         let entered = board.entered;
         let hits: HashSet<_> = board
             .scene
             .query(rect)
             .iter()
-            .filter(|i| !images_only || i.blob().is_some())
+            .filter(|i| board.presented(i))
             .filter(|i| Some(i.id) != entered)
             .map(|i| selection::target(&board.scene, entered, i.id))
             .collect();
@@ -2173,6 +2205,7 @@ impl App {
         if !pan && let Some(press) = self.gesture.press_mut() {
             press.start = self.workspace.board.view.camera.screen(press.anchor);
         }
+        self.refresh_move_snap();
     }
     fn cancel_drag(&mut self) {
         if let Some((a, b, false)) = self.gesture.drag()
@@ -2233,13 +2266,15 @@ impl App {
             overlay.window.request_redraw();
         }
         self.workspace.board.view.compact = self.compact();
-        if self.workspace.board.view.compact && self.workspace.board.appearance.images_only {
-            let board = &mut self.workspace.board;
+        let board = &mut self.workspace.board;
+        let appearance = board.appearance;
+        let compact = board.view.compact;
+        if compact && appearance.over && appearance.images_only {
             board.selection.retain(|id| {
                 board
                     .scene
                     .get(*id)
-                    .is_some_and(|item| item.blob().is_some())
+                    .is_some_and(|item| appearance.presents(compact, item))
             });
         }
         let appearance = self.workspace.board.appearance;
@@ -2573,14 +2608,15 @@ impl App {
     }
     fn render(&mut self, output: egui::FullOutput) -> anyhow::Result<()> {
         let covered = self.covered_by_preload();
-        let canvas_color = moth_ui::tokens(self.shell.context()).canvas;
-        let grid_color = moth_ui::tokens(self.shell.context()).text;
-        let grid = (self.settings.show_grid && !self.workspace.library)
-            .then(|| {
-                canvas::board_grid(&self.settings, self.workspace.board.view.camera, grid_color)
-            })
-            .flatten();
+        let tokens = moth_ui::tokens(self.shell.context());
+        let canvas_color = tokens.canvas;
         let stage = self.session_stage();
+        let grid = ((self.settings.show_grid || self.settings.snap_points)
+            && !self.workspace.library
+            && stage.is_none()
+            && !covered)
+            .then(|| canvas::board_grid(&self.settings, self.workspace.board.view.camera, &tokens))
+            .flatten();
         let Some(gpu) = self.shell.gpu.as_mut() else {
             return Ok(());
         };
@@ -2680,9 +2716,6 @@ impl App {
         }
         let preview_ids: HashSet<_> = previews.iter().map(|item| item.id).collect();
         let mut visible = self.workspace.board.visible(self.workspace.library);
-        if self.workspace.board.view.compact && self.workspace.board.appearance.images_only {
-            visible.retain(|item| item.blob().is_some());
-        }
         if !previews.is_empty() {
             visible.retain(|item| {
                 !preview_ids.contains(&item.id)
@@ -2691,6 +2724,7 @@ impl App {
             visible.extend(previews.iter());
             visible.sort_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));
         }
+        visible.retain(|item| self.workspace.board.presented(item));
         // While the full-resolution preload covers the board, viewport requests would
         // only duplicate its work.
         if let Some((items, _, _)) = &stage {
@@ -3020,6 +3054,9 @@ impl App {
             if response.repaint && !matches!(event, WindowEvent::RedrawRequested) {
                 self.redraw();
             }
+        }
+        if matches!(event, WindowEvent::ModifiersChanged(_)) {
+            self.refresh_move_snap();
         }
         self.input.adapter.wheel = self.settings.wheel;
         self.input.adapter.zoom_increment = self.settings.zoom_increment;

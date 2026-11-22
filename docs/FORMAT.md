@@ -1,4 +1,4 @@
-# MothRef format, schema 9
+# MothRef format, schema 10
 
 All integers and IEEE-754 f32 coordinates are little-endian. Core readers accept
 seekable byte streams and never open a path. From schema 9 an image may carry its
@@ -7,12 +7,12 @@ as opaque metadata, see decision 0027. Schema 1 is the
 first persistent format; there is no schema 0 board to migrate. Schema 2 adds item
 content transforms; schema 3 adds text notes; schema 4 adds appearance and source
 filenames; schema 5 adds image sampling and fixed-width note metrics; schema 6 adds
-nested groups; schema 7 adds the board preview record; schema 8 adds custom RGB group colors; schema 9 adds image sources and color gamut cards. The reader keeps the schema 1, 2, 3, 4, 5 and 6 record layouts, so every older board and journal still opens: a schema 1 insert
+nested groups; schema 7 adds the board preview record; schema 8 adds custom RGB group colors; schema 9 adds image sources and color gamut cards. Schema 10 adds automatic group origins. The reader keeps the schema 1–9 record layouts, so every older board and journal still opens: a schema 1 insert
 carries no transform and migrates to the identity transform. Future schemas must
 retain both readers and provide explicit migrations.
 
-The 16-byte header is `MOTH`, u32 schema version `9`, then eight zero bytes.
-Readers accept versions 1 through 9 and reject every other version. Every record
+The 16-byte header is `MOTH`, u32 schema version `10`, then eight zero bytes.
+Readers accept versions 1 through 10 and reject every other version. Every record
 consists of a payload followed by a 96-byte footer:
 
 | Footer offset | Size | Meaning |
@@ -248,3 +248,17 @@ opens a source to show an image. Migration reads schemas 1–8 through their exi
 layouts, where every image has no source; the next save compacts to schema 9 with
 the existing atomic path. `corpus/moth/v8.moth` remains frozen; `v9.moth` holds one
 image of each source kind, one without, and a gamut card. Older applications reject schema 9.
+
+## Migration 9 → 10: automatic group origins
+
+Grouping by source folder derives each image's folder from its existing file or
+archive source. It records the folder identity on the generated group so future
+imports can join it after a save, including when the group is renamed or empty.
+
+A group with an origin uses tag `23`: u8 tag, u16 UTF-8 byte length (1–4096),
+origin bytes, then one complete group insert (tag `16` or `19`). The origin
+is metadata only. Nested envelopes and other insert types are rejected.
+
+Older groups open without an origin. The next checkpoint uses the existing
+atomic compaction path to migrate the board to schema 10. The schema-9 fixture
+stays frozen, and `corpus/moth/v10.moth` adds a group with an origin.

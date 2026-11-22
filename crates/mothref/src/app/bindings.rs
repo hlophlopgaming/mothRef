@@ -32,6 +32,7 @@ actions! {
     Paste, Paste, "Cmd+V", Some(moth_ui::icons::Icon::Paste);
     Undo, Undo, "Cmd+Z", Some(moth_ui::icons::Icon::Undo);
     Redo, Redo, "Cmd+Y", Some(moth_ui::icons::Icon::Redo);
+    ToggleSnapPoints, SnapGrid, "", Some(moth_ui::icons::Icon::Grid);
     ToggleView, ToggleView, "Tab", Some(moth_ui::icons::Icon::Image);
     Overlay, Overlay, "Cmd+T", Some(moth_ui::icons::Icon::Overlay);
     Pin, OnTop, "Cmd+Shift+T", Some(moth_ui::icons::Icon::Pin);
@@ -171,6 +172,7 @@ actions! {
     ClearDiskCache, ClearDiskCache, "", Some(moth_ui::icons::Icon::Close);
     ShellIntegration, InstallShellIntegration, "", None;
     WindowBar, WindowControls, "", None;
+    GroupOrigin, GroupOrigin, "", None;
     Group, GroupSelection, "Cmd+G", None;
     Ungroup, Ungroup, "Cmd+Shift+G", None;
     EnterGroup, EnterGroup, "", None;

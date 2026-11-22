@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add native Linux ARM64 AppImage and binary archive builds on Ubuntu 24.04 ARM runners. Both artifacts are required before release publication; ARM32 is not included.
+
+- Expand release packaging to Windows ZIP and setup wizard, Apple Silicon/Intel app archives and DMGs, Linux tarball/DEB/RPM/AppImage, and native Arch packages with a checksummed source archive and PKGBUILD. Publication requires every format; manual workflow runs produce artifacts without publishing. Native installer and desktop qualification remains pending.
+
+- Move “Snap to points” into the canvas context menu and the selection More menu, with its grid spacing beside the mode toggle. Point snapping shows its own dots and Shift temporarily bypasses snapping. CLI: `snap-grid`.
+
+- Drawing sessions preserve the resized mini window's longer side when skipping or advancing to another image.
+- View mode keeps groups, their titles, notes and selection visible through the shared canvas path. The optional images-only filter now belongs to Over mode.
+- Group loose images by source folder from the context menu or command palette, or enable automatic grouping in Settings › Adding. CLI: `group-origin` and `add --group-origin`. Source labels survive saving and duplication; old filename-only boards cannot recover them. Boards now save as schema 10, requiring an updated MothRef to reopen.
+
 - The moth icon has a thicker, darker outline (`#a97c4c`, nearly three times as wide), so it no longer blends into the light default theme and stays readable at small sizes: window, titlebar, Windows executable, macOS app and Linux launcher.
 
 ## 0.3.0-alpha.1 — 2026-11-19

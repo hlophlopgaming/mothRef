@@ -22,6 +22,10 @@ impl App {
     ) -> Option<Intent> {
         use Action::*;
         let intent = match action {
+            ToggleSnapPoints => {
+                self.settings.snap_points = !self.settings.snap_points;
+                Intent::PreferencesDirty
+            }
             ToggleView => {
                 self.workspace.board.appearance.view = !self.workspace.board.appearance.view;
                 self.workspace.board.appearance.over = false;

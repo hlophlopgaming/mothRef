@@ -410,6 +410,8 @@ pub struct Item {
     pub id: Uuid,
     /// Source filename only, retained for sorting without storing a native path.
     pub name: String,
+    /// Folder identity of an automatic group, kept when the group is renamed.
+    pub origin: String,
     /// What the item shows: original image bytes or a note's text.
     pub content: Content,
     /// Keeps indexed bounds available without decoding an image.
@@ -429,6 +431,7 @@ impl Item {
         Self {
             id: Uuid::now_v7(),
             name: String::new(),
+            origin: String::new(),
             content: Content::Image(blob),
             rect,
             transform: Transform::default(),
@@ -442,6 +445,7 @@ impl Item {
         Self {
             id: Uuid::now_v7(),
             name: String::new(),
+            origin: String::new(),
             content: Content::Text(text.into()),
             rect,
             transform: Transform::default(),
@@ -455,6 +459,7 @@ impl Item {
         Self {
             id: Uuid::now_v7(),
             name: String::new(),
+            origin: String::new(),
             content: Content::Group(group),
             rect,
             transform: Transform::default(),
@@ -546,6 +551,7 @@ impl Item {
         Self {
             id: Uuid::now_v7(),
             name: String::new(),
+            origin: String::new(),
             content: Content::Gamut(Box::new(gamut)),
             rect,
             transform: Transform::default(),
@@ -782,6 +788,8 @@ impl Scene {
                     || !item.transform.valid()
                     || item.id.get_version_num() != 7
                     || item.name.len() > 1024
+                    || (!item.origin.is_empty()
+                        && (!item.is_group() || item.origin.len() > MAX_SOURCE))
                     || item.source.as_ref().is_some_and(|source| {
                         !source.valid() || !matches!(item.content, Content::Image(_))
                     })

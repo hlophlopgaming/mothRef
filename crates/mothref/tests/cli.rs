@@ -563,7 +563,13 @@ fn raw_transport_does_not_autosave_and_native_cli_handles_stdin_batches() {
 
 #[test]
 fn foreign_boards_support_read_only_inspection_and_native_conversion() {
-    for name in ["moth/v9.moth", "bee/tiny.bee", "pur/v2.1-redbar.pur"] {
+    for name in [
+        "moth/v8.moth",
+        "moth/v9.moth",
+        "moth/v10.moth",
+        "bee/tiny.bee",
+        "pur/v2.1-redbar.pur",
+    ] {
         let cli = Native::new();
         let source = corpus(name);
         let before = fs::read(&source).unwrap();
@@ -718,4 +724,84 @@ fn recovered_tail_requires_a_clean_save_as_before_check_passes() {
         success(cli.invoke(&["check", clean.to_str().unwrap()]))["results"][0]["valid"],
         true
     );
+}
+
+#[test]
+fn stored_origins_drive_manual_and_automatic_groups() {
+    let cli = Native::new();
+    success(cli.invoke(&["create", cli.board.to_str().unwrap()]));
+    let a = cli.root.join("one").join("refs");
+    let b = cli.root.join("two").join("refs");
+    fs::create_dir_all(&a).unwrap();
+    fs::create_dir_all(&b).unwrap();
+    fs::copy(cli.image(), a.join("first.png")).unwrap();
+    fs::copy(cli.image(), a.join("second.png")).unwrap();
+    fs::copy(cli.image(), b.join("third.png")).unwrap();
+    let first = cli.op(
+        "add",
+        &[a.join("first.png").to_str().unwrap(), "--at", "13,-27"],
+    )["results"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    cli.op("add", &[b.join("third.png").to_str().unwrap()]);
+    cli.op("group-origin", &[]);
+    let before = cli.info();
+    let first_group = before["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == first)
+        .unwrap()["parent"]
+        .clone();
+    assert!(first_group.is_string());
+    let second = cli.op(
+        "add",
+        &[a.join("second.png").to_str().unwrap(), "--group-origin"],
+    );
+    assert_eq!(second["results"][0]["item"]["parent"], first_group);
+    let after = cli.info();
+    let groups: Vec<_> = after["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["kind"] == "group")
+        .collect();
+    assert_eq!(groups.len(), 2);
+    assert!(groups.iter().all(|g| g["content"]["title"] == "refs"));
+    assert_ne!(groups[0]["origin"], groups[1]["origin"]);
+    cli.op("group-origin", &[]);
+    assert_eq!(cli.info()["items"], after["items"]);
+}
+
+#[test]
+fn native_point_snapping_moves_both_axes_and_preserves_relative_positions() {
+    let cli = Native::new();
+    success(cli.invoke(&["create", cli.board.to_str().unwrap()]));
+    let first = cli.op("note", &["first", "--at", "137,-73"])["results"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let second = cli.op("note", &["second", "--at", "177,-33"])["results"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    cli.op("snap-grid", &["--id", &first, &second, "--step", "100"]);
+    let info = cli.info();
+    let items = info["items"].as_array().unwrap();
+    let a = &items.iter().find(|i| i["id"] == first).unwrap()["rect"];
+    let b = &items.iter().find(|i| i["id"] == second).unwrap()["rect"];
+    assert_eq!(a[0], 100.);
+    assert_eq!(a[1], -100.);
+    assert_eq!(b[0], 140.);
+    assert_eq!(b[1], -60.);
+    let rejected = cli
+        .command()
+        .arg("--json")
+        .arg("snap-grid")
+        .arg(&cli.board)
+        .args(["--step", "0"])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
 }

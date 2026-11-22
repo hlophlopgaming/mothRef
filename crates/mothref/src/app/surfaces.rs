@@ -111,6 +111,7 @@ pub(super) const CONTEXT_MENU: &[Slot] = &[
     S,
     A(SelectAll),
     A(Group),
+    A(GroupOrigin),
     A(Ungroup),
     A(EnterGroup),
     A(RenameGroup),
@@ -130,6 +131,35 @@ pub(super) const CONTEXT_MENU: &[Slot] = &[
     S,
     A(Delete),
 ];
+const GRID_ACTIONS: &[Action] = &[ToggleSnapPoints];
+/// Mode controls live beside the mode choice, including on the touch More menu.
+fn grid_menu(
+    ui: &mut egui::Ui,
+    enabled: &[bool],
+    registry: &Registry,
+    settings: &mut super::settings::Settings,
+    intents: &mut Vec<Intent>,
+) {
+    ui.menu_button(text(Text::SnapGrid), |ui| {
+        for action in GRID_ACTIONS {
+            if button(ui, *action, enabled, registry, false, settings.snap_points) {
+                intents.push(Intent::Action(*action));
+            }
+        }
+        ui.horizontal(|ui| {
+            ui.label(text(Text::GridSpacing));
+            if ui
+                .add(egui::DragValue::new(&mut settings.grid_spacing).range(1. ..=10000.))
+                .changed()
+            {
+                intents.push(Intent::PreferencesDirty);
+            }
+        });
+    })
+    .response
+    .on_hover_text(text(Text::SnapGridHint));
+}
+
 const TOOLBAR: &[Slot] = &[
     A(Select),
     S,
@@ -309,12 +339,13 @@ fn available(slot: &Slot, enabled: &[bool]) -> bool {
 /// A context menu: only what applies to the click, without empty separators.
 pub(super) fn context(
     ui: &mut egui::Ui,
-    slots: &[Slot],
+    settings: &mut super::settings::Settings,
     enabled: &[bool],
     registry: &Registry,
     intents: &mut Vec<Intent>,
 ) {
-    items(ui, slots, enabled, registry, intents, true);
+    grid_menu(ui, enabled, registry, settings, intents);
+    items(ui, CONTEXT_MENU, enabled, registry, intents, true);
 }
 /// A menu that shows every entry, greyed out when unavailable, so it can be learned.
 pub(super) fn menu(
@@ -664,6 +695,7 @@ pub(super) fn selection(
     bounds: egui::Rect,
     viewport: egui::Rect,
     kind: SelectionKind,
+    settings: &mut super::settings::Settings,
     enabled: &[bool],
     registry: &Registry,
 ) -> Vec<Intent> {
@@ -703,7 +735,7 @@ pub(super) fn selection(
                     }
                     row(ui, selection_bar(kind), enabled, registry, &mut intents, 1.);
                     ui.menu_button(text(Text::More), |ui| {
-                        context(ui, CONTEXT_MENU, enabled, registry, &mut intents)
+                        context(ui, settings, enabled, registry, &mut intents)
                     });
                 });
             });
@@ -793,6 +825,26 @@ pub(super) fn added(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn point_snapping_options_live_in_the_menu() {
+        let ctx = egui::Context::default();
+        let registry = Registry::default();
+        let enabled = vec![true; super::super::bindings::ACTIONS.len()];
+        let mut settings = super::super::settings::Settings::default();
+        let mut intents = Vec::new();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            context(ui, &mut settings, &enabled, &registry, &mut intents);
+        });
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Text(t) if t.galley.text() == text(Text::SnapGrid))));
+        assert!(
+            ctx.memory(|m| m.area_rect(egui::Id::new("grid_controls")))
+                .is_none()
+        );
+        assert!(intents.is_empty());
+        output.textures_delta.clear();
+    }
+
     #[test]
     fn zoom_buttons_repeat_while_held_and_stop_on_release() {
         for action in [ZoomIn, ZoomOut] {

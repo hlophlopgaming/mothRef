@@ -36,6 +36,7 @@ pub(super) struct Workspace {
     pub(super) refresh_library: bool,
     /// Longest side added images are reduced to, or 0 to keep them (Settings › Adding).
     pub(super) reduce_side: u32,
+    pub(super) auto_group_origin: bool,
     pub(super) confirm_close: bool,
     pub(super) closing_window: bool,
     /// Native Wayland drops span several drains of the bounded input queue.
@@ -102,6 +103,7 @@ impl Workspace {
             recovery_paths: Vec::new(),
             recent_paths: Vec::new(),
             reduce_side: 0,
+            auto_group_origin: false,
             refresh_library: false,
             confirm_close: false,
             closing_window: false,
