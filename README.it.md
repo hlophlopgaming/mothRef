@@ -23,7 +23,7 @@ Trascina le immagini su una tela infinita, sistemale e tienile sott'occhio mentr
 
 <br>
 
-<img src="docs/screenshots/board.png" alt="Una bacheca di MothRef con tre illustrazioni su una tela scura" width="900">
+<img src="docs/screenshots/board.png" alt="Bacheca di MothRef con tre illustrazioni raggruppate per tema" width="900">
 
 </div>
 
@@ -94,7 +94,7 @@ Cosa funziona già nell'alpha attuale:
 <details>
 <summary><b>Libreria delle bacheche (screenshot)</b></summary>
 <br>
-<img src="docs/screenshots/library.png" alt="Libreria delle bacheche di MothRef al primo avvio" width="900">
+<img src="docs/screenshots/library.png" alt="Libreria delle bacheche di MothRef con anteprime, cartelle ed etichette" width="900">
 </details>
 
 <a id="download"></a>

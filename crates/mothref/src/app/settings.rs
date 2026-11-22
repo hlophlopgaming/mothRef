@@ -100,6 +100,8 @@ macro_rules! schema {
 }
 schema! {
     menu_bar: bool = false, "menu_bar", Appearance, ShowMenuBar, Kind::Toggle, |s| s.menu_bar.to_string(), |values: &BTreeMap<String,String>| values.get("menu_bar").and_then(|v| v.parse().ok()).unwrap_or(false);
+    annotation_color: Option<[u8; 3]> = None, "annotation_color", Canvas, AnnotationColor, Kind::Color(&moth_ui::theme::ACCENTS), |s| moth_ui::theme::encode_color(s.annotation_color), |values: &BTreeMap<String,String>| values.get("annotation_color").and_then(|v| moth_ui::theme::decode_color(v));
+    annotation_size: f32 = 100., "annotation_size", Canvas, AnnotationSize, Kind::Number(25.,400., "%"), |s| s.annotation_size.to_string(), |v: &BTreeMap<String,String>| v.get("annotation_size").and_then(|v|v.parse::<f32>().ok()).filter(|v| (25. ..=400.).contains(v)).unwrap_or(100.);
     snap_points: bool = false, "snap_points", Canvas, SnapGrid, Kind::Toggle, |s| s.snap_points.to_string(), |v: &BTreeMap<String,String>| v.get("snap_points").or_else(|| v.get("snap_grid")).and_then(|v|v.parse().ok()).unwrap_or(false);
     grid_spacing: f32 = 100., "grid_spacing", Canvas, GridSpacing, Kind::Number(1.,10000., ""), |s| s.grid_spacing.to_string(), |v: &BTreeMap<String,String>| v.get("grid_spacing").and_then(|v|v.parse::<f32>().ok()).filter(|v| v.is_finite() && (1. ..=10000.).contains(v)).unwrap_or(100.);
     auto_group_origin: bool = false, "auto_group_origin", Adding, AutoGroupOrigin, Kind::Toggle, |s| s.auto_group_origin.to_string(), |values: &BTreeMap<String,String>| values.get("auto_group_origin").and_then(|v| v.parse().ok()).unwrap_or(false);

@@ -34,6 +34,7 @@ struct Session {
     path: Option<PathBuf>,
     recovered: bool,
     dirty: bool,
+    note_layout: Option<egui::Context>,
 }
 impl Session {
     fn finish(self, success: bool, dry_run: bool) -> Result<()> {
@@ -56,6 +57,7 @@ impl Session {
             path: None,
             recovered: false,
             dirty: false,
+            note_layout: None,
         })
     }
     fn request(&mut self, request: Request) -> Result<Value> {
@@ -122,6 +124,24 @@ impl Session {
             }
         }
     }
+    fn measure_note(
+        &mut self,
+        text: &str,
+        size: f32,
+        width: Option<f32>,
+        markup: bool,
+    ) -> [f32; 2] {
+        let ctx = self.note_layout.get_or_insert_with(|| {
+            let ctx = egui::Context::default();
+            moth_ui::theme(&ctx, &moth_ui::Tokens::LIGHT);
+            ctx
+        });
+        let mut frame = [0.; 2];
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            frame = super::canvas::measure_note_frame(ui.ctx(), text, size, width, markup);
+        });
+        frame
+    }
     fn apply(&mut self, commands: Vec<Command>) -> Result<Value> {
         // Validate the complete batch before the worker journals its first command.
         let mut scratch = Scene::default();
@@ -168,6 +188,10 @@ fn item_json(item: &Item) -> Value {
         moth_scene::Content::Group(group) => {
             ("group", json!({"title":group.title,"color":group.color}))
         }
+        moth_scene::Content::Stroke(stroke) => (
+            "stroke",
+            json!({"points":stroke.points, "width":stroke.world_width(r), "color":stroke.color}),
+        ),
         moth_scene::Content::Gamut(gamut) => (
             "gamut",
             json!({"image":gamut.image.map(|id|id.to_string()),"view":gamut.view,"sort":gamut.sort,
@@ -187,7 +211,7 @@ fn item_json(item: &Item) -> Value {
         "parent":item.parent.map(|id|id.to_string()),"rect":[r.x,r.y,r.width,r.height],
         "bounds":rect_json(moth_scene::footprint(item)),"center":[r.x+r.width/2.,r.y+r.height/2.],
         "transform":{"rotation":t.rotation,"opacity":t.opacity,"grayscale":t.grayscale,"sampling":t.sampling as u8,
-        "note_font_size":t.note_font_size,"note_wrap":t.note_wrap,"flip":t.flip,"content_offset":t.content_offset,
+        "note_font_size":t.note_font_size,"note_wrap":t.note_wrap,"note_markup":t.note_markup,"note_kind":t.note_kind.code(),"flip":t.flip,"content_offset":t.content_offset,
         "content_scale":t.content_scale,"content_rotation":t.content_rotation}})
 }
 fn rect_json(rect: Rect) -> [f32; 4] {

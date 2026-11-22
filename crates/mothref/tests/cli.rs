@@ -567,6 +567,7 @@ fn foreign_boards_support_read_only_inspection_and_native_conversion() {
         "moth/v8.moth",
         "moth/v9.moth",
         "moth/v10.moth",
+        "moth/v11.moth",
         "bee/tiny.bee",
         "pur/v2.1-redbar.pur",
     ] {
@@ -686,6 +687,55 @@ fn auto_insert_accounts_for_rotation_groups_and_global_paginated_bounds() {
         &after["bounds"],
         &added["results"][0]["item"]["bounds"]
     ));
+}
+
+#[test]
+fn labels_and_lists_keep_their_kind_and_text_after_reopen() {
+    let cli = Native::new();
+    cli.op("create", &[]);
+    cli.op("note", &["--kind", "label", "# Label"]);
+    cli.op("note", &["--kind", "list", "First\nSecond"]);
+    let info = cli.info();
+    let items = info["items"].as_array().unwrap();
+    assert_eq!(items[0]["transform"]["note_kind"], "label");
+    assert_eq!(items[0]["transform"]["note_markup"], false);
+    assert_eq!(items[0]["content"]["text"], "# Label");
+    assert_eq!(items[1]["transform"]["note_kind"], "list");
+    assert_eq!(items[1]["content"]["text"], "- First\n- Second");
+}
+
+#[test]
+fn annotation_commands_persist_strokes_and_reflow_scaled_cards() {
+    let cli = Native::new();
+    cli.op("create", &[]);
+    let note = cli.op("note", &["# Costume study\n- [ ] Add warm light"]);
+    let note = &note["results"][0]["item"];
+    let width = note["rect"][2].as_f64().unwrap();
+    let height = note["rect"][3].as_f64().unwrap();
+    let id = note["id"].as_str().unwrap();
+    cli.op("edit", &["--id", id, "--note-font-size", "48"]);
+    let stroke = cli.op(
+        "stroke",
+        &[
+            "--style", "arrow", "--point", "0,0", "--point", "30,60", "--color", "0x159954",
+        ],
+    );
+    let stroke = &stroke["results"][0]["item"];
+    assert_eq!(stroke["kind"], "stroke");
+    assert_eq!(stroke["content"]["color"], json!([21, 153, 84]));
+    let reopened = cli.info();
+    let items = reopened["items"].as_array().unwrap();
+    let reflowed = items.iter().find(|item| item["id"] == id).unwrap();
+    assert_eq!(reflowed["transform"]["note_markup"], true);
+    assert!(reflowed["rect"][2].as_f64().unwrap() > width * 1.8);
+    assert!(reflowed["rect"][3].as_f64().unwrap() > height * 1.8);
+    assert_eq!(
+        items
+            .iter()
+            .find(|item| item["id"] == stroke["id"])
+            .unwrap(),
+        stroke
+    );
 }
 
 #[test]

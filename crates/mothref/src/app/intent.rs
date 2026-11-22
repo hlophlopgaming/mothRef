@@ -98,11 +98,13 @@ pub(super) enum Intent {
     /// Leave the close confirmation open, abandoning the pending close.
     KeepOpen,
     /// Create a note at a world position and open its editor.
-    AddNote([f32; 2]),
+    AddNote([f32; 2], moth_scene::NoteKind),
     /// Open the inline editor over an existing note.
     EditNote(Uuid),
     /// Commit or discard the inline editor's draft.
     CommitNote,
+    /// Flip one checklist marker by its byte offset in the note.
+    ToggleNoteCheck(Uuid, usize),
     /// Journal a whole command batch as one undo step.
     Commands(Vec<Command>),
     /// Finish editing a group title: `Some` keeps the typed title, `None` leaves it.

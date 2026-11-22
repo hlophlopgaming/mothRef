@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Split Insert into Label, Note and List. The inline editor uses more space, applies formatting to selected lines and supports bulleted, numbered and nested lists and checklists. Enter continues a list, Shift+Enter adds a line inside an item, and Tab changes the level. Ctrl/⌘+Enter saves the draft.
+
+- Add Pen, Marker and Arrow to the bottom toolbar. Set color and thickness in Settings › Canvas and navigation. Strokes are editable vector items and appear in PNG, SVG and PDF exports. The native CLI adds `stroke`.
+- Notes size to the font used on the canvas, including when a CLI edit changes the text or font size. Text fits inside older note frames. The note editor adds headings, bullets and checklists, and checkboxes toggle on the canvas. Boards save as schema 11, which stores vector strokes and whether a note uses formatting.
+
 - Update AVIF decoding to `avif-decode` 3 with `rav1d`. Source builds on x86 now require NASM.
 
 - Update the desktop UI, renderer, and other Rust dependencies. Update Trash integration to use `jiff` and remove the `chrono` advisory exception.
@@ -18,7 +23,7 @@
 
 - Drawing sessions preserve the resized mini window's longer side when skipping or advancing to another image.
 - View mode keeps groups, their titles, notes and selection visible through the shared canvas path. The optional images-only filter now belongs to Over mode.
-- Group loose images by source folder from the context menu or command palette, or enable automatic grouping in Settings › Adding. CLI: `group-origin` and `add --group-origin`. Source labels survive saving and duplication; old filename-only boards cannot recover them. Boards now save as schema 10, requiring an updated MothRef to reopen.
+- Group loose images by source folder from the context menu or command palette, or enable automatic grouping in Settings › Adding. CLI: `group-origin` and `add --group-origin`. Source labels survive saving and duplication; old filename-only boards cannot recover them. This metadata was introduced in schema 10.
 
 - The moth icon has a thicker, darker outline (`#a97c4c`, nearly three times as wide), so it no longer blends into the light default theme and stays readable at small sizes: window, titlebar, Windows executable, macOS app and Linux launcher.
 

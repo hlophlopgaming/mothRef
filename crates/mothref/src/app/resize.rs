@@ -160,6 +160,7 @@ impl Resize {
                     text,
                     item.note_font_size(),
                     Some(item.rect.width * self.factor),
+                    item.transform.note_markup,
                 )[1],
             );
             if !self.rect(item, self.factor).valid() {

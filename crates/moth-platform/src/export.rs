@@ -494,6 +494,15 @@ pub(super) fn image_geometry(
             }
             continue;
         }
+        if item.blob().is_none() {
+            if mode == Geometry::All && item.stroke().is_some() {
+                commands.push(moth_scene::Command::SetTransform {
+                    id: *id,
+                    transform: item.transform.reset_geometry(),
+                });
+            }
+            continue;
+        }
         let bytes = original(storage, sources, item)?;
         let dimensions = std::panic::catch_unwind(|| moth_io::decode(&bytes, 1))
             .map_err(|_| error("Image decoder panicked"))?
@@ -694,9 +703,7 @@ pub(super) fn run(
                 .is_some_and(|s| s.eq_ignore_ascii_case("png") || s.eq_ignore_ascii_case("pdf"))
             {
                 let mut options = resvg::usvg::Options::default();
-                options.fontdb_mut().load_font_data(
-                    include_bytes!("../../moth-ui/fonts/NotoSans-Regular.ttf").to_vec(),
-                );
+                load_note_fonts(&mut options);
                 let tree = resvg::usvg::Tree::from_str(&svg, &options).map_err(error)?;
                 let size = tree.size().to_int_size();
                 let mut pixmap = resvg::tiny_skia::Pixmap::new(size.width(), size.height())
@@ -834,23 +841,39 @@ fn bounds(items: &[&Item], region: Option<Rect>) -> io::Result<Rect> {
         .then_some(rect)
         .ok_or_else(|| error("Export bounds exceed budget"))
 }
+fn note_svg_text(line: &str) -> String {
+    let body = line.trim_start_matches([' ', '\t']);
+    let indent = &line[..line.len() - body.len()];
+    match body.chars().next() {
+        Some(marker @ ('□' | '▣')) => format!(
+            r#"{indent}<tspan font-family="Hack">{marker}</tspan>{}"#,
+            escape(&body[marker.len_utf8()..])
+        ),
+        _ => escape(line),
+    }
+}
+
+fn note_export_width(line: &str, size: f32, options: &resvg::usvg::Options) -> io::Result<f32> {
+    if line.trim().is_empty() {
+        return Ok(0.);
+    }
+    let source = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><text xml:space="preserve" y="{size}" font-family="Noto Sans" font-size="{size}">{}</text></svg>"#,
+        note_svg_text(line)
+    );
+    let tree = resvg::usvg::Tree::from_str(&source, options).map_err(error)?;
+    Ok(tree
+        .root()
+        .abs_bounding_box()
+        .map_or(0., |bounds| bounds.width()))
+}
 fn note_export_lines(
     text: &str,
     size: f32,
     width: f32,
     options: &resvg::usvg::Options,
 ) -> io::Result<Vec<String>> {
-    let measure = |line: &str| -> io::Result<f32> {
-        let source = format!(
-            r#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><text xml:space="preserve" y="{size}" font-family="Noto Sans" font-size="{size}">{}</text></svg>"#,
-            escape(line)
-        );
-        let tree = resvg::usvg::Tree::from_str(&source, options).map_err(error)?;
-        Ok(tree
-            .root()
-            .abs_bounding_box()
-            .map_or(0., |bounds| bounds.width()))
-    };
+    let measure = |line: &str| note_export_width(line, size, options);
     let mut lines = Vec::new();
     for paragraph in text.split('\n') {
         if paragraph.is_empty() {
@@ -899,6 +922,84 @@ fn note_export_lines(
     }
     Ok(lines)
 }
+fn load_note_fonts(options: &mut resvg::usvg::Options) {
+    let db = options.fontdb_mut();
+    db.load_font_data(include_bytes!("../../moth-ui/fonts/NotoSans-Regular.ttf").to_vec());
+    db.load_font_data(include_bytes!("../../moth-ui/fonts/Hack-Regular.ttf").to_vec());
+}
+
+fn note_svg(
+    svg: &mut String,
+    item: &Item,
+    text: &str,
+    options: &resvg::usvg::Options,
+) -> io::Result<()> {
+    use moth_scene::{NoteLine, note_padding};
+    use std::fmt::Write as _;
+
+    let r = item.rect;
+    let size = item.note_font_size();
+    let padding = note_padding(size).min(r.width.min(r.height) / 4.);
+    let width = (r.width - 2. * padding).max(f32::EPSILON);
+    let height = (r.height - 2. * padding).max(f32::EPSILON);
+    let mut rows = Vec::new();
+    let mut total_height = 0.;
+    let mut longest = 0.0f32;
+    for paragraph in text.split('\n') {
+        let (indent, style, body) = if item.transform.note_markup {
+            NoteLine::parse(paragraph)
+        } else {
+            ("", NoteLine::Plain, paragraph)
+        };
+        let line = format!("{indent}{}{body}", style.marker());
+        let font = size * style.scale();
+        let wrapped = if item.transform.note_wrap {
+            note_export_lines(&line, font, width, options)?
+        } else {
+            vec![line]
+        };
+        for line in wrapped {
+            longest = longest.max(note_export_width(&line, font, options)?);
+            rows.push((font, total_height + font, line));
+            total_height += font * 1.3;
+        }
+    }
+    let scale = (width / longest.max(f32::EPSILON))
+        .min(height / total_height.max(f32::EPSILON))
+        .min(1.);
+    let x = -r.width / 2. + padding;
+    let y = -r.height / 2. + padding;
+    if item.transform.note_kind != moth_scene::NoteKind::Label {
+        let _ = write!(
+            svg,
+            r##"<rect x="{}" y="{}" width="{}" height="{}" fill="#272a32" fill-opacity="0.9215686" stroke="#30343c"/>"##,
+            -r.width / 2.,
+            -r.height / 2.,
+            r.width,
+            r.height
+        );
+    }
+    let ink = if item.transform.note_kind == moth_scene::NoteKind::Label {
+        "#202229"
+    } else {
+        "#e0e2e7"
+    };
+    let _ = write!(
+        svg,
+        r#"<text fill="{ink}" font-family="Noto Sans" xml:space="preserve">"#
+    );
+    for (font, offset, line) in rows {
+        let _ = write!(
+            svg,
+            r#"<tspan x="{x}" y="{}" font-size="{}">{}</tspan>"#,
+            y + offset * scale,
+            font * scale,
+            note_svg_text(&line)
+        );
+    }
+    svg.push_str("</text>");
+    Ok(())
+}
 /// Group backdrop colors by palette code, the dark theme's swatches.
 const GROUP_SWATCHES: [&str; moth_scene::GROUP_COLORS as usize] = [
     "#9a9f94", "#a6c47a", "#e0b46c", "#8fb8de", "#e58fae", "#b4a0d8",
@@ -918,13 +1019,8 @@ fn svg(
         bounds.x, bounds.y, bounds.width, bounds.height
     );
     let mut note_options = resvg::usvg::Options::default();
-    if items
-        .iter()
-        .any(|item| item.note().is_some() && item.transform.note_wrap)
-    {
-        note_options
-            .fontdb_mut()
-            .load_font_data(include_bytes!("../../moth-ui/fonts/NotoSans-Regular.ttf").to_vec());
+    if items.iter().any(|item| item.note().is_some()) {
+        load_note_fonts(&mut note_options);
     }
     // Backdrops go first, outer groups before inner ones, so no tint covers an image.
     let mut groups: Vec<_> = items.iter().filter(|item| item.is_group()).collect();
@@ -973,23 +1069,27 @@ fn svg(
                 decoded.original[1] as f32 * fit,
             );
             svg.push_str(&format!(r#"<g transform="rotate({}) translate({} {}) scale({} {})"><image x="{}" y="{}" width="{w}" height="{h}" image-rendering="{}" {} xlink:href="data:image/png;base64,{}"/></g>"#,t.content_rotation.to_degrees(),t.content_offset[0]*r.width,t.content_offset[1]*r.height,if t.flip[0]{-1}else{1},if t.flip[1]{-1}else{1},-w/2.,-h/2.,if t.sampling.nearest(moth_scene::Sampling::Smooth, fit * scale){"optimizeSpeed"}else{"optimizeQuality"},if t.grayscale{r#"filter="url(#gray)""#}else{""},STANDARD.encode(png)));
-        } else if let Some(text) = item.note() {
-            let size = item.note_font_size();
-            let lines: Vec<String> = if t.note_wrap {
-                note_export_lines(text, size, r.width, &note_options)?
-            } else {
-                text.split('\n').map(str::to_owned).collect()
-            };
-            svg.push_str(&format!(r##"<rect x="{}" y="{}" width="{}" height="{}" fill="#272a32" fill-opacity="0.9215686" stroke="#30343c"/><text fill="#e0e2e7" font-family="Noto Sans" font-size="{size}">"##,-r.width/2.,-r.height/2.,r.width,r.height));
-            for (row, line) in lines.iter().enumerate() {
-                svg.push_str(&format!(
-                    r#"<tspan x="{}" y="{}">{}</tspan>"#,
-                    -r.width / 2.,
-                    -r.height / 2. + size * (1. + row as f32 * 1.3),
-                    escape(line)
-                ));
+        } else if let Some(stroke) = item.stroke() {
+            use std::fmt::Write as _;
+            let [red, green, blue] = stroke.color;
+            let fx = if t.flip[0] { -1. } else { 1. };
+            let fy = if t.flip[1] { -1. } else { 1. };
+            let _ = write!(
+                svg,
+                r##"<polyline fill="none" stroke="#{red:02X}{green:02X}{blue:02X}" stroke-width="{}" stroke-linecap="round" stroke-linejoin="round" points=""##,
+                stroke.world_width(r)
+            );
+            for [x, y] in &stroke.points {
+                let _ = write!(
+                    svg,
+                    "{},{} ",
+                    (x - 0.5) * r.width * fx,
+                    (y - 0.5) * r.height * fy
+                );
             }
-            svg.push_str("</text>");
+            svg.push_str(r#""/>"#);
+        } else if let Some(text) = item.note() {
+            note_svg(&mut svg, item, text, &note_options)?;
         }
         svg.push_str("</g></g>");
         if svg.len() > 64 * 1024 * 1024 {
@@ -1078,6 +1178,62 @@ mod tests {
         );
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn stroke_and_formatted_note_render_in_svg() {
+        let storage = DesktopStorage::in_directory(std::env::temp_dir());
+        let stroke = moth_scene::Stroke::item(
+            vec![[12., 90.], [108., 90.]],
+            moth_scene::StrokeStyle::Pen,
+            5.,
+            [220, 40, 20],
+            None,
+        )
+        .unwrap();
+        let mut note = Item::text(
+            "# Study\n- [x] Light",
+            Rect {
+                x: 1.,
+                y: 1.,
+                width: 105.,
+                height: 70.,
+            },
+            None,
+        );
+        note.transform.note_markup = true;
+        note.transform.note_font_size = 14.;
+        let content = svg(
+            &storage,
+            &HashMap::new(),
+            &[&note, &stroke],
+            Rect {
+                x: 0.,
+                y: 0.,
+                width: 120.,
+                height: 100.,
+            },
+            120,
+        )
+        .unwrap();
+        assert!(content.contains(">Study</tspan>"));
+        assert!(content.contains(r#"font-family="Hack">▣</tspan> Light</tspan>"#));
+        let mut options = resvg::usvg::Options::default();
+        load_note_fonts(&mut options);
+        let tree = resvg::usvg::Tree::from_str(&content, &options).unwrap();
+        let mut pixmap = resvg::tiny_skia::Pixmap::new(120, 100).unwrap();
+        resvg::render(
+            &tree,
+            resvg::tiny_skia::Transform::identity(),
+            &mut pixmap.as_mut(),
+        );
+        let sample = pixmap.pixel(60, 90).unwrap();
+        assert!(
+            sample.red().abs_diff(220) <= 3
+                && sample.green().abs_diff(40) <= 3
+                && sample.blue().abs_diff(20) <= 3
+        );
+        assert_eq!(pixmap.pixel(60, 99).unwrap().alpha(), 0);
+    }
+
     #[test]
     fn wrapped_note_export_uses_fixed_font_and_preserves_unicode_text() {
         let text = "one two three four пять шесть\nlast line";

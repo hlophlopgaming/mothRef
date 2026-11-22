@@ -23,7 +23,7 @@
 
 <br>
 
-<img src="docs/screenshots/board.png" alt="暗いキャンバスに 3 枚のイラストを並べた MothRef のボード" width="900">
+<img src="docs/screenshots/board.png" alt="3 枚のイラストを題材ごとにまとめた MothRef のボード" width="900">
 
 </div>
 
@@ -94,7 +94,7 @@
 <details>
 <summary><b>ボードライブラリ（スクリーンショット）</b></summary>
 <br>
-<img src="docs/screenshots/library.png" alt="初回起動時の MothRef ボードライブラリ" width="900">
+<img src="docs/screenshots/library.png" alt="プレビュー、フォルダー、タグが並ぶ MothRef のボードライブラリ" width="900">
 </details>
 
 <a id="download"></a>

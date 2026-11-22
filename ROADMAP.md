@@ -327,12 +327,11 @@ Open:
   - Diagonals: main diagonals, baroque and sinister diagonals, dynamic-symmetry armature (diagonals plus perpendiculars from the corners)
   - Aspect-ratio frames (3:4, 4:3, 1:1, 16:9, custom) to check how a reference would crop
   - Overlays are stored in normalized coordinates of the visible (cropped) image, so they follow crop, rotation and flip; drawn on top of the image texture with the item transform; scene export offers "with overlays"
-- [ ] Freehand drawing (3 widths, eraser, color) and shapes (ellipse, rectangle, line)
-- [ ] Drawing pens: marker (thin / thick) and highlighter (thin / thick), each with color selection
+- [ ] Ellipse, rectangle and straight line shapes
 - [ ] Washi tape: textured tape strips from a built-in set, plus user-added custom textures
 - [ ] Eraser in two modes: pencil-style (erases part of a stroke) and object/layer eraser (removes a whole stroke at once)
 - [ ] Emoji stamp: drop emoji reactions (like, not done, …) from a base set, with a custom emoji picker
-- [ ] Rich text notes with links and checklists; configurable heading font size (BeeRef #130)
+- [ ] Note links, remaining text styles and configurable heading size (BeeRef #130)
 - [ ] Animated GIFs with frame stepping: the player sits on the image (scrubber, play/pause, frame counter, speed) and steps 1, 2, 3 or 4 frames at a time
 - [x] Line/dot grid with snapping; automatic alignment guides and edge/center snapping (BeeRef #129) — View › Show grid (Ctrl/⌘+') draws dots or lines behind images at a set board spacing, every fourth mark stronger and coarser when zoomed out; View › Snap to grid (Ctrl/⌘+Shift+') and Settings › Canvas › Snap to other items line up a dragged selection's edges and centers, with guides; holding Ctrl/⌘ while dragging places freely. Snapping while resizing remains open
 - [ ] Slideshow (incl. random order), embedded ICC profiles
@@ -344,6 +343,8 @@ Open:
 <summary>Done</summary>
 
 - [x] Minimap / navigator: board overview with the viewport rectangle; click or drag to move the camera; toggle with a shortcut — shipped early with configurable size, position and opacity (0.1.0-alpha.9–10)
+- [x] Vector annotations: freehand Pen, translucent Marker and Arrow in the bottom toolbar, with color and thickness in Settings › Canvas and navigation. Strokes are editable and exportable, with native `stroke`.
+- [x] Borderless labels, note cards and list cards in Insert. Notes fit their text and support headings, nested bullets, numbers and clickable checklists. The editor continues lists with Enter and changes level with Tab. CLI `note --kind` creates each form.
 - [x] Context-menu point-snapping controls shared by Collect and View: inline spacing, dots only while enabled, both axes, Shift bypass and native `snap-grid`
 - [x] Folder-origin grouping: explicit action and optional automatic grouping on addition, preserved hierarchy, persistent group origins (schema 10), native CLI equivalents; old boards without origin metadata remain unchanged
 - [x] View uses the same groups, titles, notes and selection as Collect; timed drawing sessions keep a resized mini window's long side across slides

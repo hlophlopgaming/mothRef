@@ -7,7 +7,7 @@
 //! (freehand, shapes, eraser) add a tool and, where a press does something new,
 //! a gesture variant, instead of more flags beside the old ones.
 use moth_platform::input::Kind;
-use moth_scene::{Rect, Uuid};
+use moth_scene::{MAX_STROKE_POINTS, Rect, Stroke, StrokeStyle, Uuid};
 
 /// What a primary press on the canvas does.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -19,6 +19,8 @@ pub(super) enum Tool {
     PickColor,
     /// The next click on an image reports its coordinates and details.
     PickInfo,
+    /// Draws a vector annotation without changing the image.
+    Draw(StrokeStyle),
 }
 impl Tool {
     /// One-shot tools fall back to selection after their click.
@@ -38,10 +40,58 @@ pub(super) struct Press {
     pub(super) anchor: [f32; 2],
 }
 
+pub(super) struct Drawing {
+    pub owner: (Kind, u64),
+    pub style: StrokeStyle,
+    pub width: f32,
+    pub color: [u8; 3],
+    pub points: Vec<[f32; 2]>,
+    pub spacing: f32,
+}
+
+impl Drawing {
+    pub fn sample(&mut self, point: [f32; 2], final_point: bool) {
+        let Some(last) = self.points.last().copied() else {
+            return;
+        };
+        let distance = (point[0] - last[0]).hypot(point[1] - last[1]);
+        if distance == 0. || (!final_point && distance < self.spacing) {
+            return;
+        }
+        if self.style == StrokeStyle::Arrow && self.points.len() == 2 {
+            self.points[1] = point;
+        } else {
+            if self.points.len() == MAX_STROKE_POINTS {
+                // Keep the whole gesture even when a high-rate pen exceeds the budget.
+                let mut i = 0;
+                self.points.retain(|_| {
+                    let keep = i % 2 == 0;
+                    i += 1;
+                    keep
+                });
+                self.spacing *= 2.;
+            }
+            self.points.push(point);
+        }
+    }
+
+    pub fn preview(&self) -> Option<moth_scene::Item> {
+        Stroke::item(
+            self.points.clone(),
+            self.style,
+            self.width,
+            self.color,
+            None,
+        )
+    }
+}
+
 #[derive(Default)]
 pub(super) enum Gesture {
     #[default]
     Idle,
+    /// An annotation being drawn by a single pointer.
+    Draw(Drawing),
     /// The camera follows the pointer.
     Pan(Press),
     /// A selection rectangle from the press point.
@@ -70,6 +120,7 @@ impl Gesture {
     pub(super) fn owner(&self) -> Option<(Kind, u64)> {
         match self {
             Gesture::Idle => None,
+            Gesture::Draw(drawing) => Some(drawing.owner),
             Gesture::Pan(press) | Gesture::Marquee(press) | Gesture::Move { press, .. } => {
                 Some(press.owner)
             }

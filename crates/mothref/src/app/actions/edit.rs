@@ -40,7 +40,14 @@ impl App {
                         self.workspace.board.selection.contains(&id) && r.valid() && t.valid()
                     })
             }
-            Paste | Undo | Redo | Note => true,
+            NoteHeading | NoteBullet | NoteNumbered | NoteChecklist => {
+                self.editing.as_ref().is_some_and(|edit| {
+                    edit.kind != moth_scene::NoteKind::Label
+                        && (action != NoteHeading || edit.kind != moth_scene::NoteKind::List)
+                })
+            }
+            SaveNoteDraft | CancelNoteDraft => self.editing.is_some(),
+            Paste | Undo | Redo | Note | AddLabel | AddList => true,
             _ => !self.workspace.board.selection.is_empty(),
         }
     }
@@ -53,6 +60,21 @@ impl App {
         use Action::*;
         let items = Self::selected_items(&self.workspace.board, action);
         let intent = match action {
+            NoteHeading | NoteBullet | NoteNumbered | NoteChecklist => {
+                let style = match action {
+                    NoteHeading => moth_scene::NoteLine::Heading,
+                    NoteBullet => moth_scene::NoteLine::Bullet,
+                    NoteNumbered => moth_scene::NoteLine::Numbered(1),
+                    _ => moth_scene::NoteLine::Check(false),
+                };
+                self.format_note_line(style);
+                return None;
+            }
+            SaveNoteDraft => Intent::CommitNote,
+            CancelNoteDraft => {
+                self.editing = None;
+                return None;
+            }
             EditNote => {
                 let [item] = items.as_slice() else {
                     return None;
@@ -93,6 +115,7 @@ impl App {
                         text,
                         transform.note_font_size.max(0.001),
                         transform.note_wrap.then_some(rect.width),
+                        transform.note_markup,
                     );
                     rect.width = width;
                     rect.height = height;
@@ -142,10 +165,17 @@ impl App {
             Paste => Intent::Paste,
             Undo => Intent::Undo,
             Redo => Intent::Redo,
-            Note => Intent::AddNote(self.workspace.board.view.camera.world([
-                self.workspace.board.view.viewport.center().x,
-                self.workspace.board.view.viewport.center().y,
-            ])),
+            Note | AddLabel | AddList => {
+                let view = &self.workspace.board.view;
+                Intent::AddNote(
+                    view.camera.world(view.viewport.center().into()),
+                    match action {
+                        AddLabel => moth_scene::NoteKind::Label,
+                        AddList => moth_scene::NoteKind::List,
+                        _ => moth_scene::NoteKind::Card,
+                    },
+                )
+            }
             Delete => Intent::Commands(groups::removal(
                 &self.workspace.board.scene,
                 items.iter().map(|i| i.id).collect(),

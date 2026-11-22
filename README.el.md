@@ -23,7 +23,7 @@
 
 <br>
 
-<img src="docs/screenshots/board.png" alt="Ένας πίνακας του MothRef με τρεις εικονογραφήσεις σε σκούρο καμβά" width="900">
+<img src="docs/screenshots/board.png" alt="Πίνακας MothRef με τρεις εικονογραφήσεις σε θεματικές ομάδες" width="900">
 
 </div>
 
@@ -94,7 +94,7 @@
 <details>
 <summary><b>Βιβλιοθήκη πινάκων (στιγμιότυπο)</b></summary>
 <br>
-<img src="docs/screenshots/library.png" alt="Η βιβλιοθήκη πινάκων του MothRef στην πρώτη εκκίνηση" width="900">
+<img src="docs/screenshots/library.png" alt="Βιβλιοθήκη πινάκων MothRef με προεπισκοπήσεις, φακέλους και ετικέτες" width="900">
 </details>
 
 <a id="download"></a>

@@ -586,8 +586,21 @@ fn row_label(item: &Item) -> String {
     }
     if let Some(note) = item.note() {
         let line = note.lines().next().unwrap_or_default();
+        let line = if item.transform.note_markup {
+            moth_scene::NoteLine::parse(line).2
+        } else {
+            line
+        };
         let short: String = line.chars().take(40).collect();
-        return format!("{}: {short}", text(Text::LayerNote));
+        let label = match item.transform.note_kind {
+            moth_scene::NoteKind::Label => Text::AddLabel,
+            moth_scene::NoteKind::List => Text::AddList,
+            moth_scene::NoteKind::Card => Text::LayerNote,
+        };
+        return format!("{}: {short}", text(label));
+    }
+    if item.stroke().is_some() && item.name.is_empty() {
+        return text(Text::LayerStroke).to_owned();
     }
     if item.name.is_empty() {
         text(Text::LayerImage).to_owned()

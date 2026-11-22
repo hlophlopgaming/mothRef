@@ -23,7 +23,7 @@ Bilder auf eine unendliche Leinwand ziehen, anordnen und beim Arbeiten im Blick 
 
 <br>
 
-<img src="docs/screenshots/board.png" alt="Ein MothRef-Board mit drei Illustrationen auf dunkler Leinwand" width="900">
+<img src="docs/screenshots/board.png" alt="MothRef-Board mit drei thematisch gruppierten Illustrationen" width="900">
 
 </div>
 
@@ -94,7 +94,7 @@ Was in der aktuellen Alpha bereits funktioniert:
 <details>
 <summary><b>Board-Bibliothek (Screenshot)</b></summary>
 <br>
-<img src="docs/screenshots/library.png" alt="MothRef-Board-Bibliothek beim ersten Start" width="900">
+<img src="docs/screenshots/library.png" alt="MothRef-Board-Bibliothek mit Vorschauen, Ordnern und Tags" width="900">
 </details>
 
 <a id="download"></a>

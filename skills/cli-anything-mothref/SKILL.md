@@ -99,3 +99,14 @@ Use `snap-grid --id UUID --step 100` for a point-snapping board edit on both axe
 The first z-sorted selected item/group supplies the anchor; selected members keep
 their relative positions. The GUI context menu offers a persistent mode toggle and grid spacing together;
 the mode displays its own dot grid. See [point snapping](../../docs/CLI.md#point-snapping-on-the-canvas).
+
+Use `note` with `# Heading`, `- Item`, `1. Item` and `- [ ] Task` for
+formatted cards. Use `--kind label` for a borderless literal label or `--kind list`
+for a list card. JSON takes the optional `kind` field. Text and font-size edits reflow the card. Use `edit --note-markup`
+to enable formatting on a legacy note and `--rect` to specify its frame explicitly.
+
+Create a vector annotation with
+`mothref stroke BOARD --style arrow --point 40,40 --point 160,90`. For freehand or
+translucent strokes, use `--style pen` or `--style marker` and pass the path with
+repeated `--point`. Set `--color 0xRRGGBB` and `--width N` in board units.
+JSON uses `{"op":"stroke","style":"arrow","points":[[40,40],[160,90]]}`.

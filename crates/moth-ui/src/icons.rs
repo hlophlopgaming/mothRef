@@ -56,6 +56,12 @@ pub enum Icon {
     Layers,
     /// Done, confirmed.
     Check,
+    /// Freehand annotation.
+    Pen,
+    /// Translucent annotation.
+    Marker,
+    /// Straight annotation with an arrowhead.
+    Arrow,
 
     /// Return to the board catalog.
     Home,
@@ -97,6 +103,12 @@ pub enum Icon {
     ArrangeOptimal,
     /// List library view.
     List,
+    /// Heading in a text card.
+    Heading,
+    /// List with ordinal numbers.
+    NumberedList,
+    /// List with checkboxes.
+    Checklist,
     /// Find boards.
     Search,
     /// Recently used boards.
@@ -298,6 +310,56 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
             line(&[(12., 2.), (12., 6.), (16., 6.)]);
             line(&[(6., 16.), (6., 12.), (2., 12.)]);
             line(&[(12., 16.), (12., 12.), (16., 12.)]);
+        }
+        Icon::Pen => {
+            line(&[
+                (3., 15.),
+                (4., 11.),
+                (12., 3.),
+                (15., 6.),
+                (7., 14.),
+                (3., 15.),
+            ]);
+            line(&[(10., 5.), (13., 8.)]);
+        }
+        Icon::Marker => {
+            line(&[
+                (3., 13.),
+                (7., 13.),
+                (15., 5.),
+                (12., 2.),
+                (4., 10.),
+                (3., 13.),
+            ]);
+            line(&[(2., 16.), (9., 16.)]);
+        }
+        Icon::Arrow => {
+            line(&[(3., 15.), (15., 3.), (15., 10.)]);
+            line(&[(8., 3.), (15., 3.)]);
+        }
+        Icon::Heading => {
+            line(&[(4., 4.), (4., 14.)]);
+            line(&[(4., 9.), (14., 9.)]);
+            line(&[(14., 4.), (14., 14.)]);
+        }
+        Icon::NumberedList => {
+            line(&[(3., 4.), (4., 3.), (4., 7.)]);
+            line(&[
+                (2., 11.),
+                (4.5, 11.),
+                (4.5, 12.),
+                (2., 14.),
+                (2., 15.),
+                (5., 15.),
+            ]);
+            line(&[(8., 5.), (16., 5.)]);
+            line(&[(8., 13.), (16., 13.)]);
+        }
+        Icon::Checklist => {
+            line(&[(2., 5.), (4., 7.), (6.5, 3.)]);
+            line(&[(8., 5.), (16., 5.)]);
+            line(&[(2., 11.), (6., 11.), (6., 15.), (2., 15.), (2., 11.)]);
+            line(&[(8., 13.), (16., 13.)]);
         }
         Icon::Check => line(&[(3., 9.5), (7.5, 14.), (15., 4.5)]),
         Icon::OpenExternal => {

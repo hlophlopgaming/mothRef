@@ -23,7 +23,7 @@ Suelta imágenes en un lienzo infinito, ordénalas y tenlas a la vista mientras 
 
 <br>
 
-<img src="docs/screenshots/board.png" alt="Un tablero de MothRef con tres ilustraciones sobre un lienzo oscuro" width="900">
+<img src="docs/screenshots/board.png" alt="Lienzo de MothRef con tres ilustraciones agrupadas por tema" width="900">
 
 </div>
 
@@ -94,7 +94,7 @@ Lo que ya funciona en la alfa actual:
 <details>
 <summary><b>Biblioteca de tableros (captura)</b></summary>
 <br>
-<img src="docs/screenshots/library.png" alt="Biblioteca de tableros de MothRef en el primer arranque" width="900">
+<img src="docs/screenshots/library.png" alt="Biblioteca de tableros de MothRef con vistas previas, carpetas y etiquetas" width="900">
 </details>
 
 <a id="download"></a>

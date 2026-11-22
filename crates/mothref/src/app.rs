@@ -41,6 +41,8 @@ struct Editing {
     font_size: f32,
     width: f32,
     wrap: bool,
+    markup: bool,
+    kind: moth_scene::NoteKind,
     focus: bool,
 }
 mod actions;
@@ -62,6 +64,7 @@ mod item_motion;
 mod library;
 mod modal;
 mod motion;
+mod note_edit;
 mod overlay;
 mod panes;
 mod resize;
@@ -629,33 +632,40 @@ impl App {
         self.workspace.board.intake.burst.files_received();
     }
 
-    /// Creates an empty note at `world` and opens the inline editor for it.
-    fn add_note(&mut self, world: [f32; 2]) {
-        if self.workspace.board.locked || self.workspace.board.intake.loading {
+    /// Opens a draft at a board point. A blank draft never enters the journal.
+    fn add_note(&mut self, world: [f32; 2], kind: moth_scene::NoteKind) {
+        use moth_scene::NoteKind;
+        let board = &self.workspace.board;
+        if board.locked
+            || board.intake.loading
+            || board.file.discarding
+            || !board.idle()
+            || self.editing.is_some()
+        {
             return;
         }
-        if self.workspace.board.file.discarding || !self.workspace.board.idle() {
-            return;
-        }
-        let rect = canvas::new_note_rect(world, self.workspace.board.view.camera.zoom);
+        let rect = canvas::new_note_rect(world, board.view.camera.zoom);
         let font_size = canvas::note_font_size(rect, "");
-        let width = rect.width;
-        let mut item = Item::text("", rect, self.workspace.board.scene.top());
-        item.transform.note_font_size = font_size;
-        let id = item.id;
-        self.workspace
-            .persist(moth_platform::boards::Request::Apply(
-                Command::Insert(item),
-                None,
-            ));
+        let width = if kind == NoteKind::Label {
+            font_size * 8.
+        } else {
+            rect.width
+        };
+        let id = Uuid::now_v7();
         self.editing = Some(Editing {
             id,
             original: String::new(),
-            draft: String::new(),
+            draft: if kind == NoteKind::List {
+                moth_scene::NoteLine::Bullet.prefix().into_owned()
+            } else {
+                String::new()
+            },
             anchor: world,
             font_size,
             width,
             wrap: false,
+            markup: kind != NoteKind::Label,
+            kind,
             focus: true,
         });
     }
@@ -670,71 +680,197 @@ impl App {
         let Some(text) = item.note() else {
             return;
         };
+        let draft = if item.transform.note_markup {
+            note_edit::display_list_markers(text)
+        } else {
+            text.to_owned()
+        };
         self.editing = Some(Editing {
             id,
-            original: text.to_owned(),
-            draft: text.to_owned(),
+            original: draft.clone(),
+            draft,
             anchor: [item.rect.x, item.rect.y],
             font_size: item.note_font_size(),
             width: item.rect.width,
             wrap: item.transform.note_wrap,
+            markup: item.transform.note_markup,
+            kind: item.transform.note_kind,
             focus: true,
         });
     }
-    /// Commits or discards the inline editor's draft once it loses focus.
-    fn finish_editing(&mut self) {
-        let Some(editing) = self.editing.take() else {
+    fn format_note_line(&mut self, style: moth_scene::NoteLine) {
+        let Some(editing) = &mut self.editing else {
             return;
         };
-        if editing.draft == editing.original {
+        let id = canvas::note_editor_id(editing.id);
+        note_edit::format(self.shell.context(), id, editing, style);
+    }
+
+    fn toggle_note_check(&mut self, id: Uuid, at: usize) {
+        let board = &self.workspace.board;
+        if board.locked || !board.idle() {
             return;
         }
-        let mut commands = Vec::new();
-        if editing.draft.trim().is_empty() {
-            commands.push(Command::Remove(editing.id));
+        let Some(item) = board.scene.get(id) else {
+            return;
+        };
+        let Some(raw) = item.note() else { return };
+        let Some(tail) = raw.get(at..) else { return };
+        let line = tail.split('\n').next().unwrap_or_default();
+        let (_, style, body) = moth_scene::NoteLine::parse(line);
+        let moth_scene::NoteLine::Check(checked) = style else {
+            return;
+        };
+        let end = at + line.len() - body.len();
+        let next = moth_scene::NoteLine::Check(!checked);
+        let mut text = raw.to_owned();
+        // Preserve Markdown sources when toggling a checkbox created via the CLI.
+        if matches!(line.as_bytes().first(), Some(b'-')) {
+            text.replace_range(at + 3..at + 4, if checked { " " } else { "x" });
+        } else {
+            text.replace_range(at..end, &next.prefix());
+        }
+        let size = item.note_font_size();
+        let [width, height] = canvas::measure_note_frame(
+            self.shell.context(),
+            &text,
+            size,
+            item.transform.note_wrap.then_some(item.rect.width),
+            true,
+        );
+        let mut commands = vec![(Command::SetText { id, text }, None)];
+        if item.transform.note_font_size == 0. {
+            commands.push((
+                Command::SetTransform {
+                    id,
+                    transform: Transform {
+                        note_font_size: size,
+                        ..item.transform
+                    },
+                },
+                None,
+            ));
+        }
+        let rect = Rect {
+            width,
+            height,
+            ..item.rect
+        };
+        if rect != item.rect && rect.valid() {
+            commands.push((Command::SetRect { id, rect }, None));
+        }
+        self.workspace.persist_batch(commands);
+    }
+
+    /// Sends one undoable note edit and retains the draft if the queue is busy.
+    fn finish_editing(&mut self) {
+        let Some(mut editing) = self.editing.take() else {
+            return;
+        };
+        let board = &self.workspace.board;
+        let old = board.scene.get(editing.id);
+        if editing.markup {
+            let last = editing
+                .draft
+                .rsplit_once('\n')
+                .map_or((0, editing.draft.as_str()), |(head, line)| {
+                    (head.len() + 1, line)
+                });
+            let (_, style, body) = moth_scene::NoteLine::parse(last.1);
+            if style.is_list() && body.trim().is_empty() {
+                editing.draft.truncate(last.0.saturating_sub(1));
+            }
+        }
+        if editing.draft == editing.original
+            && old.is_none_or(|item| item.transform.note_markup == editing.markup)
+        {
+            return;
+        }
+        if editing.draft.len() > moth_scene::MAX_NOTE_BYTES {
+            self.workspace.board.notices.message = moth_ui::Text::NoteTooLong.into();
+            editing.focus = true;
+            self.editing = Some(editing);
+            return;
+        }
+
+        let empty = editing.draft.lines().all(|line| {
+            let body = if editing.markup {
+                moth_scene::NoteLine::parse(line).2
+            } else {
+                line
+            };
+            body.trim().is_empty()
+        });
+        let request = if empty {
+            if old.is_none() {
+                return;
+            }
+            moth_platform::boards::Request::Apply(Command::Remove(editing.id), None)
         } else {
             let [width, height] = canvas::measure_note_frame(
                 self.shell.context(),
                 &editing.draft,
                 editing.font_size,
                 editing.wrap.then_some(editing.width),
+                editing.markup,
             );
-            if let Some(item) = self.workspace.board.scene.get(editing.id)
-                && item.transform.note_font_size == 0.
-            {
-                commands.push(Command::SetTransform {
-                    id: editing.id,
-                    transform: Transform {
-                        note_font_size: editing.font_size,
-                        ..item.transform
-                    },
-                });
-            }
-            commands.push(Command::SetText {
-                id: editing.id,
-                text: editing.draft,
-            });
             let rect = Rect {
                 x: editing.anchor[0],
                 y: editing.anchor[1],
                 width,
                 height,
             };
-            if self
-                .workspace
-                .board
-                .scene
-                .get(editing.id)
-                .is_none_or(|i| i.rect != rect)
-            {
-                commands.push(Command::SetRect {
-                    id: editing.id,
-                    rect,
-                });
+            if !rect.valid() {
+                self.workspace.board.notices.message = moth_ui::Text::NoteTooLarge.into();
+                editing.focus = true;
+                self.editing = Some(editing);
+                return;
             }
+            let transform = Transform {
+                note_font_size: editing.font_size,
+                note_markup: editing.markup,
+                note_kind: editing.kind,
+                ..old.map_or_else(Transform::default, |item| item.transform)
+            };
+            if let Some(item) = old {
+                let mut changes = vec![(
+                    Command::SetText {
+                        id: editing.id,
+                        text: editing.draft.clone(),
+                    },
+                    None,
+                )];
+                if item.transform != transform {
+                    changes.push((
+                        Command::SetTransform {
+                            id: editing.id,
+                            transform,
+                        },
+                        None,
+                    ));
+                }
+                if item.rect != rect {
+                    changes.push((
+                        Command::SetRect {
+                            id: editing.id,
+                            rect,
+                        },
+                        None,
+                    ));
+                }
+                moth_platform::boards::Request::ApplyBatch(changes)
+            } else {
+                let mut item = Item::text(editing.draft.clone(), rect, board.scene.top());
+                item.id = editing.id;
+                item.transform = transform;
+                item.parent = board.entered;
+                moth_platform::boards::Request::Apply(Command::Insert(item), None)
+            }
+        };
+        if !self.workspace.try_persist(request) {
+            editing.focus = true;
+            self.editing = Some(editing);
         }
-        self.workspace
-            .persist_batch(commands.into_iter().map(|c| (c, None)).collect());
     }
 
     fn adapt_gpu_budget(&mut self) {
@@ -1238,6 +1374,7 @@ impl App {
             | Intent::AddNote(..)
             | Intent::EditNote(..)
             | Intent::CommitNote
+            | Intent::ToggleNoteCheck(..)
             | Intent::NoteFocused
             | Intent::GroupTitle(..)
             | Intent::EnterGroup(..)
@@ -1532,6 +1669,7 @@ impl App {
                     && !self.tools.blocked()
                     && !self.settings_window.open
                     && self.settings.show_outlines
+                    && self.tool == gesture::Tool::Select
                     && self.workspace.board.idle()
                     && self.input.pointer_action == Some(bindings::Action::MoveDrag)
                     && self.start_resize(p)
@@ -1571,6 +1709,15 @@ impl App {
                     self.zoom_drag(p);
                     return;
                 }
+                if matches!(self.gesture, gesture::Gesture::Draw(_))
+                    || (matches!(self.tool, gesture::Tool::Draw(_))
+                        && p.phase == Phase::Down
+                        && p.button == 1
+                        && !p.pan)
+                {
+                    self.draw_pointer(p);
+                    return;
+                }
                 match p.phase {
                     Phase::Down => self.press(p),
                     Phase::Move => self.drag_to(p),
@@ -1580,6 +1727,67 @@ impl App {
             }
         }
     }
+    fn draw_pointer(&mut self, p: moth_platform::input::Pointer) {
+        use gesture::{Drawing, Gesture, Tool};
+        use moth_platform::input::Phase;
+        let board = &self.workspace.board;
+        let zoom = board.view.camera.zoom;
+        let point = board.view.camera.world(p.position);
+        match p.phase {
+            Phase::Down => {
+                let Tool::Draw(style) = self.tool else { return };
+                if !board.idle()
+                    || board.locked
+                    || board.intake.loading
+                    || self.editing.is_some()
+                    || self.tools.blocked()
+                    || self.settings_window.open
+                    || self.window.overlay.is_some()
+                    || !matches!(self.gesture, Gesture::Idle)
+                {
+                    return;
+                }
+                self.camera_motion.stop();
+                let color = self.settings.annotation_color.unwrap_or_else(|| {
+                    moth_ui::theme::annotation_color(style == moth_scene::StrokeStyle::Marker)
+                });
+                self.gesture = Gesture::Draw(Drawing {
+                    owner: (p.kind, p.id),
+                    style,
+                    width: style.width() * self.settings.annotation_size / (100. * zoom),
+                    color,
+                    points: vec![point],
+                    spacing: 1.5 / zoom,
+                });
+            }
+            Phase::Move => {
+                if let Gesture::Draw(drawing) = &mut self.gesture {
+                    drawing.sample(point, false);
+                }
+            }
+            Phase::Up => {
+                if let Gesture::Draw(mut drawing) = std::mem::take(&mut self.gesture)
+                    && board.idle()
+                    && !board.locked
+                {
+                    drawing.sample(point, true);
+                    if let Some(mut item) = moth_scene::Stroke::item(
+                        drawing.points,
+                        drawing.style,
+                        drawing.width,
+                        drawing.color,
+                        board.scene.top(),
+                    ) {
+                        item.parent = board.entered;
+                        self.workspace
+                            .persist_batch(vec![(Command::Insert(item), None)]);
+                    }
+                }
+            }
+            Phase::Cancel => self.cancel_drag(),
+        }
+    }
+
     /// The physical screen position of a window point, where the system reports it.
     fn screen_point(&self, position: [f32; 2]) -> Option<[i32; 2]> {
         let window = self.shell.window.as_ref()?;
@@ -1818,8 +2026,7 @@ impl App {
                     // The index only guarantees the rotated envelope, so the
                     // click must still land inside the frame itself.
                     .find(|item| {
-                        board.presented(item)
-                            && item.rect.contains_rotated(item.transform.rotation, world)
+                        board.presented(item) && item.hits(world, 3. / board.view.camera.zoom)
                     })
                     .map(|item| item.id)
             });
@@ -2193,6 +2400,7 @@ impl App {
     /// keyboard panning and window-edge resizing wait for it.
     fn dragging(&self) -> bool {
         self.gesture.press().is_some()
+            || matches!(self.gesture, gesture::Gesture::Draw(_))
             || self.gesture.resize().is_some()
             || self.settling.resize.is_some()
     }
@@ -2510,6 +2718,10 @@ impl App {
                             moving: self.gesture.grabbed(),
                             resizing: self.gesture.resize().or(self.settling.resize.as_ref()),
                             pointer: self.input.cursor.filter(|_| self.input.hover),
+                            drawing: match &self.gesture {
+                                gesture::Gesture::Draw(drawing) => Some(drawing),
+                                _ => None,
+                            },
                             motion: &self.motion,
                             duplicate: self.settling.copies,
                             gpu,
@@ -3166,7 +3378,7 @@ impl App {
                 }
                 if pressed && key == egui::Key::Escape {
                     let closing_surface = self.tools.blocked()
-                        || self.tool.picks()
+                        || self.tool != gesture::Tool::Select
                         || self.tools.pickers.open
                         || self.settings_window.open
                         || self.window.moving_window

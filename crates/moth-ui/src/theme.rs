@@ -751,3 +751,12 @@ mod custom_color_tests {
         }
     }
 }
+
+/// Default annotation ink, shared across themes so it stays visible over images.
+pub fn annotation_color(marker: bool) -> [u8; 3] {
+    if marker {
+        [255, 205, 58]
+    } else {
+        [227, 61, 82]
+    }
+}

@@ -23,7 +23,7 @@ Solte imagens em uma tela infinita, organize-as e mantenha-as à vista enquanto 
 
 <br>
 
-<img src="docs/screenshots/board.png" alt="Um quadro do MothRef com três ilustrações sobre uma tela escura" width="900">
+<img src="docs/screenshots/board.png" alt="Quadro do MothRef com três ilustrações agrupadas por tema" width="900">
 
 </div>
 
@@ -94,7 +94,7 @@ O que já funciona no alfa atual:
 <details>
 <summary><b>Biblioteca de quadros (captura de tela)</b></summary>
 <br>
-<img src="docs/screenshots/library.png" alt="Biblioteca de quadros do MothRef na primeira execução" width="900">
+<img src="docs/screenshots/library.png" alt="Biblioteca de quadros do MothRef com prévias, pastas e etiquetas" width="900">
 </details>
 
 <a id="download"></a>

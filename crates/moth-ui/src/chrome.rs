@@ -80,6 +80,8 @@ pub struct Status<'a> {
     pub count: usize,
     /// Image count excludes notes.
     pub images: usize,
+    /// Number of vector annotations.
+    pub strokes: usize,
     /// Selected item count.
     pub selected: usize,
     /// Camera scale.
@@ -158,18 +160,30 @@ pub fn toolbar(
                             .color(crate::tokens(ui.ctx()).text_muted),
                     );
                 }
+                let language = locale();
+                let notes = status.count.saturating_sub(status.images + status.strokes);
+                let mut counts = if status.strokes == 0 || status.images + notes > 0 {
+                    item_counts(language, status.images, notes)
+                } else {
+                    String::new()
+                };
+                if status.strokes > 0 {
+                    if !counts.is_empty() {
+                        counts.push_str(" · ");
+                    }
+                    counts.push_str(&counted(
+                        language,
+                        status.strokes,
+                        [Text::StrokeOne, Text::StrokeFew, Text::StrokeMany],
+                    ));
+                }
                 let summary = format!(
-                    "{} · {}",
+                    "{} · {counts}",
                     text(if status.dirty || status.path.is_empty() {
                         Text::UnsavedChip
                     } else {
                         Text::SaveState
-                    }),
-                    item_counts(
-                        locale(),
-                        status.images,
-                        status.count.saturating_sub(status.images)
-                    )
+                    })
                 );
                 let status_font = egui::TextStyle::Body.resolve(ui.style());
                 let color = crate::tokens(ui.ctx()).text_muted;

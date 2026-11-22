@@ -18,9 +18,10 @@ impl App {
             Intent::Paste => self.workspace.paste(),
             Intent::Undo => self.workspace.persist(moth_platform::boards::Request::Undo),
             Intent::Redo => self.workspace.persist(moth_platform::boards::Request::Redo),
-            Intent::AddNote(world) => self.add_note(world),
+            Intent::AddNote(world, kind) => self.add_note(world, kind),
             Intent::EditNote(id) => self.edit_note(id),
             Intent::CommitNote => self.finish_editing(),
+            Intent::ToggleNoteCheck(id, at) => self.toggle_note_check(id, at),
             Intent::Commands(commands) => {
                 self.workspace
                     .persist_batch(commands.into_iter().map(|c| (c, None)).collect());

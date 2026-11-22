@@ -539,6 +539,7 @@ mod tests {
                         &enabled,
                         &state.registry,
                         1.,
+                        super::super::gesture::Tool::Select,
                     );
                     state.toast(ui.ctx(), true, true);
                 },

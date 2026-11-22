@@ -25,7 +25,7 @@
 
 <br>
 
-<img src="docs/screenshots/board.png" alt="لوحة MothRef تحتوي على ثلاثة رسوم على خلفية داكنة" width="900">
+<img src="docs/screenshots/board.png" alt="لوحة MothRef تضم ثلاث رسومات مجمّعة حسب الموضوع" width="900">
 
 </div>
 
@@ -96,7 +96,7 @@
 <details>
 <summary><b>مكتبة اللوحات (لقطة شاشة)</b></summary>
 <br>
-<img src="docs/screenshots/library.png" alt="مكتبة لوحات MothRef عند التشغيل الأول" width="900">
+<img src="docs/screenshots/library.png" alt="مكتبة لوحات MothRef مع معاينات ومجلدات ووسوم" width="900">
 </details>
 
 <a id="download"></a>

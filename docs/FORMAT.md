@@ -1,4 +1,4 @@
-# MothRef format, schema 10
+# MothRef format, schema 11
 
 All integers and IEEE-754 f32 coordinates are little-endian. Core readers accept
 seekable byte streams and never open a path. From schema 9 an image may carry its
@@ -7,12 +7,12 @@ as opaque metadata, see decision 0027. Schema 1 is the
 first persistent format; there is no schema 0 board to migrate. Schema 2 adds item
 content transforms; schema 3 adds text notes; schema 4 adds appearance and source
 filenames; schema 5 adds image sampling and fixed-width note metrics; schema 6 adds
-nested groups; schema 7 adds the board preview record; schema 8 adds custom RGB group colors; schema 9 adds image sources and color gamut cards. Schema 10 adds automatic group origins. The reader keeps the schema 1–9 record layouts, so every older board and journal still opens: a schema 1 insert
+nested groups; schema 7 adds the board preview record; schema 8 adds custom RGB group colors; schema 9 adds image sources and color gamut cards. Schema 10 adds automatic group origins. Schema 11 adds vector annotations and formatted notes. The reader keeps the schema 1–10 record layouts, so every older board and journal still opens: a schema 1 insert
 carries no transform and migrates to the identity transform. Future schemas must
 retain both readers and provide explicit migrations.
 
-The 16-byte header is `MOTH`, u32 schema version `10`, then eight zero bytes.
-Readers accept versions 1 through 10 and reject every other version. Every record
+The 16-byte header is `MOTH`, u32 schema version `11`, then eight zero bytes.
+Readers accept versions 1 through 11 and reject every other version. Every record
 consists of a payload followed by a 96-byte footer:
 
 | Footer offset | Size | Meaning |
@@ -262,3 +262,23 @@ is metadata only. Nested envelopes and other insert types are rejected.
 Older groups open without an origin. The next checkpoint uses the existing
 atomic compaction path to migrate the board to schema 10. The schema-9 fixture
 stays frozen, and `corpus/moth/v10.moth` adds a group with an origin.
+
+## Migration 10 → 11: annotations
+
+Tag `24` inserts a vector stroke. After the tag are a UUIDv7, the frame rectangle
+(four f32), the schema-5 transform (32 bytes), and the parent UUID (zero when
+loose). Three u8 encode sRGB, then an f32 gives the line width as a fraction of
+the frame’s shorter side, in (0, 1]. A u16 point count (2–2048) precedes that many
+f32 x/y pairs normalized to [0, 1] in the unrotated frame. A u16 name length
+(0–1024), its UTF-8 bytes and the fractional index finish the record. An arrow
+stores its shaft and head as one path. A marker uses the item's opacity.
+
+Bit 2 of the transform flag byte enables formatted notes without changing the
+record size. Notes recognize headings, bullets, numbered entries and checklists at
+the beginning of a line, with optional indentation for list entries. Either the
+Markdown prefix or its visible bullet or checkbox is stored with the text.
+A leading backslash escapes a formatting prefix. Bits 3–4 store the presentation
+(0 for a note card, 1 for a borderless label, 2 for a list card, 3 reserved).
+Schema 10 and earlier use plain text and the note card presentation. The next save of an older board uses atomic compaction and writes schema 11.
+The frozen schema-10 fixture stays readable. Schema 11 includes grouped and loose
+strokes and a formatted note in `corpus/moth/v11.moth`.

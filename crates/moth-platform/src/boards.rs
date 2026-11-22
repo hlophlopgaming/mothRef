@@ -1613,7 +1613,7 @@ mod tests {
     /// after the process dies. Item kinds that link items must be added to it.
     #[test]
     fn every_rebuild_path_keeps_every_item_kind() {
-        let bytes = include_bytes!("../../../corpus/moth/v10.moth");
+        let bytes = include_bytes!("../../../corpus/moth/v11.moth");
         let expected = board::read(&mut std::io::Cursor::new(&bytes[..])).unwrap();
         assert!(expected.scene.items().any(|i| i.parent.is_some()));
         assert!(

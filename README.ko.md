@@ -23,7 +23,7 @@
 
 <br>
 
-<img src="docs/screenshots/board.png" alt="어두운 캔버스 위에 일러스트 세 점이 놓인 MothRef 보드" width="900">
+<img src="docs/screenshots/board.png" alt="일러스트 세 점을 주제별로 묶은 MothRef 보드" width="900">
 
 </div>
 
@@ -94,7 +94,7 @@
 <details>
 <summary><b>보드 라이브러리(스크린샷)</b></summary>
 <br>
-<img src="docs/screenshots/library.png" alt="처음 실행했을 때의 MothRef 보드 라이브러리" width="900">
+<img src="docs/screenshots/library.png" alt="보드 미리보기, 폴더, 태그가 있는 MothRef 라이브러리" width="900">
 </details>
 
 <a id="download"></a>

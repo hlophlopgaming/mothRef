@@ -104,6 +104,7 @@ pub(super) struct Document {
     pub(super) image_count: usize,
     /// Gamut cards, so the status counts notes without them.
     pub(super) gamut_count: usize,
+    pub(super) stroke_count: usize,
     boards: moth_platform::boards::Worker,
     pub(super) locked: bool,
     pub(super) grayscale: bool,
@@ -192,6 +193,7 @@ impl Document {
     pub(super) fn replace_scene(&mut self, scene: Scene) {
         self.image_count = scene.items().filter(|item| item.blob().is_some()).count();
         self.gamut_count = scene.items().filter(|item| item.gamut().is_some()).count();
+        self.stroke_count = scene.items().filter(|item| item.stroke().is_some()).count();
         self.scene = scene;
     }
     /// Called only for commands acknowledged by the journal worker.
@@ -204,30 +206,14 @@ impl Document {
             Command::Remove(id) | Command::SetRect { id, .. } => Some(*id),
             _ => None,
         };
-        let image_delta: isize = match &command {
-            Command::Insert(item) if item.blob().is_some() => 1,
-            Command::Remove(id)
-                if self
-                    .scene
-                    .get(*id)
-                    .is_some_and(|item| item.blob().is_some()) =>
-            {
-                -1
-            }
+        let delta = |matches: fn(&Item) -> bool| match &command {
+            Command::Insert(item) if matches(item) => 1,
+            Command::Remove(id) if self.scene.get(*id).is_some_and(matches) => -1,
             _ => 0,
         };
-        let gamut_delta: isize = match &command {
-            Command::Insert(item) if item.gamut().is_some() => 1,
-            Command::Remove(id)
-                if self
-                    .scene
-                    .get(*id)
-                    .is_some_and(|item| item.gamut().is_some()) =>
-            {
-                -1
-            }
-            _ => 0,
-        };
+        let image_delta = delta(|item| item.blob().is_some());
+        let gamut_delta = delta(|item| item.gamut().is_some());
+        let stroke_delta = delta(|item| item.stroke().is_some());
         let now = Instant::now();
         let before = id.and_then(|id| {
             self.motion
@@ -237,6 +223,7 @@ impl Document {
         let inverse = self.scene.apply(command)?;
         self.image_count = self.image_count.saturating_add_signed(image_delta);
         self.gamut_count = self.gamut_count.saturating_add_signed(gamut_delta);
+        self.stroke_count = self.stroke_count.saturating_add_signed(stroke_delta);
         if let Some(id) = id {
             self.motion.record(before, self.scene.get(id).cloned(), now);
         }
@@ -651,6 +638,7 @@ impl Document {
             scene: Scene::default(),
             image_count: 0,
             gamut_count: 0,
+            stroke_count: 0,
             boards,
             locked: false,
             grayscale: false,

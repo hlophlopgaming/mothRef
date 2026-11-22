@@ -23,7 +23,7 @@ Görselleri sonsuz bir tuvale bırakın, düzenleyin ve çalışırken gözünü
 
 <br>
 
-<img src="docs/screenshots/board.png" alt="Koyu bir tuvalde üç illüstrasyon bulunan bir MothRef panosu" width="900">
+<img src="docs/screenshots/board.png" alt="Üç çizimin konularına göre gruplandığı bir MothRef panosu" width="900">
 
 </div>
 
@@ -94,7 +94,7 @@ Mevcut alfada şimdiden çalışanlar:
 <details>
 <summary><b>Pano kitaplığı (ekran görüntüsü)</b></summary>
 <br>
-<img src="docs/screenshots/library.png" alt="İlk açılışta MothRef pano kitaplığı" width="900">
+<img src="docs/screenshots/library.png" alt="Önizlemeler, klasörler ve etiketlerle MothRef pano kitaplığı" width="900">
 </details>
 
 <a id="download"></a>

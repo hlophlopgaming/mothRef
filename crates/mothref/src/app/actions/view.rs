@@ -32,7 +32,15 @@ impl App {
                 self.remember_appearance();
                 return None;
             }
-            Select => return None,
+            Select | DrawPen | DrawMarker | DrawArrow => {
+                self.tool = match action {
+                    DrawPen => gesture::Tool::Draw(moth_scene::StrokeStyle::Pen),
+                    DrawMarker => gesture::Tool::Draw(moth_scene::StrokeStyle::Marker),
+                    DrawArrow => gesture::Tool::Draw(moth_scene::StrokeStyle::Arrow),
+                    _ => gesture::Tool::Select,
+                };
+                return None;
+            }
             Deselect => {
                 self.workspace.board.selection.clear();
                 return None;

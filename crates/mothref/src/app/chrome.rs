@@ -71,6 +71,7 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
             adapter: &ctx.gpu.adapter,
             count: ctx.board.scene.len() - ctx.board.scene.group_count() - ctx.board.gamut_count,
             images: ctx.board.image_count,
+            strokes: ctx.board.stroke_count,
             selected: ctx.board.selection.len(),
             zoom: ctx.board.view.camera.zoom,
             zoom_increment: ctx.zoom_increment,

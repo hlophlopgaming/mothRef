@@ -32,7 +32,10 @@ An action being present in a menu does not mean its PureRef binding is implement
 | Rotate / flip | `R` / `Shift+R`: ±90°; `Shift+H` / `Shift+V`: horizontal / vertical flip |
 | Reset all selected transforms | `Shift+0` |
 | Cancel drag | `Esc`; cancellation does not commit a move |
-| Create / edit note | Double-click empty canvas / an existing note; Insert → Add note |
+| Create / edit text | Insert → Label, Note or List. Double-click empty canvas to add a note or double-click any text item to edit it |
+| Continue / finish a list | Enter adds the next item. Enter on an empty item finishes the list |
+| List line break and nesting | Shift+Enter adds a line within the same item. Tab / Shift+Tab changes the level |
+| Save / cancel text draft | Ctrl+Enter (Cmd+Enter on macOS) / Escape |
 | New / open / save board | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` |
 | Paste / undo / redo | `Ctrl+V` / `Ctrl+Z` / `Ctrl+Y` |
 | Duplicate / delete selection | `Ctrl+D` / `Delete`; selection-bar and context-menu controls |

@@ -6,7 +6,7 @@
 
 # MothRef
 
-**A fast, crash-proof reference board for artists.**<br>
+**A fast reference board for artists, with crash recovery.**<br>
 Drop images onto an infinite canvas, arrange them, keep them in view while you work.
 
 [![Listed on Remade](https://remade.wiki/badges/listed-on-remade-classic.svg)](https://remade.wiki/projects/mothref/)
@@ -17,18 +17,18 @@ Drop images onto an infinite canvas, arrange them, keep them in view while you w
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-lightgrey)
 ![Planned](https://img.shields.io/badge/planned-Android%20%C2%B7%20Web-lightgrey)
 
-[**Download**](#download) · [Features](#features) · [Controls](#getting-around) · [Roadmap](#roadmap) · [Build from source](#build-from-source) · [Docs](#documentation)
+[**Download**](#download) · [Features](#features) · [Controls](#getting-around) · [Roadmap](#roadmap) · [CLI](#agent-cli) · [Build from source](#build-from-source) · [Docs](#documentation)
 
 <sub><b>English</b> · <a href="README.ru.md">Русский</a> · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português (BR)</a> · <a href="README.fr.md">Français</a> · <a href="README.de.md">Deutsch</a> · <a href="README.it.md">Italiano</a> · <a href="README.pl.md">Polski</a> · <a href="README.sv.md">Svenska</a> · <a href="README.fi.md">Suomi</a> · <a href="README.el.md">Ελληνικά</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.ar.md">العربية</a> · <a href="README.hi.md">हिन्दी</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a></sub>
 
 <br>
 
-<img src="docs/screenshots/board.png" alt="A MothRef board with three illustrations on a dark canvas" width="900">
+<img src="docs/screenshots/board.png" alt="MothRef board with grouped illustrations, a borderless label, a note, a checklist and drawn annotations" width="900">
 
 </div>
 
 > [!WARNING]
-> MothRef is in **public alpha** (`0.3.0-alpha`). Saving, recovery and undo work, but long reliability
+> MothRef is in **public alpha** (`0.3.0-alpha.1`). Saving, recovery and undo work, but long reliability
 > qualification is still pending. Keep separate copies of important boards and original images.
 
 ---
@@ -39,95 +39,108 @@ Drop images onto an infinite canvas, arrange them, keep them in view while you w
 [PureRef](https://www.pureref.com) is fast and polished, but closed. MothRef picks up where BeeRef left off:
 native, open, and built to handle huge boards without eating your RAM.
 
-It is built around three promises, in this order:
-
-| Promise | What it means in practice |
+| Priority | How it works |
 | --- | --- |
-| **Never lose your work** | Every change goes to a recovery journal before it counts as done. A crash costs at most the last second. Board files are never overwritten in place. |
-| **Memory follows a budget, not the board size** | Every cache has a limit and evicts the least recently used images. You choose the trade-off between zoom speed and memory. |
-| **The interface never waits** | Decoding, disk and compression run off the main thread. An idle board uses 0% CPU and GPU. |
+| **Recover your work** | Board edits are journaled for crash recovery. Saves add checkpoints, and compaction replaces the file atomically. |
+| **Keep large boards responsive** | Image caches have fixed budgets. By default, full-resolution images stay in video memory up to a hardware-based limit. |
+| **Keep editing while images load** | Decoding, disk I/O and compression run in the background. |
 
-Board files use the `.moth` extension. The format is [documented](docs/FORMAT.md), stores your original image
-bytes untouched (no re-encoding) and deduplicates identical images.
+The `.moth` format embeds and deduplicates original image bytes. If you enable downscaling on import,
+the board stores a reduced copy and leaves the source file intact. See the [format specification](docs/FORMAT.md).
 
 ## Features
 
-What works in the current alpha:
+**Canvas and library**
 
-**Canvas**
-- GPU canvas on `wgpu` (Vulkan, Metal, DirectX 12) with a software fallback (`--software`)
-- Smooth zoom around the pointer, inertial touch pan, pinch zoom and trackpad gestures
-- Board tabs and a board library start screen
-- Minimap, editable zoom level, live selection size and memory use in the status bar
-- Animations with a reduced-motion setting
+- GPU rendering with `wgpu` (Vulkan, Metal or DirectX 12), with a software adapter option where supported
+- Pan and zoom with a mouse, keyboard, trackpad or touch, navigate with the minimap, and edit the zoom percentage in the bottom toolbar
+- Open boards in tabs. Search, sort, pin, tag and file boards in folders from the library
+- After an unexpected shutdown, the next launch offers a crash report with recent log entries
+- Use View mode for a compact reference window, or Over mode for an overlay with opacity and click-through controls. Pin above all windows or attach above a chosen window where supported
+- Run timed drawing sessions full-screen or in a floating mini window, with fixed intervals or a custom plan
 
-**Images and notes**
-- Paste (<kbd>Ctrl</kbd>+<kbd>V</kbd>), drop or open PNG, JPEG, AVIF, WebP, GIF and BMP files
-- Plain text notes: double-click empty canvas to create one, double-click a note to edit it
-- Rotate, flip, crop, scale, opacity and grayscale, all undoable
+**Images, notes and layout**
 
-**Arranging**
-- Move, Alt-drag to duplicate, arrow-key nudges
-- Align, distribute, stack, layer order and optimal packing of mixed-size images
-- Fit the whole board or the current selection with a tap of <kbd>Space</kbd>
+- Paste, drop or open PNG, JPEG, AVIF, WebP, GIF and BMP images, including native file drops on Wayland
+- Add plain text notes and organize items into nested groups in the Layers drawer
+- Rotate, flip, crop, scale, adjust opacity or apply grayscale. Align, distribute or pack images of mixed sizes
+- Use a line or dot grid, edge and center snapping, and alignment guides when moving items
+- Open an image’s original file, archive or web address when its source is available. Arrange images by file path. Saved source paths travel with shared boards
 
-**Compatibility**
-- Opens **BeeRef** `.bee` boards: images, text notes, rotation, flip and scale
-- Opens **PureRef** `.pur` boards (1.10 and 2.x): embedded images and plain notes; unsupported items are reported, never silently dropped
+**Import and export**
 
-**Export**
-- Boards, selections or cropped regions to PNG, SVG and PDF
-- Original images exactly as they were added, singly or as a ZIP
-- Color picker that copies HEX, RGB or HSV
+- Open BeeRef (`.bee`) and PureRef (`.pur`, 1.10 and 2.x) boards, including supported images, text notes and layout. MothRef reports unsupported content and saves edits to a separate `.moth` file
+- Export a board, selection or region to PNG, SVG or PDF. Export original images individually, to a folder or as a ZIP
+- Sample colors in HEX, RGB or HSV and add a color gamut card based on the visible part of an image
 
-**Speed and memory**
-- PureRef-style performance modes: *In memory* (default), *In memory, low zoom quality*, *Cache on disk*, *No cache*
-- Each image is decoded once per zoom range; later zoom steps reuse cached detail levels
-- RAM cache capped at 25% of available memory (max 4 GiB), disk cache at 2 GiB
+**Speed and customization**
 
-**Make it yours**
-- Every keyboard and mouse binding is editable, with conflict previews
-- BeeRef-style and PureRef-style navigation presets
-- Command palette (<kbd>Ctrl</kbd>+<kbd>K</kbd>)
-- Interface in English and Russian ([add your language](docs/LOCALIZATION.md))
+- **Everything at full resolution** is the default. Images that fit are preloaded at full resolution, and the rest load on demand. Tiled zoom shows original detail beyond 2048 px
+- Other performance modes let you keep detail levels in RAM, use lower zoom quality, cache to disk or disable caching. The RAM cache uses up to one eighth of available RAM (1 GiB maximum), and the disk cache uses up to 8 GiB
+- Rebind keyboard and mouse controls, choose BeeRef- or PureRef-style navigation, and search actions with the command palette
+- Choose a light or dark theme, reduced motion, an optional menu bar and an alternate moth icon. The interface is available in English and Russian. See [localization](docs/LOCALIZATION.md)
+
+### In development on `main`
+
+- Group images by their source folder from the context menu or command palette, or enable automatic grouping in Settings › Adding. Images need a recorded folder of origin
+- Toggle **Snap to points** and set its spacing in the canvas context menu or the selection’s More menu. Hold <kbd>Shift</kbd> while dragging to bypass it
+- View mode shows groups, titles, notes and the selection. The **Images only** option is in Over mode. Timed drawing sessions keep the resized mini window’s longer side when advancing or skipping
+- Choose **Label**, **Note**, or **List** from **Insert**. Labels are plain text on the canvas. Notes and lists use cards with formatting controls. Checkboxes can be toggled directly on the board
+- Draw with **Pen**, **Marker**, or **Arrow** in the bottom toolbar. Set their color and thickness in Settings › Canvas and navigation. Strokes can be moved, resized, and exported with the board
+- Boards saved from `main` use schema 11 and require an updated MothRef to reopen. The public alpha saves schema 9. See the [changelog](CHANGELOG.md) for recovery fixes, the AVIF decoder upgrade and dependency updates
+
+In the list editor, <kbd>Enter</kbd> adds an item and exits the list on an empty item.
+Use <kbd>Shift</kbd>+<kbd>Enter</kbd> for a line break within an item and
+<kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> to change its level. Save the draft with
+<kbd>Ctrl</kbd>+<kbd>Enter</kbd> (<kbd>Cmd</kbd>+<kbd>Enter</kbd> on macOS).
+
+<details>
+<summary><b>Editing a nested list</b> (screenshot)</summary>
+<br>
+<img src="docs/screenshots/list-editor.png" alt="MothRef's inline list editor with nested bullets and a line break within an item" width="900">
+</details>
 
 <details>
 <summary><b>Board library</b> (screenshot)</summary>
 <br>
-<img src="docs/screenshots/library.png" alt="MothRef board library on first launch" width="900">
+<img src="docs/screenshots/library.png" alt="MothRef library with board previews, folders and tags" width="900">
+</details>
+
+<details>
+<summary><b>Color gamut</b> (screenshot)</summary>
+<br>
+<img src="docs/screenshots/gamut.png" alt="Peacock Dragon beside a color gamut card with a hue wheel and swatches in MothRef's dark theme" width="900">
 </details>
 
 ## Download
 
-Grab the latest build from **[GitHub Releases](https://github.com/hlophlopgaming/mothRef/releases)**.
+Download the [public alpha from GitHub Releases](https://github.com/hlophlopgaming/mothRef/releases).
+Version `0.3.0-alpha.1` offers archives for Windows x86_64, macOS (Apple Silicon and
+Intel), and Linux x86_64 (Ubuntu 24.04 or a compatible distribution), plus
+`SHA256SUMS`. See the [release notes for direct downloads](docs/releases/v0.3.0-alpha.1.md#downloads).
 
-| Platform | File | How to run |
-| --- | --- | --- |
-| Windows x86_64 | `mothref-windows-x86_64.zip` | Extract and run `mothref.exe` |
-| macOS, Apple Silicon | `mothref-macos-arm64.tar.gz` | Extract and run `mothref` from Terminal |
-| macOS, Intel | `mothref-macos-x86_64.tar.gz` | Extract and run `mothref` from Terminal |
-| Linux x86_64 | `mothref-linux-x86_64.tar.gz` | Extract and run `./mothref` (Ubuntu 24.04 or newer, or compatible) |
+The release workflow on `main` adds Windows setup, macOS DMGs, Linux x86_64
+AppImage/DEB/RPM packages, Linux ARM64 AppImage and tarball, and an Arch package
+and build recipe. These formats are for future releases and are pending native
+installation and launch checks. See [formats and installation](docs/RELEASING.md#downloads-and-installation).
 
-Binaries are unsigned, and macOS builds are not notarized yet, so your OS may ask you to confirm the first launch.
-SHA-256 checksums are published with every release.
-
-Installers and package managers (MSI, `.dmg`, AppImage, Flatpak, Homebrew, AUR and more) are
-[planned](ROADMAP.md#distribution) from 0.3 onward.
-An **Android** app and a **web** version are planned too; the core is already written to stay portable to both.
+Windows binaries are unsigned. macOS builds are not notarized.
 
 ## Getting around
 
 | To do this | Use |
 | --- | --- |
 | Add images | Drop files, <kbd>Ctrl</kbd>+<kbd>V</kbd>, or **Insert → Paste** |
-| Pan | Middle-drag or <kbd>Space</kbd>+drag |
+| Pan | Middle-drag, <kbd>Space</kbd>+drag or <kbd>W</kbd>/<kbd>A</kbd>/<kbd>S</kbd>/<kbd>D</kbd> |
 | Zoom | Mouse wheel, pinch, or the <kbd>+</kbd> / <kbd>−</kbd> buttons |
 | Fit everything | <kbd>Home</kbd>, or tap <kbd>Space</kbd> with nothing selected |
 | Fit the selection | Tap <kbd>Space</kbd>, or double-click a selected image (again to go back) |
 | Duplicate while dragging | <kbd>Alt</kbd>+drag |
 | Rotate / flip | <kbd>R</kbd> / <kbd>Shift</kbd>+<kbd>H</kbd>, <kbd>Shift</kbd>+<kbd>V</kbd> |
+| Group the selection | <kbd>Ctrl</kbd>+<kbd>G</kbd> |
+| View / timed drawing session | <kbd>Tab</kbd> / <kbd>F5</kbd> |
 | Command palette | <kbd>Ctrl</kbd>+<kbd>K</kbd> |
-| Settings / edit bindings | <kbd>Ctrl</kbd>+<kbd>,</kbd>; **Keys and mouse** |
+| Settings / shortcut cheat sheet | <kbd>Ctrl</kbd>+<kbd>O</kbd> / <kbd>/</kbd> |
 | Arrange / edit / export selection | Selection bar, context menu or command palette |
 
 On macOS, use <kbd>Cmd</kbd> instead of <kbd>Ctrl</kbd>. The full list, plus a side-by-side comparison with
@@ -136,30 +149,28 @@ PureRef, is in [docs/SHORTCUTS.md](docs/SHORTCUTS.md).
 <details>
 <summary><b>Known limitations</b></summary>
 
-- Native Wayland file drops are not available yet (a winit 0.30 limitation). Use X11/XWayland, pass images on the command line, or paste.
-- Boards support up to 10,000 items; previews show up to 2048 px of detail per image. Full-resolution tiled zoom is on the roadmap.
+- Overlay and window controls depend on the desktop environment. See [native qualification](ROADMAP.md#qualification).
+- Animated GIF playback and snapping while resizing are on the roadmap. Gamut cards are currently visible on the board only.
 - PureRef links, rich notes, drawings and some crops are not imported yet.
 
 </details>
 
 ## Roadmap
 
-| Release | Milestone | Promise | Status |
-| --- | --- | --- | --- |
-| **0.1** pre-alpha | M1 | Does not lose data | alpha builds out |
-| **0.3** public alpha | M2, M2.5 | Replaces BeeRef, opens `.bee` and `.pur`, zooms faster than PureRef | in progress |
-| **0.7** beta | M3, M4 | Overlay mode, PureRef 2 feature parity | planned |
-| **1.0** | M5–M7 | Board library with stacks and tags, Milanote-style elements, all performance targets met | planned |
-| **2.0** | M8, M9 | Web build and real-time collaboration | later |
-| — | — | Android app | planned |
+| Release | Scope | Status |
+| --- | --- | --- |
+| **0.3** public alpha | BeeRef parity, PureRef import, zoom and memory modes | First public alpha released |
+| **0.7** beta | PureRef 2 parity, including drawing tools, rich notes and composition overlays | In development |
+| **1.0** | Expanded board library, Milanote-style elements, broader import support and release qualification | Planned |
+| After **1.0** | Web, collaboration, artist tools and capture integrations | Planned |
+| No target release | Android | Planned |
 
-After 1.0: artist tools, review and presentation mode, Obsidian/Markdown interop and further capture integrations.
-The full plan, feature checklists and performance targets live in [ROADMAP.md](ROADMAP.md).
+See [milestones and performance targets](ROADMAP.md) and the [feature matrix](docs/FEATURES.md).
 
 ## Agent CLI
 
 The same `mothref` executable contains ordinary headless subcommands and a
-stateful `--agent` JSON-lines transport. No extra runtime is required:
+stateful `--agent` JSON Lines interface. No extra runtime is required.
 
 ```sh
 mothref create references.moth
@@ -170,7 +181,10 @@ mothref info references.moth --json
 
 Use `mothref --help`, the [CLI reference](docs/CLI.md) and the
 [agent guide](skills/cli-anything-mothref/SKILL.md) for commands and JSON scripts.
-The catalog/guide are also embedded in `mothref commands --json`.
+The catalog and agent guide are also embedded in `mothref commands --json`.
+Builds from `main` support `note --kind label|note|list` and `stroke --style pen|marker|arrow`.
+On `main`, use `group-origin` or `add --group-origin` for source-folder grouping
+and `snap-grid` to snap items to a given grid spacing.
 
 ## Build from source
 
@@ -192,12 +206,12 @@ sudo pacman -S --needed base-devel rust cmake nasm libxkbcommon libxkbcommon-x11
 Release packaging also produces an Arch build recipe and a pacman package; see
 [packaging and installation](docs/RELEASING.md#downloads-and-installation).
 
-Always use `--release`: image decoders depend on optimizations, and debug builds are much slower.
+Use `--release` for normal use. Optimized builds decode images faster.
 
 ```sh
 cargo run -p mothref --release -- image.png reference.jpg   # open images at startup
 cargo run -p mothref --release -- board.moth                # open a board
-cargo run -p mothref --release -- --software                # force the CPU renderer
+cargo run -p mothref --release -- --software                # request a software GPU adapter
 ```
 
 <details>
@@ -237,11 +251,12 @@ crates/
   mothref/        the app: event loop, windows, tabs
   moth-scene/     scene graph, commands, undo/redo        (no GPU, no I/O)
   moth-format/    .moth reader/writer, journal, recovery
-  moth-io/        image decoding, detail levels, caches
+  moth-io/        image decoding, preview and tile caches
   moth-render/    wgpu renderer
   moth-ui/        egui interface, theme, motion, localization
   moth-platform/  OS-specific code: clipboard, input, settings
   moth-import/    BeeRef .bee and PureRef .pur import
+  moth-thumb/     thumbnails for file managers
 third_party/purcore/  attributed fork of LazyRef's .pur reader
 xtask/          benchmarks, corpus checks, soak tests
 corpus/         test boards and images
@@ -255,6 +270,7 @@ docs/           format spec, architecture, decisions
 - [Architecture](docs/ARCHITECTURE.md) and [design decisions](docs/decisions/)
 - [The `.moth` file format](docs/FORMAT.md)
 - [Controls and PureRef shortcut comparison](docs/SHORTCUTS.md)
+- [CLI and JSON automation](docs/CLI.md)
 - [PureRef import notes](docs/PUR-IMPORT.md)
 - [Load performance](docs/LOAD-PERFORMANCE.md)
 - [Adding a language](docs/LOCALIZATION.md)
@@ -274,7 +290,7 @@ Third-party fonts and code are listed in [THIRD_PARTY.md](THIRD_PARTY.md).
 PureRef import is built on a fork of [`purcore`](https://github.com/achrllrogia45/LazyRef) from LazyRef (MIT).
 "BeeRef", "PureRef" and "Milanote" are named only to describe compatibility; MothRef is not affiliated with them.
 
-Artwork in the screenshot is by [David Revoy](https://www.davidrevoy.com):
+Artwork in the screenshots is by [David Revoy](https://www.davidrevoy.com):
 [Electron donor](https://www.peppercarrot.com/en/viewer/misc__2010-08-19-electron-donor_by-David-Revoy.html),
 [Peacock dragon](https://commons.wikimedia.org/wiki/File:2013-04-28_peacock-dragon_by-David-Revoy.jpg)
 and [Alice in Wonderland](https://www.davidrevoy.com/article36/alice-in-wonderland),

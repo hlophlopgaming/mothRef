@@ -23,7 +23,7 @@ Déposez des images sur une toile infinie, organisez-les et gardez-les sous les 
 
 <br>
 
-<img src="docs/screenshots/board.png" alt="Un tableau MothRef avec trois illustrations sur une toile sombre" width="900">
+<img src="docs/screenshots/board.png" alt="Tableau MothRef avec trois illustrations regroupées par thème" width="900">
 
 </div>
 
@@ -94,7 +94,7 @@ Ce qui fonctionne déjà dans l'alpha actuelle :
 <details>
 <summary><b>Bibliothèque de tableaux (capture d'écran)</b></summary>
 <br>
-<img src="docs/screenshots/library.png" alt="Bibliothèque de tableaux de MothRef au premier lancement" width="900">
+<img src="docs/screenshots/library.png" alt="Bibliothèque de tableaux MothRef avec aperçus, dossiers et étiquettes" width="900">
 </details>
 
 <a id="download"></a>

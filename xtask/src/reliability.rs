@@ -200,7 +200,7 @@ fn killtest_impl(count: usize, loading: bool) -> anyhow::Result<()> {
 }
 pub fn fixture() -> anyhow::Result<()> {
     std::fs::create_dir_all("corpus/moth")?;
-    // corpus/moth/v1.moth through v9.moth are frozen migration fixtures;
+    // corpus/moth/v1.moth through v10.moth are frozen migration fixtures;
     // regenerating them with the current writer would erase that coverage.
     let mut bytes = Vec::new();
     board::initialize(&mut bytes)?;
@@ -225,7 +225,7 @@ pub fn fixture() -> anyhow::Result<()> {
         "/references/walls/rows.png".into(),
     ));
     let mut note = Item::text(
-        "a note that wraps to a fixed frame width",
+        "# Study\n- [ ] Check the frame",
         Rect {
             x: 10.,
             y: 20.,
@@ -236,6 +236,7 @@ pub fn fixture() -> anyhow::Result<()> {
     );
     note.transform.note_font_size = 24.;
     note.transform.note_wrap = true;
+    note.transform.note_markup = true;
     // Groups nest: "outer" holds "inner", which holds the image and the note.
     let rest = Rect {
         x: 0.,
@@ -283,6 +284,7 @@ pub fn fixture() -> anyhow::Result<()> {
         },
         Default::default(),
     );
+    let group_parent = inner.id;
     scene.apply(Command::Insert(outer))?;
     scene.apply(Command::Insert(inner))?;
     scene.apply(Command::Insert(item))?;
@@ -306,6 +308,40 @@ pub fn fixture() -> anyhow::Result<()> {
         None,
     )))?;
     scene.apply(Command::Insert(empty))?;
+    for (style, parent) in [
+        (moth_scene::StrokeStyle::Arrow, None),
+        (moth_scene::StrokeStyle::Marker, Some(group_parent)),
+    ] {
+        let mut stroke = moth_scene::Stroke::item(
+            vec![[8., 8.], [35., 30.]],
+            style,
+            style.width(),
+            [23, 123, 223],
+            scene.top(),
+        )
+        .ok_or_else(|| anyhow::anyhow!("invalid fixture stroke"))?;
+        stroke.parent = parent;
+        scene.apply(Command::Insert(stroke))?;
+    }
+    for (kind, text) in [
+        (moth_scene::NoteKind::Label, "Study label"),
+        (moth_scene::NoteKind::List, "1. First\n  - [ ] Detail"),
+    ] {
+        let mut note = Item::text(
+            text,
+            Rect {
+                x: 232.,
+                y: 8.,
+                width: 126.,
+                height: 65.,
+            },
+            scene.top(),
+        );
+        note.transform.note_kind = kind;
+        note.transform.note_markup = kind == moth_scene::NoteKind::List;
+        note.transform.note_font_size = 16.;
+        scene.apply(Command::Insert(note))?;
+    }
     let offset = bytes.len() as u64;
     board::append(&mut bytes, offset, 3, &board::snapshot(&scene)?)?;
     // Schema 7: a save ends with the board preview the library reads.
@@ -331,7 +367,7 @@ pub fn fixture() -> anyhow::Result<()> {
         board::PREVIEW,
         &board::encode_preview(&preview)?,
     )?;
-    std::fs::write("corpus/moth/v10.moth", bytes)?;
+    std::fs::write("corpus/moth/v11.moth", bytes)?;
     Ok(())
 }
 pub fn roundtrip(path: &Path) -> anyhow::Result<()> {

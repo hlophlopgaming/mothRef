@@ -51,7 +51,8 @@ explicit ids. Angles are radians; points/rectangles use comma-separated numbers.
 | `save BOARD [NEW.moth]` | Checkpoint BOARD, or save to a new destination |
 | `add BOARD [IMAGE ...]` | Add local images; `--at x,y` is available for one image; `--group-origin` groups them by source folder |
 | `add BOARD --url URL` | Explicit HTTP(S) image download; optional `--at x,y` |
-| `note BOARD TEXT` | Add a note; optional `--at x,y` |
+| `note BOARD TEXT` | Add a note, borderless label or list with `--kind note\|label\|list`. Optional `--at x,y` |
+| `stroke BOARD` | Draw a vector stroke from repeated `--point x,y`. Optional `--style pen\|marker\|arrow`, `--width N`, `--color 0xRRGGBB` |
 | `info BOARD` | Inspect state; `--offset 0 --limit 1000` (page size capped at 1000) |
 | `check BOARD` | Read native integrity/recovery status; recovered/torn files fail; use a clean Save As to remove recovery status |
 | `arrange BOARD` | `--mode horizontal\|vertical\|grid\|optimal` (default grid), `--gap N`, `--order z\|name\|time\|path`, optional `--count N`, `--id ...`; alias `layout` |
@@ -83,10 +84,24 @@ explicit ids. Angles are radians; points/rectangles use comma-separated numbers.
 
 `edit` accepts `--rect x,y,w,h`, `--text TEXT`, `--name TEXT`, `--rotation N`,
 `--opacity N`, `--grayscale [true|false]`, `--sampling 0..3`, `--note-font-size N`,
-`--note-wrap [true|false]`, `--flip true,false`, `--content-offset x,y`,
+`--note-wrap [true|false]`, `--note-markup [true|false]`, `--flip true,false`, `--content-offset x,y`,
 `--content-scale N`, and `--content-rotation N`. Optional booleans default to true
 when the flag is present without a value. Unspecified transform fields are kept.
-Use group-edit for group titles; edit name applies to images/notes.
+Use `group-edit` for group titles. `edit --name` renames images, notes and strokes.
+
+Notes recognize `# Heading`, `- Item`, `1. Item`, `- [ ] To do` and
+`- [x] Done` at the start of a line. Indent list entries by two spaces to nest them.
+The editor also accepts the visible markers `•`, `□` and `▣` followed by a space.
+`note --kind label` keeps literal text and omits the card backing.
+`note --kind list` adds bullets to plain lines. JSON uses the optional `kind` field.
+`info` returns the presentation as `transform.note_kind`. Older plain notes can opt in via `edit --note-markup`. Text, font size,
+and wrapping edits reflow the card unless `--rect` sets the frame explicitly.
+
+`stroke` takes board-space points. An arrow takes two endpoints. Pen and marker take
+2–2048 points. The optional width is in board units. In JSON use
+`{"op":"stroke","style":"arrow","points":[[40,40],[160,90]],"width":4,"color":14990674}`.
+`info` returns the frame, normalized path points, current board-unit width and sRGB.
+Use `move`, `edit`, `duplicate`, and `delete` with the stroke's UUID.
 
 Group colors are palette codes 0..5 or tagged RGB `0x01RRGGBB` (hex accepted by
 `--color`; JSON uses an integer). Layout count means rows in horizontal flow or

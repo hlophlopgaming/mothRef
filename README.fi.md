@@ -23,7 +23,7 @@ Pudota kuvat äärettömälle kankaalle, järjestä ne ja pidä ne näkyvillä t
 
 <br>
 
-<img src="docs/screenshots/board.png" alt="MothRef-taulu, jossa on kolme kuvitusta tummalla kankaalla" width="900">
+<img src="docs/screenshots/board.png" alt="MothRef-taulu, jossa kolme kuvitusta on ryhmitelty aiheittain" width="900">
 
 </div>
 
@@ -94,7 +94,7 @@ Tämä toimii jo nykyisessä alfassa:
 <details>
 <summary><b>Taulukirjasto (kuvakaappaus)</b></summary>
 <br>
-<img src="docs/screenshots/library.png" alt="MothRefin taulukirjasto ensimmäisellä käynnistyskerralla" width="900">
+<img src="docs/screenshots/library.png" alt="MothRefin taulukirjasto, jossa näkyvät esikatselut, kansiot ja tunnisteet" width="900">
 </details>
 
 <a id="download"></a>

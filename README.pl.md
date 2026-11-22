@@ -23,7 +23,7 @@ Upuszczaj obrazy na nieskończone płótno, układaj je i miej je na oku podczas
 
 <br>
 
-<img src="docs/screenshots/board.png" alt="Tablica MothRef z trzema ilustracjami na ciemnym płótnie" width="900">
+<img src="docs/screenshots/board.png" alt="Tablica MothRef z trzema ilustracjami pogrupowanymi tematycznie" width="900">
 
 </div>
 
@@ -94,7 +94,7 @@ Co już działa w obecnej wersji alfa:
 <details>
 <summary><b>Biblioteka tablic (zrzut ekranu)</b></summary>
 <br>
-<img src="docs/screenshots/library.png" alt="Biblioteka tablic MothRef przy pierwszym uruchomieniu" width="900">
+<img src="docs/screenshots/library.png" alt="Biblioteka tablic MothRef z podglądami, folderami i tagami" width="900">
 </details>
 
 <a id="download"></a>

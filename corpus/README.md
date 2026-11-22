@@ -80,8 +80,8 @@ original layouts. `moth/v5.moth` exercises per-image nearest-neighbor sampling
 and fixed-width text with an explicit font size. `v6.moth` adds nested groups,
 `v7.moth` adds the board preview, and `v8.moth` adds custom RGB group colors.
 `v9.moth` adds image sources and gamut cards. `v10.moth` also preserves an
-automatic group’s source folder. `cargo xtask fixture` regenerates only
-`v10.moth`; fixtures v1–v9 stay unchanged.
+automatic group’s source folder. `v11.moth` adds formatted notes and vector strokes.
+`cargo xtask fixture` regenerates only `v11.moth`. Fixtures v1–v10 stay unchanged.
 
 - `images/still.avif` and `images/alpha.avif`: synthetic 31×17 RGB (120,90,60),
   opaque and half-transparent respectively, encoded with Pillow AVIF quality 100,

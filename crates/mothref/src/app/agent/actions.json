@@ -506,5 +506,38 @@
   },
   "ToggleSnapPoints": {
     "gui_only": "Context-menu snapping mode and inline grid spacing are GUI preferences; snap-grid takes explicit UUIDs and a step for the equivalent board edit."
+  },
+  "AddLabel": {
+    "operation": "note"
+  },
+  "AddList": {
+    "operation": "note"
+  },
+  "NoteNumbered": {
+    "operation": "edit"
+  },
+  "SaveNoteDraft": {
+    "gui_only": "Commits the interactive text draft; native callers use note or edit"
+  },
+  "CancelNoteDraft": {
+    "gui_only": "Discards the interactive text draft"
+  },
+  "NoteHeading": {
+    "operation": "edit"
+  },
+  "NoteBullet": {
+    "operation": "edit"
+  },
+  "NoteChecklist": {
+    "operation": "edit"
+  },
+  "DrawPen": {
+    "operation": "stroke"
+  },
+  "DrawMarker": {
+    "operation": "stroke"
+  },
+  "DrawArrow": {
+    "operation": "stroke"
   }
 }

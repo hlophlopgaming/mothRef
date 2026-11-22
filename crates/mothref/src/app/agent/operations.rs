@@ -59,11 +59,25 @@ pub(super) enum Operation {
         #[arg(long, value_parser = super::cli::pair, allow_hyphen_values = true)]
         at: Option<[f32; 2]>,
     },
-    #[command(about = "Add a text note with estimated native font bounds.")]
+    #[command(about = "Add a formatted text note sized to its content.")]
     Note {
         text: String,
+        #[arg(long, value_parser = ["note", "label", "list"])]
+        kind: Option<String>,
         #[arg(long, value_parser = super::cli::pair, allow_hyphen_values = true)]
         at: Option<[f32; 2]>,
+    },
+    #[command(about = "Draw a vector pen stroke, marker stroke or arrow.")]
+    Stroke {
+        #[arg(long, default_value = "pen", value_parser = ["pen", "marker", "arrow"])]
+        #[serde(default = "pen_style")]
+        style: String,
+        #[arg(long = "point", required = true, value_parser = super::cli::pair, allow_hyphen_values = true)]
+        points: Vec<[f32; 2]>,
+        #[arg(long)]
+        width: Option<f32>,
+        #[arg(long, value_parser = super::cli::color)]
+        color: Option<u32>,
     },
     #[command(about = "Edit a frame, note, label or content transform.")]
     Edit {
@@ -246,6 +260,9 @@ pub(super) enum Operation {
         point: [f32; 2],
     },
 }
+fn pen_style() -> String {
+    "pen".into()
+}
 fn grid_spacing() -> f32 {
     100.
 }
@@ -273,6 +290,8 @@ pub(super) struct Patch {
     note_font_size: Option<f32>,
     #[arg(long, action = clap::ArgAction::Set, num_args = 0..=1, default_missing_value = "true")]
     note_wrap: Option<bool>,
+    #[arg(long, action = clap::ArgAction::Set, num_args = 0..=1, default_missing_value = "true")]
+    note_markup: Option<bool>,
     #[arg(long, value_parser = super::cli::flip)]
     flip: Option<[bool; 2]>,
     #[arg(long, value_parser = super::cli::pair, allow_hyphen_values = true)]
@@ -304,6 +323,7 @@ impl Operation {
             | Add { .. }
             | Gamut { .. }
             | Note { .. }
+            | Stroke { .. }
             | Edit { .. }
             | Layout { .. }
             | Align { .. }
@@ -550,14 +570,77 @@ impl Session {
                     json!({"id":identity.to_string(),"item":self.scene.get(identity).map(item_json)}),
                 )
             }
-            Note { text, at } => {
+            Note { mut text, at, kind } => {
+                use moth_scene::{NoteKind, NoteLine};
+                let kind = NoteKind::from_code(kind.as_deref().unwrap_or("note"))
+                    .context("kind must be note, label or list")?;
+                if kind == NoteKind::List {
+                    text = text
+                        .split('\n')
+                        .map(|line| {
+                            if !line.trim().is_empty() && NoteLine::parse(line).1 == NoteLine::Plain
+                            {
+                                format!("- {line}")
+                            } else {
+                                line.to_owned()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                }
+                let markup = kind != NoteKind::Label;
                 let at = at.unwrap_or_else(|| self.next_anchor());
-                let size = moth_scene::note_size(&text);
-                let item = Item::text(
+                ensure!(
+                    text.len() <= moth_scene::MAX_NOTE_BYTES,
+                    "note exceeds the text limit"
+                );
+                let size = self.measure_note(&text, moth_scene::NOTE_FONT_SIZE, None, markup);
+                let mut item = Item::text(
                     text,
                     rect([at[0], at[1], size[0], size[1]])?,
                     self.top().as_ref(),
                 );
+                item.transform.note_font_size = moth_scene::NOTE_FONT_SIZE;
+                item.transform.note_markup = markup;
+                item.transform.note_kind = kind;
+                let identity = item.id.to_string();
+                let geometry = item_json(&item);
+                self.apply(vec![Command::Insert(item)])?;
+                Ok(json!({"id":identity,"item":geometry}))
+            }
+            Stroke {
+                style,
+                points,
+                width,
+                color,
+            } => {
+                use moth_scene::StrokeStyle;
+                let style = match style.as_str() {
+                    "pen" => StrokeStyle::Pen,
+                    "marker" => StrokeStyle::Marker,
+                    "arrow" => StrokeStyle::Arrow,
+                    _ => bail!("style must be pen, marker or arrow"),
+                };
+                ensure!(
+                    style != StrokeStyle::Arrow || points.len() == 2,
+                    "an arrow needs two endpoints"
+                );
+                let color = match color {
+                    Some(color) => {
+                        ensure!(color <= 0xff_ffff, "color must be RGB (0xRRGGBB)");
+                        let [_, r, g, b] = color.to_be_bytes();
+                        [r, g, b]
+                    }
+                    None => moth_ui::theme::annotation_color(style == StrokeStyle::Marker),
+                };
+                let item = moth_scene::Stroke::item(
+                    points,
+                    style,
+                    width.unwrap_or_else(|| style.width()),
+                    color,
+                    self.top().as_ref(),
+                )
+                .context("invalid or empty stroke")?;
                 let identity = item.id.to_string();
                 let geometry = item_json(&item);
                 self.apply(vec![Command::Insert(item)])?;
@@ -571,7 +654,16 @@ impl Session {
                 transform,
             } => {
                 let identity = id(&identity)?;
-                let item = self.scene.get(identity).context("item does not exist")?;
+                let item = self
+                    .scene
+                    .get(identity)
+                    .context("item does not exist")?
+                    .clone();
+                ensure!(
+                    text.as_ref()
+                        .is_none_or(|text| text.len() <= moth_scene::MAX_NOTE_BYTES),
+                    "note exceeds the text limit"
+                );
                 let mut commands = Vec::new();
                 if let Some(name) = name {
                     ensure!(!item.is_group(), "rename groups with group-edit");
@@ -585,11 +677,12 @@ impl Session {
                         rect: rect(bounds)?,
                     });
                 }
-                if let Some(text) = text {
-                    commands.push(Command::SetText { id: identity, text });
-                }
-                if let Some(p) = transform {
-                    let mut t = item.transform;
+                let mut t = item.transform;
+                if let Some(p) = &transform {
+                    if item.note().is_some() && p.note_wrap == Some(true) && t.note_font_size == 0.
+                    {
+                        t.note_font_size = item.note_font_size();
+                    }
                     macro_rules! patch { ($($field:ident),*) => { $(if let Some(value) = p.$field { t.$field = value; })* }; }
                     patch!(
                         rotation,
@@ -597,6 +690,7 @@ impl Session {
                         grayscale,
                         note_font_size,
                         note_wrap,
+                        note_markup,
                         flip,
                         content_offset,
                         content_scale,
@@ -605,7 +699,34 @@ impl Session {
                     if let Some(code) = p.sampling {
                         t.sampling = Sampling::from_code(code).context("sampling must be 0..3")?;
                     }
+                }
+                if bounds.is_none()
+                    && let Some(body) = item.note()
+                    && (text.is_some()
+                        || t.note_font_size != item.transform.note_font_size
+                        || t.note_wrap != item.transform.note_wrap
+                        || t.note_markup != item.transform.note_markup)
+                {
+                    if t.note_font_size == 0. {
+                        t.note_font_size = item.note_font_size();
+                    }
                     ensure!(t.valid(), "invalid transform");
+                    let [w, h] = self.measure_note(
+                        text.as_deref().unwrap_or(body),
+                        t.note_font_size,
+                        t.note_wrap.then_some(item.rect.width),
+                        t.note_markup,
+                    );
+                    commands.push(Command::SetRect {
+                        id: identity,
+                        rect: rect([item.rect.x, item.rect.y, w, h])?,
+                    });
+                }
+                if let Some(text) = text {
+                    commands.push(Command::SetText { id: identity, text });
+                }
+                ensure!(t.valid(), "invalid transform");
+                if t != item.transform {
                     commands.push(Command::SetTransform {
                         id: identity,
                         transform: t,

@@ -3,7 +3,7 @@
 use super::document::View;
 use super::{Document, Editing, Intent};
 use crate::gpu::Gpu;
-use moth_scene::{Camera, Item, Rect, Uuid};
+use moth_scene::{Camera, Item, NoteKind, NoteLine, Rect, Uuid, note_padding};
 use moth_ui::Actions;
 
 /// Read-only inputs the canvas draws from; bundled to keep the call small.
@@ -19,6 +19,7 @@ pub(super) struct Canvas<'a> {
     pub moving: Option<(Uuid, Rect)>,
     pub resizing: Option<&'a super::resize::Resize>,
     pub pointer: Option<[f32; 2]>,
+    pub drawing: Option<&'a super::gesture::Drawing>,
     pub motion: &'a super::motion::DragMotion,
     pub duplicate: bool,
     pub gpu: &'a Gpu,
@@ -47,11 +48,16 @@ pub(super) fn canvas(ui: &mut egui::Ui, mut c: Canvas<'_>) -> Vec<Intent> {
             let (hover_id, fade, hot) = hover(ui, &c, &view);
             layout(ui, &c, &mut view, &mut actions, &mut intents);
             let returning = items(ui, &c, &view, hover_id, fade, hot, &mut intents);
+            if let Some(item) = c.drawing.and_then(super::gesture::Drawing::preview) {
+                draw_stroke(ui, &view.camera, &item);
+            }
             if c.moving.is_some() {
                 guides(ui, &view.camera, &c.tools.guides);
             }
             if !c.overlay {
-                selection(ui, &mut c, &view, &returning, hot, &mut intents);
+                if !matches!(*c.tool, super::gesture::Tool::Draw(_)) {
+                    selection(ui, &mut c, &view, &returning, hot, &mut intents);
+                }
                 input(ui, &mut c, &view, &mut intents);
             }
             minimap(ui, &mut c, &mut view, &mut intents);
@@ -100,10 +106,7 @@ fn hover(ui: &mut egui::Ui, c: &Canvas<'_>, view: &View) -> (Option<Uuid>, f32, 
                 })
                 .into_iter()
                 .rev()
-                .find(|item| {
-                    board.presented(item)
-                        && item.rect.contains_rotated(item.transform.rotation, world)
-                })
+                .find(|item| board.presented(item) && item.hits(world, 3. / view.camera.zoom))
                 .map(|item| item.id)
         });
     let over_canvas = pointer.is_some_and(|p| view.viewport.contains(egui::pos2(p[0], p[1])));
@@ -114,7 +117,7 @@ fn hover(ui: &mut egui::Ui, c: &Canvas<'_>, view: &View) -> (Option<Uuid>, f32, 
             over_canvas
                 && drag.is_none()
                 && resizing.is_none()
-                && !tool.picks()
+                && tool == super::gesture::Tool::Select
                 && settings.show_outlines
                 && !board.locked
                 && board.idle()
@@ -136,7 +139,7 @@ fn hover(ui: &mut egui::Ui, c: &Canvas<'_>, view: &View) -> (Option<Uuid>, f32, 
             resize_cursor(corner)
         } else if let Some(hot) = hot {
             resize_cursor(hot.corner)
-        } else if tool.picks() {
+        } else if tool != super::gesture::Tool::Select {
             egui::CursorIcon::Crosshair
         } else if drag.is_some_and(|(_, _, pan)| pan) || moving.is_some() {
             egui::CursorIcon::Grabbing
@@ -188,6 +191,7 @@ fn layout(
             enabled,
             registry,
             view.camera.zoom,
+            *c.tool,
         ));
     }
     view.safe_area = view.viewport;
@@ -232,7 +236,7 @@ fn layout(
     if view.needs_fit && board.intake.in_flight == 0 {
         view.fit(&board.scene);
     }
-    if board.scene.is_empty() {
+    if board.scene.is_empty() && !matches!(*c.tool, super::gesture::Tool::Draw(_)) {
         let empty = moth_ui::empty_board(ui);
         actions.paste |= empty.paste;
         if empty.open {
@@ -358,13 +362,15 @@ fn items(
             None => {
                 if item.gamut().is_some() {
                     draw_gamut(ui, &view.camera, item, &board.scene);
+                } else if item.stroke().is_some() {
+                    draw_stroke(ui, &view.camera, item);
                 } else if editing.as_ref().is_none_or(|e| e.id != item.id) {
                     draw_note(ui, &view.camera, item);
                 }
             }
             Some(_) => {}
         }
-        if !overlay {
+        if !overlay && !matches!(*c.tool, super::gesture::Tool::Draw(_)) {
             let selected = board.selection.len() == 1 && board.selection.contains(&item.id);
             let hot = hot
                 .filter(|hot| hot.item.map_or(selected, |id| id == item.id))
@@ -397,6 +403,7 @@ fn items(
     }
     for ghost in returning.values().filter(|item| board.presented(item)) {
         if ghost.blob().is_none() && board.scene.get(ghost.id).is_none() {
+            draw_stroke(ui, &view.camera, ghost);
             draw_note(ui, &view.camera, ghost);
         }
         if !overlay && board.scene.get(ghost.id).is_none() {
@@ -413,6 +420,7 @@ fn items(
     }
     for ghost in transitions.into_iter().filter(|item| board.presented(item)) {
         if ghost.blob().is_none() && board.scene.get(ghost.id).is_none() {
+            draw_stroke(ui, &view.camera, &ghost);
             draw_note(ui, &view.camera, &ghost);
         }
     }
@@ -515,6 +523,12 @@ fn selection(
                         .any(|id| board.scene.get(*id).is_some_and(|i| i.note().is_some()))
                     {
                         super::surfaces::SelectionKind::Note
+                    } else if board
+                        .selection
+                        .iter()
+                        .any(|id| board.scene.get(*id).is_some_and(|i| i.stroke().is_some()))
+                    {
+                        super::surfaces::SelectionKind::Stroke
                     } else {
                         super::surfaces::SelectionKind::Image
                     };
@@ -556,6 +570,7 @@ fn input(ui: &mut egui::Ui, c: &mut Canvas<'_>, view: &View, intents: &mut Vec<I
         }
         // Double-click edits a note in place, or creates one on empty canvas.
         if response.double_clicked()
+            && *c.tool == super::gesture::Tool::Select
             && activate
             && board.idle()
             && let Some(pos) = response.interact_pointer_pos()
@@ -571,9 +586,7 @@ fn input(ui: &mut egui::Ui, c: &mut Canvas<'_>, view: &View, intents: &mut Vec<I
                 })
                 .into_iter()
                 .rev()
-                .find(|i| {
-                    board.presented(i) && i.rect.contains_rotated(i.transform.rotation, world)
-                });
+                .find(|i| board.presented(i) && i.hits(world, 3. / view.camera.zoom));
             let chip = super::groups::chip_rects(ui.ctx())
                 .into_iter()
                 .rev()
@@ -592,7 +605,34 @@ fn input(ui: &mut egui::Ui, c: &mut Canvas<'_>, view: &View, intents: &mut Vec<I
                 Some(item) if item.is_group() => intents.push(Intent::EnterGroup(item.id)),
                 Some(item) if item.note().is_some() => intents.push(Intent::EditNote(item.id)),
                 Some(item) => intents.push(Intent::FocusItem(item.id)),
-                None => intents.push(Intent::AddNote(world)),
+                None => intents.push(Intent::AddNote(world, NoteKind::Card)),
+            }
+        }
+        if response.clicked()
+            && !response.double_clicked()
+            && *c.tool == super::gesture::Tool::Select
+            && editing.is_none()
+            && board.idle()
+            && !board.locked
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            let world = view.camera.world([pos.x, pos.y]);
+            let hit = board
+                .scene
+                .query(Rect {
+                    x: world[0],
+                    y: world[1],
+                    width: 1. / view.camera.zoom,
+                    height: 1. / view.camera.zoom,
+                })
+                .into_iter()
+                .rev()
+                .find(|item| board.presented(item) && item.hits(world, 0.));
+            if let Some(item) = hit
+                && super::selection::target(&board.scene, board.entered, item.id) == item.id
+                && let Some(at) = note_checkbox_at(ui.ctx(), item, &view.camera, pos)
+            {
+                intents.push(Intent::ToggleNoteCheck(item.id, at));
             }
         }
         // The inline note editor floats above the canvas.
@@ -602,14 +642,94 @@ fn input(ui: &mut egui::Ui, c: &mut Canvas<'_>, view: &View, intents: &mut Vec<I
             egui::Area::new(egui::Id::unique("note_editor"))
                 .fixed_pos(egui::pos2(anchor[0], anchor[1]))
                 .show(ui.ctx(), |ui| {
-                    let response = note_editor(ui, editing, zoom);
-                    if editing.focus {
-                        response.response.request_focus();
-                        intents.push(Intent::NoteFocused);
-                    }
-                    if response.response.lost_focus() {
-                        intents.push(Intent::CommitNote);
-                    }
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        use super::bindings::Action::*;
+                        let mut editor_action = None;
+                        let id = note_editor_id(editing.id);
+                        if ui.memory(|m| m.has_focus(id)) {
+                            editor_action = ui.input_mut(|i| {
+                                let (index, action) =
+                                    i.events.iter().enumerate().find_map(|(index, event)| {
+                                        let egui::Event::Key {
+                                            key,
+                                            pressed: true,
+                                            modifiers,
+                                            ..
+                                        } = event
+                                        else {
+                                            return None;
+                                        };
+                                        let action =
+                                            if *key == egui::Key::Escape && !modifiers.any() {
+                                                CancelNoteDraft
+                                            } else {
+                                                let action = registry.key(
+                                                    *key,
+                                                    super::bindings::Mods::from_egui(*modifiers),
+                                                )?;
+                                                if !matches!(
+                                                    action,
+                                                    NoteHeading
+                                                        | NoteBullet
+                                                        | NoteNumbered
+                                                        | NoteChecklist
+                                                        | SaveNoteDraft
+                                                        | CancelNoteDraft
+                                                ) || !enabled
+                                                    .get(action as usize)
+                                                    .copied()
+                                                    .unwrap_or(false)
+                                                {
+                                                    return None;
+                                                }
+                                                action
+                                            };
+                                        Some((index, action))
+                                    })?;
+                                i.events.remove(index);
+                                Some(action)
+                            });
+                        }
+                        let toolbar = ui.horizontal_wrapped(|ui| {
+                            if editing.kind != NoteKind::Label {
+                                for action in [NoteHeading, NoteBullet, NoteNumbered, NoteChecklist]
+                                {
+                                    if action == NoteHeading && editing.kind == NoteKind::List {
+                                        continue;
+                                    }
+                                    if super::surfaces::button(
+                                        ui, action, enabled, registry, true, false,
+                                    ) {
+                                        editor_action = Some(action);
+                                    }
+                                }
+                                ui.separator();
+                            }
+                            for action in [SaveNoteDraft, CancelNoteDraft] {
+                                if super::surfaces::button(
+                                    ui, action, enabled, registry, true, false,
+                                ) {
+                                    editor_action = Some(action);
+                                }
+                            }
+                        });
+                        if editing.kind != NoteKind::Label {
+                            toolbar
+                                .response
+                                .on_hover_text(moth_ui::text(moth_ui::Text::NoteFormattingHint));
+                        }
+
+                        let response = note_editor(ui, editing, zoom);
+                        if editing.focus {
+                            response.response.request_focus();
+                            intents.push(Intent::NoteFocused);
+                        }
+                        if let Some(action) = editor_action {
+                            intents.push(Intent::Action(action));
+                        } else if response.response.lost_focus() {
+                            intents.push(Intent::CommitNote);
+                        }
+                    });
                 });
         }
     }
@@ -1006,6 +1126,30 @@ fn edge_point(rect: egui::Rect, toward: egui::Pos2) -> egui::Pos2 {
     rect.center() + d * scale.min(1.)
 }
 
+fn draw_stroke(ui: &egui::Ui, camera: &Camera, item: &Item) {
+    let Some(stroke) = item.stroke() else { return };
+    let r = item.rect;
+    let (sin, cos) = item.transform.rotation.sin_cos();
+    let points = stroke
+        .points
+        .iter()
+        .map(|&[x, y]| {
+            let dx = (x - 0.5) * r.width * if item.transform.flip[0] { -1. } else { 1. };
+            let dy = (y - 0.5) * r.height * if item.transform.flip[1] { -1. } else { 1. };
+            let [x, y] = camera.screen([
+                r.x + r.width / 2. + dx * cos - dy * sin,
+                r.y + r.height / 2. + dx * sin + dy * cos,
+            ]);
+            egui::pos2(x, y)
+        })
+        .collect();
+    let [r, g, b] = stroke.color;
+    let color = egui::Color32::from_rgb(r, g, b).gamma_multiply(item.transform.opacity);
+    let width = stroke.world_width(item.rect) * camera.zoom;
+    ui.painter()
+        .add(egui::Shape::line(points, egui::Stroke::new(width, color)));
+}
+
 /// Draws a note's card and text in screen space. shortcut: notes render in the
 /// UI layer, above images, ignoring z-interleave with images; upgrade with a
 /// text pipeline in the renderer when stacking between the two matters.
@@ -1024,32 +1168,31 @@ fn draw_note(ui: &egui::Ui, camera: &Camera, item: &Item) {
         let s = camera.screen(corner);
         egui::pos2(s[0], s[1])
     });
-    if rotation.abs() < 1e-4 {
-        let card = egui::Rect::from_min_max(corners[0], corners[3]);
-        ui.painter()
-            .rect_filled(card, tokens.radius_s as f32 * zoom, fill);
-        ui.painter().rect_stroke(
-            card,
-            tokens.radius_s as f32 * zoom,
-            stroke,
-            egui::StrokeKind::Inside,
-        );
-    } else {
-        ui.painter().add(egui::Shape::convex_polygon(
-            vec![corners[0], corners[1], corners[3], corners[2]],
-            fill,
-            stroke,
-        ));
+    if item.transform.note_kind != NoteKind::Label {
+        if rotation.abs() < 1e-4 {
+            let card = egui::Rect::from_min_max(corners[0], corners[3]);
+            ui.painter()
+                .rect_filled(card, tokens.radius_s as f32 * zoom, fill);
+            ui.painter().rect_stroke(
+                card,
+                tokens.radius_s as f32 * zoom,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+        } else {
+            ui.painter().add(egui::Shape::convex_polygon(
+                vec![corners[0], corners[1], corners[3], corners[2]],
+                fill,
+                stroke,
+            ));
+        }
     }
-    let galley = note_galley(
-        ui.ctx(),
-        text,
-        font_size,
-        item.transform.note_wrap.then_some(item.rect.width * zoom),
-        color,
-    );
-    ui.painter().add(egui::Shape::Text(
-        egui::epaint::TextShape::new(corners[0], galley, color).with_angle(rotation),
+    let (galley, inset) = fitted_note(ui.ctx(), item, text, font_size, zoom, color);
+    let (sin, cos) = rotation.sin_cos();
+    let start = corners[0] + egui::vec2(inset * (cos - sin), inset * (sin + cos));
+    let clip = egui::Rect::from_points(&corners);
+    ui.painter().with_clip_rect(clip).add(egui::Shape::Text(
+        egui::epaint::TextShape::new(start, galley, color).with_angle(rotation),
     ));
 }
 
@@ -1057,7 +1200,7 @@ pub(super) fn new_note_rect(anchor: [f32; 2], zoom: f32) -> Rect {
     Rect {
         x: anchor[0],
         y: anchor[1],
-        width: 200. / zoom,
+        width: moth_scene::NOTE_FONT_SIZE * 15. / zoom,
         height: moth_scene::NOTE_FONT_SIZE * 1.3 / zoom,
     }
 }
@@ -1066,13 +1209,36 @@ pub(super) fn note_font_size(rect: Rect, text: &str) -> f32 {
     rect.height / (text.lines().count().max(1) as f32 * 1.3)
 }
 
+pub(super) fn note_editor_id(id: Uuid) -> egui::Id {
+    egui::Id::unique(("note_text", id))
+}
+
 fn note_editor(
     ui: &mut egui::Ui,
     editing: &mut Editing,
     zoom: f32,
 ) -> egui::text_edit::TextEditOutput {
+    let id = note_editor_id(editing.id);
+    super::note_edit::list_keys(ui, id, editing);
     let font_size = editing.font_size * zoom;
-    let wrap_width = editing.wrap.then_some(editing.width * zoom);
+    let remembered_width = editing.width * zoom;
+    let available = ui.ctx().content_rect().width() * 0.8;
+    let base_width = if editing.kind == NoteKind::Label {
+        8.
+    } else {
+        15.
+    };
+    let width = remembered_width
+        .max(font_size * base_width)
+        .min(available)
+        .max(1.);
+    let wrap_width = if editing.wrap {
+        Some((remembered_width.min(available) - 2. * note_padding(font_size)).max(1.))
+    } else if editing.draft.contains('\n') || editing.draft.len() > 70 {
+        Some(width)
+    } else {
+        None
+    };
     let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _: f32| {
         note_galley(
             ui.ctx(),
@@ -1082,13 +1248,27 @@ fn note_editor(
             moth_ui::tokens(ui.ctx()).text,
         )
     };
-    egui::TextEdit::multiline(&mut editing.draft)
+    let output = egui::TextEdit::multiline(&mut editing.draft)
         .font(egui::FontId::proportional(font_size))
         .layouter(&mut layouter)
-        .desired_width(editing.width * zoom)
-        .desired_rows(1)
-        .margin(egui::Margin::ZERO)
-        .show(ui)
+        .id(id)
+        .event_filter(egui::EventFilter {
+            horizontal_arrows: true,
+            vertical_arrows: true,
+            tab: editing.markup,
+            escape: true,
+        })
+        .char_limit(moth_scene::MAX_NOTE_BYTES)
+        .desired_width(width)
+        .desired_rows(if editing.kind == NoteKind::Label {
+            1
+        } else {
+            3
+        })
+        .margin(egui::Margin::same(moth_ui::tokens(ui.ctx()).space_s as i8))
+        .show(ui);
+    super::note_edit::show_typed_marker(ui.ctx(), editing, &output);
+    output
 }
 
 fn note_galley(
@@ -1111,17 +1291,151 @@ fn note_galley(
     ctx.fonts_mut(|fonts| fonts.layout_job(job))
 }
 
+fn formatted_note(
+    ctx: &egui::Context,
+    text: &str,
+    size: f32,
+    width: Option<f32>,
+    color: egui::Color32,
+    markup: bool,
+) -> std::sync::Arc<egui::Galley> {
+    if !markup {
+        return note_galley(ctx, text, size, width, color);
+    }
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = width.unwrap_or(f32::INFINITY);
+    for line in text.split_inclusive('\n') {
+        let (indent, style, body) = NoteLine::parse(line);
+        let font = size * style.scale();
+        let format = egui::TextFormat {
+            font_id: egui::FontId::proportional(font),
+            color,
+            line_height: Some(font * 1.3),
+            ..Default::default()
+        };
+        job.append(indent, 0., format.clone());
+        job.append(&style.marker(), 0., format.clone());
+        job.append(body, 0., format);
+    }
+    ctx.fonts_mut(|fonts| fonts.layout_job(job))
+}
+
 pub(super) fn measure_note_frame(
     ctx: &egui::Context,
     text: &str,
     font_size: f32,
     width: Option<f32>,
+    markup: bool,
 ) -> [f32; 2] {
-    let galley = note_galley(ctx, text, font_size, width, moth_ui::tokens(ctx).text);
+    let padding = note_padding(font_size);
+    let galley = formatted_note(
+        ctx,
+        text,
+        font_size,
+        width.map(|w| (w - 2. * padding).max(1.)),
+        moth_ui::tokens(ctx).text,
+        markup,
+    );
     [
-        width.unwrap_or(galley.size().x.max(font_size * 0.6)),
-        galley.size().y.max(font_size * 1.3),
+        width.unwrap_or(
+            galley
+                .rect
+                .union(galley.mesh_bounds)
+                .width()
+                .max(font_size * 0.6)
+                + 2. * padding,
+        ),
+        galley
+            .rect
+            .union(galley.mesh_bounds)
+            .height()
+            .max(font_size * 1.3)
+            + 2. * padding,
     ]
+}
+
+/// Old boards and explicit CLI frames may be smaller than their text.
+fn fitted_note(
+    ctx: &egui::Context,
+    item: &Item,
+    text: &str,
+    size: f32,
+    zoom: f32,
+    color: egui::Color32,
+) -> (std::sync::Arc<egui::Galley>, f32) {
+    let w = item.rect.width * zoom;
+    let h = item.rect.height * zoom;
+    let inset = note_padding(size).min(w.min(h) / 4.);
+    let wrap = item.transform.note_wrap.then_some((w - 2. * inset).max(1.));
+    let markup = item.transform.note_markup;
+    let mut galley = formatted_note(ctx, text, size, wrap, color, markup);
+    let bounds = galley.rect.union(galley.mesh_bounds);
+    if bounds.max.x <= w - inset && bounds.max.y <= h - inset {
+        return (galley, inset);
+    }
+    let factor = ((w - 2. * inset) / bounds.width().max(f32::EPSILON))
+        .min((h - 2. * inset) / bounds.height().max(f32::EPSILON))
+        .clamp(0.00001, 1.);
+    if factor < 1. {
+        galley = formatted_note(
+            ctx,
+            text,
+            (size * factor).max(0.01),
+            wrap.map(|w| w * factor),
+            color,
+            markup,
+        );
+    }
+    (galley, inset)
+}
+
+fn note_checkbox_at(
+    ctx: &egui::Context,
+    item: &Item,
+    camera: &Camera,
+    pos: egui::Pos2,
+) -> Option<usize> {
+    let text = item.note()?;
+    if !item.transform.note_markup || !text.contains(['[', '□', '▣']) {
+        return None;
+    }
+    let [x, y] = camera.screen(item.rect.corners(item.transform.rotation)[0]);
+    let (sin, cos) = item.transform.rotation.sin_cos();
+    let (galley, inset) = fitted_note(
+        ctx,
+        item,
+        text,
+        item.note_font_size() * camera.zoom,
+        camera.zoom,
+        moth_ui::tokens(ctx).text,
+    );
+    let dx = pos.x - x;
+    let dy = pos.y - y;
+    let local = egui::pos2(dx * cos + dy * sin - inset, -dx * sin + dy * cos - inset);
+    let mut raw_offset = 0;
+    let mut display_offset = 0;
+    for line in text.split_inclusive('\n') {
+        let (indent, style, body) = NoteLine::parse(line);
+        if matches!(style, NoteLine::Check(_)) {
+            let marker_pos = display_offset + indent.len();
+            let marker = galley.pos_from_cursor(egui::text::CCursor::new(marker_pos));
+            let after = galley.pos_from_cursor(egui::text::CCursor::new(marker_pos + 1));
+            if egui::Rect::from_min_max(
+                marker.min,
+                egui::pos2(
+                    after.left().max(marker.left() + marker.height() / 2.),
+                    marker.bottom(),
+                ),
+            )
+            .contains(local)
+            {
+                return Some(raw_offset + indent.len());
+            }
+        }
+        raw_offset += line.len();
+        display_offset += indent.len() + style.marker().chars().count() + body.chars().count();
+    }
+    None
 }
 
 /// The canvas viewport as a clip rectangle in physical pixels.
@@ -1210,8 +1524,8 @@ mod tests {
         moth_ui::theme(&ctx, &moth_ui::Tokens::LIGHT);
         let text = "Reference image with several words\nРусская заметка";
         let mut output = ctx.run_ui(Default::default(), |ui| {
-            let auto = measure_note_frame(ui.ctx(), text, 24., None);
-            let wrapped = measure_note_frame(ui.ctx(), text, 24., Some(100.));
+            let auto = measure_note_frame(ui.ctx(), text, 24., None, false);
+            let wrapped = measure_note_frame(ui.ctx(), text, 24., Some(100.), false);
             assert_eq!(wrapped[0], 100.);
             assert!(wrapped[1] > auto[1]);
             let mut item = Item::text(
@@ -1234,17 +1548,19 @@ mod tests {
                 font_size: 24.,
                 width: 100.,
                 wrap: true,
+                markup: false,
+                kind: NoteKind::Card,
                 focus: false,
             };
             let editor = note_editor(ui, &mut editing, 1.);
-            assert!((editor.galley.size().y - wrapped[1]).abs() < 0.01);
+            assert!((editor.galley.size().y + 2. * note_padding(24.) - wrapped[1]).abs() < 0.01);
             assert_eq!(
                 editor.galley.rows.len(),
                 note_galley(
                     ui.ctx(),
                     text,
                     24.,
-                    Some(100.),
+                    Some(100. - 2. * note_padding(24.)),
                     moth_ui::tokens(ui.ctx()).text
                 )
                 .rows
@@ -1252,7 +1568,7 @@ mod tests {
             );
             draw_note(ui, &Camera::default(), &item);
             assert_eq!(item.note_font_size(), 24.);
-            let larger = measure_note_frame(ui.ctx(), text, 48., Some(200.));
+            let larger = measure_note_frame(ui.ctx(), text, 48., Some(200.), false);
             assert!((larger[1] - wrapped[1] * 2.).abs() < 1.);
         });
         output.textures_delta.clear();
@@ -1273,6 +1589,8 @@ mod tests {
             font_size: item.note_font_size(),
             width: rect.width,
             wrap: false,
+            markup: false,
+            kind: NoteKind::Card,
             focus: false,
         };
         let mut editor_height = 0.;
@@ -1286,7 +1604,7 @@ mod tests {
             editor_height = editor.galley.rows[0].glyphs[0].font_height;
             assert!((editing.font_size * zoom - moth_scene::NOTE_FONT_SIZE).abs() < 0.001);
             let [width, height] =
-                measure_note_frame(ui.ctx(), &editing.draft, editing.font_size, None);
+                measure_note_frame(ui.ctx(), &editing.draft, editing.font_size, None, false);
             item.rect.width = width;
             item.rect.height = height;
             item.content = moth_scene::Content::Text(editing.draft.clone());
@@ -1319,6 +1637,65 @@ mod tests {
         for height in drawn {
             assert!((height - editor_height).abs() < 0.01);
         }
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn legacy_note_stays_inside_its_frame_and_formatted_checkboxes_are_clickable() {
+        let ctx = egui::Context::default();
+        moth_ui::theme(&ctx, &moth_ui::Tokens::LIGHT);
+        let frame = Rect {
+            x: 20.,
+            y: 30.,
+            width: 120.,
+            height: 27.,
+        };
+        let mut old = Item::text("Headwear, fabrics and shapes", frame, None);
+        old.transform.note_font_size = 25.;
+        let camera = Camera::default();
+        let card = egui::Rect::from_min_size(
+            egui::pos2(frame.x, frame.y),
+            egui::vec2(frame.width, frame.height),
+        );
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            draw_note(ui, &camera, &old);
+            let body = "# Costume study\n- [ ] Add warm light";
+            let [width, height] = measure_note_frame(ui.ctx(), body, 24., None, true);
+            let mut note = Item::text(
+                body,
+                Rect {
+                    width,
+                    height,
+                    ..frame
+                },
+                None,
+            );
+            note.transform.note_markup = true;
+            note.transform.note_font_size = 24.;
+            let pos = egui::pos2(
+                frame.x + note_padding(24.) + 3.,
+                frame.y + note_padding(24.) + 24. * 1.35 * 1.3 + 12.,
+            );
+            assert_eq!(
+                note_checkbox_at(ui.ctx(), &note, &camera, pos),
+                Some("# Costume study\n".len())
+            );
+            note.transform.note_markup = false;
+            assert_eq!(note_checkbox_at(ui.ctx(), &note, &camera, pos), None);
+        });
+        let text = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == old.note().unwrap() => Some(text),
+                _ => None,
+            })
+            .unwrap();
+        let bounds = text.visual_bounding_rect();
+        assert!(
+            card.expand(0.75).contains_rect(bounds),
+            "{bounds:?} outside {card:?}"
+        );
         output.textures_delta.clear();
     }
 

@@ -23,7 +23,7 @@
 
 <br>
 
-<img src="docs/screenshots/board.png" alt="深色画布上摆着三幅插画的 MothRef 图板" width="900">
+<img src="docs/screenshots/board.png" alt="三幅插画按主题分组的 MothRef 画布" width="900">
 
 </div>
 
@@ -94,7 +94,7 @@
 <details>
 <summary><b>图板库（截图）</b></summary>
 <br>
-<img src="docs/screenshots/library.png" alt="首次启动时的 MothRef 图板库" width="900">
+<img src="docs/screenshots/library.png" alt="带图板预览、文件夹和标签的 MothRef 图板库" width="900">
 </details>
 
 <a id="download"></a>

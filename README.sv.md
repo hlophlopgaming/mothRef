@@ -23,7 +23,7 @@ Släpp bilder på en oändlig duk, ordna dem och ha dem framför dig medan du ar
 
 <br>
 
-<img src="docs/screenshots/board.png" alt="En MothRef-tavla med tre illustrationer på en mörk duk" width="900">
+<img src="docs/screenshots/board.png" alt="En MothRef-tavla med tre illustrationer grupperade efter ämne" width="900">
 
 </div>
 
@@ -94,7 +94,7 @@ Det här fungerar redan i nuvarande alfa:
 <details>
 <summary><b>Tavelbibliotek (skärmbild)</b></summary>
 <br>
-<img src="docs/screenshots/library.png" alt="MothRefs tavelbibliotek vid första start" width="900">
+<img src="docs/screenshots/library.png" alt="MothRefs tavelbibliotek med förhandsbilder, mappar och taggar" width="900">
 </details>
 
 <a id="download"></a>

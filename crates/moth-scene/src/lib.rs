@@ -5,6 +5,10 @@ pub use fractional_index::FractionalIndex;
 use rstar::{AABB, RTree, RTreeObject};
 use std::collections::{BTreeSet, HashMap};
 pub use uuid::Uuid;
+mod note;
+pub use note::{NoteKind, NoteLine, note_padding};
+mod stroke;
+pub use stroke::{MAX_STROKE_POINTS, Stroke, StrokeStyle};
 
 /// Identifies original bytes independently of a storage backend or GPU format.
 pub type BlobId = blake3::Hash;
@@ -23,6 +27,8 @@ pub enum Content {
     Group(Group),
     /// A color gamut card: which hues and saturations an image uses and its main colors.
     Gamut(Box<Gamut>),
+    /// Vector annotation whose coordinates are local to its frame.
+    Stroke(Stroke),
 }
 /// Hue sectors of a [`Gamut`] coverage grid.
 pub const GAMUT_HUES: usize = 72;
@@ -346,6 +352,10 @@ pub struct Transform {
     pub note_font_size: f32,
     /// A fixed-width note wraps instead of expanding to fit its text.
     pub note_wrap: bool,
+    /// Interprets note prefixes for headings, lists and checklists.
+    pub note_markup: bool,
+    /// Presentation of a text item.
+    pub note_kind: NoteKind,
     /// Mirrors content horizontally, then vertically, before `content_rotation`.
     pub flip: [bool; 2],
     /// Pans content inside the frame, in frame widths and heights.
@@ -364,6 +374,8 @@ impl Default for Transform {
             sampling: Sampling::Default,
             note_font_size: 0.,
             note_wrap: false,
+            note_markup: false,
+            note_kind: NoteKind::Card,
             flip: [false; 2],
             content_offset: [0.0; 2],
             content_scale: 1.0,
@@ -380,6 +392,8 @@ impl Transform {
             sampling: self.sampling,
             note_font_size: self.note_font_size,
             note_wrap: self.note_wrap,
+            note_markup: self.note_markup,
+            note_kind: self.note_kind,
             ..Self::default()
         }
     }
@@ -517,7 +531,7 @@ impl Item {
     pub fn blob(&self) -> Option<BlobId> {
         match self.content {
             Content::Image(blob) => Some(blob),
-            Content::Text(_) | Content::Group(_) | Content::Gamut(_) => None,
+            _ => None,
         }
     }
     /// Legacy notes derive text scale from their unwrapped height until first edited.
@@ -560,11 +574,32 @@ impl Item {
             source: None,
         }
     }
+    /// Returns a vector annotation when the item carries a stroke.
+    pub fn stroke(&self) -> Option<&Stroke> {
+        match &self.content {
+            Content::Stroke(stroke) => Some(stroke),
+            _ => None,
+        }
+    }
+
+    /// Tests the rotated frame, or the painted path for an annotation.
+    pub fn hits(&self, point: [f32; 2], tolerance: f32) -> bool {
+        match self.stroke() {
+            Some(stroke) => stroke.hits(
+                self.rect,
+                self.transform.rotation,
+                self.transform.flip,
+                point,
+                tolerance,
+            ),
+            None => self.rect.contains_rotated(self.transform.rotation, point),
+        }
+    }
     /// The note text, or `None` for images.
     pub fn note(&self) -> Option<&str> {
         match &self.content {
             Content::Text(text) => Some(text),
-            Content::Image(_) | Content::Group(_) | Content::Gamut(_) => None,
+            _ => None,
         }
     }
 }
@@ -788,6 +823,7 @@ impl Scene {
                     || !item.transform.valid()
                     || item.id.get_version_num() != 7
                     || item.name.len() > 1024
+                    || item.note().is_some_and(|text| text.len() > MAX_NOTE_BYTES)
                     || (!item.origin.is_empty()
                         && (!item.is_group() || item.origin.len() > MAX_SOURCE))
                     || item.source.as_ref().is_some_and(|source| {
@@ -804,6 +840,9 @@ impl Scene {
                 if let Content::Gamut(gamut) = &item.content
                     && !gamut.valid()
                 {
+                    return Err(SceneError::Invalid);
+                }
+                if item.stroke().is_some_and(|stroke| !stroke.valid()) {
                     return Err(SceneError::Invalid);
                 }
                 if self.items.contains_key(&item.id) {

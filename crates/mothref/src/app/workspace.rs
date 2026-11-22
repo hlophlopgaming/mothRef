@@ -237,12 +237,15 @@ impl Workspace {
         TabChange::Switched
     }
     pub(super) fn persist(&mut self, request: moth_platform::boards::Request) {
+        self.try_persist(request);
+    }
+    pub(super) fn try_persist(&mut self, request: moth_platform::boards::Request) -> bool {
         use moth_platform::boards::Request;
         if self.board.intake.loading
             && !matches!(&request, Request::Preferences(_) | Request::SaveSettings(_))
         {
             self.board.notices.message = moth_ui::Text::StorageBusy.into();
-            return;
+            return false;
         }
         if !matches!(
             &request,
@@ -250,7 +253,7 @@ impl Workspace {
         ) && !self.finish_added()
         {
             self.board.notices.message = moth_ui::Text::StorageBusy.into();
-            return;
+            return false;
         }
         let loading = matches!(
             &request,
@@ -273,7 +276,7 @@ impl Workspace {
                     | Request::ImportPur(..)
             )
         {
-            return;
+            return false;
         }
         let exporting = matches!(&request, Request::Export(_));
         match self.board.boards().requests.try_send(request) {
@@ -284,8 +287,12 @@ impl Workspace {
                 }
                 self.board.intake.in_flight += 1;
                 self.board.intake.loading |= loading;
+                true
             }
-            Err(_) => self.board.notices.message = moth_ui::Text::StorageBusy.into(),
+            Err(_) => {
+                self.board.notices.message = moth_ui::Text::StorageBusy.into();
+                false
+            }
         }
     }
     pub(super) fn persist_batch(&mut self, commands: Vec<(Command, Option<Handle>)>) {

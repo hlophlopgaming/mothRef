@@ -23,7 +23,7 @@
 
 <br>
 
-<img src="docs/screenshots/board.png" alt="गहरे कैनवस पर तीन चित्रों वाला एक MothRef बोर्ड" width="900">
+<img src="docs/screenshots/board.png" alt="विषय के अनुसार समूहों में रखे तीन चित्रों वाला MothRef बोर्ड" width="900">
 
 </div>
 
@@ -94,7 +94,7 @@
 <details>
 <summary><b>बोर्ड लाइब्रेरी (स्क्रीनशॉट)</b></summary>
 <br>
-<img src="docs/screenshots/library.png" alt="पहली बार खोलने पर MothRef की बोर्ड लाइब्रेरी" width="900">
+<img src="docs/screenshots/library.png" alt="बोर्ड पूर्वावलोकन, फ़ोल्डरों और टैग वाली MothRef लाइब्रेरी" width="900">
 </details>
 
 <a id="download"></a>

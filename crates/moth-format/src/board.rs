@@ -2,7 +2,8 @@
 //! Versioned append-only records. A checksummed footer commits one record.
 use crate::ReadSeek;
 use moth_scene::{
-    BlobId, Command, Content, Gamut, Group, Item, Rect, Scene, Source, Transform, Uuid,
+    BlobId, Command, Content, Gamut, Group, Item, NoteKind, Rect, Scene, Source, Stroke, Transform,
+    Uuid,
 };
 use std::{
     collections::HashMap,
@@ -11,8 +12,9 @@ use std::{
 
 /// Schema the writer produces. Boards with an older header are compacted to it before
 /// a checkpoint is appended, so a file never mixes record layouts across headers.
-pub const SCHEMA: u8 = 10;
-const HEADER: &[u8; 16] = b"MOTH\x0a\0\0\0\0\0\0\0\0\0\0\0";
+pub const SCHEMA: u8 = 11;
+const HEADER: &[u8; 16] = b"MOTH\x0b\0\0\0\0\0\0\0\0\0\0\0";
+const HEADER_V10: &[u8; 16] = b"MOTH\x0a\0\0\0\0\0\0\0\0\0\0\0";
 const HEADER_V9: &[u8; 16] = b"MOTH\x09\0\0\0\0\0\0\0\0\0\0\0";
 /// Schema-8 boards predate image sources.
 const HEADER_V8: &[u8; 16] = b"MOTH\x08\0\0\0\0\0\0\0\0\0\0\0";
@@ -189,7 +191,12 @@ pub fn peek_preview(reader: &mut dyn ReadSeek) -> Result<Option<Preview>, Error>
     reader.seek(SeekFrom::Start(0))?;
     let mut header = [0; 16];
     reader.read_exact(&mut header)?;
-    if &header != HEADER && &header != HEADER_V9 && &header != HEADER_V8 && &header != HEADER_V7 {
+    if &header != HEADER
+        && &header != HEADER_V10
+        && &header != HEADER_V9
+        && &header != HEADER_V8
+        && &header != HEADER_V7
+    {
         return Ok(None);
     }
     let length = reader.seek(SeekFrom::End(0))?;
@@ -288,6 +295,24 @@ pub fn encode(command: &Command) -> Vec<u8> {
                 transform_bytes(&mut bytes, item.transform);
                 bytes.extend_from_slice(parent_bytes(item.parent).as_bytes());
                 gamut_bytes(&mut bytes, gamut);
+                bytes.extend_from_slice(item.z.as_bytes());
+            }
+            Content::Stroke(stroke) => {
+                bytes.push(24);
+                bytes.extend_from_slice(item.id.as_bytes());
+                rect_bytes(&mut bytes, item.rect);
+                transform_bytes(&mut bytes, item.transform);
+                bytes.extend_from_slice(parent_bytes(item.parent).as_bytes());
+                bytes.extend_from_slice(&stroke.color);
+                bytes.extend_from_slice(&stroke.width.to_le_bytes());
+                bytes.extend_from_slice(&(stroke.points.len() as u16).to_le_bytes());
+                for point in &stroke.points {
+                    for v in point {
+                        bytes.extend_from_slice(&v.to_le_bytes());
+                    }
+                }
+                bytes.extend_from_slice(&(item.name.len() as u16).to_le_bytes());
+                bytes.extend_from_slice(item.name.as_bytes());
                 bytes.extend_from_slice(item.z.as_bytes());
             }
             Content::Group(group) => {
@@ -433,7 +458,12 @@ fn rect_bytes(bytes: &mut Vec<u8>, r: Rect) {
 }
 fn transform_bytes(bytes: &mut Vec<u8>, t: Transform) {
     bytes.extend_from_slice(&t.rotation.to_le_bytes());
-    bytes.push(t.flip[0] as u8 | (t.flip[1] as u8) << 1);
+    let kind = match t.note_kind {
+        NoteKind::Card => 0,
+        NoteKind::Label => 8,
+        NoteKind::List => 16,
+    };
+    bytes.push(t.flip[0] as u8 | (t.flip[1] as u8) << 1 | (t.note_markup as u8) << 2 | kind);
     for v in t.content_offset {
         bytes.extend_from_slice(&v.to_le_bytes());
     }
@@ -499,12 +529,12 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
         let flags = *bytes.get(start + 4).ok_or(Error::Invalid)?;
         Ok(Transform {
             rotation: float(start, 0)?,
-            opacity: if matches!(bytes[0], 8..=15 | 21 | 22) {
+            opacity: if matches!(bytes[0], 8..=15 | 21 | 22 | 24) {
                 float(start + 21, 0)?
             } else {
                 1.0
             },
-            grayscale: if matches!(bytes[0], 8..=15 | 21 | 22) {
+            grayscale: if matches!(bytes[0], 8..=15 | 21 | 22 | 24) {
                 match bytes.get(start + 25) {
                     Some(0) => false,
                     Some(1) => true,
@@ -513,18 +543,18 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
             } else {
                 false
             },
-            sampling: if matches!(bytes[0], 11..=15 | 21 | 22) {
+            sampling: if matches!(bytes[0], 11..=15 | 21 | 22 | 24) {
                 moth_scene::Sampling::from_code(*bytes.get(start + 26).ok_or(Error::Invalid)?)
                     .ok_or(Error::Invalid)?
             } else {
                 moth_scene::Sampling::Default
             },
-            note_font_size: if matches!(bytes[0], 11..=15 | 21 | 22) {
+            note_font_size: if matches!(bytes[0], 11..=15 | 21 | 22 | 24) {
                 float(start + 27, 0)?
             } else {
                 0.
             },
-            note_wrap: if matches!(bytes[0], 11..=15 | 21 | 22) {
+            note_wrap: if matches!(bytes[0], 11..=15 | 21 | 22 | 24) {
                 match bytes.get(start + 31) {
                     Some(0) => false,
                     Some(1) => true,
@@ -532,6 +562,13 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
                 }
             } else {
                 false
+            },
+            note_markup: flags & 4 != 0,
+            note_kind: match flags & 24 {
+                0 => NoteKind::Card,
+                8 => NoteKind::Label,
+                16 => NoteKind::List,
+                _ => return Err(Error::Invalid),
             },
             flip: [flags & 1 != 0, flags & 2 != 0],
             content_offset: [float(start + 5, 0)?, float(start + 5, 1)?],
@@ -824,6 +861,52 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
                 source: None,
             }))
         }
+        24 if bytes.len() <= 90 + moth_scene::MAX_STROKE_POINTS * 8 + 1024 + MAX_INDEX => {
+            let (parent, at) = parent(65)?;
+            let color = bytes
+                .get(at..at + 3)
+                .ok_or(Error::Invalid)?
+                .try_into()
+                .map_err(|_| Error::Invalid)?;
+            let width = float(at + 3, 0)?;
+            let count = u16::from_le_bytes(
+                bytes
+                    .get(at + 7..at + 9)
+                    .ok_or(Error::Invalid)?
+                    .try_into()
+                    .map_err(|_| Error::Invalid)?,
+            ) as usize;
+            if !(2..=moth_scene::MAX_STROKE_POINTS).contains(&count) {
+                return Err(Error::Invalid);
+            }
+            let points_at = at + 9;
+            let points = (0..count)
+                .map(|i| Ok([float(points_at, i * 2)?, float(points_at, i * 2 + 1)?]))
+                .collect::<Result<Vec<_>, Error>>()?;
+            let stroke = Stroke {
+                points,
+                width,
+                color,
+            };
+            if !stroke.valid() {
+                return Err(Error::Invalid);
+            }
+            let (name, index) = name_index(points_at + count * 8)?;
+            Ok(Command::Insert(Item {
+                id,
+                name,
+                origin: String::new(),
+                rect: rect()?,
+                content: Content::Stroke(stroke),
+                transform: transform(33)?,
+                z: fractional_index::FractionalIndex::from_bytes(
+                    bytes.get(index..).ok_or(Error::Invalid)?.to_vec(),
+                )
+                .map_err(|_| Error::Invalid)?,
+                parent,
+                source: None,
+            }))
+        }
         17 if bytes.len() == 33 => Ok(Command::SetParent {
             id,
             parent: parent(17)?.0,
@@ -851,14 +934,16 @@ fn decode(bytes: &[u8]) -> Result<Command, Error> {
                 transform: transform(17)?,
             })
         }
-        7 if bytes.len() > 21 && bytes.len() as u64 <= MAX_TEXT_COMMAND => {
+        7 if bytes.len() >= 21 && bytes.len() as u64 <= MAX_TEXT_COMMAND => {
             let text_len =
                 u32::from_le_bytes(bytes[17..21].try_into().map_err(|_| Error::Invalid)?) as usize;
             if text_len > moth_scene::MAX_NOTE_BYTES {
                 return Err(Error::Invalid);
             }
-            let text = std::str::from_utf8(bytes.get(21..21 + text_len).ok_or(Error::Invalid)?)
-                .map_err(|_| Error::Invalid)?;
+            if bytes.len() != 21 + text_len {
+                return Err(Error::Invalid);
+            }
+            let text = std::str::from_utf8(&bytes[21..]).map_err(|_| Error::Invalid)?;
             Ok(Command::SetText {
                 id,
                 text: text.to_owned(),
@@ -874,6 +959,7 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
     let mut header = [0; 16];
     reader.read_exact(&mut header)?;
     if &header != HEADER
+        && &header != HEADER_V10
         && &header != HEADER_V9
         && &header != HEADER_V8
         && &header != HEADER_V7
@@ -988,6 +1074,7 @@ pub fn read(reader: &mut dyn ReadSeek) -> Result<Board, Error> {
                 // Previews are derived data for the library: the scene never reads them.
                 PREVIEW
                     if &header == HEADER
+                        || &header == HEADER_V10
                         || &header == HEADER_V9
                         || &header == HEADER_V8
                         || &header == HEADER_V7 => {}
@@ -1225,6 +1312,56 @@ mod tests {
         }
         assert!(read(&mut Cursor::new(bytes)).unwrap().scene.is_empty());
     }
+    #[test]
+    fn schema_ten_keeps_plain_notes_and_previews() {
+        let fixture = include_bytes!("../../../corpus/moth/v10.moth");
+        let mut reader = std::io::Cursor::new(&fixture[..]);
+        assert!(peek_preview(&mut reader).unwrap().is_some());
+        let board = read(&mut reader).unwrap();
+        assert!(
+            board
+                .scene
+                .items()
+                .filter(|item| item.note().is_some())
+                .all(|item| !item.transform.note_markup)
+        );
+    }
+
+    #[test]
+    fn stroke_roundtrip_validates_points_and_rejects_truncated_payloads() {
+        let item = Stroke::item(
+            vec![[0., 12.], [30., 40.], [45., 20.]],
+            moth_scene::StrokeStyle::Marker,
+            11.,
+            [255, 190, 10],
+            None,
+        )
+        .unwrap();
+        let command = Command::Insert(item.clone());
+        let encoded = encode(&command);
+        let mut scene = Scene::default();
+        let inverse = scene.apply(decode(&encoded).unwrap()).unwrap();
+        assert_eq!(scene.get(item.id), Some(&item));
+        let (mut bytes, previous) = base();
+        let offset = bytes.len() as u64;
+        append(&mut bytes, offset, 3, &snapshot(&scene).unwrap()).unwrap();
+        for cut in offset as usize..bytes.len() {
+            let loaded = read(&mut Cursor::new(&bytes[..cut])).unwrap();
+            assert!(loaded.scene.get(previous.id).is_some());
+            assert!(loaded.scene.get(item.id).is_none());
+        }
+        let loaded = read(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(loaded.scene.get(item.id), Some(&item));
+        scene.apply(inverse).unwrap();
+        assert!(scene.is_empty());
+        for n in 0..90 + 3 * 8 + 2 {
+            assert!(decode(&encoded[..n]).is_err());
+        }
+        let mut invalid = encoded;
+        invalid[90..94].copy_from_slice(&f32::NAN.to_le_bytes());
+        assert!(decode(&invalid).is_err());
+    }
+
     #[test]
     fn unsupported_schema_is_rejected() {
         let (mut bytes, _) = base();
@@ -1743,10 +1880,10 @@ mod tests {
     }
     proptest! {
         #[test]
-        fn scene_roundtrip(x in -10000f32..10000., y in -10000f32..10000., rotation in -10f32..10., scale in 0.01f32..100., dx in -5f32..5., dy in -5f32..5., mirror in any::<bool>(), spin in -10f32..10., opacity in 0f32..=1., grayscale in any::<bool>(), sampling in 0u8..4, note_font_size in 1f32..200., note_wrap in any::<bool>(), name in "[a-zA-Z0-9_]{0,40}[.]png") {
+        fn scene_roundtrip(x in -10000f32..10000., y in -10000f32..10000., rotation in -10f32..10., scale in 0.01f32..100., dx in -5f32..5., dy in -5f32..5., mirror in any::<bool>(), spin in -10f32..10., opacity in 0f32..=1., grayscale in any::<bool>(), sampling in 0u8..4, note_font_size in 1f32..200., note_wrap in any::<bool>(), note_markup in any::<bool>(), name in "[a-zA-Z0-9_]{0,40}[.]png") {
             let (mut bytes,mut item)=base();
             item.rect.x=x; item.rect.y=y; item.name=name;
-            item.transform=Transform{opacity,grayscale,sampling:moth_scene::Sampling::from_code(sampling).unwrap(),note_font_size,note_wrap,rotation,flip:[mirror,!mirror],content_offset:[dx,dy],content_scale:scale,content_rotation:spin};
+            item.transform=Transform{opacity,grayscale,sampling:moth_scene::Sampling::from_code(sampling).unwrap(),note_font_size,note_wrap,note_markup,note_kind: NoteKind::Card,rotation,flip:[mirror,!mirror],content_offset:[dx,dy],content_scale:scale,content_rotation:spin};
             let offset=bytes.len() as u64;
             append(&mut bytes,offset,2,&encode(&Command::Remove(item.id))).unwrap();
             let offset=bytes.len() as u64;

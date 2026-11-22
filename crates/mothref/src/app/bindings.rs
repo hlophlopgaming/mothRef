@@ -66,6 +66,8 @@ actions! {
 
     ResetCamera, ResetCamera, "", None;
     Note, AddNote, "", Some(moth_ui::icons::Icon::Plus);
+    AddLabel, AddLabel, "", None;
+    AddList, AddList, "", Some(moth_ui::icons::Icon::List);
     Delete, Delete, "Delete", Some(moth_ui::icons::Icon::Trash);
     Duplicate, Duplicate, "Cmd+D", Some(moth_ui::icons::Icon::Duplicate);
     RotateCw, RotateCw, "R", Some(moth_ui::icons::Icon::RotateCw);
@@ -188,6 +190,15 @@ actions! {
     CancelGroupColor, Cancel, "", None;
     Layers, Layers, "", None;
     DrawingSession, DrawingSession, "F5", None;
+    NoteHeading, NoteHeading, "", Some(moth_ui::icons::Icon::Heading);
+    NoteBullet, NoteBullet, "", Some(moth_ui::icons::Icon::List);
+    NoteNumbered, NoteNumbered, "", Some(moth_ui::icons::Icon::NumberedList);
+    NoteChecklist, NoteChecklist, "", Some(moth_ui::icons::Icon::Checklist);
+    SaveNoteDraft, Save, "Cmd+Enter", Some(moth_ui::icons::Icon::Check);
+    CancelNoteDraft, Cancel, "", Some(moth_ui::icons::Icon::Close);
+    DrawPen, DrawPen, "", Some(moth_ui::icons::Icon::Pen);
+    DrawMarker, DrawMarker, "", Some(moth_ui::icons::Icon::Marker);
+    DrawArrow, DrawArrow, "", Some(moth_ui::icons::Icon::Arrow);
 
 }
 /// Backdrop colors in palette-code order.

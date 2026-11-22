@@ -48,13 +48,16 @@ pub(super) fn area(action: Action) -> Area {
         | Minimize | Maximize => Area::Window,
         Select | Deselect | SelectAll | Fit | Focus | Previous | Next | ZoomIn | ZoomOut
         | ZoomReset | PanLeft | PanRight | PanUp | PanDown | ResetCamera | ToggleView | Lock
-        | Grayscale | Layers | ToggleGrid | ToggleSnapGrid | ToggleSnapPoints => Area::View,
+        | Grayscale | Layers | ToggleGrid | ToggleSnapGrid | ToggleSnapPoints | DrawPen
+        | DrawMarker | DrawArrow => Area::View,
         Paste | Undo | Redo | Note | EditNote | Delete | Duplicate | RotateCw | RotateCcw
         | FlipHorizontal | FlipVertical | ResetTransform | ResetCrop | NudgeLeft | NudgeRight
         | NudgeUp | NudgeDown | NudgeLeftFast | NudgeRightFast | NudgeUpFast | NudgeDownFast
         | BringFront | SendBack | BringForward | SendBackward | EditItem | ApplyItem
         | CancelItem | ResetRotation | ResetFlip | ResetScale | NormalizeScale
-        | SamplingDefault | SamplingSmooth | SamplingNearest | SamplingAutomatic => Area::Edit,
+        | SamplingDefault | SamplingSmooth | SamplingNearest | SamplingAutomatic | NoteHeading
+        | NoteBullet | NoteNumbered | NoteChecklist | SaveNoteDraft | CancelNoteDraft
+        | AddLabel | AddList => Area::Edit,
         GroupOrigin | Group | Ungroup | EnterGroup | RenameGroup | GroupNeutral | GroupSage
         | GroupAmber | GroupSky | GroupWing | GroupLilac | GroupCustom | ApplyGroupColor
         | CancelGroupColor => Area::Group,
@@ -93,7 +96,8 @@ pub(super) fn gate(action: Action) -> Gate {
     match action {
         SaveAndClose | Discard | KeepOpen | CancelDialog | ContinueConversion | SaveConversion
         | DismissRecovery | RestoreRecovery | CancelArrange | AddedHorizontal | AddedVertical
-        | AddedGrid | AddedOptimal | UndoAdded | DismissAdded | CancelGroupColor => Gate::None,
+        | AddedGrid | AddedOptimal | UndoAdded | DismissAdded | CancelGroupColor | NoteHeading
+        | NoteBullet | NoteNumbered | NoteChecklist | SaveNoteDraft | CancelNoteDraft => Gate::None,
         Layers | DrawingSession | ClickThrough => Gate::NoSession,
         Palette | BindingSettings | Shortcuts | Settings | CloseWindow | New | Open | Images
         | Library | CloseTab | NextTab | Overlay | Minimize | Maximize | Fullscreen | WindowBar
@@ -108,20 +112,21 @@ pub(super) fn gate(action: Action) -> Gate {
         | SamplingAutomatic | EditNote | ToggleGrid | ToggleSnapGrid | ToggleSnapPoints => {
             Gate::Board
         }
-        Paste | Undo | Redo | Note | Delete | Duplicate | RotateCw | RotateCcw | FlipHorizontal
-        | FlipVertical | ResetTransform | ResetCrop | NudgeLeft | NudgeRight | NudgeUp
-        | NudgeDown | NudgeLeftFast | NudgeRightFast | NudgeUpFast | NudgeDownFast | BringFront
-        | SendBack | BringForward | SendBackward | EditItem | ApplyItem | CancelItem
-        | ResetRotation | ResetFlip | ResetScale | NormalizeScale | GroupOrigin | Group
-        | Ungroup | EnterGroup | RenameGroup | GroupNeutral | GroupSage | GroupAmber | GroupSky
-        | GroupWing | GroupLilac | GroupCustom | ApplyGroupColor | Horizontal | Vertical | Grid
-        | Optimal | ArrangeName | ArrangeTime | ArrangePath | PackFit | NormalizeWidth
-        | NormalizeHeight | NormalizeSize | NormalizeArea | AlignLeft | AlignRight | AlignTop
-        | AlignBottom | Stack | DistributeHorizontal | DistributeVertical | ArrangeOptions
-        | ScaleApply | MoveDrag | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag
-        | PanSpaceDrag | PanAltDrag | ZoomDrag | GamutRefresh | GamutWindows | GamutCells
-        | GamutShares | GamutSortShare | GamutSortWarm | GamutSortLight | GamutSortHue
-        | GamutSortSaturation => Gate::Ready,
+        Paste | Undo | Redo | Note | AddLabel | AddList | Delete | Duplicate | RotateCw
+        | RotateCcw | FlipHorizontal | FlipVertical | ResetTransform | ResetCrop | NudgeLeft
+        | NudgeRight | NudgeUp | NudgeDown | NudgeLeftFast | NudgeRightFast | NudgeUpFast
+        | NudgeDownFast | BringFront | SendBack | BringForward | SendBackward | EditItem
+        | ApplyItem | CancelItem | ResetRotation | ResetFlip | ResetScale | NormalizeScale
+        | GroupOrigin | Group | Ungroup | EnterGroup | RenameGroup | GroupNeutral | GroupSage
+        | GroupAmber | GroupSky | GroupWing | GroupLilac | GroupCustom | ApplyGroupColor
+        | Horizontal | Vertical | Grid | Optimal | ArrangeName | ArrangeTime | ArrangePath
+        | PackFit | NormalizeWidth | NormalizeHeight | NormalizeSize | NormalizeArea
+        | AlignLeft | AlignRight | AlignTop | AlignBottom | Stack | DistributeHorizontal
+        | DistributeVertical | ArrangeOptions | ScaleApply | MoveDrag | ExtendDrag | ToggleDrag
+        | DuplicateDrag | PanDrag | PanSpaceDrag | PanAltDrag | ZoomDrag | GamutRefresh
+        | GamutWindows | GamutCells | GamutShares | GamutSortShare | GamutSortWarm
+        | GamutSortLight | GamutSortHue | GamutSortSaturation | DrawPen | DrawMarker
+        | DrawArrow => Gate::Ready,
     }
 }
 impl App {

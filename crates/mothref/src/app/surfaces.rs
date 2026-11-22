@@ -71,7 +71,7 @@ pub(super) const EXPORT: &[Slot] = &[
         &[A(ExportOriginal), A(ExportOriginals), A(ExportZip)],
     ),
 ];
-const INSERT: &[Slot] = &[A(Images), A(Paste), A(Note)];
+const INSERT: &[Slot] = &[A(Images), A(Paste), S, A(AddLabel), A(Note), A(AddList)];
 const FILE: &[Slot] = &[A(New), A(Open), A(Save), A(Library)];
 pub(super) const VIEW_WINDOW: &[Action] = &[Minimize, Maximize, CloseWindow];
 const WINDOW_MODES: &[Slot] = &[
@@ -162,6 +162,9 @@ fn grid_menu(
 
 const TOOLBAR: &[Slot] = &[
     A(Select),
+    A(DrawPen),
+    A(DrawMarker),
+    A(DrawArrow),
     S,
     G(Text::Insert, INSERT),
     S,
@@ -178,6 +181,7 @@ pub(super) enum SelectionKind {
     Gamut,
     Several,
     Note,
+    Stroke,
     /// One group, with the number of its direct members.
     Group(usize),
 }
@@ -198,6 +202,7 @@ const MULTI_BAR: &[Slot] = &[
     G(Text::AlignGroup, ALIGN),
     A(Duplicate),
 ];
+const STROKE_BAR: &[Slot] = &[A(EditItem), A(Duplicate), A(Delete)];
 const NOTE_BAR: &[Slot] = &[A(EditNote), A(EditItem), A(Duplicate), A(Delete)];
 pub(super) const GAMUT_VIEW: &[Slot] = &[A(GamutWindows), A(GamutCells), A(GamutShares)];
 pub(super) const GAMUT_SORT: &[Slot] = &[
@@ -234,6 +239,7 @@ fn selection_bar(kind: SelectionKind) -> &'static [Slot] {
         SelectionKind::Image => IMAGE_BAR,
         SelectionKind::Several => MULTI_BAR,
         SelectionKind::Note => NOTE_BAR,
+        SelectionKind::Stroke => STROKE_BAR,
         SelectionKind::Gamut => GAMUT_BAR,
         SelectionKind::Group(_) => GROUP_BAR,
     }
@@ -441,6 +447,7 @@ fn row(
     registry: &Registry,
     intents: &mut Vec<Intent>,
     zoom: f32,
+    active: Option<Action>,
 ) {
     for slot in slots {
         match slot {
@@ -451,7 +458,7 @@ fn row(
                     enabled,
                     registry,
                     true,
-                    matches!(action, Select),
+                    active.as_ref() == Some(action),
                 ) {
                     intents.push(Intent::Action(*action));
                 }
@@ -647,7 +654,17 @@ pub(super) fn toolbar(
     enabled: &[bool],
     registry: &Registry,
     zoom: f32,
+    tool: super::gesture::Tool,
 ) -> Vec<Intent> {
+    use super::gesture::Tool;
+    use moth_scene::StrokeStyle;
+    let active = match tool {
+        Tool::Select => Some(Select),
+        Tool::Draw(StrokeStyle::Pen) => Some(DrawPen),
+        Tool::Draw(StrokeStyle::Marker) => Some(DrawMarker),
+        Tool::Draw(StrokeStyle::Arrow) => Some(DrawArrow),
+        _ => None,
+    };
     let mut intents = Vec::new();
     egui::Area::new(egui::Id::unique("bottom_toolbar"))
         .constrain_to(viewport)
@@ -657,7 +674,7 @@ pub(super) fn toolbar(
             ui.set_max_width((viewport.width() - 24.).max(1.));
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    row(ui, TOOLBAR, enabled, registry, &mut intents, zoom);
+                    row(ui, TOOLBAR, enabled, registry, &mut intents, zoom, active);
                 });
             });
         });
@@ -733,7 +750,15 @@ pub(super) fn selection(
                     if let SelectionKind::Group(count) = kind {
                         ui.weak(format!("{} · {count}", text(Text::GroupLabel)));
                     }
-                    row(ui, selection_bar(kind), enabled, registry, &mut intents, 1.);
+                    row(
+                        ui,
+                        selection_bar(kind),
+                        enabled,
+                        registry,
+                        &mut intents,
+                        1.,
+                        None,
+                    );
                     ui.menu_button(text(Text::More), |ui| {
                         context(ui, settings, enabled, registry, &mut intents)
                     });
@@ -1056,7 +1081,14 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        toolbar(ui.ctx(), viewport, &enabled, &registry, 1.);
+                        toolbar(
+                            ui.ctx(),
+                            viewport,
+                            &enabled,
+                            &registry,
+                            1.,
+                            super::super::gesture::Tool::Select,
+                        );
                     },
                 )
                 .textures_delta
@@ -1085,7 +1117,14 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    toolbar(ui.ctx(), viewport, &enabled, &registry, 1.);
+                    toolbar(
+                        ui.ctx(),
+                        viewport,
+                        &enabled,
+                        &registry,
+                        1.,
+                        super::super::gesture::Tool::Select,
+                    );
                 },
             );
             delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;

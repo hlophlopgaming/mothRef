@@ -5,6 +5,24 @@ use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    DrawPen,
+    DrawMarker,
+    DrawArrow,
+    AnnotationColor,
+    AnnotationSize,
+    LayerStroke,
+    StrokeOne,
+    StrokeFew,
+    StrokeMany,
+    AddLabel,
+    AddList,
+    NoteNumbered,
+    NoteHeading,
+    NoteBullet,
+    NoteChecklist,
+    NoteFormattingHint,
+    NoteTooLong,
+    NoteTooLarge,
     /// Context menu mode for point snapping.
     SnapGrid,
     /// Explains point snapping and its temporary bypass.
@@ -1736,6 +1754,7 @@ mod tests {
             adapter: "Test adapter",
             count: 3,
             images: 2,
+            strokes: 0,
             selected: 0,
             zoom: 1.,
             zoom_increment: 10.,

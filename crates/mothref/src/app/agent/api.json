@@ -24,12 +24,16 @@
     "parameters": "path OR url, at?=[x,y]; omitted at places right of board bounds with a 24-unit gap. Explicit URLs use native bounded HTTP/TLS download. group_origin?=false groups this image with its source folder. The item keeps its source (absolute path or URL) in `source`."
   },
   "note": {
-    "description": "Add a text note with estimated native font bounds.",
-    "parameters": "text, at?=[x,y]; omitted at places right of board bounds with 24 board-unit gap"
+    "description": "Add a formatted text note sized to its content.",
+    "parameters": "text, kind?=note|label|list, at?=[x,y]; omitted at places right of board bounds with 24 board-unit gap"
+  },
+  "stroke": {
+    "description": "Draw a vector pen stroke, marker stroke or arrow.",
+    "parameters": "style?=pen|marker|arrow, points=[[x,y],...], width? (board units), color? (0xRRGGBB); CLI uses repeated --point x,y"
   },
   "edit": {
     "description": "Edit a frame, note, label or content transform.",
-    "parameters": "id, rect?=[x,y,width,height], text?, name?, transform?={rotation,opacity,grayscale,sampling,note_font_size,note_wrap,flip,content_offset,content_scale,content_rotation}; angles in radians, sampling 0..3"
+    "parameters": "id, rect?=[x,y,width,height], text?, name?, transform?={rotation,opacity,grayscale,sampling,note_font_size,note_wrap,note_markup,flip,content_offset,content_scale,content_rotation}; angles in radians, sampling 0..3"
   },
   "layout": {
     "description": "Arrange images and notes with the GUI layout algorithms.",

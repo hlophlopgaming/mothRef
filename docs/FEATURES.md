@@ -170,6 +170,7 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 
 ### Notes (M2 plain, M4 rich)
 - [x] Notes auto-size to text; manual size wraps text (PR)
+- [x] Labels, note cards and lists with headings, nested bullets, numbering and clickable checklist entries — M4
 - [ ] Creating a note with an image or group selected parents it to that item (PR) — M4
 - [ ] Copy / paste text formatting (PR) — M4
 - [ ] Links to local files; clicking a link to a `.moth` / `.pur` / `.bee` file opens that board (PR) — M4
@@ -179,6 +180,7 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 - [ ] Copy a single frame, or drag it out as a new image item (PR)
 
 ### Drawing (M4)
+- [x] Freehand pen, translucent marker and arrows, with a configurable color and thickness
 - [ ] Line color, thickness and style for all tools (PR)
 - [ ] Shift snaps lines to 0/45/90°, makes perfect circles and squares (PR)
 - [ ] Double-click a drawing (or its hierarchy entry) to edit it again (PR)
