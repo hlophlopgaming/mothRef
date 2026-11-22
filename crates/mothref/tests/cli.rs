@@ -702,7 +702,9 @@ fn coordinate_limit_errors_leave_saved_bytes_unchanged() {
 #[test]
 fn recovered_tail_requires_a_clean_save_as_before_check_passes() {
     let cli = Native::new();
-    fs::copy(corpus("moth/v9.moth"), &cli.board).unwrap();
+    // An older fixture would be compacted during migration instead of appending.
+    let fixture = format!("moth/v{}.moth", moth_format::board::SCHEMA);
+    fs::copy(corpus(&fixture), &cli.board).unwrap();
     fs::OpenOptions::new()
         .append(true)
         .open(&cli.board)
