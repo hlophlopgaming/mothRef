@@ -27,9 +27,6 @@ Déposez des images sur une toile infinie, organisez-les et gardez-les sous les 
 
 </div>
 
-> [!WARNING]
-> MothRef est en **alpha précoce** (`0.1.0-alpha`). L'enregistrement, la récupération et l'annulation fonctionnent, mais les longs tests de fiabilité restent à faire. Gardez des copies séparées de vos tableaux importants et des images d'origine.
-
 ---
 
 <a id="why-mothref"></a>

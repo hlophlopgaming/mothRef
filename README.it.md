@@ -27,9 +27,6 @@ Trascina le immagini su una tela infinita, sistemale e tienile sott'occhio mentr
 
 </div>
 
-> [!WARNING]
-> MothRef è in **alpha iniziale** (`0.1.0-alpha`). Salvataggio, ripristino e annulla funzionano, ma i lunghi test di affidabilità sono ancora da fare. Conserva copie separate delle bacheche importanti e delle immagini originali.
-
 ---
 
 <a id="why-mothref"></a>

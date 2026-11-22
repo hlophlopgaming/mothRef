@@ -27,10 +27,6 @@ Drop images onto an infinite canvas, arrange them, keep them in view while you w
 
 </div>
 
-> [!WARNING]
-> MothRef is in **public alpha** (`0.3.0-alpha.1`). Saving, recovery and undo work, but long reliability
-> qualification is still pending. Keep separate copies of important boards and original images.
-
 ---
 
 ## Why MothRef

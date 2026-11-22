@@ -27,9 +27,6 @@ Pudota kuvat äärettömälle kankaalle, järjestä ne ja pidä ne näkyvillä t
 
 </div>
 
-> [!WARNING]
-> MothRef on **varhaisessa alfavaiheessa** (`0.1.0-alpha`). Tallennus, palautus ja kumoaminen toimivat, mutta pitkät luotettavuustestit ovat vielä edessä. Pidä tärkeistä tauluista ja alkuperäisistä kuvista erilliset kopiot.
-
 ---
 
 <a id="why-mothref"></a>

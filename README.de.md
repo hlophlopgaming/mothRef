@@ -27,9 +27,6 @@ Bilder auf eine unendliche Leinwand ziehen, anordnen und beim Arbeiten im Blick 
 
 </div>
 
-> [!WARNING]
-> MothRef ist in einer **frühen Alpha** (`0.1.0-alpha`). Speichern, Wiederherstellen und Rückgängig funktionieren, aber lange Zuverlässigkeitstests stehen noch aus. Bewahre separate Kopien wichtiger Boards und der Originalbilder auf.
-
 ---
 
 <a id="why-mothref"></a>

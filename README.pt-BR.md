@@ -27,9 +27,6 @@ Solte imagens em uma tela infinita, organize-as e mantenha-as à vista enquanto 
 
 </div>
 
-> [!WARNING]
-> O MothRef está em **alfa inicial** (`0.1.0-alpha`). Salvar, recuperar e desfazer funcionam, mas os testes longos de confiabilidade ainda estão pendentes. Guarde cópias separadas dos quadros importantes e das imagens originais.
-
 ---
 
 <a id="why-mothref"></a>

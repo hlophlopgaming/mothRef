@@ -27,9 +27,6 @@ Suelta imágenes en un lienzo infinito, ordénalas y tenlas a la vista mientras 
 
 </div>
 
-> [!WARNING]
-> MothRef está en **alfa temprana** (`0.1.0-alpha`). Guardar, recuperar y deshacer funcionan, pero aún faltan las pruebas largas de fiabilidad. Guarda copias aparte de tus tableros importantes y de las imágenes originales.
-
 ---
 
 <a id="why-mothref"></a>

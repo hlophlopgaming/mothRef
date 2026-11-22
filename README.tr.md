@@ -27,9 +27,6 @@ Görselleri sonsuz bir tuvale bırakın, düzenleyin ve çalışırken gözünü
 
 </div>
 
-> [!WARNING]
-> MothRef **erken alfa** aşamasında (`0.1.0-alpha`). Kaydetme, kurtarma ve geri alma çalışıyor, ancak uzun güvenilirlik testleri henüz tamamlanmadı. Önemli panolarınızın ve orijinal görsellerin ayrı kopyalarını saklayın.
-
 ---
 
 <a id="why-mothref"></a>

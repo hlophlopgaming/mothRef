@@ -27,9 +27,6 @@ Upuszczaj obrazy na nieskończone płótno, układaj je i miej je na oku podczas
 
 </div>
 
-> [!WARNING]
-> MothRef jest we **wczesnej wersji alfa** (`0.1.0-alpha`). Zapisywanie, odzyskiwanie i cofanie działają, ale długie testy niezawodności są jeszcze przed nami. Trzymaj osobne kopie ważnych tablic i oryginalnych obrazów.
-
 ---
 
 <a id="why-mothref"></a>

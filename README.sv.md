@@ -27,9 +27,6 @@ Släpp bilder på en oändlig duk, ordna dem och ha dem framför dig medan du ar
 
 </div>
 
-> [!WARNING]
-> MothRef är i **tidig alfa** (`0.1.0-alpha`). Sparande, återställning och ångra fungerar, men långa tillförlitlighetstester återstår. Ha separata kopior av viktiga tavlor och originalbilder.
-
 ---
 
 <a id="why-mothref"></a>
