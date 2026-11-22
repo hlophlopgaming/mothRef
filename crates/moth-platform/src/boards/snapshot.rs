@@ -14,7 +14,7 @@ use std::{
 pub(super) struct Prepared {
     pub(super) board: board::Board,
     pub(super) journal: File,
-    pub(super) guard: File,
+    pub(super) guard: recovery::Guard,
 }
 
 /// Only a validated, durable private file may become the session journal.

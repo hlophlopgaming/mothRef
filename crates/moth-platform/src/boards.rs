@@ -188,7 +188,7 @@ struct State {
     scene: Scene,
     sources: HashMap<BlobId, Handle>,
     journal: Option<File>,
-    journal_guard: Option<File>,
+    journal_guard: Option<recovery::Guard>,
     blobs: HashSet<BlobId>,
     undo: VecDeque<Step>,
     redo: VecDeque<Step>,

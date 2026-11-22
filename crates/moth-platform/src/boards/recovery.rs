@@ -45,7 +45,18 @@ pub(super) fn validate(storage: &DesktopStorage, journal: &Path) -> io::Result<P
     Ok(directory.to_owned())
 }
 
-pub(super) fn lock(journal: &Path) -> io::Result<File> {
+pub(super) struct Guard(File);
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        // A child between fork and exec can still hold a copy of the descriptor.
+        if let Err(error) = self.0.unlock() {
+            tracing::warn!(%error, "could not unlock recovery journal");
+        }
+    }
+}
+
+pub(super) fn lock(journal: &Path) -> io::Result<Guard> {
     // Lock a sentinel: Windows range locks on the journal would block independent image readers.
     let path = journal
         .parent()
@@ -58,10 +69,10 @@ pub(super) fn lock(journal: &Path) -> io::Result<File> {
         .truncate(false)
         .open(path)?;
     file.try_lock().map_err(error)?;
-    Ok(file)
+    Ok(Guard(file))
 }
 
-pub(super) fn prepare(storage: &DesktopStorage) -> io::Result<(PathBuf, File)> {
+pub(super) fn prepare(storage: &DesktopStorage) -> io::Result<(PathBuf, Guard)> {
     let directory = storage.recovery_directory()?;
     std::fs::create_dir_all(&directory)?;
     #[cfg(unix)]
@@ -189,6 +200,23 @@ fn decode_path(bytes: &[u8]) -> io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn dropping_the_guard_unlocks_even_with_an_inherited_descriptor() {
+        let directory =
+            std::env::temp_dir().join(format!("moth-recovery-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir(&directory).unwrap();
+        let journal = directory.join("board.moth");
+        let guard = lock(&journal).unwrap();
+        let inherited = guard.0.try_clone().unwrap();
+        assert!(lock(&journal).is_err());
+        drop(guard);
+        let reopened = lock(&journal);
+        drop(inherited);
+        drop(reopened.unwrap());
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_destinations_roundtrip_and_reject_partial_utf16_units() {

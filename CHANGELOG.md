@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Release the recovery lock when a board closes, including when a child process temporarily inherited its file descriptor.
+
 - Update the URL parser to 2.5.9 to address RUSTSEC-2026-0592.
 
 - Add native Linux ARM64 AppImage and binary archive builds on Ubuntu 24.04 ARM runners. Both artifacts are required before release publication; ARM32 is not included.
