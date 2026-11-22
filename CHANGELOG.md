@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Update the desktop UI, renderer, and other Rust dependencies. Update Trash integration to use `jiff` and remove the `chrono` advisory exception.
+
 - Release the recovery lock when a board closes, including when a child process temporarily inherited its file descriptor.
 
 - Update the URL parser to 2.5.9 to address RUSTSEC-2026-0592.

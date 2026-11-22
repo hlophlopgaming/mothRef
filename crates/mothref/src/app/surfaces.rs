@@ -277,7 +277,7 @@ pub(super) fn button(
         };
         return response.clicked();
     }
-    let icon_id = ui.next_auto_id().with("menu_icon");
+    let icon_id = egui::IdSalt::new("menu_icon");
     let icon_size = egui::Vec2::splat(MENU_ICON);
     let button = egui::Button::new((egui::Atom::custom(icon_id, icon_size), label))
         .shortcut_text(registry.label(action))
@@ -402,13 +402,13 @@ fn items(
             G(label, children) => {
                 let button = egui::Button::new((
                     egui::Atom::custom(
-                        ui.next_auto_id().with("group_icon"),
+                        egui::IdSalt::new("group_icon"),
                         egui::Vec2::splat(MENU_ICON),
                     ),
                     text(*label),
                 ))
                 .right_text(egui::Atom::custom(
-                    ui.next_auto_id().with("submenu_arrow"),
+                    egui::IdSalt::new("submenu_arrow"),
                     egui::Vec2::splat(MENU_ICON),
                 ));
                 let (response, _) = egui::containers::menu::SubMenuButton::from_button(button)
@@ -649,7 +649,7 @@ pub(super) fn toolbar(
     zoom: f32,
 ) -> Vec<Intent> {
     let mut intents = Vec::new();
-    egui::Area::new(egui::Id::new("bottom_toolbar"))
+    egui::Area::new(egui::Id::unique("bottom_toolbar"))
         .constrain_to(viewport)
         .pivot(egui::Align2::CENTER_BOTTOM)
         .fixed_pos(viewport.center_bottom() - egui::vec2(0., 12.))
@@ -702,17 +702,17 @@ pub(super) fn selection(
     let mut intents = Vec::new();
     let gap = moth_ui::tokens(ctx).space_s as f32;
     let top = ctx
-        .data(|data| data.get_temp::<f32>(egui::Id::new("window_bar_bottom")))
+        .data(|data| data.get_temp::<f32>(egui::Id::unique("window_bar_bottom")))
         .unwrap_or(viewport.top());
     let bottom = ctx
-        .memory(|memory| memory.area_rect(egui::Id::new("bottom_toolbar")))
+        .memory(|memory| memory.area_rect(egui::Id::unique("bottom_toolbar")))
         .map_or(viewport.bottom(), |toolbar| toolbar.top() - gap);
     let viewport = egui::Rect::from_min_max(
         egui::pos2(viewport.left(), top.max(viewport.top())),
         egui::pos2(viewport.right(), bottom.max(top.max(viewport.top()))),
     );
     let size = ctx
-        .memory(|memory| memory.area_rect(egui::Id::new("selection_bar")))
+        .memory(|memory| memory.area_rect(egui::Id::unique("selection_bar")))
         .map_or(
             egui::vec2(
                 viewport.width(),
@@ -722,7 +722,7 @@ pub(super) fn selection(
         )
         .min(viewport.size());
     let position = selection_position(bounds, viewport, size, gap);
-    egui::Area::new(egui::Id::new("selection_bar"))
+    egui::Area::new(egui::Id::unique("selection_bar"))
         .constrain_to(viewport)
         .pivot(egui::Align2::LEFT_TOP)
         .fixed_pos(position)
@@ -753,7 +753,7 @@ pub(super) fn added(
     let gap = moth_ui::tokens(ctx).space_m as f32;
     let bottom =
         moth_ui::canvas::notice_bottom(ctx, viewport, &["bottom_toolbar", "selection_badge"]);
-    egui::Area::new(egui::Id::new("added_feedback"))
+    egui::Area::new(egui::Id::unique("added_feedback"))
         .order(egui::Order::Foreground)
         .constrain_to(viewport)
         .pivot(egui::Align2::CENTER_BOTTOM)
@@ -838,7 +838,7 @@ mod tests {
         assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
             egui::Shape::Text(t) if t.galley.text() == text(Text::SnapGrid))));
         assert!(
-            ctx.memory(|m| m.area_rect(egui::Id::new("grid_controls")))
+            ctx.memory(|m| m.area_rect(egui::Id::unique("grid_controls")))
                 .is_none()
         );
         assert!(intents.is_empty());
@@ -1063,7 +1063,7 @@ mod tests {
                 .clear();
             }
             let rect = ctx
-                .memory(|memory| memory.area_rect(egui::Id::new("bottom_toolbar")))
+                .memory(|memory| memory.area_rect(egui::Id::unique("bottom_toolbar")))
                 .expect("toolbar owns a visible area");
             assert!(rect.width() <= viewport.width(), "{size:?}: {rect:?}");
             assert!(rect.height() < viewport.height() / 2., "{size:?}: {rect:?}");

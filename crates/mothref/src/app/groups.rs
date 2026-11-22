@@ -330,7 +330,7 @@ pub(super) fn removal(scene: &Scene, mut ids: HashSet<Uuid>) -> Vec<Command> {
 /// Screen rectangles of the title chips drawn this frame; the pointer
 /// handler hit-tests them before the board so a chip can be grabbed like its group.
 pub(super) fn chip_rects(ctx: &egui::Context) -> Vec<(Uuid, egui::Rect)> {
-    ctx.data(|data| data.get_temp(egui::Id::new("group_chips")))
+    ctx.data(|data| data.get_temp(egui::Id::unique("group_chips")))
         .unwrap_or_default()
 }
 /// Title chips straddle the top edge of each visible backdrop; the one being renamed
@@ -466,7 +466,7 @@ pub(super) fn chips(
         ));
     }
     ui.ctx()
-        .data_mut(|data| data.insert_temp(egui::Id::new("group_chips"), rects));
+        .data_mut(|data| data.insert_temp(egui::Id::unique("group_chips"), rects));
     intents
 }
 fn place_chip(mut rect: egui::Rect, occupied: &[(Uuid, egui::Rect)], gap: f32) -> egui::Rect {
@@ -485,7 +485,7 @@ fn title_editor(
     left: egui::Pos2,
     swatch: egui::Color32,
 ) -> Option<super::Intent> {
-    let key = egui::Id::new(("group_title", id));
+    let key = egui::Id::unique(("group_title", id));
     let mut draft = ui
         .ctx()
         .data(|data| data.get_temp::<String>(key))
@@ -607,13 +607,13 @@ pub(super) fn layers(
     use moth_ui::{Text, text};
     let mut intents = Vec::new();
     let open = ctx.data(|data| {
-        data.get_temp::<bool>(egui::Id::new("layers_open"))
+        data.get_temp::<bool>(egui::Id::unique("layers_open"))
             .unwrap_or(false)
     });
     let tokens = moth_ui::tokens(ctx);
     let toggle = || super::Intent::Action(super::bindings::Action::Layers);
     if !open {
-        egui::Area::new(egui::Id::new("layers_tab"))
+        egui::Area::new(egui::Id::unique("layers_tab"))
             .anchor(egui::Align2::RIGHT_CENTER, egui::vec2(0., 0.))
             .constrain_to(viewport)
             .show(ctx, |ui| {
@@ -633,7 +633,7 @@ pub(super) fn layers(
             });
         return intents;
     }
-    let collapsed_key = egui::Id::new("layers_collapsed");
+    let collapsed_key = egui::Id::unique("layers_collapsed");
     let mut collapsed: HashSet<Uuid> = ctx
         .data(|data| data.get_temp(collapsed_key))
         .unwrap_or_default();
@@ -641,7 +641,7 @@ pub(super) fn layers(
     let width = (viewport.width() * 0.8).min(tokens.space_xl as f32 * 11.);
     let row_height = 28.;
     let indent = tokens.space_l as f32;
-    egui::Area::new(egui::Id::new("layers_drawer"))
+    egui::Area::new(egui::Id::unique("layers_drawer"))
         .anchor(
             egui::Align2::RIGHT_TOP,
             egui::vec2(-(tokens.space_s as f32), tokens.space_s as f32),

@@ -1350,7 +1350,7 @@ pub fn empty_board(ui: &mut egui::Ui) -> Actions {
     );
     let mut actions = Actions::default();
     // Keep the prompt above both egui's canvas hit target and native selection input.
-    egui::Area::new(egui::Id::new("empty_board"))
+    egui::Area::new(egui::Id::unique("empty_board"))
         .order(egui::Order::Middle)
         .movable(false)
         .fixed_pos(rect.shrink(16.).min)
@@ -1404,7 +1404,7 @@ pub fn empty_board(ui: &mut egui::Ui) -> Actions {
 
 /// Publishes labels derived from the application's single action registry.
 pub fn set_shortcuts(ctx: &Context, labels: Vec<(Text, String)>) {
-    ctx.data_mut(|data| data.insert_temp(egui::Id::new("active_shortcuts"), labels));
+    ctx.data_mut(|data| data.insert_temp(egui::Id::unique("active_shortcuts"), labels));
 }
 /// Uses current bindings, including an explicitly unbound action.
 pub fn tooltip(ctx: &Context, key: Text) -> String {
@@ -1413,7 +1413,7 @@ pub fn tooltip(ctx: &Context, key: Text) -> String {
         _ => key,
     };
     let shortcut = ctx
-        .data(|data| data.get_temp::<Vec<(Text, String)>>(egui::Id::new("active_shortcuts")))
+        .data(|data| data.get_temp::<Vec<(Text, String)>>(egui::Id::unique("active_shortcuts")))
         .and_then(|labels| {
             labels
                 .into_iter()
@@ -1892,7 +1892,7 @@ mod tests {
                             actions = empty_board(ui);
                             ui.interact(
                                 ui.max_rect(),
-                                egui::Id::new("canvas_context"),
+                                egui::Id::unique("canvas_context"),
                                 egui::Sense::click(),
                             );
                         });
@@ -1971,9 +1971,8 @@ mod tests {
                                     ui.max_rect().height() > size.y / 2.,
                                     "{size:?}: {:?}; titlebar bottom: {:?}",
                                     ui.max_rect(),
-                                    ui.ctx()
-                                        .data(|d| d
-                                            .get_temp::<f32>(egui::Id::new("window_bar_bottom")))
+                                    ui.ctx().data(|d| d
+                                        .get_temp::<f32>(egui::Id::unique("window_bar_bottom")))
                                 );
                                 let actions = empty_board(ui);
                                 assert!(!actions.paste && !actions.open);

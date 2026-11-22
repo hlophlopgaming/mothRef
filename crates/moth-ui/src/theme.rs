@@ -285,7 +285,7 @@ impl Tokens {
 pub const CLEAR: Color32 = Color32::TRANSPARENT;
 /// Active colors follow theme changes without retaining widget-local copies.
 pub fn tokens(ctx: &Context) -> Tokens {
-    ctx.data(|data| data.get_temp(egui::Id::new("house_tokens")))
+    ctx.data(|data| data.get_temp(egui::Id::unique("house_tokens")))
         .unwrap_or(Tokens::DARK)
 }
 /// Applies colors and metrics without reinstalling fonts.
@@ -335,7 +335,7 @@ pub fn apply(ctx: &Context, tokens: &Tokens) {
         egui::FontId::new(24., egui::FontFamily::Name("Bricolage Grotesque".into())),
     );
     style.animation_time = 0.12;
-    ctx.data_mut(|data| data.insert_temp(egui::Id::new("house_tokens"), *tokens));
+    ctx.data_mut(|data| data.insert_temp(egui::Id::unique("house_tokens"), *tokens));
     ctx.set_style_of(theme, style);
     ctx.set_theme(theme);
 }

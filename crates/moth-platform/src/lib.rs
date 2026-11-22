@@ -610,7 +610,7 @@ impl Platform for Desktop {
         viewer::open(path)
     }
     fn available_memory(&self) -> Option<u64> {
-        let mut system = sysinfo::System::new();
+        let mut system = sysinfo::System::new().ok()?;
         system.refresh_memory_specifics(sysinfo::MemoryRefreshKind::nothing().with_ram());
         (system.total_memory() > 0).then(|| system.available_memory())
     }

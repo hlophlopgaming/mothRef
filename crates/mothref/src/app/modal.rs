@@ -24,7 +24,7 @@ pub(super) fn crash(ctx: &egui::Context, slot: &mut Option<moth_platform::crash:
     let mut close = false;
     let tokens = moth_ui::tokens(ctx);
     egui::Window::new(text(Text::CrashTitle))
-        .id(egui::Id::new("crash_report"))
+        .id(egui::Id::unique("crash_report"))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
@@ -90,7 +90,7 @@ impl Modal {
         if let Some((_, rgb)) = &mut self.group_color {
             let mut open = true;
             egui::Window::new(moth_ui::text(moth_ui::Text::GroupColor))
-                .id(egui::Id::new("group_color_picker"))
+                .id(egui::Id::unique("group_color_picker"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -129,7 +129,7 @@ impl Modal {
             // A card in the corner, not a modal: the library stays usable, and each
             // board left in a journal can be reopened or thrown away on its own row.
             let tokens = moth_ui::tokens(ui.ctx());
-            egui::Area::new(egui::Id::new("recovery"))
+            egui::Area::new(egui::Id::unique("recovery"))
                 .order(egui::Order::Foreground)
                 .anchor(
                     egui::Align2::RIGHT_BOTTOM,
@@ -207,7 +207,7 @@ impl Modal {
 
         if board.notices.conversion_prompt && self.dialog.is_none() && !workspace.confirm_close {
             let tokens = moth_ui::tokens(ui.ctx());
-            let modal = egui::Modal::new(egui::Id::new("conversion"))
+            let modal = egui::Modal::new(egui::Id::unique("conversion"))
                 .frame(
                     egui::Frame::popup(&ui.ctx().global_style())
                         .corner_radius(tokens.radius_l)
@@ -254,7 +254,7 @@ impl Modal {
                 && board.intake.pasting == 0
                 && board.intake.pending.is_empty()
                 && board.intake.waiting.is_empty();
-            let modal = egui::Modal::new(egui::Id::new("confirm_close"))
+            let modal = egui::Modal::new(egui::Id::unique("confirm_close"))
                 .frame(
                     egui::Frame::popup(&ui.ctx().global_style())
                         .corner_radius(tokens.radius_l)
@@ -325,7 +325,7 @@ impl Modal {
                 ));
             } else {
                 let tokens = moth_ui::tokens(ui.ctx());
-                let modal = egui::Modal::new(egui::Id::new("arrange_prompt"))
+                let modal = egui::Modal::new(egui::Id::unique("arrange_prompt"))
                     .frame(
                         egui::Frame::popup(&ui.ctx().global_style())
                             .corner_radius(tokens.radius_l)

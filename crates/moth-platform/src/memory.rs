@@ -9,7 +9,7 @@ use std::{
 /// Samples this process for profiling tools; callers must run it off the UI thread.
 pub fn resident_bytes() -> Option<u64> {
     let pid = sysinfo::get_current_pid().ok()?;
-    let mut system = sysinfo::System::new();
+    let mut system = sysinfo::System::new().ok()?;
     system.refresh_processes_specifics(
         sysinfo::ProcessesToUpdate::Some(&[pid]),
         true,

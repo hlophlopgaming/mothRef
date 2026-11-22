@@ -148,7 +148,7 @@ fn hover(ui: &mut egui::Ui, c: &Canvas<'_>, view: &View) -> (Option<Uuid>, f32, 
             egui::CursorIcon::Default
         });
     }
-    let hover_key = egui::Id::new("canvas_hover_item");
+    let hover_key = egui::Id::unique("canvas_hover_item");
     if let Some(id) = hover {
         ui.ctx().data_mut(|data| data.insert_temp(hover_key, id));
     }
@@ -196,11 +196,11 @@ fn layout(
     if !compact {
         let bar_bottom = ui
             .ctx()
-            .data(|data| data.get_temp::<f32>(egui::Id::new("window_bar_bottom")));
+            .data(|data| data.get_temp::<f32>(egui::Id::unique("window_bar_bottom")));
         let (toolbar, selection) = ui.ctx().memory(|memory| {
             (
-                memory.area_rect(egui::Id::new("bottom_toolbar")),
-                memory.area_rect(egui::Id::new("selection_bar")),
+                memory.area_rect(egui::Id::unique("bottom_toolbar")),
+                memory.area_rect(egui::Id::unique("selection_bar")),
             )
         });
         view.safe_area.min.y = bar_bottom
@@ -546,7 +546,7 @@ fn input(ui: &mut egui::Ui, c: &mut Canvas<'_>, view: &View, intents: &mut Vec<I
     if !overlay {
         let response = ui.interact(
             view.viewport,
-            egui::Id::new("canvas_context"),
+            egui::Id::unique("canvas_context"),
             egui::Sense::click(),
         );
         if !secondary_gesture {
@@ -599,7 +599,7 @@ fn input(ui: &mut egui::Ui, c: &mut Canvas<'_>, view: &View, intents: &mut Vec<I
         if let Some(editing) = editing {
             let anchor = view.camera.screen(editing.anchor);
             let zoom = view.camera.zoom;
-            egui::Area::new(egui::Id::new("note_editor"))
+            egui::Area::new(egui::Id::unique("note_editor"))
                 .fixed_pos(egui::pos2(anchor[0], anchor[1]))
                 .show(ui.ctx(), |ui| {
                     let response = note_editor(ui, editing, zoom);
@@ -1140,7 +1140,7 @@ pub(super) fn preload_cover(
         ui.visuals().panel_fill,
     );
     let width = viewport.width().clamp(1., 360.);
-    egui::Area::new(egui::Id::new("preload_progress"))
+    egui::Area::new(egui::Id::unique("preload_progress"))
         .order(egui::Order::Foreground)
         .fixed_pos(viewport.center() - egui::vec2(width / 2., 24.))
         .interactable(false)

@@ -65,7 +65,7 @@ impl Shortcuts {
         );
         let label = text(toast.action.label());
         let keys = self.registry.label(toast.action);
-        egui::Area::new(egui::Id::new("hotkey_feedback"))
+        egui::Area::new(egui::Id::unique("hotkey_feedback"))
             .order(egui::Order::Foreground)
             .interactable(false)
             .pivot(egui::Align2::CENTER_BOTTOM)
@@ -207,7 +207,7 @@ impl Shortcuts {
         let mut changed = false;
         if self.sheet {
             let response =
-                egui::Modal::new(egui::Id::new("shortcut_cheatsheet")).show(ui.ctx(), |ui| {
+                egui::Modal::new(egui::Id::unique("shortcut_cheatsheet")).show(ui.ctx(), |ui| {
                     ui.set_width((ui.ctx().content_rect().width() - 40.).clamp(1., 650.));
                     moth_ui::icons::dialog_title(ui, text(Text::CheatSheet));
                     let input = ui.add(
@@ -268,7 +268,7 @@ impl Shortcuts {
         }
         if self.palette {
             let response =
-                egui::Modal::new(egui::Id::new("command_palette")).show(ui.ctx(), |ui| {
+                egui::Modal::new(egui::Id::unique("command_palette")).show(ui.ctx(), |ui| {
                     ui.set_width((ui.ctx().content_rect().width() - 40.).clamp(1., 560.));
                     let height = (ui.ctx().content_rect().height() * 0.7).min(500.);
                     ui.set_height(height);
@@ -389,7 +389,7 @@ impl Shortcuts {
         }
         if self.open {
             let response =
-                egui::Modal::new(egui::Id::new("shortcut_settings")).show(ui.ctx(), |ui| {
+                egui::Modal::new(egui::Id::unique("shortcut_settings")).show(ui.ctx(), |ui| {
                     ui.set_width((ui.ctx().content_rect().width() - 40.).clamp(1., 700.));
                     egui::ScrollArea::vertical()
                         .id_salt("shortcut_modal_body")
@@ -547,8 +547,12 @@ mod tests {
             .clear();
         }
         ctx.memory(|memory| {
-            let toolbar = memory.area_rect(egui::Id::new("bottom_toolbar")).unwrap();
-            let toast = memory.area_rect(egui::Id::new("hotkey_feedback")).unwrap();
+            let toolbar = memory
+                .area_rect(egui::Id::unique("bottom_toolbar"))
+                .unwrap();
+            let toast = memory
+                .area_rect(egui::Id::unique("hotkey_feedback"))
+                .unwrap();
             assert!(toast.bottom() < toolbar.top());
         });
     }

@@ -588,9 +588,7 @@ pub fn enabled_button(
         tokens.text.gamma_multiply(0.85)
     };
     paint(ui, response.rect, icon, color);
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
-    });
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
     response.on_hover_text(label)
 }
 
@@ -654,7 +652,7 @@ pub fn option_row(ui: &mut Ui, icon: Icon, label: &str, detail: &str, enabled: b
         small,
         dim(tokens.text_muted),
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     if enabled {
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
     } else {
@@ -706,7 +704,7 @@ pub fn tile(ui: &mut Ui, icon: Icon, label: &str) -> Response {
         egui::TextStyle::Button.resolve(ui.style()),
         tokens.text,
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     response
 }
 /// Dialog titles: one step above body text, not the page heading.
@@ -718,7 +716,7 @@ pub fn dialog_title(ui: &mut Ui, title: &str) {
 pub fn submenu(ui: &mut Ui, label: &str, add_contents: impl FnOnce(&mut Ui)) -> Response {
     const ICON: f32 = 16.;
     let button = egui::Button::new(label).right_text(egui::Atom::custom(
-        ui.next_auto_id().with("submenu_arrow"),
+        egui::IdSalt::new("submenu_arrow"),
         Vec2::splat(ICON),
     ));
     let (response, _) =
@@ -786,7 +784,7 @@ pub fn dialog_button(ui: &mut Ui, label: &str) -> Response {
 }
 /// A reserved vector slot keeps labels, focus and touch targets in the native button layout.
 pub fn labeled_button(ui: &mut Ui, icon: Icon, label: &str, selected: bool) -> Response {
-    let id = ui.next_auto_id().with("icon");
+    let id = egui::IdSalt::new("icon");
     let result = egui::Button::new((egui::Atom::custom(id, Vec2::splat(18.)), label))
         .selected(selected)
         .atom_ui(ui);

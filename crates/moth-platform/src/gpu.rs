@@ -55,11 +55,10 @@ pub fn limit_for(kind: AdapterKind, dedicated: Option<u64>, system: Option<u64>)
 
 /// Detects the adapter's memory. Blocking: call it on a worker thread.
 pub fn detect(name: &str, kind: AdapterKind) -> VideoMemory {
-    let system = {
-        let mut system = sysinfo::System::new();
+    let system = sysinfo::System::new().ok().and_then(|mut system| {
         system.refresh_memory_specifics(sysinfo::MemoryRefreshKind::nothing().with_ram());
         Some(system.total_memory()).filter(|bytes| *bytes > 0)
-    };
+    });
     let dedicated = if kind == AdapterKind::Discrete {
         pick(name, &adapters())
     } else {

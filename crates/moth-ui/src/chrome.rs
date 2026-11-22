@@ -271,11 +271,11 @@ pub fn toolbar(
         });
     ui.ctx().data_mut(|d| {
         d.insert_temp(
-            egui::Id::new("window_bar_bottom"),
+            egui::Id::unique("window_bar_bottom"),
             brand.response.rect.bottom(),
         );
         d.insert_temp(
-            egui::Id::new("collect_window_controls").with("bar"),
+            egui::Id::unique("collect_window_controls").with("bar"),
             brand.response.rect,
         );
     });
@@ -297,7 +297,7 @@ fn window_controls(ui: &mut egui::Ui, status: &Status<'_>, a: &mut Actions) {
         ),
         egui::Layout::right_to_left(egui::Align::Center),
         |ui| {
-            let id = egui::Id::new("collect_window_controls");
+            let id = egui::Id::unique("collect_window_controls");
             let tapped = ui.ctx().data(|d| d.get_temp::<bool>(id).unwrap_or(false));
             let bar = ui
                 .ctx()
@@ -446,7 +446,7 @@ fn tab_chip(
     let active = tab.active && !library;
     let height = ui.spacing().interact_size.y;
     let title = tab.title.to_owned();
-    let hovered_id = egui::Id::new(("tab_hover", tab.slot));
+    let hovered_id = egui::Id::unique(("tab_hover", tab.slot));
     let hovered = ui
         .ctx()
         .data(|d| d.get_temp::<bool>(hovered_id))

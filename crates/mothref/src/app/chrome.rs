@@ -108,7 +108,7 @@ pub(super) fn chrome(ui: &mut egui::Ui, ctx: Chrome<'_>) -> Vec<Intent> {
             });
     }
     let opacity = ui.ctx().animate_bool_with_time(
-        egui::Id::new("library_visibility"),
+        egui::Id::unique("library_visibility"),
         ctx.library,
         ui.style().animation_time * 1.4,
     );
@@ -204,7 +204,7 @@ fn view_bar(
     use moth_ui::{Text, text};
     let context = ui.ctx().clone();
     let tokens = moth_ui::tokens(&context);
-    let id = egui::Id::new("view_window_bar");
+    let id = egui::Id::unique("view_window_bar");
     let content = context.content_rect();
     let gap = f32::from(tokens.space_s);
     let last = context.memory(|m| m.area_rect(id));
@@ -231,7 +231,7 @@ fn view_bar(
         egui::emath::easing::cubic_out,
     );
     // Floating over the canvas, the bar never pushes the selection bar down.
-    context.data_mut(|d| d.insert_temp(egui::Id::new("window_bar_bottom"), content.top()));
+    context.data_mut(|d| d.insert_temp(egui::Id::unique("window_bar_bottom"), content.top()));
     if reveal <= 0. {
         return;
     }

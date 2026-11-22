@@ -342,7 +342,7 @@ mod tests {
             );
             output.textures_delta.clear();
             assert!(context.input(|input| input.pointer.primary_down()));
-            context.set_dragged_id(egui::Id::new("native titlebar"));
+            context.set_dragged_id(egui::Id::unique("native titlebar"));
             let mut pending = egui::RawInput {
                 events: vec![press.clone(), egui::Event::PointerGone],
                 ..Default::default()

@@ -745,14 +745,14 @@ fn side_panel(
     let gap = tokens.space_m as f32;
     let viewport = ctx.content_rect();
     let start = top.unwrap_or_else(|| {
-        ctx.data(|d| d.get_temp::<f32>(egui::Id::new("window_bar_bottom")))
+        ctx.data(|d| d.get_temp::<f32>(egui::Id::unique("window_bar_bottom")))
             .unwrap_or(viewport.top())
             + gap
     });
     let width = (tokens.space_xl as f32 * 13.)
         .min(viewport.width() - gap * 2.)
         .max(1.);
-    let shown = egui::Area::new(egui::Id::new(id))
+    let shown = egui::Area::new(egui::Id::unique(id))
         .order(egui::Order::Middle)
         .constrain_to(viewport)
         .pivot(egui::Align2::RIGHT_TOP)
@@ -945,7 +945,7 @@ impl Tools {
     ) {
         let tokens = moth_ui::tokens(ctx);
         let on = |action: Action| enabled.get(action as usize).copied().unwrap_or(false);
-        let modal = egui::Modal::new(egui::Id::new("export_dialog"))
+        let modal = egui::Modal::new(egui::Id::unique("export_dialog"))
             .frame(
                 egui::Frame::popup(&ctx.global_style())
                     .corner_radius(tokens.radius_l)
@@ -1181,7 +1181,7 @@ fn bottom_notice(
     let gap = tokens.space_m as f32;
     let viewport = ctx.content_rect();
     let bottom = moth_ui::canvas::notice_bottom(ctx, viewport, below);
-    egui::Area::new(egui::Id::new(id))
+    egui::Area::new(egui::Id::unique(id))
         .order(egui::Order::Foreground)
         .interactable(false)
         .constrain_to(viewport)

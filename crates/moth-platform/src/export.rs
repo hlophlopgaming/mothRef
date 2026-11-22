@@ -846,7 +846,10 @@ fn note_export_lines(
             escape(line)
         );
         let tree = resvg::usvg::Tree::from_str(&source, options).map_err(error)?;
-        Ok(tree.root().abs_bounding_box().width())
+        Ok(tree
+            .root()
+            .abs_bounding_box()
+            .map_or(0., |bounds| bounds.width()))
     };
     let mut lines = Vec::new();
     for paragraph in text.split('\n') {

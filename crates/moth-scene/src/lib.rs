@@ -1105,7 +1105,7 @@ impl Scene {
         }
         let mut items: Vec<_> = self
             .tree
-            .locate_in_envelope_intersecting(&rect.envelope())
+            .locate_in_envelope_intersecting(rect.envelope())
             .filter_map(|e| self.items.get(&e.id))
             .collect();
         items.sort_unstable_by(|a, b| a.z.cmp(&b.z).then(a.id.cmp(&b.id)));

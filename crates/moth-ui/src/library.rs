@@ -829,7 +829,7 @@ impl Library {
             });
         if let Some(index) = self.editing.filter(|&i| i < cards.len()) {
             let tokens = crate::tokens(ui.ctx());
-            egui::Modal::new(egui::Id::new("catalog_tags"))
+            egui::Modal::new(egui::Id::unique("catalog_tags"))
                 .frame(
                     egui::Frame::popup(&ui.ctx().global_style())
                         .corner_radius(tokens.radius_l)
@@ -880,7 +880,7 @@ impl Library {
             let tokens = crate::tokens(ui.ctx());
             let painter = ui.ctx().layer_painter(egui::LayerId::new(
                 egui::Order::Tooltip,
-                egui::Id::new("library_drag"),
+                egui::Id::unique("library_drag"),
             ));
             let galley = painter.layout_no_wrap(
                 card.title.clone(),
@@ -902,7 +902,7 @@ impl Library {
         }
         if let Some(index) = self.trashing.filter(|&i| i < cards.len()) {
             let tokens = crate::tokens(ui.ctx());
-            egui::Modal::new(egui::Id::new("catalog_trash"))
+            egui::Modal::new(egui::Id::unique("catalog_trash"))
                 .frame(
                     egui::Frame::popup(&ui.ctx().global_style())
                         .corner_radius(tokens.radius_l)
@@ -952,7 +952,7 @@ impl Library {
         };
         let tokens = crate::tokens(ctx);
         let mut close = false;
-        egui::Modal::new(egui::Id::new("library_folder_name"))
+        egui::Modal::new(egui::Id::unique("library_folder_name"))
             .frame(
                 egui::Frame::popup(&ctx.global_style())
                     .corner_radius(tokens.radius_l)
@@ -1103,7 +1103,7 @@ fn badge(ui: &mut egui::Ui, preview: egui::Rect, label: Text, hint: Text) {
         .galley(rect.min + egui::vec2(6., 3.), galley, tokens.danger);
     ui.interact(
         rect,
-        ui.id()
+        ui.scope_id()
             .with(("badge", preview.min.x as i32, preview.min.y as i32)),
         egui::Sense::hover(),
     )

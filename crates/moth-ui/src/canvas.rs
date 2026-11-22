@@ -70,7 +70,7 @@ pub fn minimap(
     if viewport.width() < 600. || viewport.height() < 300. {
         ctx.data_mut(|d| {
             d.insert_temp::<Option<(egui::Rect, egui::Rect, f32)>>(
-                egui::Id::new("minimap_layout"),
+                egui::Id::unique("minimap_layout"),
                 None,
             )
         });
@@ -88,7 +88,7 @@ pub fn minimap(
     let bottom = ctx.memory(|memory| {
         ["bottom_toolbar", "selection_badge"]
             .into_iter()
-            .filter_map(|id| memory.area_rect(egui::Id::new(id)))
+            .filter_map(|id| memory.area_rect(egui::Id::unique(id)))
             .map(|rect| rect.top())
             .fold(viewport.bottom(), f32::min)
     });
@@ -100,7 +100,7 @@ pub fn minimap(
         .alignment
         .anchor_size(options.alignment.pos_in_rect(&placement), size);
     let center = viewport.center().lerp(target.center(), options.distance);
-    egui::Area::new(egui::Id::new("minimap"))
+    egui::Area::new(egui::Id::unique("minimap"))
         .fixed_pos(center)
         .pivot(egui::Align2::CENTER_CENTER)
         .constrain_to(viewport)
@@ -163,9 +163,13 @@ pub fn minimap(
             let corner = outer.center() + egui::vec2(sx * outer.width(), sy * outer.height()) / 2.;
             let side = f32::from(tokens.space_l);
             let grip = egui::Rect::from_center_size(corner, egui::vec2(side, side));
-            let drag = ui.interact(grip, egui::Id::new("minimap_resize"), egui::Sense::drag());
+            let drag = ui.interact(
+                grip,
+                egui::Id::unique("minimap_resize"),
+                egui::Sense::drag(),
+            );
             let shown = ui.ctx().animate_bool_with_time(
-                egui::Id::new("minimap_resize_shown"),
+                egui::Id::unique("minimap_resize_shown"),
                 ui.rect_contains_pointer(outer) || drag.dragged(),
                 ui.style().animation_time,
             );
@@ -189,7 +193,7 @@ pub fn minimap(
         });
     ctx.data_mut(|d| {
         d.insert_temp(
-            egui::Id::new("minimap_layout"),
+            egui::Id::unique("minimap_layout"),
             panel
                 .zip(map)
                 .map(|(panel, map)| (panel, map, options.opacity)),
@@ -217,7 +221,7 @@ pub struct MinimapResponse {
 pub fn clear_minimap(ctx: &Context) {
     ctx.data_mut(|d| {
         d.insert_temp::<Option<(egui::Rect, egui::Rect, f32)>>(
-            egui::Id::new("minimap_layout"),
+            egui::Id::unique("minimap_layout"),
             None,
         )
     });
@@ -225,7 +229,7 @@ pub fn clear_minimap(ctx: &Context) {
 /// Where the last frame's minimap sits: its panel, the map inside it, and opacity.
 pub fn minimap_layout(ctx: &Context) -> Option<(egui::Rect, egui::Rect, f32)> {
     ctx.data(|d| {
-        d.get_temp::<Option<(egui::Rect, egui::Rect, f32)>>(egui::Id::new("minimap_layout"))
+        d.get_temp::<Option<(egui::Rect, egui::Rect, f32)>>(egui::Id::unique("minimap_layout"))
     })
     .flatten()
 }
@@ -270,9 +274,9 @@ pub fn selection_badge(ctx: &Context, viewport: egui::Rect, count: usize, size: 
     font.size *= (available / measured).min(1.);
     let gap = crate::tokens(ctx).space_m as f32;
     let bottom = ctx
-        .memory(|memory| memory.area_rect(egui::Id::new("bottom_toolbar")))
+        .memory(|memory| memory.area_rect(egui::Id::unique("bottom_toolbar")))
         .map_or(viewport.bottom(), |rect| rect.top());
-    egui::Area::new(egui::Id::new("selection_badge"))
+    egui::Area::new(egui::Id::unique("selection_badge"))
         .constrain_to(viewport)
         .fixed_pos(egui::pos2(viewport.left() + gap, bottom - gap))
         .pivot(egui::Align2::LEFT_BOTTOM)
@@ -295,7 +299,7 @@ pub fn notice_bottom(ctx: &egui::Context, viewport: egui::Rect, ids: &[&str]) ->
     ctx.memory(|memory| {
         let visible = memory.areas().visible_layer_ids();
         ids.iter()
-            .map(|id| egui::Id::new(*id))
+            .map(|id| egui::Id::unique(*id))
             .filter(|id| visible.iter().any(|layer| layer.id == *id))
             .filter_map(|id| memory.area_rect(id))
             .map(|rect| rect.top())
@@ -349,7 +353,7 @@ mod tests {
                 output.textures_delta.clear();
             }
             let rect = ctx
-                .memory(|memory| memory.area_rect(egui::Id::new("minimap")))
+                .memory(|memory| memory.area_rect(egui::Id::unique("minimap")))
                 .unwrap();
             assert!(viewport.contains_rect(rect), "{alignment:?}: {rect:?}");
             let expected =
@@ -401,7 +405,7 @@ mod tests {
                 output.textures_delta.clear();
             }
             let rect = ctx
-                .memory(|memory| memory.area_rect(egui::Id::new("minimap")))
+                .memory(|memory| memory.area_rect(egui::Id::unique("minimap")))
                 .unwrap();
             assert!(
                 rect.center()
@@ -478,7 +482,7 @@ mod tests {
             output.textures_delta.clear();
         }
         let rect = ctx
-            .memory(|memory| memory.area_rect(egui::Id::new("selection_badge")))
+            .memory(|memory| memory.area_rect(egui::Id::unique("selection_badge")))
             .unwrap();
         assert!(viewport.contains_rect(rect), "{rect:?}");
     }

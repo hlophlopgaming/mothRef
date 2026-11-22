@@ -249,8 +249,8 @@ pub(super) fn show(ui: &mut egui::Ui, slot: &mut Option<State>, board: &Board<'_
             if let Screen::Setup(setup) = &state.screen {
                 let (save, delete) = ui.ctx().data_mut(|d| {
                     (
-                        d.remove_temp::<String>(egui::Id::new("session_save_plan")),
-                        d.remove_temp::<String>(egui::Id::new("session_delete_plan")),
+                        d.remove_temp::<String>(egui::Id::unique("session_save_plan")),
+                        d.remove_temp::<String>(egui::Id::unique("session_delete_plan")),
                     )
                 });
                 if let Some(name) = save {
@@ -364,7 +364,7 @@ fn setup_screen(ui: &mut egui::Ui, setup: &mut Setup, board: &Board<'_>) -> Opti
     let mut outcome = None;
     let screen = ui.ctx().content_rect();
     // A dim layer keeps the board visible but out of reach.
-    egui::Area::new(egui::Id::new("session_dim"))
+    egui::Area::new(egui::Id::unique("session_dim"))
         .order(egui::Order::Middle)
         .fixed_pos(screen.min)
         .show(ui.ctx(), |ui| {
@@ -396,7 +396,7 @@ fn setup_screen(ui: &mut egui::Ui, setup: &mut Setup, board: &Board<'_>) -> Opti
             .unwrap_or(Source::Board);
     }
     let width = (screen.width() - tokens.space_xl as f32 * 4.).min(tokens.space_xl as f32 * 34.);
-    egui::Area::new(egui::Id::new("session_setup"))
+    egui::Area::new(egui::Id::unique("session_setup"))
         .order(egui::Order::Foreground)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ui.ctx(), |ui| {
@@ -443,7 +443,7 @@ fn setup_screen(ui: &mut egui::Ui, setup: &mut Setup, board: &Board<'_>) -> Opti
                                                     if ui.button(text(Text::DeletePlan)).clicked() {
                                                         ui.ctx().data_mut(|d| {
                                                             d.insert_temp(
-                                                                egui::Id::new(
+                                                                egui::Id::unique(
                                                                     "session_delete_plan",
                                                                 ),
                                                                 plan.name.clone(),
@@ -561,7 +561,7 @@ fn setup_screen(ui: &mut egui::Ui, setup: &mut Setup, board: &Board<'_>) -> Opti
                                                 .map_or(setup.interval, |s| s.seconds);
                                             setup.plan.push(Stage { count: 5, seconds });
                                         }
-                                        let naming = egui::Id::new("session_plan_name");
+                                        let naming = egui::Id::unique("session_plan_name");
                                         let mut name =
                                             ui.ctx().data(|d| d.get_temp::<String>(naming));
                                         if name.is_none()
@@ -584,7 +584,7 @@ fn setup_screen(ui: &mut egui::Ui, setup: &mut Setup, board: &Board<'_>) -> Opti
                                         }
                                     });
                                     // Naming a plan before it joins "My plans".
-                                    let naming = egui::Id::new("session_plan_name");
+                                    let naming = egui::Id::unique("session_plan_name");
                                     if let Some(mut name) =
                                         ui.ctx().data(|d| d.get_temp::<String>(naming))
                                     {
@@ -630,7 +630,7 @@ fn setup_screen(ui: &mut egui::Ui, setup: &mut Setup, board: &Board<'_>) -> Opti
                                                         .filter(|c| !matches!(c, ';' | '=' | '|'))
                                                         .collect();
                                                     d.insert_temp(
-                                                        egui::Id::new("session_save_plan"),
+                                                        egui::Id::unique("session_save_plan"),
                                                         clean,
                                                     );
                                                 }
@@ -951,7 +951,7 @@ fn running_screen(
         );
     }
     // Controls at the bottom centre.
-    let id = egui::Id::new("session_controls");
+    let id = egui::Id::unique("session_controls");
     egui::Area::new(id)
         .order(egui::Order::Foreground)
         .anchor(
@@ -1113,7 +1113,7 @@ fn summary_screen(
     let area = ui.ctx().content_rect().shrink(tokens.space_xl as f32);
     let background = ui.interact(
         ui.ctx().content_rect(),
-        ui.id().with("session_summary_window_drag"),
+        ui.scope_id().with("session_summary_window_drag"),
         // Wait for movement so a press on a child button keeps its click.
         egui::Sense::click_and_drag(),
     );

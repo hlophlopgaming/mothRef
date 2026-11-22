@@ -22,7 +22,7 @@ pub fn png(alternative: bool) -> &'static [u8] {
 /// Updates the mark; returns whether native icons also need updating.
 pub fn set(ctx: &egui::Context, alternative: bool) -> bool {
     ctx.data_mut(|data| {
-        let id = egui::Id::new("app_icon");
+        let id = egui::Id::unique("app_icon");
         let changed = data.get_temp::<bool>(id) != Some(alternative);
         data.insert_temp(id, alternative);
         changed
@@ -31,12 +31,12 @@ pub fn set(ctx: &egui::Context, alternative: bool) -> bool {
 
 /// The current window's choice, including before preferences have loaded.
 pub fn alternative(ctx: &egui::Context) -> bool {
-    ctx.data(|data| data.get_temp(egui::Id::new("app_icon")).unwrap_or(false))
+    ctx.data(|data| data.get_temp(egui::Id::unique("app_icon")).unwrap_or(false))
 }
 
 pub(crate) fn paint(ui: &egui::Ui, rect: egui::Rect) {
     let alternative = alternative(ui.ctx());
-    let id = egui::Id::new(("app_icon_texture", alternative));
+    let id = egui::Id::unique(("app_icon_texture", alternative));
     let texture = ui
         .ctx()
         .data(|data| data.get_temp::<egui::TextureHandle>(id));

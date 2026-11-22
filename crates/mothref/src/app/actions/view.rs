@@ -66,7 +66,7 @@ impl App {
             ResetCamera => Intent::ResetCamera,
             Layers => {
                 let ctx = self.shell.context();
-                let key = egui::Id::new("layers_open");
+                let key = egui::Id::unique("layers_open");
                 ctx.data_mut(|data| {
                     let open = data.get_temp_mut_or_default::<bool>(key);
                     *open = !*open;
