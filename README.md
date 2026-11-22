@@ -174,7 +174,7 @@ The catalog/guide are also embedded in `mothref commands --json`.
 
 ## Build from source
 
-You need [Rust](https://rustup.rs) 1.98 or newer plus CMake, a C/C++ toolchain and NASM 2.16.x for x86/x86_64 builds ([NASM 2.16.03 downloads](https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/)). On Linux, also install the X11/Wayland headers
+You need [Rust](https://rustup.rs) 1.98 or newer plus CMake, a C/C++ toolchain and Yasm or NASM 2.16.x for x86/x86_64 builds ([NASM 2.16.03 downloads](https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/)). On Linux, also install the X11/Wayland headers
 (`libxkbcommon-dev`, `libdbus-1-dev` and `libwayland-dev` on Debian/Ubuntu).
 
 ```sh
@@ -182,6 +182,16 @@ git clone https://github.com/hlophlopgaming/mothRef.git
 cd mothRef
 cargo run -p mothref --release
 ```
+
+On Arch/EndeavourOS, install the native build dependencies with:
+
+```sh
+sudo pacman -S --needed base-devel rust cmake yasm libxkbcommon libxkbcommon-x11 libx11 libxcursor libxi libxrandr wayland dbus
+```
+
+Use Yasm on rolling distributions: libaom 3.11 does not accept NASM 3.
+Release packaging also produces an Arch build recipe and a pacman package; see
+[packaging and installation](docs/RELEASING.md#downloads-and-installation).
 
 Always use `--release`: image decoders depend on optimizations, and debug builds are much slower.
 

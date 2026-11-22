@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+pkgname=mothref
+pkgver=@ARCH_VERSION@
+pkgrel=1
+pkgdesc='Native reference boards for artists'
+arch=('x86_64')
+url='https://github.com/hlophlopgaming/mothRef'
+license=('GPL-3.0-or-later')
+depends=('gcc-libs' 'glibc' 'libxkbcommon' 'libxkbcommon-x11' 'libx11'
+         'libxcursor' 'libxi' 'libxrandr' 'wayland' 'dbus')
+makedepends=('rust>=1.98' 'cmake' 'yasm')
+optdepends=('vulkan-driver: Vulkan rendering' 'libegl: OpenGL rendering'
+            'xdg-desktop-portal: desktop file dialogs and screen color picker')
+source=("mothref-@VERSION@-source.tar.gz::$url/releases/download/v@VERSION@/mothref-@VERSION@-source.tar.gz")
+sha256sums=('@SHA256@')
+# Keep one release package; avoid a split debug package and distro C LTO flags.
+options=('!lto' '!debug')
+
+prepare() {
+  cd "mothref-@VERSION@"
+  cargo fetch --locked --target x86_64-unknown-linux-gnu
+}
+
+build() {
+  cd "mothref-@VERSION@"
+  cargo build --frozen --release -p mothref --target x86_64-unknown-linux-gnu
+}
+
+package() {
+  cd "mothref-@VERSION@"
+  install -Dm755 target/x86_64-unknown-linux-gnu/release/mothref "$pkgdir/usr/bin/mothref"
+  install -Dm644 packaging/linux/org.mothref.MothRef.desktop "$pkgdir/usr/share/applications/org.mothref.MothRef.desktop"
+  install -Dm644 packaging/linux/org.mothref.MothRef.xml "$pkgdir/usr/share/mime/packages/org.mothref.MothRef.xml"
+  install -Dm644 docs/assets/icon/mothref-icon-512.png "$pkgdir/usr/share/icons/hicolor/512x512/apps/org.mothref.MothRef.png"
+  install -Dm644 THIRD_PARTY.md "$pkgdir/usr/share/doc/mothref/THIRD_PARTY.md"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/mothref/LICENSE"
+  for notice in crates/moth-ui/fonts/LICENSE-*.txt; do
+    install -Dm644 "$notice" "$pkgdir/usr/share/licenses/mothref/${notice##*/}"
+  done
+}

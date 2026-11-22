@@ -9,6 +9,17 @@ concurrency:
 permissions:
   contents: read
 jobs:
+  source:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package matching sources and Arch recipe
+        run: python3 packaging/release.py source
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mothref-source
+          path: dist/*
+          if-no-files-found: error
   build:
     strategy:
       fail-fast: false
@@ -17,6 +28,9 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             name: linux-x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            name: linux-arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             name: windows-x86_64
@@ -29,83 +43,129 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libdbus-1-dev cmake
-      # libaom 3.11 checks NASM 2.x help output; NASM 3 changes that interface.
-      # Only Windows uses a prebuilt NASM: there is none for Linux, and macOS builds from source as before.
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libdbus-1-dev cmake libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2 rpm desktop-file-utils
+      - if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: sudo apt-get install -y yasm
+      # Linux uses the distro's Yasm; libaom 3.11 rejects NASM 3 help output.
       - uses: ilammy/setup-nasm@v1
+        if: runner.os != 'Linux'
         with:
           version: '2.16.03'
           from-source: ${{ runner.os != 'Windows' }}
+      - uses: actions/setup-go@v5
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - name: Install DEB and RPM packaging tool
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.4
+      - name: Install native AppImage packaging tool
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 -o linuxdeploy.AppImage "https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-$(uname -m).AppImage"
+          chmod +x linuxdeploy.AppImage
       - name: Verify tag matches Cargo version
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          version=$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "mothref"))')
+          version=$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
           test "$RELEASE_TAG" = "v$version"
       - run: cargo build --locked --release -p mothref --target ${{ matrix.target }}
-      - name: Package Unix binary
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+      - name: Stage archives and native packages
+        run: python packaging/release.py native --target ${{ matrix.target }} --name ${{ matrix.name }}
+      - name: Build and check native AppImage
         if: runner.os == 'Linux'
         shell: bash
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+          LDAI_OUTPUT: mothref-${{ matrix.name }}.AppImage
         run: |
-          mkdir package
-          cp target/${{ matrix.target }}/release/mothref package/
-          cp packaging/linux/*.desktop packaging/linux/*.xml package/
-          cp docs/assets/icon/mothref-icon-512.png package/org.mothref.MothRef.png
-          cp packaging/linux/README.md package/DESKTOP.md
-          cp LICENSE THIRD_PARTY.md crates/moth-ui/fonts/LICENSE-*.txt package/
-          tar -czf mothref-${{ matrix.name }}.tar.gz -C package .
-      - name: Package Finder application
-        if: runner.os == 'macOS'
+          mkdir -p AppDir/usr/share/mime/packages AppDir/usr/share/licenses/mothref
+          cp packaging/linux/org.mothref.MothRef.xml AppDir/usr/share/mime/packages/
+          cp package/LICENSE* package/THIRD_PARTY.md AppDir/usr/share/licenses/mothref/
+          libdir="/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
+          # Winit loads these with dlopen, so ELF dependency discovery misses them.
+          ./linuxdeploy.AppImage --appdir AppDir --executable package/mothref --desktop-file packaging/linux/org.mothref.MothRef.desktop --icon-file package/org.mothref.MothRef.png --library "$libdir/libxkbcommon-x11.so.0" --library "$libdir/libXcursor.so.1" --library "$libdir/libXi.so.6" --library "$libdir/libXrandr.so.2" --output appimage
+          mv "$LDAI_OUTPUT" dist/
+          desktop-file-validate package/org.mothref.MothRef.desktop
+          "dist/$LDAI_OUTPUT" --help
+      - name: Inspect, install and remove DEB and RPM packages
+        if: runner.os == 'Linux' && runner.arch == 'X64'
         shell: bash
         run: |
-          mkdir -p package/MothRef.app/Contents/MacOS package/MothRef.app/Contents/Resources
-          cp assets/icons/moth.icns package/MothRef.app/Contents/Resources/MothRef.icns
-          cp target/${{ matrix.target }}/release/mothref package/MothRef.app/Contents/MacOS/
-          cp LICENSE THIRD_PARTY.md crates/moth-ui/fonts/LICENSE-*.txt package/
-          python3 - <<'PYTHON'
-          import json, plistlib, subprocess
-          from pathlib import Path
-          metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--no-deps', '--format-version', '1']))
-          version = next(p['version'] for p in metadata['packages'] if p['name'] == 'mothref')
-          info = dict(CFBundleExecutable='mothref', CFBundleIdentifier='org.mothref.MothRef',
-                      CFBundleName='MothRef', CFBundlePackageType='APPL', CFBundleIconFile='MothRef.icns',
-                      CFBundleDocumentTypes=[dict(CFBundleTypeName='MothRef board',
-                          CFBundleTypeExtensions=['moth'], CFBundleTypeRole='Editor',
-                          CFBundleTypeIconFile='MothRef.icns')],
-                      CFBundleShortVersionString=version.split('-')[0], CFBundleVersion='1',
-                      NSHighResolutionCapable=True)
-          destination = Path('package/MothRef.app/Contents/Info.plist')
-          destination.write_bytes(plistlib.dumps(info))
-          assert plistlib.loads(destination.read_bytes())['CFBundleExecutable'] == 'mothref'
-          assert (destination.parent / 'MacOS' / 'mothref').stat().st_mode & 0o111
-          assert (destination.parent / 'Resources' / info['CFBundleIconFile']).read_bytes().startswith(b'icns')
-          PYTHON
-          plutil -lint package/MothRef.app/Contents/Info.plist
-          tar -czf mothref-${{ matrix.name }}.tar.gz -C package .
-      - name: Package Windows binary
+          dpkg-deb --info dist/mothref-linux-x86_64.deb
+          dpkg-deb --contents dist/mothref-linux-x86_64.deb
+          rpm -qp --requires dist/mothref-linux-x86_64.rpm
+          rpm -qpl dist/mothref-linux-x86_64.rpm
+          sudo apt-get install -y ./dist/mothref-linux-x86_64.deb
+          /usr/bin/mothref --help
+          sudo apt-get remove -y mothref
+          docker run --rm --volume "$PWD/dist:/packages:ro" fedora:42 bash -ec 'dnf install -y /packages/mothref-linux-x86_64.rpm; mothref --help; rpm -e mothref; test ! -e /usr/bin/mothref'
+      - name: Build Windows setup wizard
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          python -c "import pathlib,struct; p=pathlib.Path('target/${{ matrix.target }}/release/mothref.exe').read_bytes(); pe=struct.unpack_from('<I',p,0x3c)[0]; assert p[pe:pe+4]==b'PE\0\0'; assert struct.unpack_from('<H',p,pe+24+68)[0]==2, 'Expected GUI subsystem'"
-          New-Item -ItemType Directory package
-          Copy-Item target/${{ matrix.target }}/release/mothref.exe package/
-          Copy-Item LICENSE, THIRD_PARTY.md, crates/moth-ui/fonts/LICENSE-*.txt package/
-          Compress-Archive package/* mothref-${{ matrix.name }}.zip
+          $version = python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])'
+          & "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" "/DAppVersion=$version" packaging/windows/mothref.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed" }
+          $install = Join-Path $env:RUNNER_TEMP 'MothRef install check'
+          $setup = Start-Process dist/mothref-windows-x86_64-setup.exe -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$install`"") -Wait -PassThru
+          if ($setup.ExitCode -ne 0 -or !(Test-Path "$install/mothref.exe")) { throw "Setup installation failed" }
+          $uninstall = Start-Process "$install/unins000.exe" -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0 -or (Test-Path "$install/mothref.exe")) { throw "Setup uninstallation failed" }
       - uses: actions/upload-artifact@v4
         with:
           name: mothref-${{ matrix.name }}
-          path: mothref-${{ matrix.name }}.*
+          path: dist/*
+          if-no-files-found: error
+  arch:
+    needs: source
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install build tools
+        run: pacman -Syu --noconfirm git rust cmake yasm libxkbcommon libxkbcommon-x11 libx11 libxcursor libxi libxrandr wayland dbus sudo
+      - uses: actions/download-artifact@v4
+        with:
+          name: mothref-source
+          path: /tmp/mothref-arch
+      - name: Build pacman package as an unprivileged user
+        working-directory: /tmp/mothref-arch
+        run: |
+          tar -xzf mothref-arch-build.tar.gz
+          useradd --create-home builder
+          chown -R builder:builder /tmp/mothref-arch
+          su builder -c 'cd /tmp/mothref-arch && makepkg --noconfirm'
+          pacman -U --noconfirm ./*.pkg.tar.zst
+          mothref --help
+          pacman -R --noconfirm mothref
+          test ! -e /usr/bin/mothref
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mothref-arch
+          path: |
+            /tmp/mothref-arch/*.pkg.tar.zst
           if-no-files-found: error
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, arch]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -130,7 +190,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          test "$(find binaries -maxdepth 1 -type f | wc -l)" -eq 4
+          python3 packaging/verify.py binaries
           (cd binaries && sha256sum * > SHA256SUMS)
           notes="docs/releases/$RELEASE_TAG.md"
           test -f "$notes"

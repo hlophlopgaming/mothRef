@@ -1,4 +1,10 @@
 /target/
+/dist/
+/package/
+/package-arch/
+/AppDir/
+/linuxdeploy.AppImage
+/packaging/__pycache__/
 *.profraw
 dhat-heap.json
 /fuzz/target/
