@@ -137,9 +137,11 @@ impl Session {
             ctx
         });
         let mut frame = [0.; 2];
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             frame = super::canvas::measure_note_frame(ui.ctx(), text, size, width, markup);
         });
+        // The CLI measures glyphs without a renderer to upload the font atlas.
+        output.textures_delta.clear();
         frame
     }
     fn apply(&mut self, commands: Vec<Command>) -> Result<Value> {
