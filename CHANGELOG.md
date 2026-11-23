@@ -6,6 +6,7 @@
 
 Boards stop growing on every save and use about half the memory in the default mode; drawing tools, lists and checklists, folder groups and native installers for every platform. Boards are saved as schema 11; earlier MothRef versions cannot open them.
 
+- Default to free placement when dragging. Enable snapping to other items and its alignment guides in Settings › Canvas and navigation.
 - Saving no longer makes a `.moth` file grow. Each save used to append a full layout and a library preview (about 50–100 KB) and kept the old ones until the file was twice the size of its images. A save now writes the layout back right after the images and cuts the file there, so a board whose images did not change stays the same size. Removed images are compacted away once they exceed an eighth of the board. Saving also repairs a torn tail after the images.
 - Full-resolution mode uses much less memory. Detail tiles no longer reserve unused mip levels (−25% video memory), and uploads are handed to the GPU every 16 MiB, so staging buffers no longer leave holes in the texture heap. On a 150-photo board the process went from 3.48 GB to 1.87 GB.
 - Boards open faster where the file system cannot clone them (Windows, ext4): the private recovery copy is now made by the operating system instead of reading, hashing and rewriting every image.
