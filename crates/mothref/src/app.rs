@@ -330,8 +330,7 @@ impl App {
                     }
                     self.window.overlay = Some(overlay);
                     self.workspace.library = false;
-                    self.library_screen.cards.clear();
-                    self.library_screen.catalog.dismiss_editor();
+                    self.library_screen.hide();
                 }
                 Err(error) => self.workspace.board.notices.message = error.to_string().into(),
             }
@@ -351,8 +350,7 @@ impl App {
             self.remember_appearance();
         }
         self.tools = tools::Tools::default();
-        self.library_screen.cards.clear();
-        self.library_screen.catalog.dismiss_editor();
+        self.library_screen.hide();
         self.editing = None;
         self.motion = motion::DragMotion::default();
         self.shell.refinements.clear();
@@ -442,8 +440,7 @@ impl App {
         self.input.native_pressed = None;
         // A recreated device starts with empty video memory.
         self.workspace.board.reset_preload();
-        self.library_screen.cards.clear();
-        self.library_screen.catalog.dismiss_editor();
+        self.library_screen.hide();
         self.workspace.refresh_library = self.workspace.library;
     }
     fn recover(&mut self) -> anyhow::Result<()> {
@@ -497,7 +494,7 @@ impl App {
     /// The library's "Find…": asks where a moved board file is now, with the system
     /// open dialog on its own thread; the answer relinks the library record.
     fn find_board(&mut self, old: std::path::PathBuf) {
-        if self.library_screen.relink.is_some() {
+        if self.library_screen.finding() {
             return;
         }
         let Some(window) = self.shell.window.clone() else {
@@ -528,7 +525,7 @@ impl App {
                 wake();
                 drop(window);
             }) {
-            Ok(_) => self.library_screen.relink = Some((old, receive)),
+            Ok(_) => self.library_screen.find(old, receive),
             Err(error) => self.workspace.board.notices.message = error.to_string().into(),
         }
     }
@@ -1108,216 +1105,43 @@ impl App {
             && self.workspace.refresh_library
             && self
                 .library_screen
-                .worker
-                .requests
-                .try_send(moth_platform::library::Request::Refresh(
+                .send(moth_platform::library::Request::Refresh(
                     self.workspace.recent_paths().to_vec(),
                 ))
-                .is_ok()
         {
             self.workspace.refresh_library = false;
         }
-        if let Some((old, answer)) = &self.library_screen.relink
-            && let Ok(picked) = answer.try_recv()
-        {
-            if let Some(new) = picked {
-                let request = moth_platform::library::Request::Relink(old.clone(), new.clone());
-                if self
-                    .library_screen
-                    .worker
-                    .requests
-                    .try_send(request)
-                    .is_ok()
-                {
-                    self.library_screen.relinking = Some((old.clone(), new));
-                } else {
-                    self.workspace.board.notices.message = moth_ui::Text::StorageBusy.into();
-                }
-            }
-            self.library_screen.relink = None;
+        if !self.library_screen.poll_find() {
+            self.workspace.board.notices.message = moth_ui::Text::StorageBusy.into();
         }
+        let textures = self.shell.context().clone();
         while let Ok(result) = self.library_screen.worker.results.try_recv() {
-            match result {
-                Ok(moth_platform::library::Update::Backup { original, path }) => {
-                    if let Some(path) = path {
-                        let change = self.workspace.open_backup(original, path);
-                        self.tab_change(change);
-                    } else {
-                        if let Some(card) = self
-                            .library_screen
-                            .cards
-                            .iter_mut()
-                            .find(|c| c.path == original)
-                        {
-                            card.backup_available = false;
-                        }
-                        self.workspace.board.notices.message =
-                            moth_ui::Text::BackupUnavailable.into();
-                    }
+            let update = match result {
+                Ok(update) => update,
+                Err(error) => {
+                    self.workspace.board.notices.message = error.into();
+                    continue;
                 }
-                Ok(moth_platform::library::Update::Removed(path)) => {
-                    match self.library_screen.relinking.take() {
-                        Some((old, new)) if old == path => self.workspace.move_recent(&old, &new),
-                        other => {
-                            self.library_screen.relinking = other;
-                            self.workspace.forget_recent(&path);
-                        }
-                    }
-                    self.library_screen.cards.retain(|card| card.path != path);
-                    self.library_screen.catalog.dismiss_editor();
+            };
+            let boards = library::Boards {
+                recent: self.workspace.recent_paths(),
+                unsaved: self.workspace.unsaved_boards().collect(),
+            };
+            let effect =
+                self.library_screen
+                    .apply(update, &boards, &textures, self.workspace.library);
+            match effect {
+                Some(library::Effect::OpenBackup { original, path }) => {
+                    let change = self.workspace.open_backup(original, path);
+                    self.tab_change(change);
                 }
-                Ok(moth_platform::library::Update::Folders(folders)) => {
-                    self.library_screen.folders = folders
-                        .into_iter()
-                        .map(|f| moth_ui::library::Folder {
-                            id: f.id.as_u128(),
-                            name: f.name,
-                            color: f.color,
-                        })
-                        .collect();
-                    // A deleted folder leaves no dots on the cards.
-                    let ids: Vec<u128> = self.library_screen.folders.iter().map(|f| f.id).collect();
-                    for card in &mut self.library_screen.cards {
-                        card.folders.retain(|id| ids.contains(id));
-                    }
-                    if let moth_ui::library::View::Folder(id) = self.library_screen.catalog.view
-                        && !ids.contains(&id)
-                    {
-                        self.library_screen.catalog.view = moth_ui::library::View::All;
-                    }
+                Some(library::Effect::BackupUnavailable) => {
+                    self.workspace.board.notices.message = moth_ui::Text::BackupUnavailable.into();
                 }
-                Ok(moth_platform::library::Update::Meta(path, meta)) => {
-                    if let Some(card) = self
-                        .library_screen
-                        .cards
-                        .iter_mut()
-                        .find(|c| c.path == path)
-                    {
-                        card.pinned = meta.pinned;
-                        card.backups = meta.backups;
-                        card.tags = meta.tags;
-                        card.folders = meta.folders.iter().map(|id| id.as_u128()).collect();
-                        card.opened = meta.opened;
-                    }
-                }
-                Ok(moth_platform::library::Update::Cards(entries)) if self.workspace.library => {
-                    // Keep the textures of cards whose file did not change.
-                    let mut old: HashMap<std::path::PathBuf, moth_ui::library::Card> =
-                        std::mem::take(&mut self.library_screen.cards)
-                            .into_iter()
-                            .map(|card| (card.path.clone(), card))
-                            .collect();
-                    self.library_screen.cards = entries
-                        .into_iter()
-                        .map(|entry| {
-                            let previous = old.remove(&entry.path);
-                            self.card(entry, previous)
-                        })
-                        .collect();
-                    self.library_screen
-                        .preview_order
-                        .retain(|path| !old.contains_key(path));
-                }
-                Ok(moth_platform::library::Update::Entry(entry)) if self.workspace.library => {
-                    let index = self
-                        .library_screen
-                        .cards
-                        .iter()
-                        .position(|c| c.path == entry.path);
-                    match index {
-                        Some(index) => {
-                            let previous = self.library_screen.cards.swap_remove(index);
-                            let card = self.card(entry, Some(previous));
-                            self.library_screen.cards.push(card);
-                            let last = self.library_screen.cards.len() - 1;
-                            self.library_screen.cards.swap(index, last);
-                        }
-                        None => {
-                            let card = self.card(entry, None);
-                            self.library_screen.cards.push(card);
-                        }
-                    }
-                }
-                Ok(moth_platform::library::Update::Previews(path, mips)) => {
-                    let context = self.shell.context().clone();
-                    let screen = &mut self.library_screen;
-                    let Some(card) = screen.cards.iter_mut().find(|c| c.path == path) else {
-                        continue;
-                    };
-                    card.loading = false;
-                    card.previews = mips
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, mip)| {
-                            context.load_texture(
-                                format!("library-{}-{i}", path.display()),
-                                egui::ColorImage::from_rgba_unmultiplied(
-                                    [mip.width as usize, mip.height as usize],
-                                    &mip.bytes,
-                                ),
-                                egui::TextureOptions::LINEAR,
-                            )
-                        })
-                        .collect();
-                    // Bounded: the cards seen longest ago give their textures back.
-                    screen.preview_order.retain(|p| p != &path);
-                    screen.preview_order.push_back(path);
-                    while screen.preview_order.len() > library::MAX_PREVIEW_CARDS {
-                        if let Some(oldest) = screen.preview_order.pop_front()
-                            && let Some(card) = screen.cards.iter_mut().find(|c| c.path == oldest)
-                        {
-                            card.previews.clear();
-                        }
-                    }
-                }
-                Err(error) => self.workspace.board.notices.message = error.into(),
-                _ => {}
+                Some(library::Effect::Moved { old, new }) => self.workspace.move_recent(&old, &new),
+                Some(library::Effect::Forgotten(path)) => self.workspace.forget_recent(&path),
+                None => {}
             }
-        }
-    }
-
-    /// A library card from the worker's entry, keeping the previews of the card it
-    /// replaces while the file is unchanged.
-    fn card(
-        &self,
-        entry: moth_platform::library::Entry,
-        previous: Option<moth_ui::library::Card>,
-    ) -> moth_ui::library::Card {
-        let path = entry.path;
-        let title = path
-            .file_stem()
-            .and_then(|n| n.to_str())
-            .unwrap_or(moth_ui::text(moth_ui::Text::Untitled))
-            .to_owned();
-        let (previews, loading) = match previous {
-            Some(card) if card.modified == entry.modified && !entry.missing => {
-                (card.previews, card.loading)
-            }
-            _ => (Vec::new(), false),
-        };
-        moth_ui::library::Card {
-            unsaved: self.workspace.unsaved_boards().any(|p| p == path),
-            recent: self
-                .workspace
-                .recent_paths()
-                .iter()
-                .position(|p| p == &path),
-            title,
-            folders: entry.meta.folders.iter().map(|id| id.as_u128()).collect(),
-            opened: entry.meta.opened,
-            missing: entry.missing,
-            backup_available: entry.backup_available,
-            backups: entry.meta.backups,
-            known: entry.count.is_some(),
-            loading,
-            count: entry.count.unwrap_or(0),
-            bytes: entry.bytes,
-            modified: entry.modified,
-            pinned: entry.meta.pinned,
-            tags: entry.meta.tags,
-            error: entry.error,
-            previews,
-            path,
         }
     }
     fn fit(&mut self) {
@@ -2680,6 +2504,7 @@ impl App {
                     intents.extend(events.into_iter().map(Intent::Session));
                     return;
                 }
+                let (catalog, cards, folders) = self.library_screen.parts();
                 let chrome = chrome::chrome(
                     ui,
                     chrome::Chrome {
@@ -2692,9 +2517,9 @@ impl App {
                         library: self.workspace.library,
                         pinned: self.window.pinned,
                         target_pin: self.window.target_pin,
-                        catalog: &mut self.library_screen.catalog,
-                        cards: &self.library_screen.cards,
-                        folders: &self.library_screen.folders,
+                        catalog,
+                        cards,
+                        folders,
                         window,
                         window_bar: &mut self.window.window_bar,
                         windows: &window_titles,

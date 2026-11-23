@@ -248,6 +248,13 @@ Settings, SettingsWindow, Tools, InputState}`. `App` coordinates the native even
 window/GPU state, board lifetimes, library widgets/textures, dialogs, tool drafts
 and pointer state separate.
 
+`LibraryScreen` owns the library's cards, folders, "Find…" bookkeeping and the
+bounded preview textures. `App` forwards each library-worker update to
+`LibraryScreen::apply`, which reconciles cards (keeping textures of unchanged
+boards), evicts the oldest previews beyond 64 cards and releases them all on
+`hide`; it returns an `Effect` only for what reaches beyond the screen: opening
+a backup in a tab, moving or forgetting a recent-list entry, or a notice.
+
 ```mermaid
 flowchart LR
     App --> Shell

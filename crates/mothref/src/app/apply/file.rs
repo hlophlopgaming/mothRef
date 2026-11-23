@@ -18,38 +18,12 @@ impl App {
                     self.workspace.board.notices.message = moth_ui::Text::BoardIsOpen.into();
                     return false;
                 }
-                if self
-                    .library_screen
-                    .worker
-                    .requests
-                    .try_send(request)
-                    .is_err()
-                {
+                if !self.library_screen.send(request) {
                     self.workspace.board.notices.message = moth_ui::Text::StorageBusy.into();
                 }
             }
             Intent::RelinkBoard(path) => self.find_board(path),
-            Intent::LibraryPreviews(paths) => {
-                let paths: Vec<_> = paths
-                    .into_iter()
-                    .take(moth_platform::library::MAX_PREVIEW_REQUEST)
-                    .collect();
-                let request = moth_platform::library::Request::Previews(paths.clone());
-                // A full queue just means the cards ask again next frame.
-                if self
-                    .library_screen
-                    .worker
-                    .requests
-                    .try_send(request)
-                    .is_ok()
-                {
-                    for card in &mut self.library_screen.cards {
-                        if paths.contains(&card.path) {
-                            card.loading = true;
-                        }
-                    }
-                }
-            }
+            Intent::LibraryPreviews(paths) => self.library_screen.request_previews(paths),
             Intent::Home => {
                 self.workspace.library = true;
                 self.workspace.refresh_library = true;
