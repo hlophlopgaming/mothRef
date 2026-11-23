@@ -914,6 +914,24 @@ fn log_viewer(ui: &mut egui::Ui, problems_only: &mut bool) {
 mod tests {
     use super::*;
     #[test]
+    fn item_snapping_is_opt_in_and_keeps_saved_choices() {
+        let mut settings = Settings::default();
+        assert!(!settings.snap_items);
+        let entry = SCHEMA
+            .iter()
+            .find(|entry| entry.key == "snap_to_items")
+            .unwrap();
+        assert!(entry.in_settings());
+        assert!(matches!(entry.section, Section::Canvas));
+        for (value, enabled) in [("true", true), ("false", false), ("invalid", false)] {
+            settings.load(&BTreeMap::from([("snap_to_items".into(), value.into())]));
+            assert_eq!(settings.snap_items, enabled);
+        }
+        settings.load(&BTreeMap::new());
+        assert!(!settings.snap_items);
+    }
+
+    #[test]
     fn disabled_snapping_hides_points_even_with_legacy_grid_preference() {
         let mut settings = Settings::default();
         settings.load(&BTreeMap::from([("show_grid".into(), "true".into())]));
