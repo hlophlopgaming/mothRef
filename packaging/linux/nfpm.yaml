@@ -46,6 +46,6 @@ overrides:
       - libXcursor
       - libXi
       - libXrandr
-      - wayland
+      - libwayland-client
       - dbus-libs
     recommends: [vulkan-loader, libglvnd-egl, xdg-desktop-portal]

@@ -1015,7 +1015,8 @@ mod tests {
         }
         workspace.receiving_drop = false;
         workspace.board.intake.burst.files_received();
-        let deadline = Instant::now() + Duration::from_secs(30);
+        // Every image is a synced journal record; slow CI disks (Windows) need minutes.
+        let deadline = Instant::now() + Duration::from_secs(120);
         // Hold the real storage worker after its first acknowledgment, simulating a
         // slow disk while the bounded decoder queue continues producing images.
         loop {
