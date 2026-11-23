@@ -131,7 +131,10 @@ fn copy(source: &Path, path: &Path) -> io::Result<Option<File>> {
         // Recovery files stay private and writable whatever the source allowed.
         #[cfg(unix)]
         let permissions = std::os::unix::fs::PermissionsExt::from_mode(0o600);
+        // Outside Unix this only clears the read-only attribute; it grants no one else
+        // access (the lint guards against world-writable Unix modes).
         #[cfg(not(unix))]
+        #[allow(clippy::permissions_set_readonly_false)]
         let permissions = {
             let mut permissions = std::fs::metadata(path)?.permissions();
             permissions.set_readonly(false);
