@@ -80,3 +80,20 @@ which grows quadratically with the number of tiles.
 Validation: per maintainer instruction, nothing was built or run in the authoring
 session; formatting was applied with rustfmt and the workspace checks run in CI.
 Opening time and VRAM use for large boards remain to be measured on real hardware.
+
+## Update 2026-11-23: memory measured
+
+Measured on a 150-photo board (1.09 Gpx, 173 MB `.moth`) under lavapipe, where video
+memory is process memory as on shared-memory adapters: the process held 3.48 GB
+after a cached reopening, for 2.1 GB of texture pages.
+
+- Tile pages had a full mip chain although a tile carries one level (its coarser
+  levels are tiles of their own), a third more than the 1.36× above. Pages now record
+  their level count; tiles go to single-level pages and previews keep mipped ones.
+  Texture pages fell to 1.6 GB, about 1.47 bytes per pixel.
+- A cached reopening uploads faster than frames are submitted, and every
+  `write_texture` stages its bytes in GPU-visible memory until a submission. Staging
+  and texture pages share one heap on shared-memory adapters, so the freed staging
+  left holes the size of the burst between pages: 1.5 GB more. The registry now
+  submits after every 16 MiB of uploads. The process held 1.87 GB (−46%), within
+  10% of its texture pages; a first opening that bakes everything, 2.09 GB.

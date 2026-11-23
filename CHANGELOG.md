@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Saving no longer makes a `.moth` file grow. Each save used to append a full layout and a library preview (about 50–100 KB) and kept the old ones until the file was twice the size of its images. A save now writes the layout back right after the images and cuts the file there, so a board whose images did not change stays the same size. Removed images are compacted away once they exceed an eighth of the board. Saving also repairs a torn tail after the images.
+- Full-resolution mode uses much less memory. Detail tiles no longer reserve unused mip levels (−25% video memory), and uploads are handed to the GPU every 16 MiB, so staging buffers no longer leave holes in the texture heap. On a 150-photo board the process went from 3.48 GB to 1.87 GB.
+- Boards open faster where the file system cannot clone them (Windows, ext4): the private recovery copy is now made by the operating system instead of reading, hashing and rewriting every image.
+
 - The window and the CLI apply journal-confirmed changes through one shared path. In the CLI, a batch with a refused command still applies the rest of its journaled commands, an import starts from an empty board, and a recovered board counts as unsaved.
 
 - Split Insert into Label, Note and List. The inline editor uses more space, applies formatting to selected lines and supports bulleted, numbered and nested lists and checklists. Enter continues a list, Shift+Enter adds a line inside an item, and Tab changes the level. Ctrl/⌘+Enter saves the draft.

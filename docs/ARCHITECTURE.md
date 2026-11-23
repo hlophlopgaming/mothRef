@@ -24,8 +24,10 @@
   `.pur` behavior, compatibility and limits are specified in
   [PUR-IMPORT.md](PUR-IMPORT.md).
 - `moth-render`: instanced quads and a GPU resource registry, shared by the window
-  and headless checks. Texture pages use size classes, full mip pyramids and
-  page-level LRU eviction. Original bytes do not depend on a GPU texture format.
+  and headless checks. Texture pages use size classes, full mip pyramids for
+  previews and a single level for detail tiles, and page-level LRU eviction.
+  Uploads are submitted every 16 MiB, so staging memory never fragments the
+  texture heap. Original bytes do not depend on a GPU texture format.
 - `moth-ui`: theme tokens, bundled licensed font, localized string lookup and
   responsive wrapped controls. Pan/select, fit, zoom and paste have visible
   controls for touch input.

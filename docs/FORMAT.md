@@ -184,8 +184,22 @@ modified by opening a copy. These preferences do not change the `.moth` encoding
 and a checkpoint to an exclusive temporary object beside the destination, syncs
 it, then atomically replaces the destination (`ReplaceFileW` on Windows, rename
 and directory sync on Unix). Failed compaction cannot destroy the previous board.
-Compaction currently runs on the storage worker after a save when the file is
-larger than twice its estimated live original bytes and at least 1 MiB.
+Compaction runs on the storage worker after a save when the bytes stranded among the
+live originals (removed originals, and checkpoints or previews that newer originals
+were appended after) exceed an eighth of the live bytes and at least 1 MiB.
+
+Everything after the last live original is history a save reclaims in place,
+without copying originals. After the new checkpoint is synced at the end of the
+file, the writer writes the same checkpoint again right after the last live
+original (`checkpoint_over`) and fills the rest of that space up to the new
+checkpoint with empty kind-4 records, so the records still chain into it. It syncs,
+then cuts the file after the rewritten checkpoint and syncs again, and the preview
+follows. Until the cut, the later copy of the checkpoint stays intact: a crash at
+any point reads as the board just saved, and only a crash in the middle of the
+rewrite can make the reader scan for it. When a save appends new originals, it first
+cuts a trailing preview, which is derived data. A save of a board that only moved
+or edited items therefore leaves the file the size of its originals, one checkpoint
+and one preview, and the same rewrite removes a torn tail after the originals.
 
 ## Migration 7 → 8
 

@@ -54,7 +54,7 @@ explicit ids. Angles are radians; points/rectangles use comma-separated numbers.
 | `note BOARD TEXT` | Add a note, borderless label or list with `--kind note\|label\|list`. Optional `--at x,y` |
 | `stroke BOARD` | Draw a vector stroke from repeated `--point x,y`. Optional `--style pen\|marker\|arrow`, `--width N`, `--color 0xRRGGBB` |
 | `info BOARD` | Inspect state; `--offset 0 --limit 1000` (page size capped at 1000) |
-| `check BOARD` | Read native integrity/recovery status; recovered/torn files fail; use a clean Save As to remove recovery status |
+| `check BOARD` | Read native integrity/recovery status; recovered/torn files fail; saving the board, in place or to a new file, removes a torn tail after its originals |
 | `arrange BOARD` | `--mode horizontal\|vertical\|grid\|optimal` (default grid), `--gap N`, `--order z\|name\|time\|path`, optional `--count N`, `--id ...`; alias `layout` |
 | `align BOARD` | `--mode left\|right\|top\|bottom\|horizontal\|vertical\|stack`, `--id ...`; horizontal/vertical distribute |
 | `normalize BOARD` | `--mode width\|height\|size\|area`, `--id ...`; match first z-sorted item |
@@ -235,7 +235,7 @@ unset in normal use. Undo history is bounded and ends when the process exits.
 URL downloads are explicit actions using the same native HTTP/TLS implementation
 as clipboard import: a 20-second total deadline, bounded redirects, no HTTPS
 downgrade, and a 256 MiB compressed-input cap. Header/decoder limits also apply.
-A checkpoint appended to a physically torn input may retain its recovery status; save to a new .moth for a clean file. There are no background network calls from this interface.
+A save writes its checkpoint back over history and torn bytes after the last original and cuts them off; torn bytes among the originals remain until the board is compacted or saved to a new .moth. There are no background network calls from this interface.
 
 Maintain the typed Operation enum and its clap flags, embedded api.json/action
 coverage, native integration tests, this reference and the canonical agent skill

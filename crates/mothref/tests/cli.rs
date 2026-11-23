@@ -750,7 +750,7 @@ fn coordinate_limit_errors_leave_saved_bytes_unchanged() {
 }
 
 #[test]
-fn recovered_tail_requires_a_clean_save_as_before_check_passes() {
+fn saving_in_place_or_elsewhere_leaves_no_recovered_tail() {
     let cli = Native::new();
     // An older fixture would be compacted during migration instead of appending.
     let fixture = format!("moth/v{}.moth", moth_format::board::SCHEMA);
@@ -765,6 +765,17 @@ fn recovered_tail_requires_a_clean_save_as_before_check_passes() {
         cli.agent(&[json!({"ops":[{"op":"open","path":cli.board},{"op":"save"},{"op":"info"}]})]);
     let reply = success(output);
     assert_eq!(reply["results"][2]["recovered"], true);
+    // The save writes its checkpoint back over the torn bytes and cuts them off.
+    assert_eq!(
+        success(cli.invoke(&["check", cli.board.to_str().unwrap()]))["results"][0]["valid"],
+        true
+    );
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&cli.board)
+        .unwrap()
+        .write_all(b"interrupted checkpoint")
+        .unwrap();
     failure(cli.invoke(&["check", cli.board.to_str().unwrap()]));
     let clean = cli.root.join("clean.moth");
     let output = cli.agent(&[

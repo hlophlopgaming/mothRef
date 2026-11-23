@@ -18,7 +18,11 @@ pub(super) struct Prepared {
 }
 
 /// Only a validated, durable private file may become the session journal.
-pub(super) fn prepare(storage: &DesktopStorage, source: &File) -> io::Result<Option<Prepared>> {
+pub(super) fn prepare(
+    storage: &DesktopStorage,
+    source: &File,
+    source_path: &Path,
+) -> io::Result<Option<Prepared>> {
     let mut reader = source;
     reader.seek(SeekFrom::Start(0))?;
     let mut header = [0; 16];
@@ -28,7 +32,7 @@ pub(super) fn prepare(storage: &DesktopStorage, source: &File) -> io::Result<Opt
     let _span = tracing::info_span!("snapshot_board").entered();
     let (directory, guard) = recovery::prepare(storage)?;
     let temporary = directory.join(format!("opening-{}.tmp", uuid::Uuid::now_v7()));
-    let Some(mut clone) = clone(source, &temporary)? else {
+    let Some(mut clone) = clone(source, source_path, &temporary)? else {
         return Ok(None);
     };
     let path = directory.join("board.moth");
@@ -92,8 +96,12 @@ pub(super) fn prepare(storage: &DesktopStorage, source: &File) -> io::Result<Opt
     })
 }
 
+/// A private copy of `source` at `path`: a copy-on-write clone where the filesystem
+/// offers one, otherwise a copy made by the operating system (which clones by itself
+/// on APFS, ReFS and Dev Drives). `None` when neither works; the caller then stages
+/// originals itself.
 #[cfg(target_os = "linux")]
-pub(super) fn clone(source: &File, path: &Path) -> io::Result<Option<File>> {
+pub(super) fn clone(source: &File, source_path: &Path, path: &Path) -> io::Result<Option<File>> {
     use std::os::unix::fs::OpenOptionsExt;
     let file = std::fs::OpenOptions::new()
         .read(true)
@@ -104,15 +112,46 @@ pub(super) fn clone(source: &File, path: &Path) -> io::Result<Option<File>> {
     match rustix::fs::ioctl_ficlone(&file, source) {
         Ok(()) => Ok(Some(file)),
         Err(error) => {
-            tracing::debug!(%error, "filesystem snapshot unavailable; copying originals");
+            tracing::debug!(%error, "filesystem snapshot unavailable; copying the board");
             drop(file);
             std::fs::remove_file(path)?;
-            Ok(None)
+            copy(source_path, path)
         }
     }
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(super) fn clone(_source: &File, _path: &Path) -> io::Result<Option<File>> {
-    Ok(None)
+pub(super) fn clone(_source: &File, source_path: &Path, path: &Path) -> io::Result<Option<File>> {
+    copy(source_path, path)
+}
+
+fn copy(source: &Path, path: &Path) -> io::Result<Option<File>> {
+    let _span = tracing::info_span!("copy_board").entered();
+    let copied = std::fs::copy(source, path).and_then(|_| {
+        // Recovery files stay private and writable whatever the source allowed.
+        #[cfg(unix)]
+        let permissions = std::os::unix::fs::PermissionsExt::from_mode(0o600);
+        #[cfg(not(unix))]
+        let permissions = {
+            let mut permissions = std::fs::metadata(path)?.permissions();
+            permissions.set_readonly(false);
+            permissions
+        };
+        std::fs::set_permissions(path, permissions)?;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+    });
+    match copied {
+        Ok(file) => Ok(Some(file)),
+        Err(error) => {
+            tracing::debug!(%error, "board copy unavailable; staging originals");
+            match std::fs::remove_file(path) {
+                Ok(()) => Ok(None),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(e),
+            }
+        }
+    }
 }

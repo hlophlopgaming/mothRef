@@ -32,6 +32,8 @@ const CLASSES: [(u32, u32); 8] = [
     (2048, 1),
 ];
 const MAX_INSTANCES: usize = 10_000;
+/// Texture bytes written before uploads are submitted without waiting for a frame.
+const UPLOAD_BATCH: u64 = 16 * 1024 * 1024;
 /// Instance class of group backdrops; drawn by their own pipeline with no texture.
 const BACKDROP: usize = usize::MAX;
 /// Backdrop corner radius in world units, so it scales with the board like the frame.
@@ -187,6 +189,9 @@ struct Slot {
 }
 struct Array {
     size: u32,
+    /// Mip levels the texture holds: a full chain for previews, one for detail tiles,
+    /// which have their coarser levels as tiles of their own.
+    levels: u32,
     texture: wgpu::Texture,
     bind: wgpu::BindGroup,
     slots: Vec<Option<Slot>>,
@@ -304,6 +309,8 @@ pub struct Registry {
     hard_limit: u64,
     /// Video memory ran out while making room for images; the UI says so once.
     pub out_of_memory: bool,
+    /// Bytes written to textures since uploads were last handed to the GPU.
+    unsubmitted: u64,
 }
 impl Registry {
     /// RGBA8 is the universally supported fallback; BC7 halves residency on adapters that support it.
@@ -468,6 +475,7 @@ impl Registry {
             tile_lod_bias: 0,
             hard_limit: MAX_TEXTURE_BUDGET,
             out_of_memory: false,
+            unsubmitted: 0,
         }
     }
     /// Highest texture ceiling [`Registry::adapt_budget`] accepts, from the detected
@@ -487,17 +495,15 @@ impl Registry {
         let Some(&(size, layers)) = CLASSES.iter().find(|c| c.0 >= side) else {
             return true;
         };
+        let levels = page_levels(image, size, self.image_format);
         if self.resident(hash, side)
-            || self
-                .arrays
-                .iter()
-                .rev()
-                .flatten()
-                .any(|a| a.size == size && a.slots.iter().any(Option::is_none))
+            || self.arrays.iter().rev().flatten().any(|a| {
+                a.size == size && a.levels == levels && a.slots.iter().any(Option::is_none)
+            })
         {
             return true;
         }
-        self.allocated + array_bytes(size, layers, self.image_format) <= self.ceiling
+        self.allocated + array_bytes(size, layers, levels, self.image_format) <= self.ceiling
     }
     /// Reports actual texture allocation, rather than the sum of resident source sizes.
     pub fn allocated_bytes(&self) -> u64 {
@@ -608,18 +614,12 @@ impl Registry {
             .iter()
             .find(|c| c.0 == moth_io::tiles::SIDE)
             .expect("the fixed tile side has a configured size class");
-        let mut preview_slots = std::collections::HashSet::new();
         let mut reserved_pages = std::collections::HashSet::new();
         for item in items {
             let Some(hash) = item.blob() else { continue };
-            if let Some(&(page, layer)) = self.locations.get(&hash)
-                && let Some(array) = self.arrays[page].as_ref()
-            {
-                if array.size == side {
-                    preview_slots.insert((page, layer));
-                } else {
-                    reserved_pages.insert(page);
-                }
+            // Previews live in pages of their own, apart from the tiles planned here.
+            if let Some(&(page, _)) = self.locations.get(&hash) {
+                reserved_pages.insert(page);
             }
             if let Some(&(page, _)) = self.fallbacks.get(&hash) {
                 reserved_pages.insert(page);
@@ -628,11 +628,11 @@ impl Registry {
         let reserved: u64 = reserved_pages
             .into_iter()
             .filter_map(|p| self.arrays[p].as_ref())
-            .map(|a| array_bytes(a.size, a.slots.len() as u32, self.image_format))
+            .map(|a| array_bytes(a.size, a.slots.len() as u32, a.levels, self.image_format))
             .sum();
         let pages =
-            self.ceiling.saturating_sub(reserved) / array_bytes(side, layers, self.image_format);
-        let limit = (pages as usize * layers as usize).saturating_sub(preview_slots.len());
+            self.ceiling.saturating_sub(reserved) / array_bytes(side, layers, 1, self.image_format);
+        let limit = pages as usize * layers as usize;
         'levels: for bias in 0..=15 {
             let mut wanted = std::collections::HashSet::new();
             for camera in cameras {
@@ -713,7 +713,8 @@ impl Registry {
                 .is_some_and(|a| a.slots.iter().all(Option::is_none))
             {
                 let a = array.take().expect("empty page was just checked");
-                self.allocated -= array_bytes(a.size, a.slots.len() as u32, self.image_format);
+                self.allocated -=
+                    array_bytes(a.size, a.slots.len() as u32, a.levels, self.image_format);
             }
         }
     }
@@ -790,7 +791,8 @@ impl Registry {
                 a.slots[l] = None;
             }
         }
-        let Some(index) = self.page(device, size, layers, true) else {
+        let levels = page_levels(image, size, self.image_format);
+        let Some(index) = self.page(device, size, layers, levels, true) else {
             return;
         };
         let Some(array) = self.arrays[index].as_mut() else {
@@ -828,10 +830,16 @@ impl Registry {
             tile: image.tile.is_some(),
             dimensions: [first.width, first.height],
             used: self.clock,
-            mips: (image.mips.len() - first_mip) as u32,
+            mips: ((image.mips.len() - first_mip) as u32).min(levels),
             detail_lod: 0.,
         });
-        for (level, mip) in image.mips.iter().skip(first_mip).enumerate() {
+        for (level, mip) in image
+            .mips
+            .iter()
+            .skip(first_mip)
+            .take(levels as usize)
+            .enumerate()
+        {
             // BC7 blocks are 4x4; the write extent and stride are block-aligned.
             let (width, height, bytes_per_row, rows) = match self.image_format {
                 ImageFormat::Rgba8 => (mip.width, mip.height, mip.width * 4, mip.height),
@@ -865,6 +873,15 @@ impl Registry {
                     depth_or_array_layers: 1,
                 },
             );
+            self.unsubmitted += mip.bytes.len() as u64;
+        }
+        // Each write stages its bytes in GPU-visible memory until a submission. Staged
+        // between the texture pages a board-sized burst would leave them holes as large
+        // as the burst once freed, so hand uploads over in bounded batches.
+        if self.unsubmitted >= UPLOAD_BATCH {
+            self.unsubmitted = 0;
+            queue.submit([]);
+            let _ = device.poll(wgpu::PollType::Poll);
         }
     }
     fn page(
@@ -872,18 +889,20 @@ impl Registry {
         device: &wgpu::Device,
         size: u32,
         layers: u32,
+        levels: u32,
         evict: bool,
     ) -> Option<usize> {
         // Newest pages are the ones still filling; searching from the end keeps a
         // board-sized upload linear instead of rescanning every full page.
         let free = self.arrays.iter().rposition(|a| {
-            a.as_ref()
-                .is_some_and(|a| a.size == size && a.slots.iter().any(Option::is_none))
+            a.as_ref().is_some_and(|a| {
+                a.size == size && a.levels == levels && a.slots.iter().any(Option::is_none)
+            })
         });
         let index = if let Some(i) = free {
             i
         } else {
-            let bytes = array_bytes(size, layers, self.image_format);
+            let bytes = array_bytes(size, layers, levels, self.image_format);
             self.budget = budget_for(self.allocated.saturating_add(bytes), self.ceiling);
             if !evict && self.allocated + bytes > self.budget {
                 return None;
@@ -895,12 +914,15 @@ impl Registry {
                     .iter()
                     .enumerate()
                     .filter_map(|(index, array)| {
-                        array.as_ref().filter(|a| a.size == size).map(|a| {
-                            (
-                                index,
-                                a.slots.iter().flatten().map(|s| s.used).min().unwrap_or(0),
-                            )
-                        })
+                        array
+                            .as_ref()
+                            .filter(|a| a.size == size && a.levels == levels)
+                            .map(|a| {
+                                (
+                                    index,
+                                    a.slots.iter().flatten().map(|s| s.used).min().unwrap_or(0),
+                                )
+                            })
                     })
                     .min_by_key(|(_, used)| *used)
             {
@@ -922,7 +944,7 @@ impl Registry {
             i
         };
         if self.arrays[index].is_none() {
-            let bytes = array_bytes(size, layers, self.image_format);
+            let bytes = array_bytes(size, layers, levels, self.image_format);
             // Video memory can run out before the detected limit (Windows reports
             // shared memory in it, other apps use it too). An out-of-memory error
             // here must not end the app: the board keeps what fits and loads the
@@ -935,7 +957,7 @@ impl Registry {
                     height: size,
                     depth_or_array_layers: layers,
                 },
-                mip_level_count: mip_levels(size, self.image_format),
+                mip_level_count: levels,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu_format(self.image_format),
@@ -978,6 +1000,7 @@ impl Registry {
             });
             self.arrays[index] = Some(Array {
                 size,
+                levels,
                 texture,
                 bind,
                 slots: vec![None; layers as usize],
@@ -1008,7 +1031,8 @@ impl Registry {
             return;
         };
         // Never evict the source (or another visible image) to make room for a copy.
-        let Some(dest) = self.page(device, size, layers, false) else {
+        let levels = mip_levels(size, self.image_format);
+        let Some(dest) = self.page(device, size, layers, levels, false) else {
             return;
         };
         let layer = self.arrays[dest]
@@ -1022,7 +1046,7 @@ impl Registry {
         let dest_array = self.arrays[dest]
             .as_ref()
             .expect("page allocation succeeded");
-        let mips = (slot.mips - base).min(mip_levels(size, self.image_format));
+        let mips = (slot.mips - base).min(levels);
         for level in 0..mips {
             let extent = size >> level;
             encoder.copy_texture_to_texture(
@@ -1107,7 +1131,8 @@ impl Registry {
                     self.forget(slot.hash, (i, layer));
                 }
             }
-            self.allocated -= array_bytes(a.size, a.slots.len() as u32, self.image_format);
+            self.allocated -=
+                array_bytes(a.size, a.slots.len() as u32, a.levels, self.image_format);
         }
         while self.arrays.last().is_some_and(Option::is_none) {
             self.arrays.pop();
@@ -1525,7 +1550,8 @@ impl Registry {
         self.opacity.clear();
         for array in &mut self.arrays {
             if let Some(a) = array.take() {
-                self.allocated -= array_bytes(a.size, a.slots.len() as u32, self.image_format);
+                self.allocated -=
+                    array_bytes(a.size, a.slots.len() as u32, a.levels, self.image_format);
             }
         }
         self.locations.clear();
@@ -1547,8 +1573,8 @@ fn budget_for(bytes: u64, ceiling: u64) -> u64 {
     bytes.max(MIN_TEXTURE_BUDGET).min(ceiling)
 }
 
-fn array_bytes(size: u32, layers: u32, format: ImageFormat) -> u64 {
-    (0..mip_levels(size, format))
+fn array_bytes(size: u32, layers: u32, levels: u32, format: ImageFormat) -> u64 {
+    (0..levels)
         .map(|m| {
             u64::from((size >> m).max(1)).pow(2)
                 * match format {
@@ -1558,6 +1584,14 @@ fn array_bytes(size: u32, layers: u32, format: ImageFormat) -> u64 {
                 * u64::from(layers)
         })
         .sum()
+}
+/// Mip levels a page for `image` holds: tiles need only their own level.
+fn page_levels(image: &Decoded, size: u32, format: ImageFormat) -> u32 {
+    if image.tile.is_some() {
+        1
+    } else {
+        mip_levels(size, format)
+    }
 }
 /// Texture format for image mips, from the runtime [`ImageFormat`] choice.
 fn wgpu_format(format: ImageFormat) -> wgpu::TextureFormat {
@@ -1705,7 +1739,7 @@ mod tests {
         for format in [ImageFormat::Rgba8, ImageFormat::Bc7] {
             let bytes: u64 = CLASSES
                 .iter()
-                .map(|&(s, l)| array_bytes(s, l, format))
+                .map(|&(s, l)| array_bytes(s, l, mip_levels(s, format), format))
                 .sum();
             assert!(bytes <= TEXTURE_BUDGET, "{format:?} exceeds budget");
         }

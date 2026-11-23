@@ -755,9 +755,11 @@ mod tests {
                 tiles.iter().all(|t| t.level == 1),
                 "32 MiB coarsens a 4K viewport instead of thrashing"
             );
-            let count = tiles.len() as u32 + 1;
-            let bytes = crate::array_bytes(256, count.div_ceil(32) * 32, ImageFormat::Rgba8)
-                + crate::array_bytes(32, 256, ImageFormat::Rgba8);
+            // Tiles fill single-level pages; the preview keeps its mipped page.
+            let count = tiles.len() as u32;
+            let bytes = crate::array_bytes(256, count.div_ceil(32) * 32, 1, ImageFormat::Rgba8)
+                + crate::array_bytes(256, 32, 9, ImageFormat::Rgba8)
+                + crate::array_bytes(32, 256, 6, ImageFormat::Rgba8);
             assert!(
                 bytes <= crate::MIN_TEXTURE_BUDGET,
                 "whole-page allocation and fallback must fit"

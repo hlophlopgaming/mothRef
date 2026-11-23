@@ -442,6 +442,37 @@ impl State {
         })
         .map_err(error)
     }
+    /// Moves the checkpoint just written at `checkpoint` back to `at`, over history
+    /// nothing reads any more, and cuts the file behind it. A crash at any point leaves
+    /// a file that reads as the board just saved.
+    fn reclaim(
+        &mut self,
+        path: &std::path::Path,
+        at: u64,
+        checkpoint: u64,
+        snapshot: &[u8],
+    ) -> io::Result<()> {
+        let _span = tracing::info_span!("reclaim_history", bytes = checkpoint - at).entered();
+        let mut file = OpenOptions::new().read(true).write(true).open(path)?;
+        file.seek(SeekFrom::Start(at))?;
+        let mut writer = io::BufWriter::new(&mut file);
+        let Some(end) =
+            board::checkpoint_over(&mut writer, at, checkpoint, snapshot).map_err(error)?
+        else {
+            return Ok(());
+        };
+        writer.flush()?;
+        drop(writer);
+        // The copy must be durable before the original checkpoint goes.
+        file.sync_all()?;
+        file.set_len(end)?;
+        file.sync_all()?;
+        #[cfg(test)]
+        {
+            self.save_syncs += 2;
+        }
+        Ok(())
+    }
     fn original(&self, hash: BlobId, handle: Handle) -> io::Result<Vec<u8>> {
         let _span = tracing::info_span!("read_original").entered();
         let mut source = self.storage.open(handle)?;
@@ -564,11 +595,14 @@ impl State {
             }
         }
         let live: HashSet<_> = self.scene.items().filter_map(Item::blob).collect();
-        let mut live_bytes: u64 = live
-            .iter()
-            .filter_map(|hash| previous.blobs.get(hash))
-            .map(|blob| blob.length)
-            .sum();
+        // Originals the file already holds stay where they are; everything after the
+        // last of them, older checkpoints and previews, is only history.
+        let mut originals_end = 16;
+        let mut live_records = 0;
+        for blob in live.iter().filter_map(|hash| previous.blobs.get(hash)) {
+            originals_end = originals_end.max(blob.offset + blob.length + board::FOOTER_SIZE);
+            live_records += blob.length + board::FOOTER_SIZE;
+        }
         let total = live
             .iter()
             .filter(|hash| !previous.blobs.contains_key(hash))
@@ -576,6 +610,15 @@ impl State {
         let mut done = 0;
         if total > 0 {
             self.saving(SaveProgress::Images { done, total });
+            // New originals would strand the old preview among them; it is derived
+            // data, so the board reads the same without it.
+            if let Some(start) = board::trailing_preview(&mut file).map_err(error)? {
+                drop(file);
+                let cut = OpenOptions::new().write(true).open(&path)?;
+                cut.set_len(start)?;
+                drop(cut);
+                file = OpenOptions::new().read(true).append(true).open(&path)?;
+            }
         }
         for hash in &live {
             if !previous.blobs.contains_key(hash) {
@@ -585,9 +628,11 @@ impl State {
                     .copied()
                     .ok_or_else(|| error("Original unavailable"))?;
                 let bytes = self.original(*hash, handle)?;
+                let offset = file.metadata()?.len();
                 // The checkpoint sync covers these originals before acknowledging the save.
                 append_record(&mut file, 1, &bytes)?;
-                live_bytes += bytes.len() as u64;
+                originals_end = offset + bytes.len() as u64 + board::FOOTER_SIZE;
+                live_records += bytes.len() as u64 + board::FOOTER_SIZE;
                 done += 1;
                 if done % 32 == 0 || done == total {
                     self.saving(SaveProgress::Images { done, total });
@@ -596,25 +641,33 @@ impl State {
         }
         self.saving(SaveProgress::Layout);
         let snapshot = board::snapshot(&self.scene).map_err(error)?;
-        live_bytes += snapshot.len() as u64;
+        let checkpoint = file.metadata()?.len();
         record(&mut file, 3, &snapshot)?;
-        drop(snapshot);
+        drop(file);
         #[cfg(test)]
         {
             self.save_syncs += 1;
         }
-        if file.metadata()?.len() > (live_bytes.saturating_mul(2)).max(1024 * 1024) {
+        // Removed originals and history stranded among them only go with a full rewrite,
+        // which copies every original; wait until there is enough to be worth it.
+        let stranded = originals_end - 16 - live_records;
+        let live_bytes = live_records + snapshot.len() as u64;
+        if stranded > (live_bytes / 8).max(1024 * 1024) {
             self.saving(SaveProgress::Compacting);
             #[cfg(test)]
             {
                 self.save_compactions += 1;
             }
-            drop(file);
             let handle = self.storage.register(path.clone())?;
             let result = board::compact(self.storage.as_ref(), handle).map_err(error);
             self.storage.forget(handle)?;
             result?;
+        } else if checkpoint > originals_end {
+            // History after the originals is reclaimed in place: the new checkpoint is
+            // written again right after them and the file is cut behind it.
+            self.reclaim(&path, originals_end, checkpoint, &snapshot)?;
         }
+        drop(snapshot);
         // The preview goes last, after any compaction, so the library finds it at the end
         // of the file. It is derived data: failing to make it never fails the save.
         self.saving(SaveProgress::Preview);
@@ -641,11 +694,15 @@ impl State {
         Ok(Completion::Saved)
     }
     /// Originals must remain independent of changes to the user-opened file.
-    fn snapshot(&mut self, source: &File) -> io::Result<Option<board::Board>> {
+    fn snapshot(
+        &mut self,
+        source: &File,
+        path: &std::path::Path,
+    ) -> io::Result<Option<board::Board>> {
         if self.journal.is_some() {
             return Ok(None);
         }
-        match snapshot::prepare(&self.storage, source) {
+        match snapshot::prepare(&self.storage, source, path) {
             Ok(Some(prepared)) => {
                 self.journal = Some(prepared.journal);
                 self.journal_guard = Some(prepared.guard);
@@ -690,7 +747,7 @@ impl State {
             return Err(error("MothRef board exceeds 8 GiB file limit"));
         }
         let snapshot = if snapshot {
-            self.snapshot(&file)?
+            self.snapshot(&file, &path)?
         } else {
             None
         };
@@ -2138,7 +2195,7 @@ mod tests {
         drop(file);
         let bytes = std::fs::read(&source).unwrap();
         let probe = root.join("probe.tmp");
-        let supported = snapshot::clone(&File::open(&source).unwrap(), &probe)
+        let supported = snapshot::clone(&File::open(&source).unwrap(), &source, &probe)
             .unwrap()
             .is_some();
         if probe.exists() {
@@ -2279,7 +2336,7 @@ mod tests {
             }
             let mut file = File::open(&path).unwrap();
             let loaded = board::read(&mut file).unwrap();
-            assert!(opened.snapshot(&file).unwrap().is_none(), "{case}");
+            assert!(opened.snapshot(&file, &path).unwrap().is_none(), "{case}");
             assert!(opened.journal.is_none());
             opened.request(Request::OpenSnapshot(path)).unwrap();
             assert_eq!(opened.scene.len(), loaded.scene.len());
@@ -2908,6 +2965,84 @@ mod tests {
     }
 
     #[test]
+    fn saving_again_keeps_the_file_the_size_of_the_board() {
+        let mut state = state();
+        let root = state.storage.base_directory().unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let add = |state: &mut State, n: u32| {
+            let mut bytes = include_bytes!("../../../corpus/images/rows.png").to_vec();
+            bytes.extend_from_slice(&n.to_le_bytes());
+            bytes.resize(192 * 1024, 0);
+            let source = root.join(format!("input-{n}.png"));
+            std::fs::write(&source, &bytes).unwrap();
+            let handle = state.storage.register(source).unwrap();
+            let item = Item::image(
+                blake3::hash(&bytes),
+                Rect {
+                    x: n as f32 * 10.,
+                    y: 0.,
+                    width: 9.,
+                    height: 9.,
+                },
+                state.scene.top(),
+            );
+            let id = item.id;
+            state
+                .apply_command(Command::Insert(item), Some(handle), false)
+                .unwrap();
+            id
+        };
+        let ids: Vec<_> = (0..8).map(|n| add(&mut state, n)).collect();
+        let path = root.join("board.moth");
+        state.save(path.clone(), true).unwrap();
+        let size = || std::fs::metadata(&path).unwrap().len();
+        let first = size();
+        for (n, id) in ids.iter().enumerate() {
+            let mut rect = state.scene.get(*id).unwrap().rect;
+            rect.y += 1.;
+            state
+                .apply_command(Command::SetRect { id: *id, rect }, None, false)
+                .unwrap();
+            state.save(path.clone(), n % 2 == 0).unwrap();
+            assert_eq!(
+                size(),
+                first,
+                "a save after a move leaves no history behind"
+            );
+        }
+        // New originals keep only one stranded checkpoint, never the old previews.
+        let added = add(&mut state, 100);
+        state.save(path.clone(), false).unwrap();
+        let checkpoint = board::snapshot(&state.scene).unwrap().len() as u64;
+        assert!(size() <= first + 192 * 1024 + checkpoint * 2 + 4 * 96);
+        let loaded = board::read(&mut File::open(&path).unwrap()).unwrap();
+        assert!(!loaded.recovered);
+        assert_eq!(loaded.scene.len(), 9);
+        for id in &ids {
+            assert_eq!(loaded.scene.get(*id), state.scene.get(*id));
+        }
+        assert!(
+            board::peek_preview(&mut File::open(&path).unwrap())
+                .unwrap()
+                .is_some_and(|preview| preview.items == 9)
+        );
+        // Removing most originals strands them until a full rewrite pays off.
+        let removed = ids.iter().map(|id| (Command::Remove(*id), None)).collect();
+        state.request(Request::ApplyBatch(removed)).unwrap();
+        state.save(path.clone(), false).unwrap();
+        assert_eq!(state.save_compactions, 1);
+        let loaded = board::read(&mut File::open(&path).unwrap()).unwrap();
+        assert_eq!(loaded.scene.len(), 1);
+        assert!(loaded.scene.get(added).is_some());
+        assert!(size() < 192 * 1024 * 2);
+        state.journal = None;
+        state.journal_guard = None;
+        state.storage.discard().unwrap();
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn metadata_only_save_does_not_compact_a_new_snapshot() {
         let mut state = state();
         for n in 0..80 {
@@ -2976,15 +3111,32 @@ mod tests {
             .unwrap();
         let mut acks = File::create(root.join("acks")).unwrap();
         std::fs::write(root.join("ready"), b"journaled").unwrap();
+        let mover = state
+            .scene
+            .items()
+            .find(|item| item.rect.x == 0.)
+            .unwrap()
+            .id;
+        let mut moves = 0;
         for n in 40..10000 {
-            if n > 40 {
+            // Alternate new originals with moves, whose saves rewrite history in place.
+            if n > 40 && n % 2 == 0 {
                 append_image(&mut state, n);
+            } else if n > 40 {
+                let mut rect = state.scene.get(mover).unwrap().rect;
+                rect.x += 1.;
+                state
+                    .apply_command(Command::SetRect { id: mover, rect }, None, false)
+                    .unwrap();
+                moves += 1;
+            }
+            if n > 40 {
                 state
                     .commit(3, &board::snapshot(&state.scene).unwrap())
                     .unwrap();
             }
-            state.save(root.join("saved.moth"), true).unwrap();
-            writeln!(acks, "{}", state.scene.len()).unwrap();
+            state.save(root.join("saved.moth"), n % 4 == 0).unwrap();
+            writeln!(acks, "{} {moves}", state.scene.len()).unwrap();
             acks.flush().unwrap();
             std::thread::sleep(std::time::Duration::from_micros(100));
         }
@@ -3001,14 +3153,18 @@ mod tests {
                 .stdout(std::process::Stdio::null())
                 .spawn()
                 .unwrap();
-            let acknowledged = || {
+            let acknowledged_save = || {
                 std::fs::read_to_string(root.join("acks"))
                     .unwrap_or_default()
                     .lines()
-                    .filter_map(|line| line.parse::<usize>().ok())
+                    .filter_map(|line| {
+                        let (items, moves) = line.split_once(' ')?;
+                        Some((items.parse::<usize>().ok()?, moves.parse::<u32>().ok()?))
+                    })
                     .max()
-                    .unwrap_or(0)
+                    .unwrap_or((0, 0))
             };
+            let acknowledged = || acknowledged_save().0;
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
             loop {
                 let ready = if iteration % 2 == 0 {
@@ -3054,8 +3210,20 @@ mod tests {
                     saved.scene.len() >= ack,
                     "iteration {iteration}: an acknowledged save was lost"
                 );
+                // The moved image is where the last acknowledged save or the one after
+                // it left it; every other item matches the journal.
+                let moves = acknowledged_save().1 as f32;
                 for item in saved.scene.items() {
-                    assert_eq!(recovered.scene.get(item.id), Some(item));
+                    if item.rect.x != item.rect.x.floor() || item.rect.y != 0. {
+                        panic!("iteration {iteration}: unexpected item {item:?}");
+                    }
+                    if recovered.scene.get(item.id) != Some(item) {
+                        assert!(
+                            item.rect.x == moves || item.rect.x == moves + 1.,
+                            "iteration {iteration}: a moved image is not where a save left it"
+                        );
+                        continue;
+                    }
                     assert!(
                         item.blob()
                             .is_some_and(|blob| saved.blobs.contains_key(&blob))

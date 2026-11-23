@@ -32,7 +32,8 @@ const HEADER_V2: &[u8; 16] = b"MOTH\x02\0\0\0\0\0\0\0\0\0\0\0";
 /// Schema-1 boards predate content transforms; the reader still accepts them.
 const HEADER_V1: &[u8; 16] = b"MOTH\x01\0\0\0\0\0\0\0\0\0\0\0";
 const FOOTER: &[u8; 8] = b"MOTHEND1";
-const FOOTER_SIZE: u64 = 96;
+/// Bytes each record's commit footer adds after its payload.
+pub const FOOTER_SIZE: u64 = 96;
 /// Bounds allocations even for malicious input lengths.
 pub const MAX_RECORD: u64 = 256 * 1024 * 1024;
 /// Record kind of the board preview (schema 7): a rebuildable summary written last by
@@ -224,6 +225,73 @@ pub fn peek_preview(reader: &mut dyn ReadSeek) -> Result<Option<Preview>, Error>
         return Ok(None);
     }
     Ok(decode_preview(&payload).ok())
+}
+/// Where the board's trailing preview record starts, when the last committed record is
+/// one. A writer may cut the file there: a preview is derived data, so the board reads
+/// the same without it.
+pub fn trailing_preview(reader: &mut dyn ReadSeek) -> Result<Option<u64>, Error> {
+    let length = reader.seek(SeekFrom::End(0))?;
+    if length < 16 + FOOTER_SIZE {
+        return Ok(None);
+    }
+    let mut footer = [0; FOOTER_SIZE as usize];
+    reader.seek(SeekFrom::Start(length - FOOTER_SIZE))?;
+    reader.read_exact(&mut footer)?;
+    if &footer[..8] != FOOTER
+        || blake3::hash(&footer[..64]).as_bytes() != &footer[64..]
+        || footer[24] != PREVIEW
+    {
+        return Ok(None);
+    }
+    let start = u64::from_le_bytes(footer[8..16].try_into().map_err(|_| Error::Invalid)?);
+    let size = u64::from_le_bytes(footer[16..24].try_into().map_err(|_| Error::Invalid)?);
+    if start < 16 || size > MAX_PREVIEW || start.checked_add(size) != Some(length - FOOTER_SIZE) {
+        return Ok(None);
+    }
+    Ok(Some(start))
+}
+/// Writes `checkpoint` at `offset` over records that are no longer live, then fills
+/// the rest of the space up to `end` with empty preview records, so the records from
+/// `offset` to `end` still chain into whatever follows. Returns where the checkpoint
+/// record ends, or `None` (writing nothing) when the space cannot be filled exactly.
+///
+/// The bytes from `offset` to `end` must hold nothing the board still needs, and a
+/// later checkpoint with the same scene must follow `end`: while this write is torn the
+/// reader still finds that one. Once these bytes are durable, the caller may cut the
+/// file at the returned end.
+pub fn checkpoint_over(
+    writer: &mut impl Write,
+    offset: u64,
+    end: u64,
+    checkpoint: &[u8],
+) -> Result<Option<u64>, Error> {
+    let Some(mut rest) = end
+        .checked_sub(offset)
+        .and_then(|space| space.checked_sub(checkpoint.len() as u64 + FOOTER_SIZE))
+    else {
+        return Ok(None);
+    };
+    if rest != 0 && rest < FOOTER_SIZE {
+        return Ok(None);
+    }
+    let checkpoint_end = append(writer, offset, 3, checkpoint)?;
+    let mut position = checkpoint_end;
+    let padding = vec![0; MAX_PREVIEW as usize];
+    while rest > 0 {
+        let mut record = rest.min(MAX_PREVIEW + FOOTER_SIZE);
+        if rest - record != 0 && rest - record < FOOTER_SIZE {
+            record -= FOOTER_SIZE;
+        }
+        position = append(
+            writer,
+            position,
+            PREVIEW,
+            &padding[..(record - FOOTER_SIZE) as usize],
+        )?;
+        rest -= record;
+    }
+    debug_assert_eq!(position, end);
+    Ok(Some(checkpoint_end))
 }
 /// Starts a new stream; callers must use create-new storage, never an existing file.
 pub fn initialize(writer: &mut impl Write) -> Result<(), Error> {
@@ -1311,6 +1379,74 @@ mod tests {
             );
         }
         assert!(read(&mut Cursor::new(bytes)).unwrap().scene.is_empty());
+    }
+    #[test]
+    fn a_checkpoint_rewritten_over_history_reads_the_same_at_every_torn_byte() {
+        let (mut bytes, item) = base();
+        let history = bytes.len() as u64;
+        // Older checkpoints and previews, then the checkpoint the save just made.
+        let mut moved = item.clone();
+        let mut offset = history;
+        for x in 1..6 {
+            moved.rect.x = x as f32;
+            let mut scene = Scene::default();
+            scene.apply(Command::Insert(moved.clone())).unwrap();
+            offset = append(&mut bytes, offset, 3, &snapshot(&scene).unwrap()).unwrap();
+            offset = append(&mut bytes, offset, PREVIEW, &[7; 300]).unwrap();
+        }
+        let checkpoint = snapshot(&{
+            let mut scene = Scene::default();
+            scene.apply(Command::Insert(moved.clone())).unwrap();
+            scene
+        })
+        .unwrap();
+        let end = append(&mut bytes, offset, 3, &checkpoint).unwrap();
+        let mut over = Vec::new();
+        let cut = checkpoint_over(&mut over, history, offset, &checkpoint)
+            .unwrap()
+            .unwrap();
+        assert_eq!(over.len() as u64, offset - history);
+        let at = history as usize;
+        for torn in 0..=over.len() {
+            let mut file = bytes.clone();
+            file[at..at + torn].copy_from_slice(&over[..torn]);
+            let board = read(&mut Cursor::new(&file)).unwrap();
+            assert_eq!(board.scene.get(item.id), Some(&moved), "torn at {torn}");
+            if torn == over.len() {
+                assert!(!board.recovered, "the filled space chains like history did");
+            }
+        }
+        let mut file = bytes.clone();
+        file[at..offset as usize].copy_from_slice(&over);
+        file.truncate(cut as usize);
+        let board = read(&mut Cursor::new(&file)).unwrap();
+        assert!(!board.recovered);
+        assert_eq!(board.scene.get(item.id), Some(&moved));
+        assert!(end > cut);
+        // Space it cannot fill exactly is left alone.
+        let tight = history + checkpoint.len() as u64 + FOOTER_SIZE;
+        for space in [tight - 1, tight + 1, tight + FOOTER_SIZE - 1] {
+            let mut none = Vec::new();
+            assert!(
+                checkpoint_over(&mut none, history, space, &checkpoint)
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(none.is_empty());
+        }
+        let mut exact = Vec::new();
+        assert!(
+            checkpoint_over(&mut exact, history, tight + FOOTER_SIZE, &checkpoint)
+                .unwrap()
+                .is_some()
+        );
+        // Space larger than one filler record is split without leaving a sliver.
+        let wide = tight + 2 * (MAX_PREVIEW + FOOTER_SIZE) + 10;
+        let mut large = Vec::new();
+        checkpoint_over(&mut large, history, wide, &checkpoint)
+            .unwrap()
+            .unwrap();
+        assert_eq!(large.len() as u64, wide - history);
     }
     #[test]
     fn schema_ten_keeps_plain_notes_and_previews() {

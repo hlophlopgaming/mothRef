@@ -48,3 +48,15 @@ The existing bounded progress messages and journal-first mutation path remain.
 Kernel contract: [FICLONE](https://www.man7.org/linux/man-pages/man2/FICLONE.2const.html)
 documents independent copy-on-write contents, same-filesystem restrictions and
 atomic cloning with respect to concurrent writes.
+
+## Update 2026-11-23: copy where cloning is unavailable
+
+Where `FICLONE` fails, and on every other platform, the private snapshot is now an
+operating-system copy (`std::fs::copy`: `copy_file_range` on Linux, `clonefile` on
+APFS, `CopyFileExW` on Windows, which clones on ReFS and Dev Drives). The copy is made
+private and writable, then validated and trimmed exactly like a clone; any failure
+falls back to staging originals. This replaces reading, hashing and appending every
+original a second time. On a 173 MB board without reflinks, the storage stage of an
+opening went from 490–530 ms to 270–430 ms; the first preview arrives after the copy
+rather than with the first original, which the full-resolution mode hides behind its
+progress bar.
