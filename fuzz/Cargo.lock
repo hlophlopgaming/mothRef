@@ -574,7 +574,7 @@ dependencies = [
 
 [[package]]
 name = "moth-format"
-version = "0.3.0-alpha.1"
+version = "0.3.0-alpha.2"
 dependencies = [
  "blake3",
  "fractional_index",
@@ -584,7 +584,7 @@ dependencies = [
 
 [[package]]
 name = "moth-import"
-version = "0.3.0-alpha.1"
+version = "0.3.0-alpha.2"
 dependencies = [
  "moth-format",
  "moth-scene",
@@ -595,7 +595,7 @@ dependencies = [
 
 [[package]]
 name = "moth-io"
-version = "0.3.0-alpha.1"
+version = "0.3.0-alpha.2"
 dependencies = [
  "avif-decode",
  "avif-parse",
@@ -617,7 +617,7 @@ dependencies = [
 
 [[package]]
 name = "moth-scene"
-version = "0.3.0-alpha.1"
+version = "0.3.0-alpha.2"
 dependencies = [
  "blake3",
  "fractional_index",

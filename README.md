@@ -111,14 +111,13 @@ Use <kbd>Shift</kbd>+<kbd>Enter</kbd> for a line break within an item and
 ## Download
 
 Download the [public alpha from GitHub Releases](https://github.com/hlophlopgaming/mothRef/releases).
-Version `0.3.0-alpha.1` offers archives for Windows x86_64, macOS (Apple Silicon and
-Intel), and Linux x86_64 (Ubuntu 24.04 or a compatible distribution), plus
-`SHA256SUMS`. See the [release notes for direct downloads](docs/releases/v0.3.0-alpha.1.md#downloads).
-
-The release workflow on `main` adds Windows setup, macOS DMGs, Linux x86_64
-AppImage/DEB/RPM packages, Linux ARM64 AppImage and tarball, and an Arch package
-and build recipe. These formats are for future releases and are pending native
-installation and launch checks. See [formats and installation](docs/RELEASING.md#downloads-and-installation).
+Version `0.3.0-alpha.2` offers a Windows ZIP and setup wizard, macOS archives and DMGs
+(Apple Silicon and Intel), Linux x86_64 tarball, AppImage, DEB and RPM (Ubuntu 24.04
+or a compatible distribution), a Linux ARM64 tarball and AppImage, and an Arch package
+and build recipe, plus `SHA256SUMS`. See the [release notes for direct downloads](docs/releases/v0.3.0-alpha.2.md#downloads)
+and [formats and installation](docs/RELEASING.md#downloads-and-installation). The
+installers and packages are new in this release and have not been checked by hand on
+every system yet.
 
 Windows binaries are unsigned. macOS builds are not notarized.
 

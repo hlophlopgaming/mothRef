@@ -37,7 +37,7 @@ Every milestone and every pull request is judged against these, in this order:
 
 ## Where we are
 
-Latest release: **0.3.0-alpha.1** (2026-11-19), the first public alpha. Builds for Windows, macOS and Linux are attached to every tagged release on GitHub Releases.
+Latest release: **0.3.0-alpha.2** (2026-11-23). The first public alpha was 0.3.0-alpha.1 (2026-11-19). Builds for Windows, macOS and Linux are attached to every tagged release on GitHub Releases.
 
 | Milestone | State | What is left |
 | --- | --- | --- |

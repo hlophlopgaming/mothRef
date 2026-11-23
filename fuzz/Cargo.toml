@@ -11,9 +11,9 @@ cargo-fuzz = true
 [dependencies]
 purcore = { path = "../third_party/purcore", version = "=0.1.0-mothref.1" }
 libfuzzer-sys = "0.4"
-moth-io = { path = "../crates/moth-io", version = "0.3.0-alpha.1" }
-moth-format = { path = "../crates/moth-format", version = "0.3.0-alpha.1" }
-moth-import = { path = "../crates/moth-import", version = "0.3.0-alpha.1" }
+moth-io = { path = "../crates/moth-io", version = "0.3.0-alpha.2" }
+moth-format = { path = "../crates/moth-format", version = "0.3.0-alpha.2" }
+moth-import = { path = "../crates/moth-import", version = "0.3.0-alpha.2" }
 
 [[bin]]
 name = "image_reader"
