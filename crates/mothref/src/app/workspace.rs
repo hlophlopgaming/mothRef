@@ -601,24 +601,36 @@ impl Workspace {
         // Edits answered by the worker, journaled once the queue has been read.
         let mut deferred: Vec<Vec<(Command, Option<Handle>)>> = Vec::new();
         while let Ok(done) = self.board.boards().results.try_recv() {
+            use super::confirmed::{self, Change};
             use moth_platform::boards::Completion;
-            match done {
-                Completion::Saving(progress) => self.board.file.saving = Some(progress),
-                Completion::Loading {
-                    commands,
-                    sources,
+            let finishes = !matches!(
+                done,
+                Completion::Saving(_)
+                    | Completion::Loading { .. }
+                    | Completion::Recovery(_)
+                    | Completion::Recent(_)
+                    | Completion::Preferences(_)
+                    | Completion::Settings(_)
+            );
+            if finishes {
+                self.board.intake.in_flight = self.board.intake.in_flight.saturating_sub(1);
+            }
+            // A new board starts without the old one's motion; its own may begin now.
+            let fresh = match &done {
+                Completion::Loading { .. } => self.board.scene.is_empty(),
+                Completion::Opened(..) | Completion::Imported(..) => true,
+                _ => false,
+            };
+            if fresh {
+                self.board.motion.clear();
+            }
+            match confirmed::confirm(&mut self.board, done) {
+                Change::Loading {
+                    first,
                     bounds,
+                    errors,
                 } => {
-                    let first = self.board.scene.is_empty();
-                    if first {
-                        self.board.motion.clear();
-                    }
-                    for command in commands {
-                        if let Err(error) = self.board.apply_visual(command) {
-                            self.board.notices.message = error.to_string().into();
-                        }
-                    }
-                    self.board.sources.extend(sources);
+                    self.board.notify_errors(errors);
                     if bounds.is_some() {
                         self.board.intake.loading_bounds = bounds;
                     }
@@ -635,242 +647,198 @@ impl Workspace {
                     }
                     self.board.notices.message = moth_ui::Text::StorageBusy.into();
                 }
-                Completion::Recovery(paths) => self.recovery_paths = paths,
-                Completion::Recent(paths) => {
-                    if self.recent_paths.is_empty() {
-                        self.recent_paths = paths;
-                        self.refresh_library = true;
+                Change::Applied {
+                    ids,
+                    inserted,
+                    batch,
+                    errors,
+                } => {
+                    self.board.notify_errors(errors);
+                    if batch {
+                        if !inserted.is_empty() {
+                            self.board.selection = inserted.into_iter().collect();
+                        } else if self.board.selection.is_empty() {
+                            self.board.selection = ids.into_iter().collect();
+                        }
+                    }
+                    self.board
+                        .selection
+                        .retain(|id| self.board.scene.get(*id).is_some());
+                    self.board.settle_groups();
+                }
+                Change::Opened {
+                    recovered,
+                    destination,
+                } => {
+                    if let Some(journal) = self.board.file.restoring.take() {
+                        self.recovery_paths.retain(|entry| entry.journal != journal);
+                    }
+                    self.board.file.path = destination
+                        .map_or_else(String::new, |path| path.to_string_lossy().into_owned());
+                    let progressed = self.board.intake.loading_bounds.take().is_some();
+                    self.board.intake.loading = false;
+                    if active {
+                        pump.events.push(Event::Opened);
+                    }
+                    self.board.notices.message = (if self.board.file.backup_origin.is_some() {
+                        moth_ui::Text::BackupOpened
+                    } else if recovered {
+                        moth_ui::Text::Recovered
+                    } else {
+                        moth_ui::Text::Opened
+                    })
+                    .into();
+                    if !progressed {
+                        self.board.fit();
                     }
                 }
-                Completion::Preferences(values) => {
-                    pump.events.push(Event::Preferences(values));
+                Change::Imported { skipped, errors } => {
+                    self.board.notify_errors(errors);
+                    if let Some((_, count)) = &mut self.board.file.conversion {
+                        *count = skipped;
+                    }
+                    self.board.notices.conversion_prompt = true;
+                    self.board.intake.loading = false;
+                    self.board.intake.loading_bounds = None;
+                    if active {
+                        pump.events.push(Event::Opened);
+                    }
+                    self.board.file.path = String::new();
+                    self.board.notices.message = if skipped == 0 {
+                        moth_ui::Text::Imported.into()
+                    } else {
+                        moth_ui::Message::Count(moth_ui::Text::ImportSkippedCount, skipped)
+                    };
+                    self.board.fit();
                 }
-                Completion::Settings(code) => {
-                    if let Some(language) = moth_ui::Locale::from_code(&code) {
-                        pump.events.push(Event::Language(language));
+                Change::Saved => {
+                    self.board.file.backup_origin = None;
+                    self.board.file.saving = None;
+                    if active {
+                        pump.events.push(Event::Saved);
+                    }
+                    let timed = std::mem::take(&mut self.board.file.autosaving);
+                    let path = std::path::PathBuf::from(&self.board.file.path);
+                    self.recent_paths.retain(|p| p != &path);
+                    self.recent_paths.insert(0, path);
+                    self.recent_paths
+                        .truncate(moth_platform::library::MAX_BOARDS);
+                    self.refresh_library = true;
+                    if !timed {
+                        self.board.notices.message = moth_ui::Text::Saved.into();
+                        self.board.notices.flash =
+                            Some((moth_ui::Text::Saved.into(), true, Instant::now()));
+                    }
+                    if self.board.file.close_after_save {
+                        self.discard();
                     }
                 }
-                done => {
-                    self.board.intake.in_flight = self.board.intake.in_flight.saturating_sub(1);
-                    match done {
-                        Completion::RecoveryDiscarded(path) => {
-                            self.recovery_paths.retain(|entry| entry.journal != path)
+                Change::Other(done) => match *done {
+                    Completion::Saving(progress) => self.board.file.saving = Some(progress),
+                    Completion::Recovery(paths) => self.recovery_paths = paths,
+                    Completion::Recent(paths) => {
+                        if self.recent_paths.is_empty() {
+                            self.recent_paths = paths;
+                            self.refresh_library = true;
                         }
-                        Completion::Applied(command, source) => {
-                            match self.board.apply_visual(command) {
-                                Ok(_) => {
-                                    if let Some((hash, handle)) = source {
-                                        self.board.sources.insert(hash, handle);
-                                    }
-                                    self.board.file.dirty = true;
-                                }
-                                Err(e) => self.board.notices.message = e.to_string().into(),
-                            }
-                            self.board
-                                .selection
-                                .retain(|id| self.board.scene.get(*id).is_some());
-                            self.board.settle_groups();
+                    }
+                    Completion::Preferences(values) => {
+                        pump.events.push(Event::Preferences(values));
+                    }
+                    Completion::Settings(code) => {
+                        if let Some(language) = moth_ui::Locale::from_code(&code) {
+                            pump.events.push(Event::Language(language));
                         }
-                        Completion::AppliedBatch(commands, sources) => {
-                            let affected: HashSet<_> = commands.iter().map(Command::id).collect();
-                            let inserted: HashSet<_> = commands
-                                .iter()
-                                .filter_map(|c| match c {
-                                    Command::Insert(item)
-                                        if self.board.scene.get(item.id).is_none() =>
-                                    {
-                                        Some(item.id)
-                                    }
-                                    _ => None,
-                                })
-                                .collect();
-                            for command in commands {
-                                if let Err(e) = self.board.apply_visual(command) {
-                                    self.board.notices.message = e.to_string().into();
-                                }
-                            }
-                            for (hash, handle) in sources {
-                                self.board.sources.insert(hash, handle);
-                            }
-                            if !inserted.is_empty() {
-                                self.board.selection = inserted;
-                            } else if self.board.selection.is_empty() {
-                                self.board.selection = affected;
-                            }
-                            self.board.file.dirty = true;
-                            self.board
-                                .selection
-                                .retain(|id| self.board.scene.get(*id).is_some());
-                            self.board.settle_groups();
+                    }
+                    Completion::RecoveryDiscarded(path) => {
+                        self.recovery_paths.retain(|entry| entry.journal != path)
+                    }
+                    Completion::Gamut(mut gamut, card) => {
+                        self.board.file.exporting = false;
+                        let Some(card) = card else {
+                            self.board.notices.gamut = Some(gamut);
+                            continue;
+                        };
+                        // Updating a card keeps its place, view and order.
+                        if let Some(item) = self.board.scene.get(card)
+                            && let Some(old) = item.gamut()
+                        {
+                            gamut.view = old.view;
+                            gamut.sort = old.sort;
+                            let mut updated = item.clone();
+                            updated.content = moth_scene::Content::Gamut(Box::new(gamut));
+                            deferred.push(vec![
+                                (Command::Remove(card), None),
+                                (Command::Insert(updated), None),
+                            ]);
                         }
-                        Completion::Opened(scene, sources, recovered, destination) => {
-                            if let Some(journal) = self.board.file.restoring.take() {
-                                self.recovery_paths.retain(|entry| entry.journal != journal);
-                            }
-                            self.board.file.path = destination.map_or_else(String::new, |path| {
-                                path.to_string_lossy().into_owned()
-                            });
-                            let progressed = self.board.intake.loading_bounds.take().is_some();
-                            self.board.intake.loading = false;
-                            self.board.motion.clear();
-                            self.board.replace_scene(scene);
-                            self.board.sources = sources;
-                            if active {
-                                pump.events.push(Event::Opened);
-                            }
-
-                            self.board.file.dirty = recovered;
-                            self.board.notices.message =
-                                (if self.board.file.backup_origin.is_some() {
-                                    moth_ui::Text::BackupOpened
-                                } else if recovered {
-                                    moth_ui::Text::Recovered
-                                } else {
-                                    moth_ui::Text::Opened
-                                })
-                                .into();
-                            if !progressed {
-                                self.board.fit();
-                            }
+                    }
+                    Completion::Source(outcome) => {
+                        use moth_platform::export::SourceOutcome;
+                        self.board.file.exporting = false;
+                        let language = moth_ui::locale();
+                        let say = |key| moth_ui::translated(language, key);
+                        let (message, ok): (moth_ui::Message, bool) = match outcome {
+                            SourceOutcome::Shown => (moth_ui::Text::SourceShown.into(), true),
+                            SourceOutcome::Opened => (moth_ui::Text::SourceOpened.into(), true),
+                            SourceOutcome::InArchive(entry) => (
+                                say(moth_ui::Text::SourceInArchive)
+                                    .replace("{name}", &entry)
+                                    .into(),
+                                true,
+                            ),
+                            SourceOutcome::Missing(path) => (
+                                say(moth_ui::Text::SourceMissing)
+                                    .replace("{path}", &path)
+                                    .into(),
+                                false,
+                            ),
+                            SourceOutcome::Unknown => (moth_ui::Text::NoSource.into(), false),
+                        };
+                        self.board.notices.message = message.clone();
+                        self.board.notices.flash = Some((message, ok, Instant::now()));
+                    }
+                    Completion::PixelInfo(info) => {
+                        self.board.file.exporting = false;
+                        self.board.notices.message = info.summary().into();
+                        self.board.notices.export_message = None;
+                        self.board.notices.pixel_info = Some(info);
+                    }
+                    Completion::Exported(value) => {
+                        self.board.file.exporting = false;
+                        self.board.notices.message = if value == "Image opened in system viewer" {
+                            moth_ui::Text::ViewerOpened.into()
+                        } else if value.is_empty() {
+                            moth_ui::Text::Exported.into()
+                        } else {
+                            value.into()
+                        };
+                        self.board.notices.export_message =
+                            Some(self.board.notices.message.clone());
+                    }
+                    Completion::Failed(e) => {
+                        if self.board.file.saving.take().is_some() {
+                            self.board.notices.flash =
+                                Some((e.clone().into(), false, Instant::now()));
                         }
-                        Completion::Imported(commands, sources, skipped) => {
-                            if let Some((_, count)) = &mut self.board.file.conversion {
-                                *count = skipped;
-                            }
-                            self.board.notices.conversion_prompt = true;
+                        self.board.file.autosaving = false;
+                        if self.board.file.exporting {
+                            self.board.file.exporting = false;
+                            self.board.notices.export_message = Some(e.clone().into());
+                        }
+                        self.finish_added();
+                        self.board.file.restoring = None;
+                        if self.board.intake.loading {
                             self.board.intake.loading = false;
                             self.board.intake.loading_bounds = None;
-                            self.board.motion.clear();
-                            self.board.replace_scene(Scene::default());
-                            if active {
-                                pump.events.push(Event::Opened);
-                            }
-                            for command in commands {
-                                if let Err(e) = self.board.apply_visual(command) {
-                                    self.board.notices.message = e.to_string().into();
-                                }
-                            }
-                            self.board.sources = sources;
-                            self.board.file.path = String::new();
-                            self.board.file.dirty = true;
-                            self.board.notices.message = if skipped == 0 {
-                                moth_ui::Text::Imported.into()
-                            } else {
-                                moth_ui::Message::Count(moth_ui::Text::ImportSkippedCount, skipped)
-                            };
-                            self.board.fit();
+                            self.board.file.path.clear();
+                            self.board.file.dirty = !self.board.scene.is_empty();
                         }
-                        Completion::Gamut(mut gamut, card) => {
-                            self.board.file.exporting = false;
-                            let Some(card) = card else {
-                                self.board.notices.gamut = Some(gamut);
-                                continue;
-                            };
-                            // Updating a card keeps its place, view and order.
-                            if let Some(item) = self.board.scene.get(card)
-                                && let Some(old) = item.gamut()
-                            {
-                                gamut.view = old.view;
-                                gamut.sort = old.sort;
-                                let mut updated = item.clone();
-                                updated.content = moth_scene::Content::Gamut(Box::new(gamut));
-                                deferred.push(vec![
-                                    (Command::Remove(card), None),
-                                    (Command::Insert(updated), None),
-                                ]);
-                            }
-                        }
-                        Completion::Source(outcome) => {
-                            use moth_platform::export::SourceOutcome;
-                            self.board.file.exporting = false;
-                            let language = moth_ui::locale();
-                            let say = |key| moth_ui::translated(language, key);
-                            let (message, ok): (moth_ui::Message, bool) = match outcome {
-                                SourceOutcome::Shown => (moth_ui::Text::SourceShown.into(), true),
-                                SourceOutcome::Opened => (moth_ui::Text::SourceOpened.into(), true),
-                                SourceOutcome::InArchive(entry) => (
-                                    say(moth_ui::Text::SourceInArchive)
-                                        .replace("{name}", &entry)
-                                        .into(),
-                                    true,
-                                ),
-                                SourceOutcome::Missing(path) => (
-                                    say(moth_ui::Text::SourceMissing)
-                                        .replace("{path}", &path)
-                                        .into(),
-                                    false,
-                                ),
-                                SourceOutcome::Unknown => (moth_ui::Text::NoSource.into(), false),
-                            };
-                            self.board.notices.message = message.clone();
-                            self.board.notices.flash = Some((message, ok, Instant::now()));
-                        }
-                        Completion::PixelInfo(info) => {
-                            self.board.file.exporting = false;
-                            self.board.notices.message = info.summary().into();
-                            self.board.notices.export_message = None;
-                            self.board.notices.pixel_info = Some(info);
-                        }
-                        Completion::Exported(value) => {
-                            self.board.file.exporting = false;
-                            self.board.notices.message = if value == "Image opened in system viewer"
-                            {
-                                moth_ui::Text::ViewerOpened.into()
-                            } else if value.is_empty() {
-                                moth_ui::Text::Exported.into()
-                            } else {
-                                value.into()
-                            };
-                            self.board.notices.export_message =
-                                Some(self.board.notices.message.clone());
-                        }
-                        Completion::Saved => {
-                            self.board.file.backup_origin = None;
-                            self.board.file.saving = None;
-                            if active {
-                                pump.events.push(Event::Saved);
-                            }
-                            self.board.file.dirty = false;
-                            let timed = std::mem::take(&mut self.board.file.autosaving);
-                            let path = std::path::PathBuf::from(&self.board.file.path);
-                            self.recent_paths.retain(|p| p != &path);
-                            self.recent_paths.insert(0, path);
-                            self.recent_paths
-                                .truncate(moth_platform::library::MAX_BOARDS);
-                            self.refresh_library = true;
-                            if !timed {
-                                self.board.notices.message = moth_ui::Text::Saved.into();
-                                self.board.notices.flash =
-                                    Some((moth_ui::Text::Saved.into(), true, Instant::now()));
-                            }
-                            if self.board.file.close_after_save {
-                                self.discard();
-                            }
-                        }
-                        Completion::Failed(e) => {
-                            if self.board.file.saving.take().is_some() {
-                                self.board.notices.flash =
-                                    Some((e.clone().into(), false, Instant::now()));
-                            }
-                            self.board.file.autosaving = false;
-                            if self.board.file.exporting {
-                                self.board.file.exporting = false;
-                                self.board.notices.export_message = Some(e.clone().into());
-                            }
-                            self.finish_added();
-                            self.board.file.restoring = None;
-                            if self.board.intake.loading {
-                                self.board.intake.loading = false;
-                                self.board.intake.loading_bounds = None;
-                                self.board.file.path.clear();
-                                self.board.file.dirty = !self.board.scene.is_empty();
-                            }
-                            self.board.notices.message = e.into();
-                            self.board.file.close_after_save = false;
-                        }
-                        _ => {}
+                        self.board.notices.message = e.into();
+                        self.board.file.close_after_save = false;
                     }
-                }
+                    _ => {}
+                },
             }
         }
         for batch in deferred {

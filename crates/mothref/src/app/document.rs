@@ -188,7 +188,33 @@ pub(super) struct GroupEdits {
     /// Frame of a group whose insert is still being journaled, for its title field.
     pub(super) pending_group: Option<(Uuid, Rect)>,
 }
+/// The window's board takes confirmed changes through the shared rules, keeping its
+/// item counts and motion in step with them.
+impl super::confirmed::Board for Document {
+    fn scene(&self) -> &Scene {
+        &self.scene
+    }
+    fn apply(&mut self, command: Command) -> Result<(), moth_scene::SceneError> {
+        self.apply_visual(command).map(|_| ())
+    }
+    fn replace(&mut self, scene: Scene) {
+        self.replace_scene(scene);
+    }
+    fn sources(&mut self) -> &mut HashMap<BlobId, Handle> {
+        &mut self.sources
+    }
+    fn set_dirty(&mut self, dirty: bool) {
+        self.file.dirty = dirty;
+    }
+}
+
 impl Document {
+    /// Shows the last of the scene's refusals, if any.
+    pub(super) fn notify_errors(&mut self, errors: Vec<moth_scene::SceneError>) {
+        if let Some(error) = errors.last() {
+            self.notices.message = error.to_string().into();
+        }
+    }
     /// Opening a scene recounts once; normal edits maintain the count incrementally.
     pub(super) fn replace_scene(&mut self, scene: Scene) {
         self.image_count = scene.items().filter(|item| item.blob().is_some()).count();

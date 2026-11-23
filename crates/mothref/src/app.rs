@@ -53,6 +53,7 @@ mod bindings;
 mod camera_motion;
 mod canvas;
 mod chrome;
+mod confirmed;
 mod document;
 mod floating;
 mod gesture;

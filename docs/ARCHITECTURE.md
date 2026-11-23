@@ -255,6 +255,18 @@ boards), evicts the oldest previews beyond 64 cards and releases them all on
 `hide`; it returns an `Effect` only for what reaches beyond the screen: opening
 a backup in a tab, moving or forgetting a recent-list entry, or a notice.
 
+Storage answers reach a board through `confirmed::confirm`, shared by the
+window's `Document` and the CLI `Session`. Both implement `confirmed::Board`,
+so the scene, journal-backed sources and the unsaved flag change by the same
+rules: a single command applies (and adds its source) only if the scene
+accepts it; a batch, a loading part or an import applies every journaled
+command and reports refusals rather than stopping at the first; an opened board
+replaces the scene and sources and is unsaved exactly when it was recovered; an
+import starts from an empty scene; a save clears the flag. `confirm` returns a
+`Change` and the caller adds only its own presentation: selection, motion,
+notices and fitting in the window, JSON replies (and an error after the state is
+updated) in the CLI.
+
 ```mermaid
 flowchart LR
     App --> Shell

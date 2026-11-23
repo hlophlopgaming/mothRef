@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The window and the CLI apply journal-confirmed changes through one shared path. In the CLI, a batch with a refused command still applies the rest of its journaled commands, an import starts from an empty board, and a recovered board counts as unsaved.
+
 - Split Insert into Label, Note and List. The inline editor uses more space, applies formatting to selected lines and supports bulleted, numbered and nested lists and checklists. Enter continues a list, Shift+Enter adds a line inside an item, and Tab changes the level. Ctrl/⌘+Enter saves the draft.
 
 - Add Pen, Marker and Arrow to the bottom toolbar. Set color and thickness in Settings › Canvas and navigation. Strokes are editable vector items and appear in PNG, SVG and PDF exports. The native CLI adds `stroke`.

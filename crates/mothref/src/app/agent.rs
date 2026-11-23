@@ -4,6 +4,7 @@ pub(crate) mod cli;
 mod operations;
 mod preview;
 use anyhow::{Context, Result, bail, ensure};
+use moth_format::Handle;
 use moth_platform::{
     DesktopStorage,
     boards::{Completion, Request, Worker},
@@ -13,6 +14,7 @@ use operations::Operation;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     io::{BufRead, Read, Write},
     path::PathBuf,
     sync::Arc,
@@ -34,7 +36,33 @@ struct Session {
     path: Option<PathBuf>,
     recovered: bool,
     dirty: bool,
+    /// Journal-backed originals the worker confirmed, by content hash.
+    sources: HashMap<BlobId, Handle>,
     note_layout: Option<egui::Context>,
+}
+/// Fails with the first command the scene refused.
+fn refused(errors: Vec<moth_scene::SceneError>) -> Result<()> {
+    match errors.into_iter().next() {
+        Some(error) => Err(error.into()),
+        None => Ok(()),
+    }
+}
+impl super::confirmed::Board for Session {
+    fn scene(&self) -> &Scene {
+        &self.scene
+    }
+    fn apply(&mut self, command: Command) -> Result<(), moth_scene::SceneError> {
+        self.scene.apply(command).map(|_| ())
+    }
+    fn replace(&mut self, scene: Scene) {
+        self.scene = scene;
+    }
+    fn sources(&mut self) -> &mut HashMap<BlobId, Handle> {
+        &mut self.sources
+    }
+    fn set_dirty(&mut self, dirty: bool) {
+        self.dirty = dirty;
+    }
 }
 impl Session {
     fn finish(self, success: bool, dry_run: bool) -> Result<()> {
@@ -57,54 +85,44 @@ impl Session {
             path: None,
             recovered: false,
             dirty: false,
+            sources: HashMap::new(),
             note_layout: None,
         })
     }
+    /// Sends one request and answers once the journal has confirmed it. The board
+    /// takes the answer through the same rules as the window's; a refused command
+    /// fails the request only after every journaled command has reached the scene.
     fn request(&mut self, request: Request) -> Result<Value> {
+        use super::confirmed::{self, Change};
         self.worker.requests.send(request)?;
         loop {
-            match self.worker.results.recv()? {
-                Completion::Saving(_) => {}
-                Completion::Loading { .. } => {} // Opened carries the complete authoritative scene.
-                Completion::Opened(scene, _, recovered, _) => {
-                    self.scene = scene;
+            let done = self.worker.results.recv()?;
+            return match confirmed::confirm(self, done) {
+                // Opened follows with the complete authoritative scene.
+                Change::Loading { .. } => continue,
+                Change::Opened { recovered, .. } => {
                     self.recovered = recovered;
-                    return Ok(json!({"recovered": recovered}));
+                    Ok(json!({"recovered": recovered}))
                 }
-                Completion::Imported(commands, _, skipped) => {
-                    self.dirty = true;
-                    for command in commands {
-                        self.scene.apply(command)?;
-                    }
-                    return Ok(json!({"skipped": skipped}));
+                Change::Imported { skipped, errors } => {
+                    refused(errors)?;
+                    Ok(json!({"skipped": skipped}))
                 }
-                Completion::Applied(command, _) => {
-                    self.dirty = true;
-                    let id = command.id();
-                    self.scene.apply(command)?;
-                    return Ok(self.feedback(&[id]));
+                Change::Applied { ids, errors, .. } => {
+                    refused(errors)?;
+                    Ok(self.feedback(&ids))
                 }
-                Completion::AppliedBatch(commands, _) => {
-                    self.dirty = true;
-                    let ids: Vec<_> = commands.iter().map(Command::id).collect();
-                    for command in commands {
-                        self.scene.apply(command)?;
-                    }
-                    return Ok(self.feedback(&ids));
-                }
-                Completion::Exported(message) => return Ok(json!({"message": message})),
-                Completion::PixelInfo(info) => {
-                    return Ok(
+                Change::Saved => Ok(json!({"saved": true})),
+                Change::Other(other) => match *other {
+                    Completion::Saving(_) => continue,
+                    Completion::Exported(message) => Ok(json!({"message": message})),
+                    Completion::PixelInfo(info) => Ok(
                         json!({"name":info.name,"pixel":info.pixel,"size":info.size,"format":info.format,"bytes":info.bytes,"frame":info.frame}),
-                    );
-                }
-                Completion::Saved => {
-                    self.dirty = false;
-                    return Ok(json!({"saved": true}));
-                }
-                Completion::Failed(message) => bail!("{message}"),
-                _ => bail!("unexpected storage completion"),
-            }
+                    ),
+                    Completion::Failed(message) => bail!("{message}"),
+                    _ => bail!("unexpected storage completion"),
+                },
+            };
         }
     }
     /// Measures an image's colors on the storage worker for a gamut card.
