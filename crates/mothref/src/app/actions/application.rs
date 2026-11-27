@@ -17,6 +17,8 @@ impl App {
                 self.workspace.library && self.library_screen.catalog.backup_target.is_some()
             }
             Save => self.workspace.board.idle(),
+            UpdateDownload | UpdateInstall | UpdateLater | UpdateSkip | UpdateWhatsNew
+            | UpdateShowOffer => self.updates.enabled(action),
             _ => true,
         }
     }
@@ -49,6 +51,11 @@ impl App {
                 return None;
             }
             CloseWindow => Intent::CloseWindow,
+            UpdateDownload | UpdateInstall | UpdateLater | UpdateSkip | UpdateWhatsNew
+            | UpdateShowOffer => {
+                self.update_action(action);
+                return None;
+            }
             ClearDiskCache => {
                 self.diagnostics.clear_disk_cache = true;
                 return None;

@@ -17,6 +17,7 @@ pub(super) enum Event {
     TabChanged,
     Opened,
     Saved,
+    RecoveryResolved(std::path::PathBuf),
     Preferences(std::collections::BTreeMap<String, String>),
     Language(moth_ui::Locale),
 }
@@ -74,6 +75,11 @@ impl Workspace {
     pub(super) fn recovery_paths(&self) -> &[moth_platform::boards::Recovery] {
         &self.recovery_paths
     }
+    pub(super) fn forget_recovery(&mut self, journal: &std::path::Path) -> bool {
+        let before = self.recovery_paths.len();
+        self.recovery_paths.retain(|entry| entry.journal != journal);
+        self.recovery_paths.len() != before
+    }
     pub(super) fn dismiss_recovery(&mut self, index: usize) {
         if let Some(entry) = self.recovery_paths.get(index) {
             self.persist(moth_platform::boards::Request::DiscardRecovery(
@@ -87,11 +93,14 @@ impl Workspace {
             && let Some(entry) = self.recovery_paths.get(index)
         {
             let journal = entry.journal.clone();
-            self.library = false;
-            self.persist(moth_platform::boards::Request::Restore(journal.clone()));
-            if self.board.intake.loading {
-                self.board.file.restoring = Some(journal);
-            }
+            self.restore_journal(journal);
+        }
+    }
+
+    pub(super) fn restore_journal(&mut self, journal: std::path::PathBuf) {
+        self.library = false;
+        if self.try_persist(moth_platform::boards::Request::Restore(journal.clone())) {
+            self.board.file.restoring = Some(journal);
         }
     }
 
@@ -671,12 +680,16 @@ impl Workspace {
                     destination,
                 } => {
                     if let Some(journal) = self.board.file.restoring.take() {
-                        self.recovery_paths.retain(|entry| entry.journal != journal);
+                        self.forget_recovery(&journal);
+                        pump.events.push(Event::RecoveryResolved(journal));
                     }
                     self.board.file.path = destination
                         .map_or_else(String::new, |path| path.to_string_lossy().into_owned());
                     let progressed = self.board.intake.loading_bounds.take().is_some();
                     self.board.intake.loading = false;
+                    if let Some(journal) = self.board.file.restart_journal.take() {
+                        self.persist(moth_platform::boards::Request::DiscardRecovery(journal));
+                    }
                     if active {
                         pump.events.push(Event::Opened);
                     }
@@ -751,7 +764,8 @@ impl Workspace {
                         }
                     }
                     Completion::RecoveryDiscarded(path) => {
-                        self.recovery_paths.retain(|entry| entry.journal != path)
+                        self.forget_recovery(&path);
+                        pump.events.push(Event::RecoveryResolved(path));
                     }
                     Completion::Gamut(mut gamut, card) => {
                         self.board.file.exporting = false;
@@ -829,6 +843,7 @@ impl Workspace {
                         self.finish_added();
                         self.board.file.restoring = None;
                         if self.board.intake.loading {
+                            self.board.file.restart_journal = None;
                             self.board.intake.loading = false;
                             self.board.intake.loading_bounds = None;
                             self.board.file.path.clear();

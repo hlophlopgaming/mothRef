@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Check for updates at startup in standalone release builds. Download and install verified Windows, macOS and Linux updates from the app, with open boards restored after restart.
+- The What’s new window displays the release notes from GitHub before installation and after a successful update. Open the installed version’s notes from Settings › General.
+
 ## 0.3.0-alpha.2 — 2026-11-23
 
 Boards stop growing on every save and use about half the memory in the default mode; drawing tools, lists and checklists, folder groups and native installers for every platform. Boards are saved as schema 11; earlier MothRef versions cannot open them.

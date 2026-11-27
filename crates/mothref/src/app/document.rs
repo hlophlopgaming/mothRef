@@ -164,6 +164,8 @@ pub(super) struct FileState {
     pub(super) path: String,
     pub(super) conversion: Option<(std::path::PathBuf, usize)>,
     pub(super) restoring: Option<std::path::PathBuf>,
+    /// Keep the old journal until the saved file has successfully reopened.
+    pub(super) restart_journal: Option<std::path::PathBuf>,
     pub(super) backup_origin: Option<std::path::PathBuf>,
     pub(super) dirty: bool,
     pub(super) close_after_save: bool,
@@ -695,6 +697,28 @@ impl Document {
             + self.intake.pending.len();
         (total > 1 && remaining > 0).then(|| (total.saturating_sub(remaining), total))
     }
+    /// Snapshot the durable source without saving changes over the original.
+    pub(super) fn restart_board(&self) -> std::io::Result<Option<moth_platform::update::Board>> {
+        use moth_platform::update::Board;
+        if self.file.dirty {
+            return Ok(Some(Board::Journal(
+                self.storage.journal_path()?.into_os_string(),
+            )));
+        }
+        if !self.file.path.is_empty() {
+            return Ok(Some(Board::Saved {
+                path: self.file.path.clone().into(),
+                journal: self.storage.journal_path()?.into_os_string(),
+            }));
+        }
+        if !self.scene.is_empty() {
+            return Ok(Some(Board::Journal(
+                self.storage.journal_path()?.into_os_string(),
+            )));
+        }
+        Ok(None)
+    }
+
     pub(super) fn idle(&self) -> bool {
         self.intake.pasting == 0
             && self.intake.in_flight == 0

@@ -335,13 +335,13 @@ Open:
 - [ ] Animated GIFs with frame stepping: the player sits on the image (scrubber, play/pause, frame counter, speed) and steps 1, 2, 3 or 4 frames at a time
 - [x] Line/dot grid with snapping; automatic alignment guides and edge/center snapping (BeeRef #129) — View › Show grid (Ctrl/⌘+') draws dots or lines behind images at a set board spacing, every fourth mark stronger and coarser when zoomed out; View › Snap to grid (Ctrl/⌘+Shift+') and Settings › Canvas › Snap to other items line up a dragged selection's edges and centers, with guides. Snapping to other items is off by default; holding Ctrl/⌘ while dragging places freely. Snapping while resizing remains open
 - [ ] Slideshow (incl. random order), embedded ICC profiles
-- [ ] Update notice: on start (at most once a day, can be turned off in Settings) check GitHub Releases for a newer version and tell the user with a short notice: version, what changed, Download / Later / Skip this version. No data is sent beyond the request itself (maintainer, 2026-11-19)
-- [ ] Self-update: download the new release for this platform, verify it against the release's `SHA256SUMS`, replace the app and restart with open boards restored from the journal; keep the previous version to roll back if the new one fails to start. Windows `.exe`, macOS `.app` and the Linux archive each need their own replace step (maintainer, 2026-11-19)
 - [ ] All parity- and Milanote-checklist items tagged M4 (presentation mode, note formatting and markdown shortcuts, sketch card, drawing shortcuts, GIF frame tools, drawing details, locked groups, hierarchy tools, note parenting and links)
 
 <details>
 <summary>Done</summary>
 
+- [x] Update notice and What’s new. Check GitHub Releases at startup at most once a day, show the version and release notes, and offer Download, Later and Skip this version. Configure startup checks and open the installed version’s release notes in Settings › General.
+- [x] Self-update for Windows portable and Setup, installed macOS bundles, and Linux archives and AppImages. Verify `SHA256SUMS`, retain the previous executable or bundle until first launch, and restore open boards from their files and journals. System packages follow their package manager. Native update qualification is part of the release checklist in [RELEASING.md](docs/RELEASING.md#desktop-updates).
 - [x] Minimap / navigator: board overview with the viewport rectangle; click or drag to move the camera; toggle with a shortcut — shipped early with configurable size, position and opacity (0.1.0-alpha.9–10)
 - [x] Vector annotations: freehand Pen, translucent Marker and Arrow in the bottom toolbar, with color and thickness in Settings › Canvas and navigation. Strokes are editable and exportable, with native `stroke`.
 - [x] Borderless labels, note cards and list cards in Insert. Notes fit their text and support headings, nested bullets, numbers and clickable checklists. The editor continues lists with Enter and changes level with Tab. CLI `note --kind` creates each form.

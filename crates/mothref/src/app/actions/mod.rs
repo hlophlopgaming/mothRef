@@ -40,9 +40,9 @@ pub(super) fn area(action: Action) -> Area {
         | DismissRecovery | RestoreRecovery | CancelArrange | AddedHorizontal | AddedVertical
         | AddedGrid | AddedOptimal | UndoAdded | DismissAdded => Area::Prompt,
         Palette | Shortcuts | BindingSettings | Settings | New | Open | Images | Save | Library
-        | CloseTab | NextTab | CloseWindow | ClearDiskCache | ShellIntegration | OpenBackup => {
-            Area::Application
-        }
+        | CloseTab | NextTab | CloseWindow | ClearDiskCache | ShellIntegration | OpenBackup
+        | UpdateDownload | UpdateInstall | UpdateLater | UpdateSkip | UpdateWhatsNew
+        | UpdateShowOffer => Area::Application,
         WindowBar | Overlay | Pin | ClickThrough | OverlaySelection | Bottom | LockWindow
         | ResizeSelection | ResizeAll | OpacityUp | OpacityDown | MoveWindow | Fullscreen
         | Minimize | Maximize => Area::Window,
@@ -97,7 +97,9 @@ pub(super) fn gate(action: Action) -> Gate {
         SaveAndClose | Discard | KeepOpen | CancelDialog | ContinueConversion | SaveConversion
         | DismissRecovery | RestoreRecovery | CancelArrange | AddedHorizontal | AddedVertical
         | AddedGrid | AddedOptimal | UndoAdded | DismissAdded | CancelGroupColor | NoteHeading
-        | NoteBullet | NoteNumbered | NoteChecklist | SaveNoteDraft | CancelNoteDraft => Gate::None,
+        | NoteBullet | NoteNumbered | NoteChecklist | SaveNoteDraft | CancelNoteDraft
+        | UpdateDownload | UpdateInstall | UpdateLater | UpdateSkip | UpdateWhatsNew
+        | UpdateShowOffer => Gate::None,
         Layers | DrawingSession | ClickThrough => Gate::NoSession,
         Palette | BindingSettings | Shortcuts | Settings | CloseWindow | New | Open | Images
         | Library | CloseTab | NextTab | Overlay | Minimize | Maximize | Fullscreen | WindowBar
@@ -153,7 +155,7 @@ impl App {
             }
     }
     pub(super) fn run_action(&mut self, action: Action, event_loop: &ActiveEventLoop) {
-        if !self.action_enabled(action) {
+        if self.updates.switching_versions() || !self.action_enabled(action) {
             return;
         }
         let intent = match area(action) {

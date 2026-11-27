@@ -6,6 +6,7 @@ Moved from `ROADMAP.md` on 2026-10-26. Add new lines at the top of the table.
 
 | Date | Decision |
 | --- | --- |
+| 2026-11-27 | [Desktop updates](0032-desktop-updates.md) use GitHub Releases, a verified per-package handoff and the existing board recovery journals. |
 | 2026-11-22 | [Board annotations](0031-board-annotations.md) use vector strokes and opt-in note formatting in schema 11 |
 | 2026-11-22 | [AVIF decoder](0030-rav1d-avif-decoder.md) uses `avif-decode` 3 and a local manifest patch for `rav1d` |
 | 2026-11-22 | [Automatic source groups](0029-automatic-source-groups.md): derive folders from existing image sources and persist automatic group identity in schema 10 |

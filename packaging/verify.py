@@ -34,6 +34,8 @@ def verify(directory):
     with zipfile.ZipFile(directory / "mothref-windows-x86_64.zip") as archive:
         if not {"mothref.exe", "LICENSE", "THIRD_PARTY.md"} <= set(archive.namelist()):
             raise ValueError("Missing Windows executable or notices")
+        if "mothref.install" in archive.namelist():
+            raise ValueError("Windows portable ZIP contains the setup marker")
         if archive.testzip() is not None:
             raise ValueError("Corrupt Windows ZIP")
 

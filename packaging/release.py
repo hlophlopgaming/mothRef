@@ -64,6 +64,8 @@ def stage(target, name, dist):
         assert pe[offset:offset + 4] == b"PE\0\0"
         assert struct.unpack_from("<H", pe, offset + 24 + 68)[0] == 2, "GUI subsystem required"
         shutil.make_archive(str(dist / f"mothref-{name}"), "zip", package)
+        # Setup alone installs this marker so the same binary can select its update artifact.
+        (package / "mothref.install").write_text("inno-setup\n", encoding="utf-8")
     elif "apple" in target:
         contents = package / "MothRef.app" / "Contents"
         (contents / "MacOS").mkdir(parents=True)

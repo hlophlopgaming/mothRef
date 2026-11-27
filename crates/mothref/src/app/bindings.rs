@@ -173,6 +173,12 @@ actions! {
     CopyImage, CopyImage, "", None;
     ClearDiskCache, ClearDiskCache, "", Some(moth_ui::icons::Icon::Close);
     ShellIntegration, InstallShellIntegration, "", None;
+    UpdateDownload, UpdateDownload, "", None;
+    UpdateInstall, UpdateInstall, "", None;
+    UpdateLater, UpdateLater, "", None;
+    UpdateSkip, UpdateSkip, "", None;
+    UpdateWhatsNew, UpdateWhatsNew, "", None;
+    UpdateShowOffer, UpdateAvailable, "", None;
     WindowBar, WindowControls, "", None;
     GroupOrigin, GroupOrigin, "", None;
     Group, GroupSelection, "Cmd+G", None;
@@ -233,7 +239,8 @@ impl Action {
             | CloseTab | NextTab | Overlay | Pin | Minimize | Maximize | MoveWindow
             | Fullscreen | Settings | CloseWindow | OverlaySelection | ClickThrough | Bottom
             | LockWindow | ResizeSelection | ResizeAll | OpacityUp | OpacityDown
-            | ShellIntegration | WindowBar | Layers => Text::CategoryBoard,
+            | ShellIntegration | WindowBar | Layers | UpdateDownload | UpdateInstall
+            | UpdateLater | UpdateSkip | UpdateWhatsNew | UpdateShowOffer => Text::CategoryBoard,
             _ => Text::CategoryEdit,
         }
     }

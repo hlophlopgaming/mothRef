@@ -87,6 +87,7 @@ jobs:
         env:
           CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
           MACOSX_DEPLOYMENT_TARGET: '11.0'
+          MOTHREF_RELEASE_BUILD: '1'
       - name: Stage archives and native packages
         run: python packaging/release.py native --target ${{ matrix.target }} --name ${{ matrix.name }}
       - name: Build and check native AppImage
@@ -126,9 +127,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed" }
           $install = Join-Path $env:RUNNER_TEMP 'MothRef install check'
           $setup = Start-Process dist/mothref-windows-x86_64-setup.exe -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$install`"") -Wait -PassThru
-          if ($setup.ExitCode -ne 0 -or !(Test-Path "$install/mothref.exe")) { throw "Setup installation failed" }
+          if ($setup.ExitCode -ne 0 -or !(Test-Path "$install/mothref.exe") -or !(Test-Path "$install/mothref.install")) { throw "Setup installation failed" }
           $uninstall = Start-Process "$install/unins000.exe" -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
-          if ($uninstall.ExitCode -ne 0 -or (Test-Path "$install/mothref.exe")) { throw "Setup uninstallation failed" }
+          if ($uninstall.ExitCode -ne 0 -or (Test-Path "$install/mothref.exe") -or (Test-Path "$install/mothref.install")) { throw "Setup uninstallation failed" }
       - uses: actions/upload-artifact@v4
         with:
           name: mothref-${{ matrix.name }}

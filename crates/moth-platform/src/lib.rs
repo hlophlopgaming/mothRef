@@ -33,6 +33,8 @@ pub mod shortcuts;
 /// Short sound cues for drawing sessions.
 pub mod sound;
 mod source;
+/// Desktop release discovery and installation.
+pub mod update;
 mod viewer;
 use moth_format::{Handle, ReadSeek, Storage};
 #[cfg(unix)]

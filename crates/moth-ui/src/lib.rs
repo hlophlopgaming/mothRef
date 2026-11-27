@@ -5,6 +5,23 @@ use egui::Context;
 /// Centralized strings keep widgets independent of the selected locale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
+    UpdateChecks,
+    UpdateWhatsNew,
+    UpdateAvailable,
+    UpdateDownload,
+    UpdateInstall,
+    UpdateLater,
+    UpdateSkip,
+    UpdateDownloading,
+    UpdateLoadingNotes,
+    UpdateReady,
+    UpdatePreparingRestart,
+    UpdateNoNotes,
+    UpdateFailed,
+    UpdateInstallReadOnly,
+    UpdateRolledBack,
+    UpdateBoardsBusy,
+    UpdateRestoreFailed,
     DrawPen,
     DrawMarker,
     DrawArrow,

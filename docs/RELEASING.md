@@ -78,6 +78,23 @@ host glibc and graphics drivers. Without FUSE, use
 Linux ARM32, native Windows ARM, universal macOS bundles, MSI, Flatpak and package
 repository publication are not part of this matrix.
 
+## Desktop updates
+
+Official standalone builds check GitHub Releases at startup at most once per day. Settings › General can disable the check. What’s new fetches the installed tag’s GitHub Release description on request. The update preview and post-install window use the target release’s description.
+
+| Running copy | Update asset |
+| --- | --- |
+| Windows portable executable from ZIP | Matching Windows ZIP |
+| Windows Setup installation | Inno Setup executable. The setup-only `mothref.install` marker identifies this distribution. |
+| Installed macOS app from DMG or archive | Matching macOS archive. The updater replaces the complete `.app`. |
+| Linux executable from archive | The `mothref` member of the matching Linux archive |
+| Linux AppImage | Complete AppImage for the current architecture |
+| DEB, RPM, Arch, and other package-managed builds | The system’s package manager |
+
+A release needs its usual `SHA256SUMS` and a GitHub Release description. The release workflow enables self-update with `MOTHREF_RELEASE_BUILD=1` at Cargo build time. The helper needs a writable installation directory. Copy a macOS app out of the disk image to install it. OS policies for unsigned Windows packages and unnotarized macOS bundles still apply.
+
+Before publishing the first release with the updater, qualify it with two consecutive test versions in writable throwaway installations. Check Windows Setup with a custom directory containing spaces, Windows portable, Linux archives and AppImages on x86_64 and ARM64, and both macOS architectures. Verify the release notes, a rejected checksum, cancellation, and a failed first launch that restores the prior executable or bundle. Leave a saved board and an edited unnamed board open across multiple windows and confirm that both return after restart. On Windows, also confirm the installer keeps the previous shortcut and file association choices. Verify system packages open their existing boards and skip the startup check.
+
 ## Packaging locally and in CI
 
 Build the release binary, then run from the repository root in a clean workspace:

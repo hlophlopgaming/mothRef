@@ -14,6 +14,10 @@ thiserror.workspace = true
 crossbeam-channel.workspace = true
 tracing.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+semver = "1"
+ring = "0.17"
+tempfile = "3"
 moth-io.workspace = true
 uuid.workspace = true
 blake3.workspace = true
@@ -32,11 +36,11 @@ sysinfo = { version = "0.40", default-features = false, features = ["system"] }
 trash = "5.4.0"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_Globalization", "Win32_UI_WindowsAndMessaging", "Win32_UI_Accessibility", "Win32_UI_Shell", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Console", "Win32_UI_Input_Pointer", "Win32_UI_HiDpi", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Wdk_System_SystemServices", "Win32_System_SystemInformation", "Win32_Media_Audio"] }
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_Globalization", "Win32_UI_WindowsAndMessaging", "Win32_UI_Accessibility", "Win32_UI_Shell", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Console", "Win32_System_Threading", "Win32_UI_Input_Pointer", "Win32_UI_HiDpi", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Wdk_System_SystemServices", "Win32_System_SystemInformation", "Win32_Media_Audio"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version = "0.14", features = ["xkb"] }
-rustix = { version = "1", features = ["event", "fs"] }
+rustix = { version = "1", features = ["event", "fs", "process"] }
 # Links the system libdbus-1 (libdbus-1-dev to build).
 dbus = "0.9"
 wayland-client = "0.31"
@@ -51,6 +55,7 @@ wayland-protocols = { version = "0.32", features = ["server"] }
 global-hotkey = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSApplication", "NSImage", "NSResponder", "NSView", "NSWindow", "NSWorkspace", "NSRunningApplication", "NSSound", "NSColor", "NSColorSampler", "NSColorSpace", "block2", "objc2-core-foundation"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSNotification", "NSDictionary", "NSString", "NSOperation", "NSData"] }

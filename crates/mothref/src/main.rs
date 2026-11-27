@@ -5,6 +5,10 @@
 mod app;
 mod gpu;
 fn main() -> anyhow::Result<()> {
+    let args: Vec<_> = std::env::args_os().collect();
+    if let Some(result) = moth_platform::update::run_helper(&args) {
+        return result.map_err(Into::into);
+    }
     moth_platform::diagnostics::parent_console();
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--agent")) {
         return std::thread::Builder::new()
@@ -13,7 +17,6 @@ fn main() -> anyhow::Result<()> {
             .join()
             .map_err(|_| anyhow::anyhow!("agent worker panicked"))?;
     }
-    let args: Vec<_> = std::env::args_os().collect();
     if app::agent::cli::recognizes(&args) {
         let status = std::thread::Builder::new()
             .name("cli".into())
@@ -26,8 +29,8 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     // Before logging starts, so the previous run's last lines are what it wrote.
-    let (_session, crashed) = moth_platform::crash::begin_session();
-    let (log, _logging) = moth_platform::diagnostics::start()?;
+    let (session, crashed) = moth_platform::crash::begin_session();
+    let (log, logging) = moth_platform::diagnostics::start()?;
     tracing_subscriber::fmt()
         .with_writer(move || log.clone())
         .with_ansi(false)
@@ -43,9 +46,18 @@ fn main() -> anyhow::Result<()> {
     if let Err(error) = &result {
         tracing::error!(%error, "application stopped");
     }
-    result
+    let restart = result?;
+    drop(session);
+    drop(logging);
+    if let Some(update) = restart {
+        update.commit()?;
+    }
+    Ok(())
 }
-fn run(crashed: Option<moth_platform::crash::Report>) -> anyhow::Result<()> {
+
+fn run(
+    crashed: Option<moth_platform::crash::Report>,
+) -> anyhow::Result<Option<moth_platform::update::Armed>> {
     moth_platform::crash::install()?;
     let event_loop = winit::event_loop::EventLoop::<app::Wake>::with_user_event().build()?;
     let shutdown = event_loop.create_proxy();
@@ -55,8 +67,8 @@ fn run(crashed: Option<moth_platform::crash::Report>) -> anyhow::Result<()> {
     let mut app = app::App::new(event_loop.create_proxy())?;
     app.crash_report = crashed;
     event_loop.run_app(&mut app)?;
-    if let Some(error) = app.startup_error {
+    if let Some(error) = app.startup_error.take() {
         return Err(error);
     }
-    Ok(())
+    Ok(app.take_update_restart())
 }

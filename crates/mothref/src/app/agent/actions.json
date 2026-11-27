@@ -413,6 +413,24 @@
   "ClearDiskCache": {
     "gui_only": "Explicit OS desktop integration or maintenance UI, outside headless board editing; sample inspects a selected image instead of the screen."
   },
+  "UpdateDownload": {
+    "gui_only": "Manages the interactive desktop installation or its release-notes window."
+  },
+  "UpdateInstall": {
+    "gui_only": "Manages the interactive desktop installation or its release-notes window."
+  },
+  "UpdateLater": {
+    "gui_only": "Manages the interactive desktop installation or its release-notes window."
+  },
+  "UpdateSkip": {
+    "gui_only": "Manages the interactive desktop installation or its release-notes window."
+  },
+  "UpdateShowOffer": {
+    "gui_only": "Reopens the available update on the interactive desktop."
+  },
+  "UpdateWhatsNew": {
+    "gui_only": "Manages the interactive desktop installation or its release-notes window."
+  },
   "ShellIntegration": {
     "gui_only": "Explicit OS desktop integration or maintenance UI, outside headless board editing; sample inspects a selected image instead of the screen."
   },

@@ -206,7 +206,7 @@ impl App {
     }
 
     /// Creates a window and makes it current; the previous one becomes a pane.
-    fn open_window(
+    pub(super) fn open_window(
         &mut self,
         event_loop: &ActiveEventLoop,
         board: Document,

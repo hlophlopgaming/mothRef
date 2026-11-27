@@ -178,6 +178,7 @@ schema! {
             .get("scale_with_window")
             .and_then(|v| v.parse().ok())
             .unwrap_or(false);
+    update_checks: bool = true, "update_checks", General, UpdateChecks, Kind::Toggle, |s| s.update_checks.to_string(), |values: &BTreeMap<String,String>| values.get("update_checks").and_then(|v| v.parse().ok()).unwrap_or(true);
     backup_copies: bool = false, "backup_copies", General, BackupCopies, Kind::Toggle, |s| s.backup_copies.to_string(), |values: &BTreeMap<String,String>| values.get("backup_copies").and_then(|v| v.parse().ok()).unwrap_or(false);
     autosave: u8 = 3, "autosave", General, Autosave, Kind::Choice(&[Text::AutosaveOff, Text::Autosave15s, Text::Autosave30s, Text::Autosave1m, Text::Autosave2m, Text::Autosave3m, Text::Autosave5m]), |s| s.autosave.to_string(), |values: &BTreeMap<String,String>| values.get("autosave").and_then(|v| v.parse().ok()).filter(|v| *v < 7).unwrap_or(3);
     reopen_last: bool = false, "reopen_last_board", General, ReopenLast, Kind::Toggle, |s| s.reopen_last.to_string(), |values: &BTreeMap<String,String>| values
@@ -468,6 +469,24 @@ impl SettingsWindow {
                                 ui.vertical(|ui| {
                                     ui.set_width(ui.available_width());
                                     let section = self.section.unwrap_or(Section::General);
+                                    if section == Section::General && self.query.trim().is_empty() {
+                                        for action in
+                                            [Action::UpdateShowOffer, Action::UpdateWhatsNew]
+                                        {
+                                            let available = enabled[action as usize];
+                                            if (available || action == Action::UpdateWhatsNew)
+                                                && ui
+                                                    .add_enabled(
+                                                        available,
+                                                        egui::Button::new(text(action.label())),
+                                                    )
+                                                    .clicked()
+                                            {
+                                                intents.push(Intent::Action(action));
+                                            }
+                                        }
+                                    }
+
                                     let query = self.query.to_lowercase();
                                     for (index, entry) in
                                         SCHEMA.iter().enumerate().filter(|(_, e)| {

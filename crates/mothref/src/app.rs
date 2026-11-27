@@ -81,6 +81,7 @@ mod snap;
 const SNAP_DISTANCE: f32 = 6.;
 mod surfaces;
 mod tools;
+mod update;
 mod window_mode;
 mod workspace;
 use document::Document;
@@ -98,6 +99,8 @@ pub struct App {
     diagnostics: settings::Diagnostics,
     settings: settings::Settings,
     settings_window: settings::SettingsWindow,
+    updates: update::Updates,
+    resolved_recoveries: Vec<std::path::PathBuf>,
     shortcuts: shortcuts::Shortcuts,
     global_shortcuts: Option<moth_platform::shortcuts::Shortcuts>,
     window_preferences: std::collections::BTreeMap<String, String>,
@@ -144,6 +147,9 @@ pub struct App {
 }
 impl App {
     /// Canvas texture format for decode requests; RGBA8 until the GPU exists.
+    pub(crate) fn take_update_restart(&mut self) -> Option<moth_platform::update::Armed> {
+        self.updates.restart.take()
+    }
     fn image_format(&self) -> moth_io::ImageFormat {
         self.shell
             .gpu
@@ -177,6 +183,8 @@ impl App {
             diagnostics: settings::Diagnostics::default(),
             settings: settings::Settings::default(),
             settings_window: settings::SettingsWindow::default(),
+            updates: update::Updates::new(),
+            resolved_recoveries: Vec::new(),
             shortcuts: shortcuts::Shortcuts::default(),
             global_shortcuts: None,
             window_preferences: Default::default(),
@@ -204,7 +212,7 @@ impl App {
                 .map(std::path::PathBuf::from)
                 .collect(),
             startup_pending: Vec::new(),
-            reopen_last: Some(true),
+            reopen_last: Some(!moth_platform::update::resuming()),
             startup_board: false,
             started: Instant::now(),
             panes: Vec::new(),
@@ -1026,6 +1034,7 @@ impl App {
             match event {
                 workspace::Event::TabChanged => self.reset_board_ui(),
                 workspace::Event::Saved => self.remember_appearance(),
+                workspace::Event::RecoveryResolved(path) => self.resolved_recoveries.push(path),
                 workspace::Event::Opened => {
                     self.editing = None;
                     self.restore_appearance();
@@ -1055,6 +1064,8 @@ impl App {
                                     .into(),
                             ));
                     }
+                    self.updates
+                        .check(self.settings.update_checks, self.shell.wake());
                     self.restyle_windows();
                     self.configure_global_shortcuts();
                     if !self.shortcuts.registry.load(&values) {
@@ -2627,6 +2638,7 @@ impl App {
                     &self.shortcuts.registry,
                 ));
                 modal::crash(ui.ctx(), &mut self.crash_report);
+                intents.extend(self.updates.show(ui, &enabled, window.id()));
             })
         };
         if !self.dragging()
@@ -2817,7 +2829,7 @@ impl App {
             .shell
             .render(output, &visible, &overlay, camera, frame)?
         {
-            shell::Present::Presented => {}
+            shell::Present::Presented => self.updates.presented(self.shell.wake()),
             shell::Present::Recovered => {
                 self.reset_renderer_ui();
                 self.redraw();
@@ -2893,7 +2905,7 @@ impl ApplicationHandler<Wake> for App {
         match event {
             Wake::Shutdown => event_loop.exit(),
             Wake::Global(shortcut) => {
-                if self.settings.global_shortcuts {
+                if self.settings.global_shortcuts && !self.updates.switching_versions() {
                     use bindings::Action;
                     use moth_platform::shortcuts::Shortcut;
                     self.run_action(
@@ -2908,7 +2920,10 @@ impl ApplicationHandler<Wake> for App {
                     self.redraw();
                 }
             }
-            Wake::Ready => self.each_pane(|app| app.ready(event_loop)),
+            Wake::Ready => {
+                self.each_pane(|app| app.ready(event_loop));
+                self.update_results(event_loop);
+            }
             Wake::Repaint(delay) => self.each_pane(|app| {
                 if delay.is_zero() {
                     app.redraw();
@@ -2927,6 +2942,18 @@ impl ApplicationHandler<Wake> for App {
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.run_window_ops(event_loop);
+        let resolved = std::mem::take(&mut self.resolved_recoveries);
+        if !resolved.is_empty() {
+            self.each_pane(|app| {
+                let mut changed = false;
+                for path in &resolved {
+                    changed |= app.workspace.forget_recovery(path);
+                }
+                if changed {
+                    app.redraw();
+                }
+            });
+        }
         if !self.reap_windows() {
             event_loop.exit();
             return;
@@ -2966,7 +2993,9 @@ impl App {
             self.settings.global_shortcuts = false;
             self.global_shortcuts = None;
         }
-        self.native_input();
+        if !self.updates.switching_versions() {
+            self.native_input();
+        }
         self.results();
         self.picked_save_path(event_loop);
         self.picked_export_path(event_loop);
@@ -2983,6 +3012,16 @@ impl App {
         id: WindowId,
         event: WindowEvent,
     ) {
+        if self.updates.switching_versions()
+            && !matches!(
+                &event,
+                WindowEvent::RedrawRequested
+                    | WindowEvent::Resized(_)
+                    | WindowEvent::ScaleFactorChanged { .. }
+            )
+        {
+            return;
+        }
         if self.floating_event(id, &event) {
             return;
         }
