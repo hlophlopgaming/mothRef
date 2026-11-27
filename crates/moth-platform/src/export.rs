@@ -58,6 +58,17 @@ pub enum Target {
     Viewer(Uuid),
     /// Copy an image as RGBA through the native clipboard backend.
     Clipboard(Uuid),
+    /// Copies a composited GIF frame through the platform clipboard.
+    GifClipboard(Uuid, usize),
+    /// Saves a composited GIF frame as a new PNG.
+    GifFrame {
+        /// GIF item in the board.
+        id: Uuid,
+        /// Zero-based frame index.
+        index: usize,
+        /// New destination filename.
+        path: PathBuf,
+    },
     /// Original images, each as its own file, in a new directory.
     Originals {
         /// Directory created exclusively; nothing in an existing one is replaced.
@@ -457,6 +468,41 @@ fn escape(s: &str) -> String {
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
 }
+fn copy_pixels(
+    clipboard: &mut Option<arboard::Clipboard>,
+    width: u32,
+    height: u32,
+    bytes: &[u8],
+) -> io::Result<()> {
+    if clipboard.is_none() {
+        *clipboard = Some(arboard::Clipboard::new().map_err(error)?);
+    }
+    clipboard
+        .as_mut()
+        .ok_or_else(|| error("Clipboard unavailable"))?
+        .set_image(arboard::ImageData {
+            width: width as usize,
+            height: height as usize,
+            bytes: std::borrow::Cow::Borrowed(bytes),
+        })
+        .map_err(error)
+}
+
+/// Resolves an image identity through the board's journal-backed originals.
+pub fn gif_source(
+    scene: &Scene,
+    sources: &HashMap<BlobId, Handle>,
+    id: Uuid,
+) -> io::Result<Handle> {
+    let hash = item(scene, id)?
+        .blob()
+        .ok_or_else(|| error("Expected an image"))?;
+    sources
+        .get(&hash)
+        .copied()
+        .ok_or_else(|| error("Image source unavailable"))
+}
+
 fn item(scene: &Scene, id: Uuid) -> io::Result<&Item> {
     scene.get(id).ok_or_else(|| error("Item no longer exists"))
 }
@@ -625,6 +671,32 @@ pub(super) fn run(
                 copy_original(storage, sources, item, &directory.join(name))?;
             }
         }
+        Target::GifClipboard(id, index) | Target::GifFrame { id, index, .. } => {
+            let source = gif_source(scene, sources, id)?;
+            let frame = moth_io::gif_animation::Reader::default()
+                .frame(storage, source, index)
+                .map_err(error)?;
+            if let Target::GifFrame { path, .. } = target {
+                if !path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("png"))
+                {
+                    return Err(error("GIF frame export requires a .png destination"));
+                }
+                let mut bytes = Vec::new();
+                image::ImageEncoder::write_image(
+                    image::codecs::png::PngEncoder::new(&mut bytes),
+                    frame.as_raw(),
+                    frame.width(),
+                    frame.height(),
+                    image::ExtendedColorType::Rgba8,
+                )
+                .map_err(error)?;
+                write_new(&path, &bytes)?;
+            } else {
+                copy_pixels(clipboard, frame.width(), frame.height(), frame.as_raw())?;
+            }
+        }
         Target::Clipboard(id) | Target::Sample { id, .. } | Target::InspectSample { id, .. } => {
             let bytes = original(storage, sources, item(scene, id)?)?;
             let decoded = moth_io::decode(&bytes, moth_io::MAX_SIDE).map_err(error)?;
@@ -663,19 +735,7 @@ pub(super) fn run(
                     .map_err(error)?;
                 return Ok(format!("{hex} · {rgb} · {hsv}"));
             }
-            if clipboard.is_none() {
-                *clipboard = Some(arboard::Clipboard::new().map_err(error)?);
-            }
-            let clipboard = clipboard
-                .as_mut()
-                .ok_or_else(|| error("Clipboard unavailable"))?;
-            clipboard
-                .set_image(arboard::ImageData {
-                    width: mip.width as usize,
-                    height: mip.height as usize,
-                    bytes: std::borrow::Cow::Borrowed(&mip.bytes),
-                })
-                .map_err(error)?;
+            copy_pixels(clipboard, mip.width, mip.height, &mip.bytes)?;
         }
         Target::Scene {
             path,

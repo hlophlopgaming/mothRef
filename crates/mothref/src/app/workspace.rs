@@ -535,47 +535,48 @@ impl Workspace {
         let Some(pending) = self.board.intake.pending.remove(&done.request.handle) else {
             return;
         };
-        let paste = matches!(pending, Pending::Paste);
-        let insert = paste || matches!(pending, Pending::Import);
+        let paste = !matches!(pending, Pending::Import);
+        let point = match pending {
+            Pending::GifFrame(point) => point,
+            _ => point,
+        };
         match done.result {
             Ok(image) => {
-                if insert {
-                    self.begin_batch();
-                    // Both pastes and drops land under the cursor; drops cascade to stay visible.
-                    let (p, offset) = if paste {
-                        (point, 0.)
-                    } else {
-                        (point, (self.board.scene.len() % 10) as f32 * 24.)
-                    };
-                    let width = (image.original[0] as f32).min(600.);
-                    let height = width * image.original[1] as f32 / image.original[0] as f32;
-                    let mut item = Item::image(
-                        image.hash,
-                        Rect {
-                            x: p[0] - width / 2. + offset,
-                            y: p[1] - height / 2. + offset,
-                            width,
-                            height,
-                        },
-                        self.board.scene.top(),
-                    );
-                    if !paste {
-                        item.name = self.board.storage().source_name(done.request.handle);
-                    }
-                    item.source = self.board.storage().source_of(done.request.handle);
-                    item.parent = super::groups::landing(&self.board.scene, point);
-                    self.board.intake.burst.add(item.id);
-                    self.persist(moth_platform::boards::Request::Apply(
-                        Command::Insert(item),
-                        Some(done.request.handle),
-                    ));
+                self.begin_batch();
+                // Both pastes and drops land under the cursor; drops cascade to stay visible.
+                let (p, offset) = if paste {
+                    (point, 0.)
+                } else {
+                    (point, (self.board.scene.len() % 10) as f32 * 24.)
+                };
+                let width = (image.original[0] as f32).min(600.);
+                let height = width * image.original[1] as f32 / image.original[0] as f32;
+                let mut item = Item::image(
+                    image.hash,
+                    Rect {
+                        x: p[0] - width / 2. + offset,
+                        y: p[1] - height / 2. + offset,
+                        width,
+                        height,
+                    },
+                    self.board.scene.top(),
+                );
+                if !paste {
+                    item.name = self.board.storage().source_name(done.request.handle);
                 }
+                item.source = self.board.storage().source_of(done.request.handle);
+                item.parent = super::groups::landing(&self.board.scene, point);
+                self.board.intake.burst.add(item.id);
+                self.persist(moth_platform::boards::Request::Apply(
+                    Command::Insert(item),
+                    Some(done.request.handle),
+                ));
                 if active {
                     (pump.upload)(&image);
                 }
             }
             Err(e) => {
-                if insert && let Some(hash) = done.failure_hash {
+                if let Some(hash) = done.failure_hash {
                     self.begin_batch();
                     let p = point;
                     let mut item = Item::image(
@@ -877,14 +878,24 @@ impl Workspace {
                         self.board.notices.message = error.to_string().into();
                     }
                 },
-                moth_platform::ClipboardCompletion::Pasted(Ok((handle, image))) => {
+                completion @ (moth_platform::ClipboardCompletion::Pasted(Ok(_))
+                | moth_platform::ClipboardCompletion::GifFrame(Ok(_), _)) => {
+                    let ((handle, image), pending) = match completion {
+                        moth_platform::ClipboardCompletion::Pasted(Ok(image)) => {
+                            (image, Pending::Paste)
+                        }
+                        moth_platform::ClipboardCompletion::GifFrame(Ok(image), at) => {
+                            (image, Pending::GifFrame(at))
+                        }
+                        _ => unreachable!("successful image staging matched above"),
+                    };
                     self.board.intake.pasting = self.board.intake.pasting.saturating_sub(1);
                     if self.board.scene.len()
                         + self.board.intake.waiting.len()
                         + self.board.intake.pending.len()
                         < 1_000_000
                     {
-                        self.board.intake.pending.insert(handle, Pending::Paste);
+                        self.board.intake.pending.insert(handle, pending);
                         self.complete(
                             moth_io::Completion {
                                 request: moth_io::Request {
@@ -905,6 +916,11 @@ impl Workspace {
                         self.board.notices.message = moth_ui::Text::BoardFull.into();
                     }
                     self.board.intake.burst.files_received();
+                }
+                moth_platform::ClipboardCompletion::GifFrame(Err(error), _) => {
+                    self.board.intake.pasting = self.board.intake.pasting.saturating_sub(1);
+                    tracing::warn!(%error, "could not stage GIF frame");
+                    self.board.notices.message = moth_ui::Text::GifFailed.into();
                 }
                 moth_platform::ClipboardCompletion::Reduced(Ok((handle, image))) => {
                     self.board.intake.pasting = self.board.intake.pasting.saturating_sub(1);

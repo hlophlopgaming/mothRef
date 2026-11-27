@@ -1446,6 +1446,9 @@ pub(super) fn preload_cover(
     viewport: egui::Rect,
     progress: moth_io::PreloadProgress,
 ) {
+    if !viewport.is_finite() || !viewport.is_positive() {
+        return;
+    }
     // Called with the root UI after the canvas panel: the canvas images are drawn below
     // egui, so this opaque rect hides them while windows such as Settings stay above it.
     ui.painter().rect_filled(
@@ -1517,6 +1520,14 @@ pub(super) fn preview_rect(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn preload_cover_waits_until_the_viewport_has_a_size() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            super::preload_cover(ui, egui::Rect::NOTHING, moth_io::PreloadProgress::default());
+        });
+    }
+
     use super::*;
     #[test]
     fn wrapped_note_uses_one_layout_for_editor_measurement_and_painting() {

@@ -720,7 +720,41 @@ impl Registry {
     }
     /// Uploading replaces the least recently drawn layer within a size class.
     pub fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, image: &Decoded) {
-        self.upload_mip(device, queue, image, 0);
+        self.upload_mip(device, queue, image, 0, true);
+    }
+
+    /// Writes one temporary GIF frame without evicting an original or accumulating frames.
+    pub fn upload_animation(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &Decoded,
+    ) -> bool {
+        if frame.format != self.image_format || !self.fits(frame) {
+            return false;
+        }
+        self.remove_preview_slots(frame.hash);
+        self.upload_mip(device, queue, frame, 0, false);
+        self.resident(frame.hash, 1)
+    }
+
+    /// Releases the transient GIF slot when its player changes image or closes.
+    pub fn release_animation(&mut self, key: BlobId) {
+        self.remove_preview_slots(key);
+        self.release_empty_pages();
+    }
+
+    fn remove_preview_slots(&mut self, key: BlobId) {
+        for (page, layer) in self
+            .locations
+            .remove(&key)
+            .into_iter()
+            .chain(self.fallbacks.remove(&key))
+        {
+            if let Some(array) = &mut self.arrays[page] {
+                array.slots[layer] = None;
+            }
+        }
     }
 
     /// Resident resolution and currently displayed detail, for view-only refinement.
@@ -756,6 +790,7 @@ impl Registry {
         queue: &wgpu::Queue,
         image: &Decoded,
         first_mip: usize,
+        evict: bool,
     ) {
         let hash = image.tile.map_or(image.hash, |tile| tile.key(image.hash));
         // A device-loss recreation can change the chosen format; skip stale results.
@@ -773,14 +808,15 @@ impl Registry {
         if self.resident(hash, side) {
             return;
         }
-        if first_mip == 0
+        if evict
+            && first_mip == 0
             && side > FALLBACK_SIDE
             && let Some(base) = image
                 .mips
                 .iter()
                 .position(|mip| mip.width.max(mip.height) <= FALLBACK_SIDE)
         {
-            self.upload_mip(device, queue, image, base);
+            self.upload_mip(device, queue, image, base, evict);
         }
         if let Some((p, l)) = self.locations.remove(&hash)
             && let Some(a) = self.arrays[p].as_mut()
@@ -792,7 +828,7 @@ impl Registry {
             }
         }
         let levels = page_levels(image, size, self.image_format);
-        let Some(index) = self.page(device, size, layers, levels, true) else {
+        let Some(index) = self.page(device, size, layers, levels, evict) else {
             return;
         };
         let Some(array) = self.arrays[index].as_mut() else {

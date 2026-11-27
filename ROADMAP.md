@@ -47,7 +47,7 @@ Latest release: **0.3.0-alpha.2** (2026-11-23). The first public alpha was 0.3.0
 | M2.5 Zoom performance and memory modes | ✅ done | Measurements on reference hardware ([Qualification](#qualification)) |
 | M2.6 UI architecture | ✅ done | Native and CI screenshot qualification ([Qualification](#qualification)) |
 | M3 Everyday usability, window, overlay | ✅ done | Native window qualification ([Qualification](#qualification)) |
-| M4 PureRef 2 parity | 🟡 started | Minimap, groups and drawing sessions done; drawing, grid, GIFs, rich notes, composition overlays open |
+| M4 PureRef 2 parity | 🟡 started | Minimap, groups and drawing sessions done; GIF playback shipped. Drawing refinements, rich notes and composition overlays open |
 | M5 Library | 🟡 first slice | Start screen, search, tags, pins and folder stacks exist; index, previews, health open |
 | M6 Milanote-style elements | ⚪ not started | |
 | M7 Import compatibility and 1.0 qualification | ⚪ not started | |
@@ -332,7 +332,6 @@ Open:
 - [ ] Eraser in two modes: pencil-style (erases part of a stroke) and object/layer eraser (removes a whole stroke at once)
 - [ ] Emoji stamp: drop emoji reactions (like, not done, …) from a base set, with a custom emoji picker
 - [ ] Note links, remaining text styles and configurable heading size (BeeRef #130)
-- [ ] Animated GIFs with frame stepping: the player sits on the image (scrubber, play/pause, frame counter, speed) and steps 1, 2, 3 or 4 frames at a time
 - [x] Line/dot grid with snapping; automatic alignment guides and edge/center snapping (BeeRef #129) — View › Show grid (Ctrl/⌘+') draws dots or lines behind images at a set board spacing, every fourth mark stronger and coarser when zoomed out; View › Snap to grid (Ctrl/⌘+Shift+') and Settings › Canvas › Snap to other items line up a dragged selection's edges and centers, with guides. Snapping to other items is off by default; holding Ctrl/⌘ while dragging places freely. Snapping while resizing remains open
 - [ ] Slideshow (incl. random order), embedded ICC profiles
 - [ ] All parity- and Milanote-checklist items tagged M4 (presentation mode, note formatting and markdown shortcuts, sketch card, drawing shortcuts, GIF frame tools, drawing details, locked groups, hierarchy tools, note parenting and links)
@@ -340,6 +339,7 @@ Open:
 <details>
 <summary>Done</summary>
 
+- [x] Animated GIFs play on the board with a scrubber, steps of 1, 2, 4 or 5 frames, variable speed and a loop toggle. Copy a frame or drag it onto the board as a still. The CLI can inspect timing, export a frame as PNG or insert it.
 - [x] Update notice and What’s new. Check GitHub Releases at startup at most once a day, show the version and release notes, and offer Download, Later and Skip this version. Configure startup checks and open the installed version’s release notes in Settings › General.
 - [x] Self-update for Windows portable and Setup, installed macOS bundles, and Linux archives and AppImages. Verify `SHA256SUMS`, retain the previous executable or bundle until first launch, and restore open boards from their files and journals. System packages follow their package manager. Native update qualification is part of the release checklist in [RELEASING.md](docs/RELEASING.md#desktop-updates).
 - [x] Minimap / navigator: board overview with the viewport rectangle; click or drag to move the camera; toggle with a shortcut — shipped early with configurable size, position and opacity (0.1.0-alpha.9–10)

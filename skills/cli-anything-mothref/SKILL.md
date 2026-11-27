@@ -110,3 +110,8 @@ Create a vector annotation with
 translucent strokes, use `--style pen` or `--style marker` and pass the path with
 repeated `--point`. Set `--color 0xRRGGBB` and `--width N` in board units.
 JSON uses `{"op":"stroke","style":"arrow","points":[[40,40],[160,90]]}`.
+
+
+For animated references, use `mothref gif-info BOARD --id UUID` to read frame delays.
+Use `mothref gif-frame BOARD frame.png --id UUID --frame 3` to export a composited PNG.
+Omit the PNG filename to add a still to the board. Frame numbers start at 1.

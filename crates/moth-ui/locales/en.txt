@@ -718,3 +718,17 @@ UpdateBoardsBusy = Finish editing or wait for open boards to finish loading and 
 UpdateRestoreFailed = Some board windows could not be restored. Recovery journals remain available in the library.
 UpdatePreparingRestart = Preparing to restart…
 UpdateInstallReadOnly = MothRef needs write access to its installation folder to update.
+
+GifPlay = Play
+GifPause = Pause
+GifPrevious = Previous frame
+GifNext = Next frame
+GifLoop = Loop
+GifCopy = Copy frame
+GifAdd = Add frame
+GifDragHint = Drag to put this frame on the board as an image.
+GifFrame = Frame
+GifSpeed = Playback speed
+GifFailed = Could not read this GIF animation.
+GifStep = Frame step
+GifVideoMemory = GIF playback paused because video memory is full.

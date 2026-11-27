@@ -171,6 +171,12 @@ actions! {
     GamutSortHue, GamutSortHue, "", None;
     GamutSortSaturation, GamutSortSaturation, "", None;
     CopyImage, CopyImage, "", None;
+    GifPlay, GifPlay, "", None;
+    GifPrevious, GifPrevious, "", None;
+    GifNext, GifNext, "", None;
+    GifLoop, GifLoop, "", None;
+    GifCopy, GifCopy, "", None;
+    GifAdd, GifAdd, "", None;
     ClearDiskCache, ClearDiskCache, "", Some(moth_ui::icons::Icon::Close);
     ShellIntegration, InstallShellIntegration, "", None;
     UpdateDownload, UpdateDownload, "", None;

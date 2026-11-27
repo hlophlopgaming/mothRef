@@ -220,6 +220,23 @@ pub(super) enum Operation {
     Undo,
     #[command(about = "Redo within a JSON-lines session or batch; history ends with the process.")]
     Redo,
+    #[command(about = "Inspect GIF animation frame count and delays.")]
+    GifInfo {
+        #[arg(long)]
+        id: String,
+    },
+    #[command(
+        about = "Export a composited GIF frame to PNG, or add it to the board when no PNG path is supplied."
+    )]
+    GifFrame {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        frame: usize,
+        path: Option<PathBuf>,
+        #[arg(long, value_parser = super::cli::pair, allow_hyphen_values = true, conflicts_with = "path")]
+        at: Option<[f32; 2]>,
+    },
     #[command(about = "Export using the real native renderer; destination must be new.")]
     Export {
         #[arg(long, default_value = "scene")]
@@ -317,7 +334,9 @@ impl Operation {
             | Info { .. }
             | Check
             | Export { .. }
+            | GifInfo { .. }
             | PixelInfo { .. } => false,
+            GifFrame { path, .. } => path.is_none(),
             Create { .. }
             | Save { .. }
             | Add { .. }
@@ -941,6 +960,63 @@ impl Session {
             }
             Undo => self.request(Request::Undo),
             Redo => self.request(Request::Redo),
+            GifInfo { id: identity } => {
+                let source =
+                    moth_platform::export::gif_source(&self.scene, &self.sources, id(&identity)?)?;
+                let delays = moth_io::gif_animation::timeline(self.storage.as_ref(), source)?
+                    .context("item has no GIF animation")?;
+                let delays_ms = delays
+                    .iter()
+                    .map(|delay| delay.as_millis() as u64)
+                    .collect::<Vec<_>>();
+                Ok(
+                    json!({"frames":delays_ms.len(),"delays_ms":delays_ms,"duration_ms":delays_ms.iter().sum::<u64>()}),
+                )
+            }
+            GifFrame {
+                id: identity,
+                frame,
+                path,
+                at,
+            } => {
+                let index = frame
+                    .checked_sub(1)
+                    .context("GIF frames are numbered from 1")?;
+                let id = id(&identity)?;
+                let source = moth_platform::export::gif_source(&self.scene, &self.sources, id)?;
+                if let Some(path) = path {
+                    ensure!(!dry_run, "export is disabled in dry-run");
+                    ensure!(at.is_none(), "at is only for adding the frame to the board");
+                    return self.request(Request::Export(
+                        moth_platform::export::Target::GifFrame { id, index, path },
+                    ));
+                }
+                let pixels = moth_io::gif_animation::Reader::default().frame(
+                    self.storage.as_ref(),
+                    source,
+                    index,
+                )?;
+                let (handle, decoded) =
+                    self.storage
+                        .stage_preview(pixels.width(), pixels.height(), pixels.as_raw())?;
+                let at = at.unwrap_or_else(|| self.next_anchor());
+                let mut item = Item::image(
+                    decoded.hash,
+                    rect([
+                        at[0],
+                        at[1],
+                        decoded.original[0] as f32,
+                        decoded.original[1] as f32,
+                    ])?,
+                    self.top().as_ref(),
+                );
+                item.name = format!("frame-{frame}");
+                let identity = item.id;
+                self.request(Request::Apply(Command::Insert(item), Some(handle)))?;
+                Ok(
+                    json!({"id":identity.to_string(),"item":self.scene.get(identity).map(item_json)}),
+                )
+            }
             Export {
                 kind,
                 path,

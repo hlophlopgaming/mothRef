@@ -705,6 +705,8 @@ pub enum ClipboardRequest {
     /// Settings › Adding › Reduce large images: add a smaller copy of this file when
     /// its longer side exceeds the limit, else add the file itself.
     Reduce(PathBuf, u32),
+    /// Stages a composited GIF frame as a new image in the board's recovery area.
+    GifFrame(Handle, usize, [f32; 2]),
     /// Discard this board before the app exits.
     Discard,
 }
@@ -712,6 +714,8 @@ pub enum ClipboardRequest {
 pub enum ClipboardCompletion {
     /// A failed paste leaves the board and its recovery files intact.
     Pasted(Result<(Handle, moth_io::Decoded), PlatformError>),
+    /// A staged still and its drop point, retained across the asynchronous decode.
+    GifFrame(Result<(Handle, moth_io::Decoded), PlatformError>, [f32; 2]),
     /// Native file lists use the same bounded import path as dropped files.
     Files(Vec<PathBuf>),
     /// A reduced copy of an added file, staged like a pasted image.
@@ -816,6 +820,25 @@ impl ClipboardWorker {
                     if let ClipboardRequest::Reduce(path, side) = request {
                         let completion = reduce_file(&storage, path, side);
                         if tx.send(completion).is_err() {
+                            break;
+                        }
+                        wake();
+                        continue;
+                    }
+                    if let ClipboardRequest::GifFrame(handle, frame, point) = request {
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let pixels = moth_io::gif_animation::Reader::default().frame(
+                                storage.as_ref(),
+                                handle,
+                                frame,
+                            )?;
+                            storage.stage_preview(pixels.width(), pixels.height(), pixels.as_raw())
+                        }))
+                        .unwrap_or(Err(PlatformError::Panic));
+                        if tx
+                            .send(ClipboardCompletion::GifFrame(result, point))
+                            .is_err()
+                        {
                             break;
                         }
                         wake();

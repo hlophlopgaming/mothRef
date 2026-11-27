@@ -34,6 +34,10 @@ fn reduce_inner(bytes: &[u8], max_side: u32) -> Result<Option<Reduced>, DecodeEr
     if max_side == 0 || long <= max_side {
         return Ok(None);
     }
+    // A still PNG would lose the remaining frames of an animated original.
+    if probe.format == Some(ImageFormat::Gif) && crate::gif_animation::has_animation(bytes)? {
+        return Ok(None);
+    }
     let scale = f64::from(max_side) / f64::from(long);
     let size = [
         ((f64::from(width) * scale).round() as u32).max(1),

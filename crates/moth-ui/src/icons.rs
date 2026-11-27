@@ -44,6 +44,8 @@ pub enum Icon {
     Previous,
     /// Next image of a sequence.
     Next,
+    /// Repeat animated playback.
+    Repeat,
     /// Sound cue on or off.
     Sound,
     /// Grow to full screen.
@@ -285,6 +287,12 @@ pub fn paint(ui: &Ui, rect: Rect, icon: Icon, color: Color32) {
         Icon::Next => {
             line(&[(14., 3.), (14., 15.)]);
             line(&[(3., 3.), (12., 9.), (3., 15.), (3., 3.)]);
+        }
+        Icon::Repeat => {
+            line(&[(2., 9.), (2., 6.), (4., 4.), (15., 4.)]);
+            line(&[(12., 1.), (15., 4.), (12., 7.)]);
+            line(&[(16., 9.), (16., 12.), (14., 14.), (3., 14.)]);
+            line(&[(6., 11.), (3., 14.), (6., 17.)]);
         }
         Icon::Sound => {
             line(&[
@@ -603,6 +611,33 @@ pub fn enabled_button(
     selected: bool,
     enabled: bool,
 ) -> Response {
+    let tokens = crate::tokens(ui.ctx());
+    button_with_colors(ui, icon, label, selected, enabled, tokens)
+}
+
+/// Keeps controls legible over pictures regardless of the window theme.
+pub fn theater_button(
+    ui: &mut Ui,
+    icon: Icon,
+    label: &str,
+    selected: bool,
+    enabled: bool,
+) -> Response {
+    let theme = crate::tokens(ui.ctx());
+    let mut tokens = crate::Tokens::DARK;
+    tokens.text = theme.on_theater;
+    tokens.accent_text = theme.on_theater;
+    button_with_colors(ui, icon, label, selected, enabled, tokens)
+}
+
+fn button_with_colors(
+    ui: &mut Ui,
+    icon: Icon,
+    label: &str,
+    selected: bool,
+    enabled: bool,
+    tokens: crate::Tokens,
+) -> Response {
     // Ghost buttons: no idle fill, so bars of icons read as one calm surface; hover
     // and the selected state paint a soft background instead of an outline.
     let response = ui.add_enabled(
@@ -615,7 +650,6 @@ pub fn enabled_button(
             },
         )),
     );
-    let tokens = crate::tokens(ui.ctx());
     let hover = ui.ctx().animate_bool_with_time(
         response.id.with("hover"),
         response.hovered() && enabled,

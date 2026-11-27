@@ -29,6 +29,10 @@ pub(super) enum Intent {
     LibraryPreviews(Vec<std::path::PathBuf>),
 
     /// Clipboard import.
+    GifSeek(usize),
+    GifSpeed(f32),
+    GifStep(usize),
+    GifDrop(super::gif::Still, [f32; 2]),
     Paste,
     /// Fit the camera to the whole board immediately.
     Fit,

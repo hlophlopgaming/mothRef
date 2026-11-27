@@ -96,6 +96,14 @@
     "description": "Redo in a JSON-lines session or batch; history does not survive process exit.",
     "parameters": "none"
   },
+  "gif-info": {
+    "description": "Inspect the timing of an animated GIF from the board's original.",
+    "parameters": "id; returns frame count, per-frame delays in milliseconds and total duration"
+  },
+  "gif-frame": {
+    "description": "Capture a full-resolution, composited GIF frame as PNG or an independent board image.",
+    "parameters": "id, frame (1-based), path? (new .png file); omit path to add the image at at?=[x,y] or auto-place it"
+  },
   "export": {
     "description": "Export using the real native renderer; destination must be new.",
     "parameters": "kind=scene|original|originals|archive, path, ids?=[], side?=2048 (scene longest side), region?=[x,y,width,height]; scene path .png/.svg/.pdf"

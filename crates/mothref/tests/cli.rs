@@ -868,3 +868,34 @@ fn native_point_snapping_moves_both_axes_and_preserves_relative_positions() {
         .unwrap();
     assert!(!rejected.status.success());
 }
+
+#[test]
+fn native_gif_frame_exports_png_and_adds_an_independent_still() {
+    let cli = Native::new();
+    success(cli.invoke(&["create", cli.board.to_str().unwrap()]));
+    let source = cli.root.join("motion.gif");
+    fs::write(
+        &source,
+        include_bytes!("../../moth-io/tests/fixtures/animated.gif"),
+    )
+    .unwrap();
+    let gif = cli.op("add", &[source.to_str().unwrap()]);
+    let id = gif["results"][0]["id"].as_str().unwrap();
+    let info = cli.op("gif-info", &["--id", id]);
+    assert_eq!(info["results"][0]["delays_ms"], json!([20, 70, 110, 100]));
+
+    let exported = cli.root.join("frame.png");
+    cli.op(
+        "gif-frame",
+        &["--id", id, "--frame", "3", exported.to_str().unwrap()],
+    );
+    let png = fs::read(&exported).unwrap();
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+    let still = cli.op("gif-frame", &["--id", id, "--frame", "3", "--at", "90,40"]);
+    let still = &still["results"][0];
+    assert_eq!(still["item"]["rect"], json!([90.0, 40.0, 3.0, 1.0]));
+    assert_ne!(still["id"].as_str().unwrap(), id);
+    assert_eq!(cli.info()["items"].as_array().unwrap().len(), 2);
+    // The original is still animated after saving and reopening the board.
+    assert_eq!(cli.op("gif-info", &["--id", id])["results"][0]["frames"], 4);
+}

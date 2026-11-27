@@ -29,6 +29,7 @@ pub(super) enum Area {
     Edit,
     Group,
     Arrange,
+    Gif,
     Export,
     Session,
     Pointer,
@@ -71,6 +72,7 @@ pub(super) fn area(action: Action) -> Area {
         | ExportScene | ExportSelection | ExportOriginal | ExportOriginals | ExportZip => {
             Area::Export
         }
+        GifPlay | GifPrevious | GifNext | GifLoop | GifCopy | GifAdd => Area::Gif,
         DrawingSession => Area::Session,
         MoveDrag | ExtendDrag | ToggleDrag | DuplicateDrag | PanDrag | PanSpaceDrag
         | PanAltDrag | ZoomDrag => Area::Pointer,
@@ -101,6 +103,7 @@ pub(super) fn gate(action: Action) -> Gate {
         | UpdateDownload | UpdateInstall | UpdateLater | UpdateSkip | UpdateWhatsNew
         | UpdateShowOffer => Gate::None,
         Layers | DrawingSession | ClickThrough => Gate::NoSession,
+        GifPlay | GifPrevious | GifNext | GifLoop | GifCopy | GifAdd => Gate::Board,
         Palette | BindingSettings | Shortcuts | Settings | CloseWindow | New | Open | Images
         | Library | CloseTab | NextTab | Overlay | Minimize | Maximize | Fullscreen | WindowBar
         | OpenBackup | ShellIntegration | ClearDiskCache | MoveWindow | LockWindow
@@ -150,6 +153,7 @@ impl App {
                 Area::Group => self.group_enabled(action),
                 Area::Arrange => self.arrange_enabled(action),
                 Area::Export => self.export_enabled(action),
+                Area::Gif => self.gif_action_enabled(action),
                 Area::Session => self.session_enabled(action),
                 Area::Pointer => self.pointer_enabled(action),
             }
@@ -167,6 +171,10 @@ impl App {
             Area::Group => self.run_group(action, event_loop),
             Area::Arrange => self.run_arrange(action, event_loop),
             Area::Export => self.run_export(action, event_loop),
+            Area::Gif => {
+                self.gif_action(action);
+                None
+            }
             Area::Session => self.run_session(action, event_loop),
             Area::Pointer => self.run_pointer(action, event_loop),
         };

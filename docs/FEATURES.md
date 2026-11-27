@@ -176,8 +176,8 @@ As in PureRef: when nothing is selected, arrange/align/normalize actions apply t
 - [ ] Links to local files; clicking a link to a `.moth` / `.pur` / `.bee` file opens that board (PR) — M4
 
 ### GIFs (M4)
-- [ ] Play / pause, timeline scrubbing, playback speed, frame step (PR)
-- [ ] Copy a single frame, or drag it out as a new image item (PR)
+- [x] Play / pause, timeline scrubbing, playback speed, frame step and loop toggle (PR)
+- [x] Copy a single frame or drag it onto the board as a new image item (PR). The CLI provides `gif-info` and `gif-frame`.
 
 ### Drawing (M4)
 - [x] Freehand pen, translucent marker and arrows, with a configurable color and thickness

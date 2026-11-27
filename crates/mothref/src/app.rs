@@ -28,6 +28,7 @@ pub enum Wake {
 enum Pending {
     Import,
     Paste,
+    GifFrame([f32; 2]),
 }
 /// Inline note editor state; the draft is committed (or discarded) on focus loss.
 struct Editing {
@@ -57,6 +58,7 @@ mod confirmed;
 mod document;
 mod floating;
 mod gesture;
+mod gif;
 mod groups;
 mod input;
 mod intake;
@@ -100,6 +102,7 @@ pub struct App {
     settings: settings::Settings,
     settings_window: settings::SettingsWindow,
     updates: update::Updates,
+    gif: gif::Player,
     resolved_recoveries: Vec<std::path::PathBuf>,
     shortcuts: shortcuts::Shortcuts,
     global_shortcuts: Option<moth_platform::shortcuts::Shortcuts>,
@@ -184,6 +187,7 @@ impl App {
             settings: settings::Settings::default(),
             settings_window: settings::SettingsWindow::default(),
             updates: update::Updates::new(),
+            gif: gif::Player::default(),
             resolved_recoveries: Vec::new(),
             shortcuts: shortcuts::Shortcuts::default(),
             global_shortcuts: None,
@@ -1189,6 +1193,22 @@ impl App {
             Intent::Action(action) => {
                 self.run_action(action, event_loop);
                 true
+            }
+            Intent::GifSeek(frame) => {
+                self.gif_seek(frame);
+                false
+            }
+            Intent::GifSpeed(speed) => {
+                self.gif_speed(speed);
+                false
+            }
+            Intent::GifStep(step) => {
+                self.gif_step(step);
+                false
+            }
+            Intent::GifDrop(still, point) => {
+                self.add_gif_frame(still, point);
+                false
             }
             Intent::Session(event) => {
                 self.session_event(event);
@@ -2355,6 +2375,7 @@ impl App {
             self.workspace.board.notices.message = error.into();
         }
         self.results();
+        self.tick_gif(window.id());
         self.picked_save_path(event_loop);
         self.picked_export_path(event_loop);
         if let Some(gpu) = &mut self.shell.gpu {
@@ -2437,8 +2458,9 @@ impl App {
         }
         self.settle_session_window();
         self.rebase_drag();
-        let result = self.render(output);
+        let result = self.render(output, window.id());
         self.schedule_autosave();
+        self.schedule_gif(window.id());
         result
     }
     fn run_ui(&mut self, window: &Window) -> Option<(egui::FullOutput, Vec<Intent>)> {
@@ -2594,6 +2616,42 @@ impl App {
                     );
                     intents.extend(events.into_iter().map(Intent::Session));
                 }
+                if !self.workspace.library
+                    && let Some(item) = self
+                        .workspace
+                        .board
+                        .selection
+                        .iter()
+                        .next()
+                        .filter(|_| self.workspace.board.selection.len() == 1)
+                        .and_then(|id| self.workspace.board.scene.get(*id))
+                {
+                    let board = &self.workspace.board;
+                    intents.extend(self.gif.show(
+                        ui,
+                        window.id(),
+                        item,
+                        board.view.camera,
+                        board.view.viewport,
+                        &enabled,
+                    ));
+                    if ui.input(|input| input.pointer.any_released())
+                        && let Some(point) =
+                            ui.input(|input| input.pointer.interact_pos()).filter(|p| {
+                                board.view.viewport.contains(*p)
+                                    && ui
+                                        .ctx()
+                                        .layer_id_at(*p)
+                                        .is_none_or(|layer| layer.order == egui::Order::Background)
+                            })
+                        && let Some(still) = egui::DragAndDrop::take_payload::<gif::Still>(ui.ctx())
+                    {
+                        intents.push(Intent::GifDrop(
+                            *still,
+                            board.view.camera.world([point.x, point.y]),
+                        ));
+                    }
+                }
                 intents.extend(chrome);
                 if self.modal.dialog.is_none()
                     && !self.workspace.board.notices.conversion_prompt
@@ -2656,7 +2714,7 @@ impl App {
         }
         Some((output, intents))
     }
-    fn render(&mut self, output: egui::FullOutput) -> anyhow::Result<()> {
+    fn render(&mut self, output: egui::FullOutput, window: WindowId) -> anyhow::Result<()> {
         let covered = self.covered_by_preload();
         let tokens = moth_ui::tokens(self.shell.context());
         let canvas_color = tokens.canvas;
@@ -2813,6 +2871,20 @@ impl App {
                     })
                     .collect::<Vec<_>>(),
             );
+        }
+        let animation = if stage.is_none() && !covered {
+            visible
+                .iter()
+                .find_map(|item| self.gif.draw_item(window, item, &gpu.registry))
+        } else {
+            None
+        };
+        if let Some(animation) = &animation {
+            for item in &mut visible {
+                if item.id == animation.id {
+                    *item = animation;
+                }
+            }
         }
         groups::backdrops_first(&self.workspace.board.scene, &mut visible);
         let overlay = if stage.is_some() || self.workspace.library {

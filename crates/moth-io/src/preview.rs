@@ -64,7 +64,7 @@ pub(super) fn gif_rows(
             row_sink(top + y, 0, 1, &row, png::ColorType::Rgba)?;
         }
     }
-    // A static preview uses the first frame; animation playback belongs to M4.
+    // The static LOD pyramid uses the first frame; the animation player composites later frames.
     let mut tail = [0; 4];
     if decoder.fill_buffer(&mut tail)? {
         return Err(DecodeError::Budget);

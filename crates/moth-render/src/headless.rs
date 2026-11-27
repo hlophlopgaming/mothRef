@@ -1393,6 +1393,78 @@ mod tests {
         });
     }
     #[test]
+    fn gif_frames_replace_the_same_texture_without_changing_the_original() {
+        let _gpu = gpu();
+        use super::*;
+        pollster::block_on(async {
+            let instance =
+                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let (_, device, queue) = crate::request_device(&instance, None, false).await.unwrap();
+            let mut registry =
+                Registry::new(&device, wgpu::TextureFormat::Rgba8Unorm, ImageFormat::Rgba8);
+            let original = fixture(40, 16);
+            registry.upload(&device, &queue, &original);
+            let key = fixture(100, 16).hash;
+            let left = Item::image(
+                original.hash,
+                Rect {
+                    x: 0.,
+                    y: 0.,
+                    width: 16.,
+                    height: 16.,
+                },
+                None,
+            );
+            let right = Item::image(
+                key,
+                Rect {
+                    x: 16.,
+                    ..left.rect
+                },
+                Some(&left.z),
+            );
+            let texture = target(&device, 32, 16);
+            let view = texture.create_view(&Default::default());
+            let allocated = registry.allocated_bytes();
+            for color in [100, 200] {
+                let mut frame = fixture(color, 16);
+                frame.hash = key;
+                assert!(registry.upload_animation(&device, &queue, &frame));
+                registry
+                    .draw(
+                        &device,
+                        &queue,
+                        crate::Target {
+                            opacity: 1.,
+                            grid: None,
+                            view: &view,
+                            screen: [32., 16.],
+                            clip: None,
+                            clear: wgpu::Color::BLACK,
+                        },
+                        &[&left, &right],
+                        Camera::default(),
+                    )
+                    .unwrap();
+                let pixels = readback(&device, &queue, &texture, 256).unwrap();
+                for (x, red) in [(8, 40), (24, color as u8)] {
+                    let offset = 8 * 256 + x * 4;
+                    assert!(
+                        pixels[offset..offset + 4]
+                            .iter()
+                            .zip([red, 0, 127, 255])
+                            .all(|(&a, b)| a.abs_diff(b) <= 3)
+                    );
+                }
+                assert_eq!(registry.allocated_bytes(), allocated);
+            }
+            registry.release_animation(key);
+            assert!(!registry.resident(key, 1));
+            assert!(registry.resident(original.hash, 16));
+        });
+    }
+
+    #[test]
     fn custom_group_rgb_golden() {
         let _gpu = gpu();
         use super::{Camera, ImageFormat, Item, Rect, Registry, readback, target};

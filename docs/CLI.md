@@ -71,6 +71,8 @@ explicit ids. Angles are radians; points/rectangles use comma-separated numbers.
 | `order BOARD` | `--mode raise\|lower\|top\|bottom --id ...`; individual images/notes |
 | `reset BOARD` | `--mode scale\|normalize\|crop\|all --id ...`; original-backed geometry |
 | `edit BOARD` | Required `--id UUID`; frame/text/name and transform flags below |
+| `gif-info BOARD` | `--id UUID` returns frame count and delays in milliseconds |
+| `gif-frame BOARD [FRAME.png]` | `--id UUID --frame N` captures a composited frame at original resolution. Omit the PNG path to add the frame to the board. `--at x,y` only applies when adding. |
 | `export BOARD DESTINATION` | `--kind scene\|original\|originals\|archive` (default scene), `--id ...`, `--side N` (default 2048), optional `--region x,y,w,h` |
 | `pixel-info BOARD` | `--id UUID --point x,y`; original pixel coordinate and image metadata |
 | `gamut BOARD` | `--id IMAGE [--view windows\|cells\|shares] [--sort share\|warm\|light\|hue\|saturation] [--at x,y]`; measures the visible part of the image and adds a color gamut card beside it, linked to the image by an arrow; with a gamut card's id it measures that card's image again, keeping its view and order |
@@ -110,6 +112,8 @@ sorts by each image's saved source: images from one folder stay together, number
 compare by value, and images without a source (pasted, from imported boards) come
 last. Item JSON carries the source as `{"file": PATH}`, `{"archive": PATH,
 "entry": NAME}`, `{"url": URL}` or `null`.
+
+GIF frames are numbered from 1. In JSON, `gif-frame` takes `id`, `frame`, and an optional `path` or `at`. A PNG export creates a new file. Adding the frame creates an independent still and leaves the GIF item on the board.
 
 Scene export chooses PNG/SVG/PDF from the destination extension. `original`
 requires one image UUID; `originals` creates a new directory; `archive` creates ZIP.

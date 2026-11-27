@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Select an animated GIF to show playback controls directly on the image. Play or pause it, scrub and step through frames, adjust playback speed or loop it. Copy a full-resolution frame or drag it onto the board as a still image. The CLI adds `gif-info` and `gif-frame`.
 - Check for updates at startup in standalone release builds. Download and install verified Windows, macOS and Linux updates from the app, with open boards restored after restart.
 - The What’s new window displays the release notes from GitHub before installation and after a successful update. Open the installed version’s notes from Settings › General.
 

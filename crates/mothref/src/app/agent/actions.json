@@ -407,6 +407,24 @@
   "OpenSource": {
     "gui_only": "Shows the file manager or the browser on the user's desktop; headless sessions read an image's source from the `source` field of its item JSON."
   },
+  "GifPlay": {
+    "gui_only": "Starts or pauses live viewport playback; use gif-info for timing."
+  },
+  "GifPrevious": {
+    "gui_only": "Steps the live player; gif-frame captures a numbered frame."
+  },
+  "GifNext": {
+    "gui_only": "Steps the live player; gif-frame captures a numbered frame."
+  },
+  "GifLoop": {
+    "gui_only": "Toggles repeating live viewport playback."
+  },
+  "GifCopy": {
+    "operation": "gif-frame"
+  },
+  "GifAdd": {
+    "operation": "gif-frame"
+  },
   "CopyImage": {
     "operation": "export"
   },
