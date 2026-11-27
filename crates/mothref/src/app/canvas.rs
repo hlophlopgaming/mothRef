@@ -1523,9 +1523,10 @@ mod tests {
     #[test]
     fn preload_cover_waits_until_the_viewport_has_a_size() {
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             super::preload_cover(ui, egui::Rect::NOTHING, moth_io::PreloadProgress::default());
         });
+        output.textures_delta.clear();
     }
 
     use super::*;
